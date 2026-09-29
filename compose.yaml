@@ -1,0 +1,33 @@
+x-mysql: &mysql
+  image: mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf
+  environment:
+    MYSQL_ROOT_PASSWORD: fixture-root-only
+  healthcheck:
+    test: ["CMD-SHELL", "MYSQL_PWD=fixture-root-only mysql -uroot -h127.0.0.1 -e 'SELECT 1'"]
+    interval: 3s
+    timeout: 3s
+    retries: 90
+  networks: [fixture]
+services:
+  source:
+    <<: *mysql
+    command: ["--server-id=8401", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_GTID_MODE:-OFF}", "--enforce-gtid-consistency=${FIXTURE_GTID_MODE:-OFF}", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1"]
+    volumes: ["source-data:/var/lib/mysql"]
+  native:
+    <<: *mysql
+    command: ["--server-id=8402", "--log-bin=binlog", "--log-replica-updates=ON", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_GTID_MODE:-OFF}", "--enforce-gtid-consistency=${FIXTURE_GTID_MODE:-OFF}", "--replica-parallel-workers=0", "--replica-exec-mode=STRICT", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1"]
+    volumes: ["native-data:/var/lib/mysql"]
+  target57:
+    <<: *mysql
+    image: mysql-replicator-fixture:5.7.42-setpriv
+    platform: linux/amd64
+    build: ./docker/mysql57
+    command: ["--server-id=5701", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_GTID_MODE:-OFF}", "--enforce-gtid-consistency=${FIXTURE_GTID_MODE:-OFF}", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start"]
+    volumes: ["target57-data:/var/lib/mysql"]
+networks:
+  fixture:
+    internal: true
+volumes:
+  source-data:
+  native-data:
+  target57-data:

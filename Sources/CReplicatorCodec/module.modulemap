@@ -1,0 +1,5 @@
+module CReplicatorCodec [system] {
+    header "include/replicator_codec.h"
+    link "replicator_codec"
+    export *
+}

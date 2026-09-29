@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+rust/target/
+artifacts/
+.upstream/
+.DS_Store
+.env
+__pycache__/
