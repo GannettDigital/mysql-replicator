@@ -36,3 +36,7 @@ Tests were developed in an isolated temporary clone before fast-forwarding the m
 The normalizer covers INT, unescaped printable ASCII VARCHAR and BIGINT UNSIGNED only. It is not a generic decoder or a replacement for the selected Rust production codec. Additional schemas, DDL, large/multi-row operations, transaction compression, key changes and binlog rotation need coverage. Upstream fixture cataloging is not full Swift coverage or blanket redistribution clearance.
 
 Database kill/network/disk-full/restart controls, broad corpus qualification, ABI ownership/value/lifetime tests, resource profiles and Ubuntu 16.04 packaging remain open. No Static Linux SDK was installed when checked. The production Rust/Swift dependency stack has not been built or executed for Ubuntu 16.04. Fleet inventory and the final Phase 1 exit report are outstanding. See IMPLEMENTATION_STATUS.md.
+
+## Subsequent Ubuntu increment
+
+The container userland portion of the packaging spike subsequently passed with the actual Swift/NIO/TLS/SQLite/Rust/zstd dependency stack. The SDK was installed inside Docker, and static x86_64 binaries were executed in Ubuntu 16.04. Fleet kernel and release qualification remain open. See [Ubuntu packaging results](UBUNTU_PACKAGING_RESULTS.md); the earlier “no release binary produced” observation above describes the preceding increment.

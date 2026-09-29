@@ -12,3 +12,7 @@ native-suite:
 	swift run replicator-lab native-suite $(ARGS)
 upstream-tests:
 	swift run replicator-lab upstream-tests
+
+.PHONY: ubuntu-smoke
+ubuntu-smoke:
+	swift run replicator-lab ubuntu-smoke $(ARGS)

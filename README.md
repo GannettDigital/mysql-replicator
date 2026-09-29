@@ -13,6 +13,7 @@ make build
 make test
 make native-suite
 make upstream-tests
+make ubuntu-smoke
 ```
 
 Equivalent SwiftPM harness commands:
@@ -37,6 +38,8 @@ make native-smoke ARGS="--native-engine InnoDB"
 
 The raw transaction/MyISAM smoke intentionally returns exit 1 for the verified native rejection; infrastructure or assertion failures return 2. Use the suite for a green expected-outcome check.
 
+`make ubuntu-smoke` builds static x86_64 Linux executables and tests the actual networking/TLS, Rust codec/zstd and SQLite dependency stack in Ubuntu 16.04 containers, including TLS rejection and SQLite recovery after SIGKILL. See [the packaging spike](packaging/README.md) for scope, evidence and prerequisites. Docker tests the Ubuntu user environment under its own kernel; fleet kernel qualification remains separate.
+
 ## Prerequisites and limits
 
 Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git, OpenSSL, and a MySQL 8.4 `mysqlbinlog` in PATH. Set `MYSQLBINLOG=/absolute/path/to/mysqlbinlog` when needed. The tested reference client is 8.4.6; the servers are 8.4.8 and 5.7.42. That patch difference is recorded in evidence. This is not Ubuntu 16.04 release qualification.
@@ -47,6 +50,7 @@ Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git
 
 ## Design and evidence
 
+- [Ubuntu packaging results](PLAN/UBUNTU_PACKAGING_RESULTS.md)
 - [Current Phase 1 progress](PLAN/PHASE_1_PROGRESS.md)
 - [Implementation status and outstanding gates](PLAN/IMPLEMENTATION_STATUS.md)
 - [Approved technical plan](PLAN/REPLICATOR_TECHNICAL_PLAN.md)

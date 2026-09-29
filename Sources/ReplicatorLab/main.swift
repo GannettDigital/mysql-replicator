@@ -10,6 +10,7 @@ func main() throws -> Int32 {
           native-suite [--positioning auto|file-position|both]
           native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
                        [--native-engine MyISAM|InnoDB] [--native-init-automatic]
+          ubuntu-smoke [--skip-build]
           upstream-tests
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
@@ -20,6 +21,11 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command == "ubuntu-smoke" {
+        try require(args.isEmpty || args == ["--skip-build"], "ubuntu-smoke accepts only --skip-build")
+        try UbuntuQualification.run(root: root, build: args.isEmpty)
+        return 0
+    }
     if command == "verify-evidence" {
         try require(args.count == 1, "verify-evidence requires one case directory")
         try EvidenceVerification.verify(root: root, directory: URL(fileURLWithPath: args[0], relativeTo: root).standardizedFileURL)

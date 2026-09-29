@@ -1,0 +1,5 @@
+module CPackagingRust [system] {
+    header "include/packaging_rust.h"
+    link "packaging_rust"
+    export *
+}

@@ -1,0 +1,11 @@
+[package]
+name = "packaging-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[lib]
+crate-type = ["staticlib"]
+[dependencies]
+mysql_common = { git = "https://github.com/blackbeam/rust_mysql_common", rev = "374c9d5c24f76a00b678d5b1d7103d6ceb4edb8c", default-features = false, features = ["binlog"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+zstd = "=0.13.3"

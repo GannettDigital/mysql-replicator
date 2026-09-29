@@ -6,3 +6,7 @@ artifacts/
 .DS_Store
 .env
 __pycache__/
+
+packaging/Probe/.build/
+packaging/Probe/.swiftpm/
+packaging/rust/target/

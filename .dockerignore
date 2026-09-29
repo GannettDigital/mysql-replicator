@@ -1,0 +1,8 @@
+.git
+.build
+.swiftpm
+.upstream
+artifacts
+rust/target
+packaging/Probe/.build
+packaging/rust/target

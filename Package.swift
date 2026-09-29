@@ -2,6 +2,7 @@
 import PackageDescription
 import Foundation
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let codecLibraryPath = ProcessInfo.processInfo.environment["REPLICATOR_CODEC_LIBRARY_PATH"] ?? root + "/rust/target/debug"
 let package = Package(
     name: "mysql-replicator",
     platforms: [.macOS(.v13)],
@@ -10,7 +11,7 @@ let package = Package(
     targets: [
         .systemLibrary(name: "CReplicatorCodec"),
         .target(name: "ReplicatorCodec", dependencies: ["CReplicatorCodec"],
-            linkerSettings: [.unsafeFlags(["-L", root + "/rust/target/debug"]),
+            linkerSettings: [.unsafeFlags(["-L", codecLibraryPath]),
                 .linkedLibrary("pthread", .when(platforms: [.linux])),
                 .linkedLibrary("dl", .when(platforms: [.linux])),
                 .linkedLibrary("m", .when(platforms: [.linux]))]),
