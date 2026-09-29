@@ -19,3 +19,7 @@ The first GTID-enabled run (`20260929T185639Z-771ef497`) stopped native apply wi
 An intermediate positional run (`20260929T185850Z-688a327f`) passed row/engine/rollback assertions but failed when trying to invoke `mysqlbinlog`: the minimal 8.4 image does not include it. The final harness captures raw files and leaves independent decoding/logical comparison pending. The raw magic/size check and SHA-256 capture do not validate event CRCs or semantics.
 
 Swift capture, codec decoding, SQLite persistence, JSON inspect and target apply are unimplemented. Upstream binlog tests have historical evidence in the imported decision, but were not rerun as part of this bootstrap. Normalized event comparison, negative comparator tests, failure injection, the full ABI contract and Ubuntu 16.04 packaging remain open. See IMPLEMENTATION_STATUS.md and the approved plan.
+
+## GTID follow-up
+
+The original all-OFF success above is historical control evidence only. The current harness keeps source GTIDs ON, configures both replicas OFF_PERMISSIVE/WARN and uses GTID auto-positioning. See [the follow-up results](GTID_QUALIFICATION.md); permissive replica settings alone do not resolve the observed MyISAM apply failure. The default was changed accordingly, and failed native runs now retain raw binlogs and labeled replication errors.
