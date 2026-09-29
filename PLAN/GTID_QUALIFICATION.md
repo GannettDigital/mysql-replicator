@@ -40,13 +40,13 @@ The successful InnoDB control confirms the requested GTID configuration and auto
 make native-smoke
 
 # GTID configuration control: expected to pass; not a MyISAM substitute.
-python3 tests/harness/native_smoke.py --native-engine InnoDB
+swift run replicator-lab native-smoke --native-engine InnoDB
 
 # Coordinate positioning with the same GTID ON source and permissive targets.
-python3 tests/harness/native_smoke.py --positioning file-position
+swift run replicator-lab native-smoke --positioning file-position
 ```
 
-Other mode/enforcement experiments remain explicit CLI overrides. Invalid native ON/WARN and anonymous-source auto-position requests are rejected before starting containers. Python syntax and Compose configuration checks passed. No Swift/Rust code changed, so the bootstrap build was not rerun.
+The original mode/enforcement experiments were explicit Python-harness overrides; their evidence is retained. The replacement Swift runner fixes the accepted settings. Invalid native ON/WARN and anonymous-source auto-position requests are rejected before starting containers. Python syntax and Compose configuration checks passed. No Swift/Rust code changed, so the bootstrap build was not rerun.
 
 ## Implementation consequences
 
@@ -59,3 +59,7 @@ Swift should use source GTIDs as durable transaction identities in SQLite and re
 The subsequent [positional investigation](POSITIONAL_GTID_RESEARCH.md) tests exact offsets with no gtid_purged bootstrap and also initializes GTID_NEXT=AUTOMATIC inside the native SQL thread using init_replica. Both retain source GTID ON and target OFF_PERMISSIVE/WARN and still reproduce error 1837 on the original multi-statement workload. The report includes MySQL documentation, Percona's positioning comparison, and the relevant pinned MySQL source code.
 
 The same positional setup **passed** when the first three DML statements became separate source commits (`--workload autocommit`). This narrows the observed failure to the tested multi-statement transaction shape; it does not establish a blanket MyISAM/GTID incompatibility or qualify all multi-row statements.
+
+## Automation update
+
+The reproduction commands above now use the SwiftPM runner. Historical run IDs and captured paths refer to the original experiments. The current runner fixes source ON/ON and targets OFF_PERMISSIVE/WARN, and `make native-suite` classifies both successful and expected-negative cases. See [Phase 1 progress](PHASE_1_PROGRESS.md).

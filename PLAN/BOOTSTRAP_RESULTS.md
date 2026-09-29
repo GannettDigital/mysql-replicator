@@ -23,3 +23,7 @@ Swift capture, codec decoding, SQLite persistence, JSON inspect and target apply
 ## GTID follow-up
 
 The original all-OFF success above is historical control evidence only. The current harness keeps source GTIDs ON, configures both replicas OFF_PERMISSIVE/WARN and uses GTID auto-positioning. See [the follow-up results](GTID_QUALIFICATION.md); permissive replica settings alone do not resolve the observed MyISAM apply failure. The default was changed accordingly, and failed native runs now retain raw binlogs and labeled replication errors.
+
+## Automation replacement
+
+The Python and shell commands above describe historical bootstrap runs. Current automation uses SwiftPM and Make; see [Phase 1 progress](PHASE_1_PROGRESS.md) and the repository README for supported commands.

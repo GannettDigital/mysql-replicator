@@ -1,27 +1,23 @@
 # Implementation status
 
-Phase 1 is in progress. The approved architecture is unchanged. See [bootstrap validation and findings](BOOTSTRAP_RESULTS.md).
+Phase 1 is in progress. The reviewed GTID/reference checkpoint is commit `42c36d3`. See [the current implementation evidence](PHASE_1_PROGRESS.md).
 
-Initial scope:
+Implemented and validated:
 
-- Independent Git repository and imported approved plans.
-- Swift executable, C header/module and Rust static-library build structure; pinned `mysql_common` revision and Cargo lockfile. Only ABI version/capability exports exist; no decoder is advertised.
-- Disposable three-server harness with aligned post-seed source coordinates, native 8.4 InnoDB-to-MyISAM replication, exact row/engine checks, raw binlogs, explicit pending 5.7 Swift parity.
+- Independent repository, approved architecture and accepted native-reference contract.
+- Swift/Rust static-library build skeleton; production decoding capability remains zero.
+- SwiftPM `replicator-lab` replaces the Python harness. Make coordinates Cargo and SwiftPM; no Python or shell workflow script is required.
+- Four-case native suite: positive autocommit and expected error 1837 under both positional and GTID auto-positioning. Exact rows, receiver/applier status, boundaries, GTID coverage, engines, rollback behavior and cleanup are asserted.
+- Physical binlog capture plus checksum-verified mysqlbinlog reference decoding and ordered logical operation comparison for the fixed fixture schema. Source/native effects and unchanged future Swift target are checked independently of final rows.
+- Swift tests for missing/duplicate/reordered/wrong-value operations, transient insert/delete history, prematurely advanced native completion, malformed reference rows and process timeouts. Three synthetic offline reference fixtures have provenance and checksums.
+- Reproducible upstream codec qualification: 26 tests pass with binlog explicitly enabled, committed test lockfile and a generated catalog of 41 upstream binlog fixtures.
 
 Remaining Phase 1 gates:
 
-- Build an expectation-aware native suite around the positive autocommit and accepted negative multi-statement cases; assert specific outcomes, not just process exit.
+- Broaden the independent corpus beyond the fixed three-column schema, including exact boundary types, multi-row statements, DDL, key changes and live transient-row histories. Add an independent Go reference where planned; the current external decoder is MySQL's mysqlbinlog.
+- Implement process-kill, connection-cut, disk-full and rotation/restart controls and appropriate resource profiles. ProcessRunner timeout tests do not satisfy these database failure scenarios.
+- Strengthen the Rust/Swift ABI beyond version/capability exports with ownership/error/value tests; current upstream and harness tests do not qualify the production adapter.
+- Ubuntu 16.04 x86_64 packaging spike with actual Swift/NIO/TLS/SQLite/Rust/zstd dependencies. No Static Linux SDK was installed on this host when checked; no release binary or fleet-kernel test has been produced.
+- Complete the remaining per-pair workload inventory and publish the Phase 1 exit report. This increment is not Phase 1 completion.
 
-- Independent normalized event comparator and negative missing/duplicate/reordered/wrong-value/checkpoint cases; fixture catalog and provenance.
-- Reproduce the explicit upstream 26-test binlog run in this repository, then implement ABI ownership/error/value tests.
-- Process-kill, connection-cut, disk-full, rotation, DDL and transient-row scenarios; matched resource profiles and fleet inventory.
-- Ubuntu 16.04 x86_64 deployment spike with actual Swift/NIO/TLS/SQLite/Rust/zstd dependencies.
-- Full Phase 1 evidence report. A native smoke pass is not Phase 1 completion.
-
-Phase 2 adds Swift capture, the strict Rust adapter, typed records, SQLite and JSON inspect. Phase 3 adds target apply and failure recovery. The CLI currently rejects all replication commands.
-
-Current required fixture settings: source `gtid_mode=ON`, `enforce_gtid_consistency=ON`; both native 8.4 and future Swift 5.7 targets `gtid_mode=OFF_PERMISSIVE`, `enforce_gtid_consistency=WARN`. Native setup uses GTID auto-positioning. Source GTID mode is not downgraded to obtain a passing smoke test.
-
-Native 8.4 MyISAM apply still stops with error 1837 after the first row of the multi-statement source transaction under these settings. The receive path connects and obtains GTIDs; exact row reads expose partial application. The user has accepted this as an expected negative reference for the initial Swift implementation, which may also reject the corresponding case with durable diagnostics and no applied-checkpoint advance. See [GTID qualification](GTID_QUALIFICATION.md) for the settings, controls, evidence and implications for Swift checkpoint design.
-
-The [positional follow-up](POSITIONAL_GTID_RESEARCH.md) also reproduces error 1837 with Auto_Position=0, including a reset inside the actual applier thread via init_replica. A control with the same DML split into separate source commits passes into MyISAM under the required GTID settings. This supplies a restricted positive reference case; the original multi-statement workload is retained as an expected negative case. Resolving native error 1837 is no longer a prerequisite to progress. See [the accepted compatibility contract](NATIVE_REFERENCE_CONTRACT.md); the remaining Phase 1 gates still apply.
+Source settings remain ON/ON; both targets remain OFF_PERMISSIVE/WARN. The positive native MyISAM case now passes with both positioning modes. The native multi-statement error-1837 case is an accepted expected-negative reference, so it is not necessary to make native MySQL succeed before proceeding. Swift target apply and its durable BLOCKED/checkpoint behavior remain Phase 3 work.

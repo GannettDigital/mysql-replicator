@@ -197,7 +197,7 @@ Readers may observe a partially applied source transaction, including after an a
 
 ## Phased implementation and exit gates
 
-Every phase produces a results document, machine-readable pass/fail results and retained evidence. Unsupported infrastructure is a failure or an explicit outstanding gate, never a passing skip. Commands mentioned below are proposed, not existing Make targets.
+Every phase produces a results document, machine-readable pass/fail results and retained evidence. Unsupported infrastructure is a failure or an explicit outstanding gate, never a passing skip. The phase descriptions are requirements; implemented SwiftPM/Make entry points and current validation are tracked in [Phase 1 progress](PHASE_1_PROGRESS.md). Repository automation is owned by SwiftPM executables/tests, with Make used to coordinate Cargo and Swift builds.
 
 ### Phase 1 — independent harness and workload inventory
 

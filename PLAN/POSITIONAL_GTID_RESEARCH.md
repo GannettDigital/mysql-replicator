@@ -35,13 +35,13 @@ Both failed cases preserve raw binlogs, settings, errors and partial row readbac
 
 ```sh
 # Actual file/offset, no gtid_purged bootstrap; original transaction.
-python3 tests/harness/native_smoke.py --positioning file-position
+swift run replicator-lab native-smoke --positioning file-position
 
 # Reset GTID_NEXT inside the native SQL thread before it reads events.
-python3 tests/harness/native_smoke.py --positioning file-position --native-init-automatic
+swift run replicator-lab native-smoke --positioning file-position --native-init-automatic
 
 # Diagnostic control: change the first three DML statements into separate commits.
-python3 tests/harness/native_smoke.py --positioning file-position --workload autocommit
+swift run replicator-lab native-smoke --positioning file-position --workload autocommit
 ```
 
 The autocommit control deliberately changes source transaction boundaries and adjusts the expected-operation manifest. It is not a proposed rewrite of production source traffic. The autocommit control passed, establishing a useful restricted MyISAM reference case. The user subsequently accepted the original multi-statement failure as an expected negative reference: Swift may also reject the corresponding case. Keep both positive and negative scenarios, according to the [initial compatibility contract](NATIVE_REFERENCE_CONTRACT.md).
@@ -49,3 +49,7 @@ The autocommit control deliberately changes source transaction boundaries and ad
 ## Implication for the direct Swift replicator
 
 Keep cloud-compatible source GTIDs ON and retain the requested target settings. An external Swift consumer can track received GTIDs and file/offsets in SQLite while issuing target SQL through its own AUTOMATIC session. Native replication instead processes the GTID events itself. Positional startup alone does not remove this distinction. Safe complete-transaction checkpoints, MyISAM partial effects, target binlogs and repair/resume still need their planned tests; this investigation neither establishes Swift correctness nor completes Phase 1.
+
+## Automation update
+
+The reproduction commands above now use the SwiftPM runner. Historical run IDs and captured paths refer to the original experiments. The current runner fixes source ON/ON and targets OFF_PERMISSIVE/WARN, and `make native-suite` classifies both successful and expected-negative cases. See [Phase 1 progress](PHASE_1_PROGRESS.md).

@@ -1,34 +1,56 @@
 # mysql-replicator
 
-Direct MySQL replication POC: Swift capture and application, a Rust `mysql_common` codec through a C ABI, and a local SQLite durable relay. Intended topology: Cloud SQL MySQL 8.4 InnoDB to on-premises MySQL 5.7 MyISAM.
+Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and a local SQLite durable relay. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
-This is an independent repository created from the approved design in `maxwell-mysql-consumer`. The initial implementation provides a buildable Swift/Rust ABI skeleton and an isolated three-server native-reference smoke harness. It does **not** replicate through Swift yet.
+Phase 1 is in progress. The repository contains a Swift/Rust build skeleton and a tested native-reference harness. Swift capture, production decoding, SQLite relay and target apply are not implemented yet.
 
-## Development
+## Repository automation
 
-Local baseline: Swift 6.2.1, Cargo/Rust 1.93.1, Python 3, Docker Compose v2. Run from this repository:
+Automation lives in the SwiftPM executable `replicator-lab`. Make coordinates the Rust static-library prerequisite and provides short aliases. Python and shell workflow scripts have been removed.
 
 ```sh
 make build
-.build/debug/mysql-replicator --help
-make native-smoke
+make test
+make native-suite
+make upstream-tests
 ```
 
-The build compiles the pinned Rust dependency with binlog support, statically links the adapter into Swift and checks the ABI version. Its capability mask is zero until decoding is implemented. `Cargo.lock` pins transitive dependencies. The production decoder excludes upstream's `test` feature. This host development build is not the qualified Ubuntu 16.04 release build.
+Equivalent SwiftPM harness commands:
 
-The harness starts fresh MySQL 8.4 InnoDB, 8.4 MyISAM native replica and 5.7 MyISAM future Swift target containers. It uses a unique Compose project, no published ports and disposable volumes. It verifies source/native rows, engines, rollback behavior and captures raw binlogs, coordinates and configuration. It always cleans up its own containers/volumes, retaining evidence under `artifacts/native-smoke/<run-id>/`. Fixture credentials are local-only. Failed cleanup is reported with the project name. Logical binlog decoding/comparison is pending: the minimal 8.4 fixture lacks `mysqlbinlog`; raw files and SHA-256 digests are captured for the forthcoming reference decoder. The default source uses `gtid_mode=ON` and `enforce_gtid_consistency=ON`. Every fixture target client session explicitly runs `SET @@SESSION.GTID_NEXT = 'AUTOMATIC';`; the separate native applier still receives source GTIDs. Both replicas use `gtid_mode=OFF_PERMISSIVE` and `enforce_gtid_consistency=WARN`, as required for the cloud-source POC. The native channel uses GTID auto-positioning after an explicit disposable-fixture snapshot handoff. The current MyISAM workload still fails with native error 1837; `make native-smoke` returns nonzero and preserves diagnostics and raw binlogs. This is now an accepted negative reference under the [initial compatibility contract](PLAN/NATIVE_REFERENCE_CONTRACT.md): Swift may stop on the corresponding native-failing cases. The raw smoke command still exits nonzero; an expectation-aware suite remains to be implemented. See [GTID qualification results](PLAN/GTID_QUALIFICATION.md).
+```sh
+swift run replicator-lab native-suite
+swift run replicator-lab upstream-tests
+swift run replicator-lab verify-evidence artifacts/native-suite/<case-directory>
+```
 
-Run `python3 tests/harness/native_smoke.py --native-engine InnoDB` for the engine control. Each server's GTID mode is independently configurable; `--positioning file-position` selects coordinate-based positioning while still allowing a GTID-enabled source. `--gtid` retains the old all-ON experiment. The previous all-OFF baseline is available only with explicit `--source-gtid-mode OFF --native-gtid-mode OFF --target57-gtid-mode OFF --positioning file-position`.
+`make native-suite` runs four isolated cases: autocommit success and expected native error 1837, each using file/position and GTID auto-positioning. A negative case passes only when the expected error, receiver state, failure boundary, partial rows and logical binlog effects match. Unrelated errors fail the suite. Each case preserves observed native outcome separately from assertion results. Swift apply remains explicitly pending.
 
-The 5.7 target remains at its seed boundary; Swift parity is explicitly pending.
+The three servers have no published ports, use unique Compose projects and disposable volumes, and are cleaned up after each case. Evidence stays under `artifacts/native-suite/`. Source GTIDs remain ON with consistency ON; both targets use OFF_PERMISSIVE/WARN. Target client sessions initialize GTID_NEXT=AUTOMATIC. The native reference and future Swift target are separate servers.
 
-Additional diagnostic cases are documented in [positional GTID research](PLAN/POSITIONAL_GTID_RESEARCH.md). `--native-init-automatic` runs the reset inside the native SQL thread at startup; `--workload autocommit` changes the first three source DML statements into separate transactions. Keep both cases: autocommit is the positive reference and the original multi-statement workload is the expected negative reference.
+For individual diagnostics:
 
-## Design and status
+```sh
+make native-smoke ARGS="--positioning file-position --workload autocommit"
+make native-smoke ARGS="--positioning file-position --native-init-automatic"
+make native-smoke ARGS="--native-engine InnoDB"
+```
 
+The raw transaction/MyISAM smoke intentionally returns exit 1 for the verified native rejection; infrastructure or assertion failures return 2. Use the suite for a green expected-outcome check.
+
+## Prerequisites and limits
+
+Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git, OpenSSL, and a MySQL 8.4 `mysqlbinlog` in PATH. Set `MYSQLBINLOG=/absolute/path/to/mysqlbinlog` when needed. The tested reference client is 8.4.6; the servers are 8.4.8 and 5.7.42. That patch difference is recorded in evidence. This is not Ubuntu 16.04 release qualification.
+
+`mysqlbinlog` always receives `--no-defaults` to prevent host option files from filtering events, and `--verify-binlog-checksum`. The independent Swift normalizer covers only the known fixture schema: signed INT key, unescaped printable ASCII VARCHAR, and BIGINT UNSIGNED. It preserves UINT64_MAX as an exact string and verifies the signed/unsigned dual rendering. It is not the production decoder or a general lossless mysqlbinlog text converter. Windows containing rotation, arbitrary types/strings, DDL and other tables require further qualification.
+
+`make test` builds the Rust prerequisite and runs SwiftPM tests without Docker. After `make codec`, direct `swift test` also works. `swift run replicator-lab` does not need the Rust archive. `make upstream-tests` fetches the pinned codec, explicitly enables its binlog test feature, uses a committed test lockfile, and writes a fixture catalog. Its test-only C++ dependencies are described in [upstream qualification](tests/Upstream/README.md). Production Rust dependencies exclude that test feature.
+
+## Design and evidence
+
+- [Current Phase 1 progress](PLAN/PHASE_1_PROGRESS.md)
+- [Implementation status and outstanding gates](PLAN/IMPLEMENTATION_STATUS.md)
 - [Approved technical plan](PLAN/REPLICATOR_TECHNICAL_PLAN.md)
-- [Reader/decoder decision and research evidence](PLAN/REPLICATOR_CODEC_DECISION.md)
-- [Implementation status and next gates](PLAN/IMPLEMENTATION_STATUS.md)
-- [Imported-document provenance](PLAN/IMPORT_NOTES.md)
-
-No remote repository, production connection, deployment or production-ready replication service is configured.
+- [Native-reference compatibility contract](PLAN/NATIVE_REFERENCE_CONTRACT.md)
+- [Reader/decoder decision](PLAN/REPLICATOR_CODEC_DECISION.md)
+- [GTID qualification](PLAN/GTID_QUALIFICATION.md) and [positional experiments](PLAN/POSITIONAL_GTID_RESEARCH.md)
+- [Imported planning provenance](PLAN/IMPORT_NOTES.md)

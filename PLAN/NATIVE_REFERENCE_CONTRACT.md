@@ -25,7 +25,7 @@ Do not assign a source GTID to target SQL merely to provoke the native error. Sw
 
 ## Phase gates
 
-Phase 1 now needs reproducible positive and expected-negative native cases, rather than a fix that makes the known multi-statement case succeed. The suite must assert the specific expected SQL failure, source transaction boundary, receiver state and partial rows; record observed native failure separately from the result of those assertions. Raw `make native-smoke` still exits nonzero for the negative case. An expectation-aware suite runner has not yet been implemented. Comparator/corpus, failure controls, ABI and Ubuntu packaging gates remain outstanding.
+Phase 1 now needs reproducible positive and expected-negative native cases, rather than a fix that makes the known multi-statement case succeed. The suite must assert the specific expected SQL failure, source transaction boundary, receiver state and partial rows; record observed native failure separately from the result of those assertions. Raw `make native-smoke` still exits nonzero for the negative case. The SwiftPM `replicator-lab native-suite` now implements these native assertions for both positioning modes. It records native rejection separately from a passing expected-outcome assertion; Swift parity remains pending. Comparator/corpus, failure controls, ABI and Ubuntu packaging gates remain outstanding.
 
 Phase 2 must preserve the event/statement/transaction information needed for classification. It may decode valid transactions that Phase 3 will reject for target compatibility; parsing success does not promise apply support.
 

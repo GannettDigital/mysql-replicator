@@ -1,0 +1,50 @@
+[
+  {
+    "origin_run": "20260929T200829Z-a5d0cee6-position-autocommit-myisam",
+    "origin_service": "source",
+    "origin_file": "binlog.000003",
+    "schema": "poc.items: INT, VARCHAR(100) ASCII fixture, BIGINT UNSIGNED",
+    "start": 1589,
+    "end": 2841,
+    "outcome": "applied",
+    "server_version": "8.4.8",
+    "reference_decoder": "mysqlbinlog  Ver 8.4.6 for macos15.4 on arm64 (Homebrew)",
+    "provenance": "Generated locally by replicator-lab; synthetic workload owned by this repository.",
+    "raw": "source-positive.binlog",
+    "raw_sha256": "94ef07e26d19b089fb6398175a57a5878c18678ed2b4c8378593d4fe1da3d670",
+    "text": "source-positive.txt",
+    "text_sha256": "d4a5c0de7bf12ceb3b807d5e512c47c2a15b6d3e99a0bedbc916ef65dc42b13a"
+  },
+  {
+    "origin_run": "20260929T200829Z-a5d0cee6-position-autocommit-myisam",
+    "origin_service": "native",
+    "origin_file": "binlog.000003",
+    "schema": "poc.items: INT, VARCHAR(100) ASCII fixture, BIGINT UNSIGNED",
+    "start": 1020,
+    "end": 2418,
+    "outcome": "applied",
+    "server_version": "8.4.8",
+    "reference_decoder": "mysqlbinlog  Ver 8.4.6 for macos15.4 on arm64 (Homebrew)",
+    "provenance": "Generated locally by replicator-lab; synthetic workload owned by this repository.",
+    "raw": "native-positive.binlog",
+    "raw_sha256": "a2d87d9ed9c414e393e3b5175c9ddf1a817c9b98e2a9d2e9ab357d8d8f2cebd2",
+    "text": "native-positive.txt",
+    "text_sha256": "ae05754ce0e8dfc1106df9c345f0a6555291960ec3407347dea6da32e2e8faa9"
+  },
+  {
+    "origin_run": "20260929T200907Z-b32af54e-position-transaction-myisam",
+    "origin_service": "native",
+    "origin_file": "binlog.000003",
+    "schema": "poc.items: INT, VARCHAR(100) ASCII fixture, BIGINT UNSIGNED",
+    "start": 1020,
+    "end": 1357,
+    "outcome": "rejected_1837",
+    "server_version": "8.4.8",
+    "reference_decoder": "mysqlbinlog  Ver 8.4.6 for macos15.4 on arm64 (Homebrew)",
+    "provenance": "Generated locally by replicator-lab; synthetic workload owned by this repository.",
+    "raw": "native-rejected.binlog",
+    "raw_sha256": "81e3c34f1f998c9153f5ea6cf4ad60c26c768687dd7471937c0a901a945c839e",
+    "text": "native-rejected.txt",
+    "text_sha256": "a94e513626c865fdd0f595b33e7560e63951547aec4e583ab8a10eeccccece7c"
+  }
+]

@@ -5,7 +5,8 @@ let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let package = Package(
     name: "mysql-replicator",
     platforms: [.macOS(.v13)],
-    products: [.executable(name: "mysql-replicator", targets: ["ReplicatorCLI"])],
+    products: [.executable(name: "mysql-replicator", targets: ["ReplicatorCLI"]),
+        .executable(name: "replicator-lab", targets: ["ReplicatorLab"])],
     targets: [
         .systemLibrary(name: "CReplicatorCodec"),
         .target(name: "ReplicatorCodec", dependencies: ["CReplicatorCodec"],
@@ -13,6 +14,11 @@ let package = Package(
                 .linkedLibrary("pthread", .when(platforms: [.linux])),
                 .linkedLibrary("dl", .when(platforms: [.linux])),
                 .linkedLibrary("m", .when(platforms: [.linux]))]),
-        .executableTarget(name: "ReplicatorCLI", dependencies: ["ReplicatorCodec"])
-    ]
+        .executableTarget(name: "ReplicatorCLI", dependencies: ["ReplicatorCodec"]),
+        .target(name: "ReplicatorLabCore"),
+        .executableTarget(name: "ReplicatorLab", dependencies: ["ReplicatorLabCore"]),
+        .testTarget(name: "ReplicatorLabTests", dependencies: ["ReplicatorLabCore"], path: "tests/ReplicatorLabTests",
+                    resources: [.copy("Fixtures")])
+    ],
+    swiftLanguageModes: [.v5]
 )

@@ -1,0 +1,83 @@
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
+
+public struct LabError: Error, CustomStringConvertible {
+    public let description: String
+    public init(_ description: String) { self.description = description }
+}
+
+public func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+    if try !condition() { throw LabError(message) }
+}
+
+public func writeJSON(_ value: Any, to url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]).write(to: url)
+}
+
+public func runID() -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+    return formatter.string(from: Date()) + "-" + UUID().uuidString.prefix(8).lowercased()
+}
+
+public struct CommandResult {
+    public let stdout: Data
+    public let stderr: Data
+    public let status: Int32
+    public var text: String { String(decoding: stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// File-backed output avoids pipe deadlocks. Subprocesses receive argument arrays,
+/// never interpolated shell commands. Every command has a bounded lifetime.
+public final class ProcessRunner {
+    public let root: URL
+    public init(root: URL) { self.root = root }
+
+    public func run(_ arguments: [String], environment: [String: String] = [:],
+                    timeout: TimeInterval = 120, checked: Bool = true) throws -> CommandResult {
+        try require(!arguments.isEmpty, "empty command")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("replicator-command-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outURL = directory.appendingPathComponent("stdout")
+        let errURL = directory.appendingPathComponent("stderr")
+        FileManager.default.createFile(atPath: outURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errURL.path, contents: nil)
+        let output = try FileHandle(forWritingTo: outURL), errors = try FileHandle(forWritingTo: errURL)
+        defer { try? output.close(); try? errors.close() }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = arguments
+        process.currentDirectoryURL = root
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = errors
+        let completion = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in completion.signal() }
+        try process.run()
+        if completion.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if completion.wait(timeout: .now() + 3) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+            throw LabError("command timed out: \(arguments.first!)")
+        }
+        let outSize = try outURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        let errSize = try errURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        try require(outSize <= 128 * 1024 * 1024 && errSize <= 128 * 1024 * 1024, "command output exceeds lab limit")
+        let result = CommandResult(stdout: try Data(contentsOf: outURL), stderr: try Data(contentsOf: errURL), status: process.terminationStatus)
+        if checked && result.status != 0 {
+            throw LabError("command \(arguments.first!) exited \(result.status): " + String(decoding: result.stderr.suffix(16_384), as: UTF8.self))
+        }
+        return result
+    }
+}
