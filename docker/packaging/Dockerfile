@@ -16,7 +16,7 @@ WORKDIR /workspace
 COPY packaging/Probe/Package.swift packaging/Probe/Package.resolved packaging/Probe/
 RUN swift package --package-path packaging/Probe resolve --force-resolved-versions
 COPY packaging/rust packaging/rust
-COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog tests/ReplicatorLabTests/Fixtures/source-positive.binlog
+COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
 COPY packaging/Makefile packaging/Makefile
 COPY Package.swift Package.swift
@@ -27,4 +27,6 @@ FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f30119070
 COPY --from=build /out/packaging-probe /usr/local/bin/packaging-probe
 COPY --from=build /out/mysql-replicator /usr/local/bin/mysql-replicator
 COPY --from=build /out/evidence /opt/packaging-evidence
+COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog /opt/inspect-fixtures/source-positive.binlog
+COPY tests/ReplicatorCodecTests/Schema/source-positive.json /opt/inspect-fixtures/source-positive.json
 ENTRYPOINT ["/usr/local/bin/packaging-probe"]

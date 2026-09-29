@@ -4,7 +4,7 @@ Date: 2026-09-29. This follows reviewed checkpoint `42c36d3` and does not close 
 
 ## Changes
 
-The Python native harness and shell build script were replaced by the SwiftPM `replicator-lab` product and Make aliases. The Swift CLI for the actual replicator still exposes only help/version; these harness changes do not implement production capture or apply.
+The Python native harness and shell build script were replaced by the SwiftPM `replicator-lab` product and Make aliases. At this checkpoint the Swift CLI for the actual replicator exposed only help/version; these harness changes do not implement production capture or apply.
 
 The expectation-aware native suite covers a positive and a known negative case under both file/position and GTID auto-positioning. A negative result must have native SQL error 1837, no receiver error, a running receiver at the source end, stopped SQL thread at the rejected group boundary, exactly the expected partial rows and incomplete workload GTID coverage. Cleanup, settings/engine checks and MyISAM rollback probes are required. Infrastructure failures cannot count as matched native rejection.
 
@@ -40,3 +40,7 @@ Database kill/network/disk-full/restart controls, broad corpus qualification, AB
 ## Subsequent Ubuntu increment
 
 The container userland portion of the packaging spike subsequently passed with the actual Swift/NIO/TLS/SQLite/Rust/zstd dependency stack. The SDK was installed inside Docker, and static x86_64 binaries were executed in Ubuntu 16.04. Fleet kernel and release qualification remain open. See [Ubuntu packaging results](UBUNTU_PACKAGING_RESULTS.md); the earlier “no release binary produced” observation above describes the preceding increment.
+
+## Subsequent decoder increment
+
+ABI 2 now exposes bounded offline event/row decoding and typed values to Swift, and `mysql-replicator inspect` emits NDJSON. Historical schema context, framing/CRC checks, resource bounds, ownership, poisoning/reset, cancellation and error behavior have initial coverage. See [offline inspection](OFFLINE_INSPECT.md) and [current implementation status](IMPLEMENTATION_STATUS.md) for the supported subset, passing tests and remaining gates.

@@ -39,6 +39,23 @@ public enum UbuntuQualification {
             report["runtime_image"] = try docker(["image", "inspect", image, "--format", "{{.Id}}"]).text
             let environment = try record("runtime-environment", ["docker", "run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/bin/sh", image, "-c", "cat /etc/os-release; uname -a; getconf GNU_LIBC_VERSION; cat /opt/packaging-evidence/elf.txt; cat /opt/packaging-evidence/toolchains.txt; cat /opt/packaging-evidence/sha256.txt; /usr/local/bin/mysql-replicator --version"])
             try require(environment.text.contains("VERSION_ID=\"16.04\"") && environment.text.contains("statically linked"), "wrong runtime environment or nonstatic artifact")
+            let inspection = try record("offline-inspect", ["docker", "run", "--rm", "--platform", "linux/amd64", "--network", "none", "--entrypoint", "/usr/local/bin/mysql-replicator", image, "inspect", "/opt/inspect-fixtures/source-positive.binlog", "--schema", "/opt/inspect-fixtures/source-positive.json"])
+            var operations: [RowOperation] = []
+            for line in inspection.text.split(separator: "\n") {
+                let event = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] ?? [:]
+                guard let position = UInt64(event["offset"] as? String ?? ""), position >= 1589, position < 2841 else { continue }
+                for row in event["rows"] as? [[String: Any]] ?? [] {
+                    func values(_ key: String) throws -> [String]? {
+                        guard let values = row[key] as? [[String: Any]] else { return nil }
+                        return try values.map { value in
+                            guard let kind = value["kind"] as? String, ["signed", "unsigned", "utf8"].contains(kind), let exact = value["value"] as? String else { throw LabError("unexpected inspect value") }
+                            return exact
+                        }
+                    }
+                    operations.append(RowOperation(row["operation"] as? String ?? "", before: try values("before"), after: try values("after")))
+                }
+            }
+            try Comparison.operations(operations, expected: Fixture.operations)
             // Generated credentials are local fixture material, never production secrets.
             _ = try record("ca", ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "2", "-subj", "/CN=Replicator Packaging Test CA", "-keyout", tls.appendingPathComponent("ca-key.pem").path, "-out", tls.appendingPathComponent("ca.pem").path])
             _ = try record("server-csr", ["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-sha256", "-subj", "/CN=packaging-mysql", "-keyout", tls.appendingPathComponent("server-key.pem").path, "-out", tls.appendingPathComponent("server.csr").path])
@@ -82,7 +99,7 @@ public enum UbuntuQualification {
             _ = try docker(["cp", "\(recovery):/opt/packaging-evidence", output.appendingPathComponent("build-evidence").path])
             _ = try docker(["cp", "\(recovery):/usr/local/bin/packaging-probe", output.appendingPathComponent("packaging-probe").path])
             _ = try docker(["cp", "\(recovery):/usr/local/bin/mysql-replicator", output.appendingPathComponent("mysql-replicator").path])
-            report["checks"] = ["static_elf", "rust_codec", "zstd", "dns", "nio_timer", "mysql_verified_tls", "wrong_hostname_rejected", "untrusted_ca_rejected", "sqlite_sigkill_recovery", "sqlite_writer_lock", "sqlite_checkpoint", "process_restart"]
+            report["checks"] = ["offline_inspect_exact_operations", "static_elf", "rust_codec", "zstd", "dns", "nio_timer", "mysql_verified_tls", "wrong_hostname_rejected", "untrusted_ca_rejected", "sqlite_sigkill_recovery", "sqlite_writer_lock", "sqlite_checkpoint", "process_restart"]
         } catch { failure = error; report["error"] = String(describing: error) }
         var cleanupErrors: [String] = []
         for name in containers.reversed() {

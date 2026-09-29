@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "tableMaps": [
+    {
+      "offset": 1420,
+      "eventSHA256": "2c528d0360af889ac21eff730278f0725bed9b13280ecef0541862d515d0814f",
+      "database": "poc",
+      "table": "items",
+      "tableID": "88",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 1739,
+      "eventSHA256": "06f79dcb344bd30b6b3f52afeed98ac07129b1da571702186a249cde32ffc179",
+      "database": "poc",
+      "table": "items",
+      "tableID": "88",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 2044,
+      "eventSHA256": "4679919f3b68b24d57e5f861acc9d6b6d4eca485c70176b65179d03d7191088c",
+      "database": "poc",
+      "table": "items",
+      "tableID": "88",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 2363,
+      "eventSHA256": "ca98132e43fda440ea2388845eb19937e415a7d366b62e33a3b1622676f36ae8",
+      "database": "poc",
+      "table": "items",
+      "tableID": "88",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 2668,
+      "eventSHA256": "2570ae0899255d39f02d354c5ab047e6686d67598f6c062a23e1d41cf46a890a",
+      "database": "poc",
+      "table": "items",
+      "tableID": "88",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    }
+  ]
+}

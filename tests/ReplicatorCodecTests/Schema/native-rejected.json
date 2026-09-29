@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "tableMaps": [
+    {
+      "offset": 810,
+      "eventSHA256": "7c98ac11144fc0f6ea14f5c885f4718afa22029a4f5db6da1d5338d086226421",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 1175,
+      "eventSHA256": "a09ba828cf8e1e753a4aeaed5d0249d0fc8a7b56bf4ff20a96522225aa0b1510",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 1723,
+      "eventSHA256": "9f77d344ec080af6df247367f63448435abc42dc0b6473cb430cd26fadbd5094",
+      "database": "poc",
+      "table": "rollback_probe",
+      "tableID": "89",
+      "columns": [
+        "signed"
+      ]
+    }
+  ]
+}

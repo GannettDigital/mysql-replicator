@@ -68,6 +68,10 @@ Fixture SHA-256: `f0964305ad925d94039797f152238b8fe77a1a0928915d624d284fae605c47
 
 No 8.4 live source, target applier, Linux x86_64 binary, Ubuntu 16.04 deployment, complete ABI lifetime tests or throughput benchmark was run. The local link emitted deployment-version warnings for bundled zstd objects; this host probe is not a portable release artifact. The warnings reinforce the need for a consistent target/toolchain in Phase 1.
 
+## Implementation increment
+
+The first bounded adapter and offline JSON inspector are implemented. [Offline inspect](OFFLINE_INSPECT.md) records the supported subset, ABI 2 ownership contract, historical column-context approach, tests and remaining qualification work. This implementation does not change the selected upstream revision or claim full event/type coverage.
+
 ## Required strict adapter behavior
 
 The upstream crate is a low-level parser, not a fail-closed replication boundary. These are mandatory implementation tasks, not optional hardening:

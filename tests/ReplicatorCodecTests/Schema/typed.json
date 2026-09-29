@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "tableMaps": [
+    {
+      "offset": 127,
+      "eventSHA256": "69bea1c8d574f920bb0713867b6f38db5f716b80bbeee1bb1f4576f0e0de969b",
+      "database": "poc",
+      "table": "typed",
+      "tableID": "123",
+      "columns": [
+        "signed",
+        "unsigned",
+        "signed",
+        "unsigned",
+        "utf8",
+        "binary",
+        "binary"
+      ]
+    },
+    {
+      "offset": 279,
+      "eventSHA256": "e064613c9af4d294cef99576fc2ef74b289bb4e0d41d52291141eccc21c653f8",
+      "database": "poc",
+      "table": "typed",
+      "tableID": "123",
+      "columns": [
+        "signed",
+        "unsigned",
+        "signed",
+        "unsigned",
+        "utf8",
+        "binary",
+        "binary"
+      ]
+    }
+  ]
+}

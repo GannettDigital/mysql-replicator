@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "tableMaps": [
+    {
+      "offset": 810,
+      "eventSHA256": "eb95f3a17bd42c3d1ee3dba621ec5a1c8084de4bdb62157afd4e0bb735d46e3c",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 1175,
+      "eventSHA256": "05cdaefe358d86da7e6ecc0c9a50808b67259abe642d77b8e46652bceb4933cb",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 1512,
+      "eventSHA256": "2ee37ba86cf1dca1159df2ede0fcd1e044e90e78ddb25eb9490573ecd3e4cc9f",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 1872,
+      "eventSHA256": "66dddd1087b79c9b72c0455fe40b5bc234365d4e63581244efc3522a8914f402",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 2209,
+      "eventSHA256": "4986324baa632e42f0a512828828b18626ebc3249ec0f92aa2de002405c468e4",
+      "database": "poc",
+      "table": "items",
+      "tableID": "83",
+      "columns": [
+        "signed",
+        "utf8",
+        "unsigned"
+      ]
+    },
+    {
+      "offset": 2784,
+      "eventSHA256": "ca6dc6f03840f68e84f4fd5a0e7e43800643afd437d3091d4d95ee0aa106f251",
+      "database": "poc",
+      "table": "rollback_probe",
+      "tableID": "89",
+      "columns": [
+        "signed"
+      ]
+    }
+  ]
+}

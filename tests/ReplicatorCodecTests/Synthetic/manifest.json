@@ -1,0 +1,9 @@
+{
+  "provenance": "Hand-encoded repository-owned MySQL v4 CRC32 wire vectors; FDE from the recorded source-positive fixture. Expected values authored independently of Rust/Swift decoding.",
+  "sha256": "e88ed6f6442a8f92cb94d77f5ce349e857db34a5c9b9ac2323f9ca1752216203",
+  "columns": "TINYINT, SMALLINT UNSIGNED, INT, BIGINT UNSIGNED, VARCHAR(256) utf8mb4, VARBINARY(1024), LONGBLOB",
+  "scope": "Decoder framing/value test; not an end-to-end transaction stream.",
+  "reference_decoder": "mysqlbinlog 8.4.6 --no-defaults --verify-binlog-checksum --base64-output=DECODE-ROWS -vv",
+  "reference_sha256": "c5a14c7e9d9c1a9872fd9d7d355ee744735376623c173927ae5effdbfdf9d71c",
+  "golden": "typed-rows.json (independent handwritten expected values; binary bytes are checked against wire bytes, not mysqlbinlog display replacement characters)"
+}

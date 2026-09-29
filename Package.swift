@@ -18,6 +18,7 @@ let package = Package(
         .executableTarget(name: "ReplicatorCLI", dependencies: ["ReplicatorCodec"]),
         .target(name: "ReplicatorLabCore"),
         .executableTarget(name: "ReplicatorLab", dependencies: ["ReplicatorLabCore"]),
+        .testTarget(name: "ReplicatorCodecTests", dependencies: ["ReplicatorCodec", "CReplicatorCodec", "ReplicatorLabCore"], path: "tests/ReplicatorCodecTests", exclude: ["Schema", "Synthetic"]),
         .testTarget(name: "ReplicatorLabTests", dependencies: ["ReplicatorLabCore"], path: "tests/ReplicatorLabTests",
                     resources: [.copy("Fixtures")])
     ],

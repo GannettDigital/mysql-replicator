@@ -44,3 +44,7 @@ This demonstrates a viable packaging route without depending on Ubuntu 16.04's o
 - Complete distribution licensing/notices, production dependency update policy and release artifact packaging before shipping.
 
 The Phase 1 deployment risk is reduced, but Phase 1 is not complete.
+
+## Subsequent decoder qualification
+
+Run `replicator-ubuntu-20260929t230511z-5a362b66` also passed with production codec ABI 2 / capability 1. The actual offline inspector now runs in Ubuntu and reproduces the four expected workload operations; all 36 JSON events match host inspection. This extends the earlier packaging result without closing the fleet-kernel gate. See [offline inspection](OFFLINE_INSPECT.md) for the supported subset.

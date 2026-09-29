@@ -10,3 +10,5 @@ __pycache__/
 packaging/Probe/.build/
 packaging/Probe/.swiftpm/
 packaging/rust/target/
+
+.build-asan/

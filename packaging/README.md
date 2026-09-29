@@ -20,14 +20,14 @@ The runtime image is digest-pinned Ubuntu 16.04.7 with glibc 2.23. No newer glib
 
 Two executables are produced:
 
-- `mysql-replicator`: the current production skeleton, still ABI version/capabilities only.
+- `mysql-replicator`: the current production executable, now including the bounded offline decoder and JSON inspector.
 - `packaging-probe`: a separate Swift package exercising MySQLNIO 1.9.1, NIO 2.90.0, NIOSSL 2.37.0, pinned SQLite 3.53.4, the selected Rust mysql_common revision and zstd 0.13.3 / native zstd 1.5.7. It calls these libraries, preventing a successful link caused by dead-stripping all unused dependency code.
 
 Both Swift and Rust dependency resolutions are committed. The packaging Rust crate uses the production codec revision/features without upstream's test-only MySQL C++ dependencies. Its self-test accepts only its compiled-in synthetic fixture and returns event/row counts. This probe is not the production decoder ABI or its error/ownership qualification.
 
 ## What runs
 
-1. Record Docker CPU architecture/kernel, runtime OS, glibc version, static ELF metadata, binary hashes and toolchain versions.
+1. Record Docker CPU architecture/kernel, runtime OS, glibc version, static ELF metadata, binary hashes and toolchain versions. Run `mysql-replicator inspect` on the saved source binlog and compare the four workload operations with independent expectations.
 2. Exercise Rust event framing/CRC/row decoding on the committed source fixture and zstd compression/decompression.
 3. Resolve a local MySQL server through DNS, fire a NIO timer, authenticate through MySQLNIO over verified TLS, and query an exact UINT64_MAX value. Confirm an active TLS cipher and reject a wrong hostname and an untrusted CA.
 4. Write and commit an exact value and binary bytes to SQLite with WAL/FULL synchronization, then begin an uncommitted write. After the writer reports that boundary, kill its container with SIGKILL.

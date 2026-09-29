@@ -1,0 +1,117 @@
+[
+  {
+    "operation": "insert",
+    "after": [
+      {
+        "kind": "signed",
+        "value": "-128"
+      },
+      {
+        "kind": "unsigned",
+        "value": "65535"
+      },
+      {
+        "kind": "signed",
+        "value": "-2147483648"
+      },
+      {
+        "kind": "unsigned",
+        "value": "18446744073709551615"
+      },
+      {
+        "kind": "utf8",
+        "value": "hé\u0000😀"
+      },
+      {
+        "kind": "binary",
+        "value": "AP+A"
+      },
+      {
+        "kind": "null"
+      }
+    ]
+  },
+  {
+    "operation": "insert",
+    "after": [
+      {
+        "kind": "signed",
+        "value": "127"
+      },
+      {
+        "kind": "unsigned",
+        "value": "0"
+      },
+      {
+        "kind": "signed",
+        "value": "2147483647"
+      },
+      {
+        "kind": "unsigned",
+        "value": "0"
+      },
+      {
+        "kind": "utf8",
+        "value": ""
+      },
+      {
+        "kind": "binary",
+        "value": ""
+      },
+      {
+        "kind": "binary",
+        "value": "3q2+7w=="
+      }
+    ]
+  },
+  {
+    "operation": "update",
+    "before": [
+      {
+        "kind": "signed",
+        "value": "-128"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      }
+    ],
+    "after": [
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "absent"
+      },
+      {
+        "kind": "null"
+      }
+    ]
+  }
+]

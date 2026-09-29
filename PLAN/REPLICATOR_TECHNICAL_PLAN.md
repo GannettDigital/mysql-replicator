@@ -139,7 +139,7 @@ Ubuntu 16.04 is absent from current Swift Ubuntu downloads. The [container packa
 
 ### JSON inspection mode
 
-Provide a read-only `inspect` subcommand using the same Swift transport and Rust C-ABI codec as replication, rendering their typed records to JSON in Swift. Proposed interfaces, not implemented commands:
+Provide a read-only `inspect` subcommand using the same Swift transport and Rust C-ABI codec as replication, rendering their typed records to JSON in Swift. The initial file-only command is now `mysql-replicator inspect FILE --schema HISTORY.json`; see [offline inspection](OFFLINE_INSPECT.md). The following broader interfaces remain proposed Phase 2 interfaces, not current CLI syntax:
 
 ```sh
 mysql-replicator inspect --source-config source.toml --start-position mysql-bin.000123:456 --format ndjson

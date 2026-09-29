@@ -6,3 +6,5 @@ artifacts
 rust/target
 packaging/Probe/.build
 packaging/rust/target
+
+.build-asan/

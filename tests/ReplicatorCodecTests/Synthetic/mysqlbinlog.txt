@@ -1,0 +1,46 @@
+# The proper term is pseudo_replica_mode, but we use this compatibility alias
+# to make the statement usable on server versions 8.0.24 and older.
+/*!50530 SET @@SESSION.PSEUDO_SLAVE_MODE=1*/;
+/*!50003 SET @OLD_COMPLETION_TYPE=@@COMPLETION_TYPE,COMPLETION_TYPE=0*/;
+DELIMITER /*!*/;
+# at 4
+#260929 13:08:39 server id 8401  end_log_pos 127 CRC32 0x893506f4 	Start: binlog v 4, server v 8.4.8 created 260929 13:08:39 at startup
+ROLLBACK/*!*/;
+# at 127
+#691231 16:00:00 server id 8401  end_log_pos 185 CRC32 0x91c5a3d8 	Table_map: `poc`.`typed` mapped to number 123
+# at 185
+#691231 16:00:00 server id 8401  end_log_pos 279 CRC32 0x73c9dac3 	Write_rows: table id 123 flags: STMT_END_F
+### INSERT INTO `poc`.`typed`
+### SET
+###   @1=-128 (128) /* TINYINT meta=0 nullable=1 is_null=0 */
+###   @2=-1 (65535) /* SHORTINT meta=0 nullable=1 is_null=0 */
+###   @3=-2147483648 (2147483648) /* INT meta=0 nullable=1 is_null=0 */
+###   @4=-1 (18446744073709551615) /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='hÃ©\x00ðŸ˜€' /* VARSTRING(1024) meta=1024 nullable=1 is_null=0 */
+###   @6='\x00ÿ€' /* VARSTRING(1024) meta=1024 nullable=1 is_null=0 */
+###   @7=NULL /* LONGBLOB/LONGTEXT meta=4 nullable=1 is_null=1 */
+### INSERT INTO `poc`.`typed`
+### SET
+###   @1=127 /* TINYINT meta=0 nullable=1 is_null=0 */
+###   @2=0 /* SHORTINT meta=0 nullable=1 is_null=0 */
+###   @3=2147483647 /* INT meta=0 nullable=1 is_null=0 */
+###   @4=0 /* LONGINT meta=0 nullable=1 is_null=0 */
+###   @5='' /* VARSTRING(1024) meta=1024 nullable=1 is_null=0 */
+###   @6='' /* VARSTRING(1024) meta=1024 nullable=1 is_null=0 */
+###   @7='Þ­¾ï' /* LONGBLOB/LONGTEXT meta=4 nullable=1 is_null=0 */
+# at 279
+#691231 16:00:00 server id 8401  end_log_pos 337 CRC32 0xacb4f181 	Table_map: `poc`.`typed` mapped to number 123
+# at 337
+#691231 16:00:00 server id 8401  end_log_pos 376 CRC32 0x4e265741 	Update_rows: table id 123 flags: STMT_END_F
+### UPDATE `poc`.`typed`
+### WHERE
+###   @1=-128 (128) /* TINYINT meta=0 nullable=1 is_null=0 */
+### SET
+###   @7=NULL /* LONGBLOB/LONGTEXT meta=4 nullable=1 is_null=1 */
+# at 376
+#691231 16:00:00 server id 8401  end_log_pos 399 CRC32 0x568838c6 	Stop
+SET @@SESSION.GTID_NEXT= 'AUTOMATIC' /* added by mysqlbinlog */ /*!*/;
+DELIMITER ;
+# End of log file
+/*!50003 SET COMPLETION_TYPE=@OLD_COMPLETION_TYPE*/;
+/*!50530 SET @@SESSION.PSEUDO_SLAVE_MODE=0*/;
