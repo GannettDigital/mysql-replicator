@@ -65,6 +65,10 @@ pub struct EventView {
     flags: u32,
     row_count: u32,
     column_count: u32,
+    event_size: u32,
+    payload_flags: u32,
+    query_error_code: u32,
+    query_status: Bytes,
     name: Bytes,
     database: Bytes,
     table: Bytes,
@@ -152,6 +156,9 @@ pub struct Batch {
     fingerprint: Vec<u8>,
     rows: Vec<[Vec<Cell>; 2]>,
     columns: usize,
+    payload_flags: u32,
+    query_error_code: u32,
+    query_status: Vec<u8>,
 }
 impl Batch {
     fn new(offset: u64, event_type: u32) -> Self {
@@ -173,6 +180,9 @@ impl Batch {
             fingerprint: vec![],
             rows: vec![],
             columns: 0,
+            payload_flags: 0,
+            query_error_code: 0,
+            query_status: vec![],
         }
     }
     fn view(&self) -> EventView {
@@ -187,6 +197,10 @@ impl Batch {
             flags: self.flags,
             row_count: self.rows.len() as u32,
             column_count: self.columns as u32,
+            event_size: self.raw.len() as u32,
+            payload_flags: self.payload_flags,
+            query_error_code: self.query_error_code,
+            query_status: Bytes::new(&self.query_status),
             name: Bytes::new(&self.name),
             database: Bytes::new(&self.database),
             table: Bytes::new(&self.table),
@@ -504,18 +518,37 @@ impl Decoder {
             EventData::QueryEvent(query) => {
                 out.database = query.schema_raw().to_vec();
                 out.detail = query.query_raw().to_vec();
+                out.query_error_code = query.error_code() as u32;
+                out.query_status = query.status_vars_raw().to_vec();
             }
             EventData::RotateEvent(rotate) => {
                 out.detail = rotate.name_raw().to_vec();
                 out.number = rotate.position();
                 self.tables.clear();
             }
-            EventData::XidEvent(xid) => out.number = xid.xid,
+            EventData::XidEvent(xid) => {
+                ensure(
+                    event.data().len() == 8,
+                    MALFORMED,
+                    "invalid XID payload length",
+                )?;
+                out.number = xid.xid;
+            }
             EventData::GtidEvent(gtid) => {
                 out.detail = gtid.sid().to_vec();
+                ensure(gtid.gno() > 0, MALFORMED, "zero sequence in named GTID")?;
                 out.number = gtid.gno();
+                out.payload_flags = gtid.flags_raw() as u32;
             }
-            EventData::AnonymousGtidEvent(_) => out.detail = event.data().to_vec(),
+            EventData::AnonymousGtidEvent(gtid) => {
+                ensure(
+                    gtid.0.gno() == 0 && gtid.0.sid() == [0; 16],
+                    MALFORMED,
+                    "nonzero anonymous GTID identity",
+                )?;
+                out.detail = event.data().to_vec();
+                out.payload_flags = gtid.0.flags_raw() as u32;
+            }
             EventData::PreviousGtidsEvent(_) => out.detail = event.data().to_vec(),
             EventData::StopEvent => {
                 ensure(event.data().is_empty(), MALFORMED, "trailing STOP bytes")?
@@ -591,6 +624,18 @@ impl Decoder {
                 );
             }
             EventData::RowsEvent(rows) => {
+                // The unified upstream accessor truncates unknown flag bits.
+                // Preserve them through the ABI so policy can reject them.
+                use mysql_common::binlog::events::RowsEventData::*;
+                out.payload_flags = match &rows {
+                    WriteRowsEventV1(e) => e.flags_raw(),
+                    UpdateRowsEventV1(e) => e.flags_raw(),
+                    DeleteRowsEventV1(e) => e.flags_raw(),
+                    WriteRowsEvent(e) => e.flags_raw(),
+                    UpdateRowsEvent(e) => e.flags_raw(),
+                    DeleteRowsEvent(e) => e.flags_raw(),
+                    PartialUpdateRowsEvent(e) => e.flags_raw(),
+                } as u32;
                 let table = self
                     .tables
                     .get(&rows.table_id())
@@ -652,7 +697,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    2
+    3
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {

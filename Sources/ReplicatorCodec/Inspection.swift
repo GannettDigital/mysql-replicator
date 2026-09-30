@@ -1,6 +1,21 @@
 import Foundation
 
 public enum Inspection {
+    /// Complete groups only. The returned coordinate is a validated physical
+    /// boundary, not a durable checkpoint. No partial transaction is emitted.
+    @discardableResult
+    public static func inspectTransactions(file: URL, sourceFile: String, history: SchemaHistory? = nil,
+                                           includeRaw: Bool = false, limits: TransactionAssembler.Limits = .init(),
+                                           cancelled: () -> Bool = { false },
+                                           emit: (CompleteTransaction) throws -> Void) throws -> BinlogCoordinate {
+        let assembler = try TransactionAssembler(file: sourceFile, limits: limits)
+        try inspect(file: file, history: history, includeRaw: includeRaw, cancelled: cancelled) { event in
+            if let transaction = try assembler.consume(event, file: sourceFile) { try emit(transaction) }
+        }
+        try assembler.finish()
+        return assembler.lastCompleteBoundary!
+    }
+
     /// Streaming offline inspection. A failed event emits no record. Earlier
     /// records may already have been emitted; the caller must report failure.
     /// Cancellation happens between bounded frames and discards decoder state.

@@ -44,3 +44,7 @@ The container userland portion of the packaging spike subsequently passed with t
 ## Subsequent decoder increment
 
 ABI 2 now exposes bounded offline event/row decoding and typed values to Swift, and `mysql-replicator inspect` emits NDJSON. Historical schema context, framing/CRC checks, resource bounds, ownership, poisoning/reset, cancellation and error behavior have initial coverage. See [offline inspection](OFFLINE_INSPECT.md) and [current implementation status](IMPLEMENTATION_STATUS.md) for the supported subset, passing tests and remaining gates.
+
+## Subsequent transaction-boundary increment
+
+ABI 3 and event JSON schema 2 now expose typed GTID/query/XID/rotation controls, query status bytes and raw row flags. A bounded Swift assembler emits only complete groups, checks physical coordinates and rejects incomplete EOF. The fixture's source GTIDs and exact transaction boundaries are checked against independently captured mysqlbinlog text. See [transaction assembly](TRANSACTION_ASSEMBLY.md). This is offline capture preparation; live streaming, file relay and SQLite state, durable resume and target apply remain pending. The local MySQL 8.4.8 checkout is in ignored `.upstream/mysql-server` at the plan's pinned commit.

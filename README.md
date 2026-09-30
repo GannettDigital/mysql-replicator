@@ -1,8 +1,8 @@
 # mysql-replicator
 
-Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and a local SQLite durable relay. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
+Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
-Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, an offline JSON inspector, and a tested native-reference harness. Swift capture, SQLite relay and target apply are not implemented yet. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
+Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, an offline JSON inspector with bounded transaction assembly, and a tested native-reference harness. Swift capture, the file relay/SQLite state store, REST status API and target apply are not implemented yet. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
 ## Offline binlog inspection
 
@@ -12,6 +12,14 @@ make build
 ```
 
 The command prints JSON events, preserves exact values, and stops with a nonzero exit on malformed or unsupported input. Row decoding requires historical signedness/encoding tied to table-map positions. Add `--include-raw` for original event bytes. See [the schema format, supported types and review points](PLAN/OFFLINE_INSPECT.md).
+
+For complete source groups and validated file/position boundaries:
+
+```sh
+.build/debug/mysql-replicator inspect tests/ReplicatorLabTests/Fixtures/source-positive.binlog --schema tests/ReplicatorCodecTests/Schema/source-positive.json --transactions --binlog-file binlog.000003
+```
+
+This mode rejects incomplete transactions at EOF and emits no partial group. Its coordinates are in-memory boundary candidates, not durable or applied checkpoints. See [transaction assembly and review points](PLAN/TRANSACTION_ASSEMBLY.md). The pinned MySQL 8.4.8 source checkout is available locally in ignored `.upstream/mysql-server` for protocol research.
 
 ## Repository automation
 
@@ -58,6 +66,8 @@ Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git
 `make test` builds and tests the Rust adapter, then runs SwiftPM tests without Docker. `make test-asan` instruments the Swift/C callers and CLI with AddressSanitizer; Rust instrumentation remains separate. Make clears Swift build products after building Rust to prevent stale static-library links. After `make codec`, direct `swift test` also works. `swift run replicator-lab` does not need the Rust archive. `make upstream-tests` fetches the pinned codec, explicitly enables its binlog test feature, uses a committed test lockfile, and writes a fixture catalog. Its test-only C++ dependencies are described in [upstream qualification](tests/Upstream/README.md). Production Rust dependencies exclude that test feature.
 
 ## Design and evidence
+
+- [Local binlog files, SQLite state and REST status](PLAN/RELAY_STATE_AND_STATUS.md)
 
 - [Ubuntu packaging results](PLAN/UBUNTU_PACKAGING_RESULTS.md)
 - [Current Phase 1 progress](PLAN/PHASE_1_PROGRESS.md)

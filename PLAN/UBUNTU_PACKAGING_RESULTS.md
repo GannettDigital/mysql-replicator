@@ -48,3 +48,7 @@ The Phase 1 deployment risk is reduced, but Phase 1 is not complete.
 ## Subsequent decoder qualification
 
 Run `replicator-ubuntu-20260929t230511z-5a362b66` also passed with production codec ABI 2 / capability 1. The actual offline inspector now runs in Ubuntu and reproduces the four expected workload operations; all 36 JSON events match host inspection. This extends the earlier packaging result without closing the fleet-kernel gate. See [offline inspection](OFFLINE_INSPECT.md) for the supported subset.
+
+## Transaction-boundary increment
+
+Run `replicator-ubuntu-20260930t014415z-67fc2683` passed with ABI 3 and event JSON schema 2. The production transaction inspector reproduced the nine independently expected group boundaries and GTIDs. All nine transaction records and all 36 event records match the host output byte for byte. TLS/SQLite checks and cleanup also passed. This is still container-userland qualification; it does not test live capture, durable relay progress or fleet kernels. See [transaction assembly](TRANSACTION_ASSEMBLY.md).

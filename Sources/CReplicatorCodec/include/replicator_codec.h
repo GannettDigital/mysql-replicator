@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 2. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 3. Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -20,6 +20,11 @@ typedef struct { const uint8_t *data; uint64_t length; } rc_bytes;
 typedef struct {
     uint64_t offset, number, table_id;
     uint32_t event_type, timestamp, server_id, next_position, flags, row_count, column_count;
+    /* payload_flags: GTID flags for types 33/34, row flags for 23-25/30-32.
+     * query_error_code/query_status: source QUERY_EVENT error and status bytes.
+     * Header flags and row/GTID flags are distinct namespaces. */
+    uint32_t event_size, payload_flags, query_error_code;
+    rc_bytes query_status;
     rc_bytes name, database, table, detail, raw, error, fingerprint;
 } rc_event;
 /* Value kinds: 0 absent, 1 SQL NULL, 2 signed integer, 3 unsigned integer,

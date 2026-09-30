@@ -4,7 +4,7 @@ Date: 2026-09-28. Applies to [REPLICATOR_TECHNICAL_PLAN.md](REPLICATOR_TECHNICAL
 
 ## Decision
 
-Use **a Swift capture reader on MySQLNIO/SwiftNIO, and the Rust `mysql_common` binlog codec behind a narrow C ABI**. Keep SQLite, transaction assembly, schema history, target application, diagnostics, bootstrap and the CLI in Swift. Statically link the Rust adapter into the Swift executable. Use Go's reader and selected Go/MySQL/Rust fixtures as independent test references.
+Use **a Swift capture reader on MySQLNIO/SwiftNIO, and the Rust `mysql_common` binlog codec behind a narrow C ABI**. Keep local relay files, SQLite metadata/journals, transaction assembly, schema history, target application, diagnostics, bootstrap and the CLI in Swift. Statically link the Rust adapter into the Swift executable. Use Go's reader and selected Go/MySQL/Rust fixtures as independent test references.
 
 This replaces the earlier “try native Swift, decide in Phase 2” approach. We will not build two production decoders or port the full Go decoder into Swift. Phase 2 qualifies the selected architecture rather than running an open-ended language comparison.
 
@@ -70,7 +70,7 @@ No 8.4 live source, target applier, Linux x86_64 binary, Ubuntu 16.04 deployment
 
 ## Implementation increment
 
-The first bounded adapter and offline JSON inspector are implemented. [Offline inspect](OFFLINE_INSPECT.md) records the supported subset, ABI 2 ownership contract, historical column-context approach, tests and remaining qualification work. This implementation does not change the selected upstream revision or claim full event/type coverage.
+The first bounded adapter and offline JSON inspector are implemented. [Offline inspect](OFFLINE_INSPECT.md) records the supported subset, ABI 3 ownership contract, historical column-context approach, tests and remaining qualification work. Typed control fields and bounded Swift transaction assembly are now documented in [transaction assembly](TRANSACTION_ASSEMBLY.md). This implementation does not change the selected upstream revision or claim full event/type coverage.
 
 ## Required strict adapter behavior
 
