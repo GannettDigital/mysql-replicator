@@ -6,7 +6,15 @@ Reviewed DML checkpoint: `d188f58`. The current follow-up implements automatic
 schema discovery (version 2 configuration), ABI 4/event JSON 3 metadata and bounded
 SQLite history. Cleanup removes covered completed records older than the minimum
 age only when storage approaches its limit. See [the implementation and storage
-policy](SCHEMA_DISCOVERY_AND_RETENTION.md). DDL, resume and REST remain unimplemented.
+policy](SCHEMA_DISCOVERY_AND_RETENTION.md). That work is committed as `e8c0e77`.
+The current follow-up adds discovered target UUIDs and a strict ordered DDL subset
+with versioned schema/DDL intents; see [DDL application](DDL_APPLY.md). Its forced engine/charset/collation rewrites are superseded by the
+[next DDL completeness plan](DDL_COMPLETENESS.md) and still need code changes.
+Resume/recovery and operator skip/resolution remain future work. Statistics will
+be read from SQLite; an embedded REST API is no longer planned. The DDL increment passes 80 Swift tests normally and
+with Swift/C/CLI AddressSanitizer, the Rust test, both strengthened DDL start modes
+and both existing DML regression modes; evidence is recorded in the DDL document. Those passes describe the old prototype
+and do not qualify the revised native engine policy or broader DDL support.
  The reviewed GTID/reference checkpoint is commit `42c36d3`. See [the current implementation evidence](PHASE_1_PROGRESS.md).
 
 Previous decoder checkpoint (`9378bf4`): 30 Swift tests and one Rust panic-containment test pass; all 30 Swift tests also pass with Swift/C/CLI AddressSanitizer instrumentation. Rust itself remains uninstrumented. Ubuntu run `replicator-ubuntu-20260929t230511z-5a362b66` passed, including the production inspector; all 36 source-file JSON events match the host output. Local evidence is under `artifacts/decoder/` and `artifacts/ubuntu/<run>/`.
@@ -19,9 +27,9 @@ Live checkpoint (`d7725b2`): verified-TLS Swift capture supports file/position a
 
 Ubuntu live run `20260930T030250Z-17f7bd18-auto-autocommit-myisam` passed all 15 checks and cleanup. Positional and GTID readers emit identical complete-group JSON across rotation; source/mysqlbinlog/native MyISAM comparisons, explicit replay/resume, clean nonblocking EOF, disconnect, certificate/identity rejection and purged-history error 1236 pass. Evidence is in `artifacts/live-suite/<run>/` and test/build logs in `artifacts/live-capture-validation/`. The shipped static Ubuntu binary was exercised under Docker Desktop amd64 emulation.
 
-Scope update: dump/load management and target provisioning are entirely external. Replace the earlier dump preparation/verification proposal with a tool-independent known-boundary handoff. The first serial end-to-end MyISAM applier now includes the minimum relay/state/intent support it needs. Schema-change application follows DML. Crash/reconnect recovery implementation and qualification come only after both DML and DDL pass their correctness gates; REST status is not an applier prerequisite. GTID mode now permits a seed set without positional context. See [the boundary contract and next increment](START_BOUNDARY.md).
+Scope update: dump/load management and target provisioning are entirely external. Replace the earlier dump preparation/verification proposal with a tool-independent known-boundary handoff. The first serial end-to-end MyISAM applier now includes the minimum relay/state/intent support it needs. The immediate next work is native-compatible DDL completeness, with subsequent DML for every supported change. Crash/reconnect recovery implementation and qualification come only after both DML and DDL pass their correctness gates; external SQLite readers replace the REST requirement. GTID mode now permits a seed set without positional context. See [the boundary contract and next increment](START_BOUNDARY.md).
 
-Next storage/runtime design is updated: raw events live in local binlog/relay files; SQLite holds state, GTID/file-position checkpoints, recovery intents, diagnostics and counter snapshots. A read-only REST API exposes live status/statistics. The initial applier implements a bounded framed relay and minimum state/intents; relay rotation, reopening/recovery and REST remain planned; see [relay state and status](RELAY_STATE_AND_STATUS.md).
+Next storage/runtime design is updated: raw events live in local binlog/relay files; SQLite holds state, GTID/file-position checkpoints, recovery intents, diagnostics and counter snapshots. SQLite exposes persisted status/statistics to external readers; a stable read contract and broader snapshots remain planned. The applier implements a bounded framed relay, state/intents and pressure-triggered SQLite history cleanup; relay rotation and reopening/recovery remain planned; see [relay state and status](RELAY_STATE_AND_STATUS.md).
 
 Current DML increment: `run --config FILE --initialize` applies one-table,
 one-statement committed groups to MySQL 5.7 MyISAM with exact before/after checks,

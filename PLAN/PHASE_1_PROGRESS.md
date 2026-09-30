@@ -51,7 +51,7 @@ ABI 3 and event JSON schema 2 now expose typed GTID/query/XID/rotation controls,
 
 ## Subsequent live inspection increment
 
-The native Swift/NIO reader now feeds live MySQL 8.4 dump frames into the existing Rust decoder and Swift assembler. It supports verified TLS, positional/GTID starts, rotation, heartbeats, bounded queues and event/transaction JSON. Live schema metadata must correspond to the supplied bootstrap boundary; DDL stops the stream. Read [live inspection](LIVE_INSPECTION.md) and [current status](IMPLEMENTATION_STATUS.md) for the validation and limits. File relay/SQLite persistence, REST status, automatic recovery and target apply remain pending.
+The native Swift/NIO reader now feeds live MySQL 8.4 dump frames into the existing Rust decoder and Swift assembler. It supports verified TLS, positional/GTID starts, rotation, heartbeats, bounded queues and event/transaction JSON. Live schema metadata must correspond to the supplied bootstrap boundary; DDL stops the stream. Read [live inspection](LIVE_INSPECTION.md) and [current status](IMPLEMENTATION_STATUS.md) for the validation and limits. At this historical checkpoint, file relay/SQLite persistence and target apply were still pending; later increments are recorded in [current status](IMPLEMENTATION_STATUS.md). Automatic recovery remains future work. SQLite readers supersede the proposed REST service.
 
 
 ## First serial DML increment
@@ -62,5 +62,7 @@ GTID-only initialization, raw framed relay storage, SQLite intents/checkpoints a
 the three-server DML harness. All 70 Swift tests pass normally and under Swift-side
 AddressSanitizer; both Ubuntu DML start modes and their extended cases pass.
 This supersedes the earlier pending status for minimum storage and target apply.
-DDL is next, then crash/reconnect recovery; those and REST remain unimplemented.
+At that checkpoint DDL and recovery were still pending. A narrow DDL prototype now
+exists; the next priority is [native-compatible DDL completeness](DDL_COMPLETENESS.md),
+then restart/recovery. SQLite readers replace the earlier planned REST service.
 The remaining Phase 1 inventory, broader decoder and fleet gates still apply.

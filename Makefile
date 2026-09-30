@@ -31,3 +31,7 @@ live-suite:
 .PHONY: dml-suite
 dml-suite:
 	swift run replicator-lab dml-suite $(ARGS)
+
+.PHONY: ddl-suite
+ddl-suite:
+	swift run replicator-lab ddl-suite $(ARGS)

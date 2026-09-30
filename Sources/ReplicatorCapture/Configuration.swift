@@ -23,7 +23,8 @@ public struct CaptureConfiguration: Decodable {
     public let sourceUUID: String
     public let mode: String
     /// Schema and GTID/position metadata must come from the same verified
-    /// post-seed boundary. All DDL is rejected during this inspection window.
+    /// post-seed boundary. Source-only inspection rejects DDL; the apply pipeline
+    /// opts into ordered query groups and qualifies each DDL before execution.
     public let start: Start
     public let tables: [Table]?
     public let nonBlocking: Bool?

@@ -2,8 +2,10 @@
 
 This increment connects the existing live reader/decoder/transaction assembler to
 MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
-DDL, automatic reconnect, recovery/reopening of existing state, and REST serving
-remain unimplemented. The order remains DML correctness, then DDL correctness,
+A [strict DDL prototype](DDL_APPLY.md) is now available; its engine/collation
+rewrites must be removed under the [DDL completeness plan](DDL_COMPLETENESS.md).
+Automatic reconnect and recovery/reopening of existing state remain unimplemented.
+Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 
 The reviewed checkpoint is `d188f58`. The current increment replaces its manual
@@ -24,7 +26,8 @@ back before cleanup removes that volume.
 For a separately prepared target, start with the checked-in
 [configuration template](../examples/apply.example.json). **Replace its placeholders
 with the connection identities and external starting boundary before running.**
-The template is not a ready-to-run fixture. Set the two named password environment
+Target UUID is discovered through the verified target connection and saved in
+SQLite; remove `targetUUID` from old configs. The template is not a ready-to-run fixture. Set the two named password environment
 variables, then run:
 
 ```sh

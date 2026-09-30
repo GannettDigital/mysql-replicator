@@ -10,14 +10,16 @@ The replicator begins with an already prepared target and a known source boundar
 
 The planned production configuration supplies:
 
-- Source identity/history and target identity, connection/TLS settings, and stream identity.
+- Source identity/history, connection/TLS settings and stream identity. Discover the
+  target UUID from the verified target connection, persist it on initialization and
+  require that identity on reopen; no manually configured target UUID.
 - One selected start mode: a source binlog filename plus the position of the next event at a complete boundary; or the executed source GTID set already represented by the prepared target for the configured scope. The latter is an exclusion set, not the next GTID to set on a target session.
 - A prepared target whose schema/data match that boundary. Discover schema internally from target metadata and source table maps; do not require column/key descriptions in production configuration. Explicit include/exclude rules are a separate later feature. If both coordinate forms are provided, they must refer to the same boundary; never substitute a later sample of source state.
 - An explicit operator declaration that the target is ready at this boundary. An optional opaque external provisioning reference is useful for diagnostics, but no dump files, hashes, format or loader progress are required inputs.
 
 The operator owns snapshot/load correctness. Startup validates syntax, identities, schema compatibility and available history, and refuses active/connecting native channels or uncertain ownership before target writes. These checks cannot prove that every loaded row matches the asserted boundary. A filtered stream's seed GTID set stays bound to that scope; adding previously omitted data requires another externally established baseline.
 
-For a new local state directory, durably record the supplied baseline without counting it as transactions applied by this process. Capture-only mode must not claim target/applied progress. Existing state resumes from its own durable capture/applied checkpoints; initialization must refuse to overwrite it. Source GTIDs live in local state; the replicator does not set target `gtid_purged`. Target apply connections continue using `SET @@SESSION.GTID_NEXT = 'AUTOMATIC'` with OFF_PERMISSIVE/WARN.
+For a new local state directory, durably record the supplied baseline without counting it as transactions applied by this process. Capture-only mode must not claim target/applied progress. The planned restart path resumes existing state from its own durable capture/applied checkpoints; initialization must refuse to overwrite it. Source GTIDs live in local state; the replicator does not set target `gtid_purged`. Target apply connections continue using `SET @@SESSION.GTID_NEXT = 'AUTOMATIC'` with OFF_PERMISSIVE/WARN.
 
 A prepared-target handoff may come from a dump/load, an existing stopped replica or another externally verified provisioning method. All use this same input contract. Required history must remain available from the supplied boundary until safely captured; expired history produces a diagnostic requiring external action, never an automatic jump to the current source position or an internal reload.
 
@@ -31,34 +33,142 @@ The exact export/import versions and 8.4-to-5.7 MyISAM load compatibility need s
 
 ## Next implementation increment
 
-The reviewed DML checkpoint is `d188f58`. Its manual schema manifests are temporary
-POC inputs. The immediate follow-up is [automatic schema discovery and bounded
-checkpoint/history retention](SCHEMA_DISCOVERY_AND_RETENTION.md), before ordered
-DDL/schema evolution. These requirements supersede manual-schema configuration
-references in the earlier plans; they do not change the external load contract.
+Automatic schema discovery and bounded SQLite history are committed at `e8c0e77`.
+The current DDL prototype adds target UUID discovery and ordered schema/DDL intents,
+but rewrites explicit InnoDB to MyISAM. The immediate priority is
+[removing that rewrite and qualifying broader native-compatible DDL](DDL_COMPLETENESS.md),
+including DML after each schema change. The sections below define future work;
+restart, channel adoption and operator skip commands are not implemented yet.
 
-Implementation order is DML correctness, then DDL correctness, then crash/reconnect recovery. Start with the serial DML applier:
+## Future first start: stopped native replica
 
-1. Accept an externally prepared target and known file/position or executed GTID set, with matching source identity, scope and historical schema. Refuse active native replication and acquire exclusive writer ownership before mutation.
-2. Feed complete decoded source transactions to a serial MySQL 5.7 MyISAM applier. Start with the existing primary-key fixture and its supported autocommit INSERT/UPDATE/DELETE operations. Keep exact values and statement order, initialize target sessions with `GTID_NEXT=AUTOMATIC`, and leave target binlogging enabled. Reject unsupported transaction shapes before writes where possible.
-3. Add the minimum local relay/SQLite state needed for that path: retain raw bytes in files, persist the supplied baseline and row intents before mutation, record completed operations, and advance applied GTID/file-position only after the whole supported source group is verified. SQLite stores state and references, not raw events. Retain the file-fsync-before-metadata ordering; comprehensive storage/recovery qualification is not a prerequisite milestone ahead of the first applier.
-4. Extend the three-server harness so the 5.7 target is actually written by Swift. Compare final data and ordered binlog effects against source intent and the native 8.4 MyISAM reference. Assert diagnostics and stopped progress for unsupported operations and apply errors.
+Use a working replica stopped at an established application boundary. Capture the
+handoff evidence before removing/reconfiguring any native channel:
 
-The first acceptance gate is correct end-to-end INSERT/UPDATE/DELETE application for the declared subset, including exact values, before/after row matching, affected-row checks, key changes and multi-row operations where supported. Unsupported shapes must stop predictably; the native expected-negative cases remain part of the contract. This increment does not promise automatic crash/reconnect recovery: an interrupted run or uncertain SQL outcome stops/blocks and requires explicit operator handling until recovery is implemented and qualified. Do not retry uncertain writes or treat an incomplete journal as a safe applied checkpoint.
+1. The operator stops and fences native receiver/applier/coordinator/workers and
+   disables automatic native start. Confirm all channels are enumerated and none
+   are running or connecting; recheck after acquiring Swift writer ownership.
+2. Record source identity, channel, scope/filters, observed target UUID, settings,
+   stop time, errors and **executed** upstream boundary. On 5.7, inspect
+   `Relay_Master_Log_File` / `Exec_Master_Log_Pos` and the relevant executed GTID
+   coverage; on 8.4 use their corresponding SOURCE-named fields. Do not substitute
+   `Read_Master_Log_Pos` / `Read_Source_Log_Pos`, `Retrieved_Gtid_Set`, the target's
+   own binlog position or the source's current position.
+3. Prove no worker gaps or partial failed MyISAM group remain. A stopped SQL thread
+   or a GTID in `Executed_Gtid_Set` alone is insufficient: the native error-1837
+   fixture already demonstrates partial effects. Exclude unrelated target-local or
+   other-channel GTIDs from the supplied source coverage; validate lineage/scope.
+4. Supply the verified file/position, GTID set or both through the generic boundary
+   input. Persist baseline and handoff provenance atomically without incrementing
+   this process's applied counters. Discover the target schema at this boundary.
 
-The second increment implements schema changes for a declared compatibility subset. Apply DDL in source order, preserve the explicit MyISAM mapping, update historical schema/table-map context before following DML, and reject unsupported changes with diagnostics. Test schema changes interleaved with INSERT/UPDATE/DELETE, including table-map invalidation/reuse and supported create/alter/rename/drop scenarios. Compare schemas, actual rows and ordered binlog effects against independently expected/native results, with engine/version transformations recorded explicitly. The current inspector's blanket DDL rejection is replaced only for qualified cases.
+The planned adoption path may accept retained stopped channels only with this
+explicit handoff record and exclusive operational ownership. It never silently
+issues STOP/RESET or discards channel credentials/coordinates. The current code is
+stricter and rejects **all** retained channels, including stopped ones; changing
+that check requires the handoff tests, not simply dropping the guard.
 
-Only after both DML and DDL correctness gates pass, implement and qualify automatic crash/reconnect recovery. This third increment exercises crashes before/after target mutation, lost SQL responses, disconnects before checkpoint commit, partial MyISAM transactions, interrupted DDL and implicit commits, source rotation/replay, relay/SQLite crash windows and target restart. Prove target data, target binlog effects, row intents and applied checkpoints agree after recovery; capture-only stream equality is insufficient. Retain the conservative block/validation policy for target mysqld or host loss. Add read-only REST status/statistics once the capture/apply state is established; it is not a prerequisite for the first applier.
+## Future first start: externally loaded MySQL Shell dump
 
-Phase 2 storage, Phase 3 apply and the relevant Phase 4 schema work may be interleaved to deliver DML then DDL before recovery. Their full qualification gates and remaining Phase 1 inventory/type/fleet work still stand. Dump/load management remains external throughout.
+The operator completes and verifies the parallel dump/load externally, then
+supplies the coordinates recorded for that snapshot. Accept file/position only,
+GTID set only, or both when their correspondence is established. Preserve which
+form is authoritative and the external provenance; do not fabricate missing
+coordinates or sample new ones from the live source. The MySQL Shell metadata
+notes above describe the external source of these values, not a dump parser or
+loader to add to the replicator.
+
+Validate source history availability, target identity/schema and ownership before
+writing. A supplied baseline is an operator assertion about prepared data; the
+replicator cannot infer load completeness from coordinates. Unavailable upstream
+history blocks and requires external repair/reseed. Never silently jump forward.
+
+## Future subsequent starts: SQLite is authoritative
+
+Ordinary startup with existing state reads its persisted baseline, source/target
+identities, scope, schema versions, completed applied checkpoint, cumulative GTID
+snapshot plus committed deltas, and pending row/DDL intents. New start arguments
+must not overwrite it. Missing/corrupt/incompatible state is an error requiring
+explicit handling, not an implicit first start. Target UUID must match the value
+previously discovered; a replacement target needs a new external handoff.
+
+Keep received, durably captured, fully applied and explicitly skipped/resolved
+coverage separate. Verify pinned relay ranges before replay. Select the reader's
+reconnect boundary from validated durable capture/replay availability; the applier
+continues from its applied/resolved state and outstanding intents. A GTID exclusion
+set must not suppress an incomplete or unaccounted-for group. Missing local bytes
+may be fetched again only when the exact source history remains available.
+
+Before any target write, recheck native exclusion and writer ownership. Reconcile
+uncertain outstanding DML/DDL outcomes before continuing. A lost SQL response is
+not permission to retry a MyISAM mutation; a durable SQLite checkpoint alone does
+not establish target durability after mysqld/host loss. Retain the technical plan's
+conservative block/validate/reseed policy for those failures. Restart preserves a
+permanent diagnostic until explicit resolution.
+
+## Future operator resolution and skipping
+
+Default behavior stays stop, diagnose, retain evidence and await intervention.
+Design a local CLI/state-writer operation, not an HTTP mutation API; exact command
+syntax remains to be designed. Reject concurrent state mutation by another writer.
+Provide a dry-run description of the selected groups and resulting boundary.
+
+| Operation | Planned semantics |
+| --- | --- |
+| Repair and resume | After an external correction, reconcile the outstanding intent and continue the original group at its known progress; never blindly repeat completed MyISAM writes |
+| Mark externally applied | Verify the declared target effects/schema and record the source group as externally resolved, separately from Swift-applied work |
+| Skip source GTID/set | Select exact complete source groups in this stream, retaining every affected GTID and reason; never install those GTIDs on the target SQL session |
+| Skip source file/offset range | Require matching source lineage and complete group boundaries, not a byte in a row event or the middle of a transaction; record all covered groups |
+| Skip selected error types | An explicit, bounded policy keyed by stable MySQL code/SQLSTATE or replicator diagnostic category, with stream/object scope and maximum count/expiry; no default catch-all or error-message substring policy |
+
+Error-type skipping is inspired by Percona's restart tooling, but this replicator
+owns its own journal and cannot delegate checkpoint changes to native skip counters.
+The Percona documentation describes selective error matching/restart behavior;
+MySQL documents different skipping mechanisms for GTID and non-GTID channels.
+[Percona pt-replica-restart / pt-slave-restart](https://docs.percona.com/percona-toolkit/pt-replica-restart.html),
+[MySQL skipping transactions](https://dev.mysql.com/doc/refman/8.4/en/replication-administration-skip.html).
+
+A skip advances **accounted-for consumption**, not the count/set of transactions
+successfully applied by Swift. Keep applied, skipped and externally resolved
+outcomes distinct in SQLite. Their validated union with the external baseline can
+form the future source exclusion set; never label that union `transactions_applied`.
+Pending/partial MyISAM effects must be inspected and resolved before a group can be
+skipped. Skipping is not rollback. Exclude storage corruption, unknown framing and
+uncertain ownership/outcomes from automatic error-type skip policies. A DDL skip
+needs explicit schema reconciliation before following row events can be decoded
+and applied safely.
+
+Persist each decision atomically with checkpoint/coverage changes: operator or
+policy identity, timestamp, reason, original diagnostic, source identity/GTIDs/
+start-end positions, previous/new progress, known partial effects and resolution
+evidence. Snapshot skipped/resolved coverage without confusing it with applied
+coverage. Keep unresolved records pinned; compact completed audit/history only under
+the age-gated storage-pressure policy, preserving coverage and required summaries.
+If safe reclamation is impossible, stop before exhausting the storage budget.
+Target connections always retain `GTID_NEXT=AUTOMATIC`; source skips are local state,
+not injected empty target transactions or changed `gtid_purged`.
+
+## Future recovery acceptance
+
+After the DDL/DML correctness gate, test both first-start sources, both positioning
+modes, agreeing/conflicting dual coordinates, stopped-channel adoption and active/
+connecting-channel rejection. Test repeat initialization, accidental start overrides,
+wrong identities/scope, corrupt state, purged source history and missing relay files.
+
+Inject failures before/after target writes, DDL implicit commits, relay fsync,
+SQLite intent/completion/checkpoint commits and lost responses. Prove actual target
+rows/schema/binlogs and local progress agree after recovery or that the required
+block persists. Include target/host restart separately from replicator process loss.
+For every resolution mode, test partial groups, malformed/mid-group offsets, GTID
+sets with gaps/wrong lineage, policy limits, failed manual repair and crashes during
+audit/checkpoint publication. Following work must neither be lost nor duplicated;
+failed resolution retains the block. Expose durable results through SQLite.
 
 ## Current implementation
 
-The first [DML applier](DML_APPLY.md) accepts either file/position or a GTID-only
-seed, persists raw relay events and SQLite state/intents, and applies the declared
-single-statement DML subset. `run --initialize` asserts an externally prepared
-handoff; it refuses existing state directories and all retained native channels,
-even stopped ones. Deployment asserts native auto-start is disabled; SQL checks
-verify no native channels/workers are present or active. Reopening state, explicit
-stopped-channel adoption, DDL and REST serving remain unimplemented. The future
-resume behavior above is a contract for a later increment, not current behavior.
+`run --initialize` accepts externally established positional or GTID-only starts,
+refuses existing state and all retained native channels, and persists a bounded
+relay plus SQLite state/intents. [DML](DML_APPLY.md) and a [narrow DDL prototype](DDL_APPLY.md)
+are implemented. Target UUID discovery is implemented. Reopening state, reconnect
+recovery, stopped-channel adoption and all resolution/skip operations above remain
+future work. An embedded REST server is no longer planned.

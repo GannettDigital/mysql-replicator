@@ -21,6 +21,7 @@ final class StateStore {
     private var completedGTIDs: GTIDSet
     private(set) var transactions = 0
     private(set) var rows = 0
+    private(set) var ddlApplied = 0
     private(set) var applied: BinlogCoordinate?
     private(set) var pendingGTID: String?
     private var pendingSequence: Int64 = 0
@@ -63,14 +64,16 @@ final class StateStore {
             try execute("PRAGMA cache_spill=OFF")
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=64")
-            try execute("PRAGMA user_version=2")
-            try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT NOT NULL,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
-            try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT UNIQUE NOT NULL,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,map_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
+            try execute("PRAGMA user_version=3")
+            try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
+            try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
+            try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
+            try execute("CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try execute("CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try execute("CREATE INDEX groups_retention ON groups(status,completed_at)")
             try execute("CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))")
             try execute("CREATE TABLE snapshots(id INTEGER PRIMARY KEY,covered_sequence INTEGER NOT NULL,gtids TEXT NOT NULL,source_file TEXT,source_position TEXT,created_at TEXT NOT NULL)")
-            try execute("INSERT INTO state(id,lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,updated_at) VALUES(1,'STARTING',?,?,?,?,?,?)",[c.source.sourceUUID,c.target.targetUUID,c.source.start.file,c.source.start.position.map(String.init),completedGTIDs.canonical,timestamp()])
+            try execute("INSERT INTO state(id,lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,updated_at) VALUES(1,'STARTING',?,?,?,?,?,?)",[c.source.sourceUUID,nil,c.source.start.file,c.source.start.position.map(String.init),completedGTIDs.canonical,timestamp()])
             try snapshot()
             try checkpoint()
             ready = true
@@ -156,8 +159,10 @@ final class StateStore {
                     try execute("INSERT INTO prune_groups SELECT gtid FROM groups WHERE status='APPLIED' AND sequence<=? AND completed_at<? ORDER BY sequence LIMIT 128",[String(snapshotSequence),cutoff])
                     removed = try number("SELECT COUNT(*) FROM prune_groups")
                     try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
+                    try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM groups WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM snapshots WHERE covered_sequence<? AND created_at<?",[String(snapshotSequence),cutoff])
+                    try execute("DELETE FROM schemas WHERE current=0 AND retired_at<? AND NOT EXISTS(SELECT 1 FROM row_intents WHERE schema_id=schemas.id) AND NOT EXISTS(SELECT 1 FROM ddl_intents WHERE before_schema_id=schemas.id OR after_schema_id=schemas.id)",[cutoff])
                 }
                 try checkpoint()
                 try execute("PRAGMA incremental_vacuum(128)")
@@ -180,13 +185,22 @@ final class StateStore {
         }
         snapshotSequence=sequence
     }
+    private func insertSchema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws -> Int64 {
+        let schema=String(decoding:try JSONEncoder().encode(table),as:UTF8.self)
+        let wire=String(decoding:try JSONEncoder().encode(event.wireColumns),as:UTF8.self)
+        try execute("INSERT INTO schemas(identity,discovered_at,source_file,source_position,event_hash,schema_json,wire_json) VALUES(?,?,?,?,?,?,?)",[String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self),timestamp(),coordinate.file,String(coordinate.position),event.sha256,schema,wire])
+        return sqlite3_last_insert_rowid(db)
+    }
     func schema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
-        if let old = schemas[table.identity] {try require(old.1 == table,"schema changed without ordered DDL"); return}
-        try require(schemas.count < 64,"schema cache limit reached")
-        let schema = String(decoding:try JSONEncoder().encode(table),as:UTF8.self)
-        let wire = String(decoding:try JSONEncoder().encode(event.wireColumns),as:UTF8.self)
-        try execute("INSERT INTO schemas(identity,discovered_at,source_file,source_position,map_hash,schema_json,wire_json) VALUES(?,?,?,?,?,?,?)",[String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self),timestamp(),coordinate.file,String(coordinate.position),event.sha256,schema,wire])
-        schemas[table.identity]=(sqlite3_last_insert_rowid(db),table)
+        if let old=schemas[table.identity] {try require(old.1==table,"schema changed without ordered DDL");return}
+        try require(schemas.count<64,"schema cache limit reached")
+        schemas[table.identity]=(try insertSchema(table,event:event,coordinate:coordinate),table)
+    }
+    func ddlIntent(_ plan: PreparedDDL,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
+        try require(pendingGTID != nil,"DDL intent without pending group")
+        if let before=plan.before {try schema(before,event:event,coordinate:coordinate)}
+        let beforeID=schemas[plan.statement.name.identity]?.0
+        try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,status,created_at) VALUES(?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,timestamp()])
     }
     func append(_ record: LiveRecord) throws {
         guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
@@ -197,6 +211,10 @@ final class StateStore {
         try require(UInt64(frame.count) <= maximumBytes-relayLength,"relay storage limit reached")
         try checkDisk(extra:policy.maximumSQLiteBytes+Int64(frame.count))
         try relay!.write(contentsOf:frame); relayLength += UInt64(frame.count)
+    }
+    func bindTargetIdentity(_ uuid: String) throws {
+        try require(UUID(uuidString:uuid) != nil,"invalid discovered target identity")
+        try execute("UPDATE state SET target_uuid=?,updated_at=? WHERE id=1 AND target_uuid IS NULL",[uuid,timestamp()])
     }
     func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
     func begin(_ group: CompleteTransaction) throws {
@@ -215,15 +233,31 @@ final class StateStore {
         try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[pendingGTID,String(ordinal),mutation.eventOffset,String(mutation.rowIndex),String(schema.0),timestamp()])
     }
     func rowDone(_ ordinal: Int) throws {try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",[timestamp(),pendingGTID,String(ordinal)])}
-    func complete(_ group: CompleteTransaction,rowCount: Int) throws {
-        guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.sid+":"+identity.sequence,rowCount>0 else {throw ApplyError("completion without matching pending group")}
+    func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil) throws {
+        guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.sid+":"+identity.sequence,(rowCount>0 && ddl==nil) || (rowCount==0 && ddl != nil) else {throw ApplyError("completion without matching pending group")}
         let done = try query("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='DONE'",[pendingGTID])[0][0]
         try require(Int(done ?? "") == rowCount,"cannot complete group with unfinished row intents")
+        if ddl != nil {
+            try require(group.outcome == .statement && (try number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'")) == 1,"DDL completion without a pending intent")
+        }
+        var newSchemaID: Int64?
         var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
         let time=timestamp()
         try atomic {
+            if let ddl {
+                if let old=schemas[ddl.statement.name.identity] {
+                    try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
+                }
+                if let after=ddl.after {newSchemaID=try insertSchema(after,event:group.events[1],coordinate:group.end)}
+                try execute("UPDATE ddl_intents SET status='DONE',completed_at=?,after_schema_id=? WHERE gtid=?",[time,newSchemaID.map(String.init),pendingGTID])
+            }
             try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,pendingGTID])
-            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),String(rows+rowCount),time,time])
+            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,ddl_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),String(rows+rowCount),String(ddlApplied+(ddl == nil ? 0 : 1)),time,time])
+        }
+        if let ddl {
+            schemas.removeValue(forKey:ddl.statement.name.identity)
+            if let after=ddl.after,let newSchemaID {schemas[after.identity]=(newSchemaID,after)}
+            ddlApplied+=1
         }
         completedGTIDs=next; applied=group.end; transactions+=1; rows+=rowCount; sequence=pendingSequence
         self.pendingGTID=nil; groupStart=relayLength

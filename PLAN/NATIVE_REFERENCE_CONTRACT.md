@@ -32,3 +32,26 @@ Phase 2 must preserve the event/statement/transaction information needed for cla
 Phase 3 compares Swift positive data/binlog effects and negative stop/diagnostic/checkpoint behavior with the cataloged native outcomes. Include a later transaction behind the rejected transaction, blocked restart and failed/unfixed resume tests. Matching only an error code is insufficient. Do not count unimplemented Swift tests as passing based on native results.
 
 This decision removes the need to solve native error 1837 before progressing with the bounded implementation. It does not complete Phase 1 or establish production workload coverage; fleet transaction-shape inventory is still needed to assess how often the initial policy would stop replication.
+
+## DDL review update — 2026-09-30
+
+[DDL completeness](DDL_COMPLETENESS.md) is the next priority. Remove the prototype's
+forced engine/collation rewrites. Configure and verify local engine defaults and
+qualify omitted/default engine CREATE, ALTER, indexes and subsequent DML against
+native behavior. Explicit InnoDB can succeed on a MyISAM-default native replica;
+engine-restriction failures require their own measured profile. A stricter Swift
+MyISAM-only rejection is a declared support limit, not evidence of native failure.
+The old transformed-engine fixture is historical and does not establish parity.
+
+Native-incompatible index/type/DDL cases may remain expected failures, with precise
+errors, actual partial effects, stopped progress and following-work exclusion.
+Native successes in the declared common subset should become supported fixtures;
+5.7 incompatibility and missing Swift coverage must be listed separately. Broaden
+schema discovery/decoder/DML support alongside each supported DDL family.
+
+After DDL/DML correctness, implement [handoff, SQLite restart and operator
+resolution](START_BOUNDARY.md). No automatic skip is implied by this contract.
+Future explicit skips/manual-apply resolutions retain separate audited coverage;
+replication failure itself never advances successful-apply progress. SQLite status
+and diagnostics remain externally inspectable after the process stops; no embedded
+REST service is required.

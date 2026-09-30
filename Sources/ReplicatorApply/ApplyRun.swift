@@ -7,6 +7,7 @@ public struct ApplySummary: Encodable {
     public let lifecycle: String
     public let transactionsApplied: Int
     public let rowsApplied: Int
+    public let ddlApplied: Int
     public let appliedPosition: BinlogCoordinate?
     public let appliedGTIDSet: String
     public let pendingGTID: String?
@@ -19,23 +20,33 @@ public struct ApplyRunError: Error, CustomStringConvertible {
     public var description: String { reason }
 }
 public enum ApplyRun {
-    /// Initial DML milestone: exactly one attempt and a new state directory.
+    /// Serial DML/qualified DDL: exactly one attempt and a new state directory.
     /// Existing state, interrupted runs and uncertain outcomes are never retried.
     public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
                            cancellation: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
         try configuration.validate()
         let state = try StateStore(configuration:configuration)
         func summary(_ lifecycle: String) -> ApplySummary {
-            ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,
+            ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
                 appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path)
         }
         do {
             let target = try TargetSession(configuration:configuration,password:targetPassword)
             try target.preflight()
+            try state.bindTargetIdentity(target.targetUUID!)
             try state.running()
             _ = try LiveInspection.run(configuration:configuration.source,password:sourcePassword,includeRaw:true,cancellation:cancellation,
                 emitEvent:state.append,emitTransaction: { group in
                     try state.begin(group)
+                    if group.outcome == .statement {
+                        let plan=try target.prepareDDL(DDLStatement.from(group))
+                        try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+                        try require(!cancellation.isCancelled,"apply cancelled")
+                        try target.applyDDL(plan)
+                        try state.complete(group,rowCount:0,ddl:plan)
+                        try emitProgress(summary("RUNNING"))
+                        return
+                    }
                     let mutations = try DMLPlan.make(group,tables:Array(target.discovered.values))
                     try target.lock(mutations[0].table)
                     var locked = true
@@ -56,7 +67,7 @@ public enum ApplyRun {
                         guard let kind = column.interpretation else {throw ApplyError("missing wire interpretation")}
                         return kind
                     }
-                })
+                },allowDDL:true)
             try state.stopped()
             return summary("STOPPED")
         } catch {

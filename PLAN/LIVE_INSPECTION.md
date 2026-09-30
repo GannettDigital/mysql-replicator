@@ -146,7 +146,7 @@ of progress on incomplete groups, frozen-schema handling, queue bounds, TLS patc
 and source/native comparisons. Next work is a small serial MyISAM applier with the local relay and SQLite
 intent/checkpoint support it needs: INSERT/UPDATE/DELETE first, then schema changes.
 Crash/reconnect recovery implementation and qualification follow only after both
-DML and DDL correctness gates pass. Read-only REST status follows the initial capture/apply state. See [the storage/runtime design](RELAY_STATE_AND_STATUS.md).
+DML and DDL correctness gates pass. Persisted SQLite status/statistics support external readers; an embedded REST server is no longer planned. The next implementation priority is [native-compatible DDL completeness](DDL_COMPLETENESS.md). See [the storage/runtime design](RELAY_STATE_AND_STATUS.md).
 
 ## Recorded validation
 

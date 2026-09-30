@@ -150,8 +150,8 @@ preexisting permutation of indistinguishable columns.
 The initial cache is bounded to 64 tables, 256 columns each. Each first discovery
 records source coordinate, table-map hash, discovery time, target description and
 wire description in `schemas`; row intents reference its ID. Repeated maps are
-validated against that description. DDL still stops the stream; versioned cache
-refresh/evolution belongs to the next increment.
+validated against that description. The subsequent [DDL increment](DDL_APPLY.md) adds ordered versions for its strict
+subset; other schema changes still stop the stream.
 
 Supported wire text collations are 45, 46, 224 and 255 (utf8mb4, including 8.4's
 0900 default). The target uses its supported legacy utf8mb4 collation. They are
@@ -159,6 +159,12 @@ recorded separately, not asserted to have identical sorting semantics. This
 compatibility is limited to the current subset: integer primary-key predicates,
 no text indexes, and source-computed values applied and verified byte for byte.
 Text predicates, indexes and richer schema behavior require separate qualification.
+This describes the existing DML-only subset, not permission to rewrite new DDL.
+The [charset/default-resolution follow-up](DDL_COMPLETENESS.md#character-sets-event-context-and-native-default-resolution)
+removes hard-coded utf8mb4, adds typed query context and historical database/table/
+column charset discovery, and qualifies inheritance against native MySQL. Event
+metadata and historically resolved defaults must agree; missing metadata never
+means guessing the charset or reading a later source schema.
 
 ## Storage policy
 
@@ -192,7 +198,8 @@ Young or pinned history can cause a budget stop instead of deletion. If SQLite
 cannot record a failure, stderr remains the diagnostic fallback. Other processes
 can still consume disk unexpectedly; I/O/full errors are fatal, never success.
 
-SQLite schema version is 2. Inspect `schemas`, `groups`, `row_intents`, `snapshots`
+The reviewed checkpoint uses SQLite schema version 2; the [DDL follow-up](DDL_APPLY.md)
+uses version 3 with retired schema versions and DDL intents. Inspect `schemas`, `groups`, `row_intents`, `snapshots`
 and the singleton `state`. Old state is never migrated or reopened by this POC.
 The raw `relay.frames` file still has its independent stop-at-limit budget (default
 256 MiB); segment rotation and re-download are later work. No target recovery or
@@ -207,8 +214,11 @@ pressure/age gating, pinned intents, exact retained GTID coverage and budget sto
 multiple discovered tables with non-leading keys, exact values and absent or
 incompatible targets, alongside the existing native/data/binlog comparisons.
 
-Continue with ordered DDL and schema-cache evolution. Full target crash/reconnect
-recovery follows DML and DDL correctness; filtering and REST remain separate.
+Continue with [native-compatible DDL completeness](DDL_COMPLETENESS.md): remove
+forced engine/collation rewrites, broaden schema-cache evolution and test following
+DML. Full target crash/reconnect recovery and explicit skip/resolution follow those
+correctness gates. Filtering remains later work. External SQLite readers replace
+the planned REST service; broader statistics must share the bounded storage policy.
 Dump/load management remains external.
 
 Recorded validation (2026-09-29/30): 75 Swift tests pass with Swift/C/CLI

@@ -540,6 +540,7 @@ impl Decoder {
                 self.fde = Some(fde.into_owned());
             }
             EventData::QueryEvent(query) => {
+                self.tables.clear();
                 out.database = query.schema_raw().to_vec();
                 out.detail = query.query_raw().to_vec();
                 out.query_error_code = query.error_code() as u32;

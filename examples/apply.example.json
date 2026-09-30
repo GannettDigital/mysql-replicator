@@ -23,8 +23,7 @@
     "passwordEnvironment": "REPLICATOR_TARGET_PASSWORD",
     "serverHostname": "REPLACE_TARGET_TLS_HOSTNAME",
     "caFile": "/REPLACE/target-ca.pem",
-    "nativeAutoStartDisabled": true,
-    "targetUUID": "REPLACE_TARGET_UUID"
+    "nativeAutoStartDisabled": true
   },
   "storage": {
     "maximumSQLiteBytes": 268435456,

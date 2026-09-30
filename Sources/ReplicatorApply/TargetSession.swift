@@ -47,9 +47,13 @@ final class TargetSession {
             try require(rows.allSatisfy { $0.column("SERVICE_STATE")?.string == "OFF" },"native replication worker/receiver is active or indeterminate")
         }
     }
+    private(set) var targetUUID: String?
     func preflight() throws {
         let r = try query("SELECT VERSION() AS version,@@server_uuid AS uuid,@@GLOBAL.gtid_mode AS mode,@@GLOBAL.enforce_gtid_consistency AS consistency,@@GLOBAL.log_bin AS log_bin,@@SESSION.sql_log_bin AS session_binlog,@@SESSION.binlog_format AS format,@@SESSION.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum").0.first
-        try require(r?.column("version")?.string?.hasPrefix("5.7.") == true && r?.column("uuid")?.string?.lowercased() == config.target.targetUUID.lowercased(),"wrong target version/identity")
+        try require(r?.column("version")?.string?.hasPrefix("5.7.") == true,"wrong target version")
+        guard let uuid=r?.column("uuid")?.string?.lowercased(),UUID(uuidString:uuid) != nil else {throw ApplyError("invalid discovered target UUID")}
+        try require(uuid != config.source.sourceUUID.lowercased(),"source and target UUID must differ")
+        targetUUID=uuid
         try require(r?.column("mode")?.string == "OFF_PERMISSIVE" && r?.column("consistency")?.string == "WARN", "target must use OFF_PERMISSIVE/WARN")
         try require(r?.column("log_bin")?.int == 1 && r?.column("session_binlog")?.int == 1 && r?.column("format")?.string == "ROW" && r?.column("row_image")?.string == "FULL" && r?.column("checksum")?.string == "CRC32","target binary logging differs from contract")
         let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'").0
@@ -63,7 +67,7 @@ final class TargetSession {
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
 
     }
-    private(set) var discovered: [String:ApplyTable] = [:]
+    var discovered: [String:ApplyTable] = [:]
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
         guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
         let identity = database + "\0" + name
@@ -71,15 +75,7 @@ final class TargetSession {
         if let cached = discovered[identity] { table = cached }
         else {
             try require(discovered.count < 64,"discovered schema limit reached")
-            let binds = [MySQLData(string:database),MySQLData(string:name)]
-            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
-            let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
-            try require(keys.count == 1,"discovered target requires a single primary-key column")
-            table = ApplyTable(database:database,table:name,columns:try columns.map { row in
-                guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
-                return ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
-            },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
-            try table.validate(); try verifySchema(table)
+            table=try readSchema(database:database,name:name)
         }
         try require(wire.count == table.columns.count,"source/target column count differs")
         for (w,c) in zip(wire,table.columns) {
@@ -91,6 +87,18 @@ final class TargetSession {
             if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
         }
         discovered[identity] = table
+        return table
+    }
+    func readSchema(database: String,name: String) throws -> ApplyTable {
+        let binds = [MySQLData(string:database),MySQLData(string:name)]
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
+        try require(keys.count == 1,"discovered target requires a single primary-key column")
+        let table = ApplyTable(database:database,table:name,columns:try columns.map { row in
+            guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
+            return ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+        },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
+        try table.validate(); try verifySchema(table)
         return table
     }
     private func normalizeType(_ type: String) -> String {
@@ -114,9 +122,12 @@ final class TargetSession {
         try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
         try require(try query("SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL",binds).0.isEmpty,"partitioned target tables are unsupported")
     }
-    func lock(_ table: ApplyTable) throws {
+    func writerExclusion() throws {
         try nativeExclusion()
         try require(try scalar("SELECT IS_USED_LOCK('mysql-replicator-writer')=CONNECTION_ID() AS v") == "1","writer ownership lost")
+    }
+    func lock(_ table: ApplyTable) throws {
+        try writerExclusion()
         _ = try query("LOCK TABLES \(table.sqlName) WRITE",textProtocol:true)
         try verifySchema(table)
     }

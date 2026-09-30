@@ -18,6 +18,7 @@ final class StreamProcessor {
     let excluded: GTIDSet
     var completeGTIDs: GTIDSet
     let includeRaw: Bool
+    let allowDDL: Bool
     var decoder: BinlogDecoder?
     var format: Data?
     var decoderOffset: UInt64 = 4
@@ -38,7 +39,9 @@ final class StreamProcessor {
     init(config: CaptureConfiguration, includeRaw: Bool,
          emitEvent: @escaping (LiveRecord) throws -> Void,
          emitTransaction: @escaping (CompleteTransaction) throws -> Void,
-         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil) throws {
+         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
+         allowDDL: Bool = false) throws {
+        self.allowDDL=allowDDL
         self.resolveSchema = resolveSchema
         self.config = config; self.includeRaw = includeRaw
         self.excluded = try GTIDSet(config.start.executedGTIDs)
@@ -166,7 +169,7 @@ final class StreamProcessor {
         }
         let event = try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw).atSourcePosition(offset)
         if case .query(let query) = event.control {
-            try check([Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql),
+            try check(allowDDL || [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql),
                       "live schema window stops at DDL or non-control SQL")
             try check(assembler.pendingTransactionStart != nil, "query without GTID on GTID-ON source")
         }

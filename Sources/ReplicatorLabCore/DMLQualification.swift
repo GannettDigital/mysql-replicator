@@ -1,11 +1,11 @@
 import Foundation
 
 public enum DMLQualification {
-    public static func run(root: URL, build: Bool = true) throws {
+    public static func run(root: URL, build: Bool = true, ddl: Bool = false) throws {
         let runner = ProcessRunner(root:root)
         let image = "mysql-replicator-packaging:dml"
         if build {
-            FileHandle.standardError.write(Data("DML suite: building static Ubuntu image (live build output follows).\n".utf8))
+            FileHandle.standardError.write(Data("\(ddl ? "DDL" : "DML") suite: building static Ubuntu image (live build output follows).\n".utf8))
             let result = try runner.run(["docker","build","--progress=plain","--platform","linux/amd64","--target","runtime","-f","docker/packaging/Dockerfile","-t",image,"."],timeout:3600,checked:false,onOutput:{ FileHandle.standardError.write($0) })
             let log = root.appendingPathComponent("artifacts/dml-suite/build-" + runID() + ".log")
             try FileManager.default.createDirectory(at:log.deletingLastPathComponent(),withIntermediateDirectories:true)
@@ -13,11 +13,11 @@ public enum DMLQualification {
             try require(result.status == 0,"DML image build failed; see \(log.path)")
         }
         let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
-        for mode in ["file-position","gtid"] { try runCase(root:root,image:qualifiedImage,mode:mode) }
+        for mode in ["file-position","gtid"] { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl) }
     }
-    private static func runCase(root: URL,image: String,mode: String) throws {
+    private static func runCase(root: URL,image: String,mode: String,ddl: Bool) throws {
         var native = NativeCase(); native.transaction = false; native.autoPosition = mode == "gtid"
-        let h = NativeHarness(root:root,config:native,artifactCategory:"dml-suite")
+        let h = NativeHarness(root:root,config:native,artifactCategory:ddl ? "ddl-suite" : "dml-suite")
         let runner = h.runner, output = h.output, tls = output.appendingPathComponent("tls")
         try FileManager.default.createDirectory(at:tls,withIntermediateDirectories:true)
         h.composeOverlays = [root.appendingPathComponent("docker/dml/compose.yaml").path]
@@ -26,8 +26,8 @@ public enum DMLQualification {
         var volumeCreated = false, helperCreated = false
         var copiedStates: Set<String> = []
         var clients: [String] = [], started = false, failure: Error?
-        var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":"unsupported"]
-        func stage(_ text: String) { FileHandle.standardError.write(Data(("DML \(mode): " + text + "\n").utf8)) }
+        var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":ddl ? "qualified_subset" : "not_exercised"]
+        func stage(_ text: String) { FileHandle.standardError.write(Data(("\(ddl ? "DDL" : "DML") \(mode): " + text + "\n").utf8)) }
         stage("evidence: \(output.path)")
         func docker(_ args: [String]) throws -> CommandResult { try runner.run(["docker"] + args) }
         func record(_ name: String,_ args: [String]) throws -> CommandResult {
@@ -103,7 +103,7 @@ public enum DMLQualification {
                 let engine = service == "source" ? "InnoDB" : "MyISAM"
                 _ = try h.sql(service,"CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(engine); INSERT INTO poc.items VALUES(1,'seed-one',1),(2,'seed-two',2)")
             }
-            _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
             if mode == "gtid" { _ = try h.sql("source","SET GLOBAL binlog_row_metadata=FULL") }
             let uuid = try h.sql("source","SELECT @@server_uuid"), targetUUID = try h.sql("target57","SELECT @@server_uuid")
             let sourceStart = try h.boundary("source"), nativeStart = try h.boundary("native"), targetStart = try h.boundary("target57")
@@ -115,7 +115,7 @@ public enum DMLQualification {
                 var start: [String:Any] = ["executedGTIDs":boundary.gtids]
                 if mode == "file-position" { start["file"] = boundary.file; start["position"] = boundary.position }
                 let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem","serverID":9100,"sourceUUID":uuid,"mode":mode,"start":start,"stopAfterTransactions":count]
-                return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true,"targetUUID":targetUUID],"stateDirectory":"/evidence/state-" + label]
+                return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],"stateDirectory":"/evidence/state-" + label]
             }
             let positiveConfig = configuration("positive",at:sourceStart,count:4)
             let client = try start("positive",positiveConfig); try waitForReader(client)
@@ -137,8 +137,114 @@ public enum DMLQualification {
                 let dir = output.appendingPathComponent(service)
                 try FileManager.default.copyItem(at:dir.appendingPathComponent("operations.json"),to:dir.appendingPathComponent("positive-operations.json"))
             }
+            try require(state("positive","SELECT target_uuid FROM state") == targetUUID,"discovered target UUID was not persisted")
             report["positive"] = positive
-            if mode == "gtid" {
+            if ddl {
+                let changes: [(String,String,String,String)] = [
+                    ("CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY) ENGINE=InnoDB","changes","payload:varbinary:YES,id:int:NO",""),
+                    ("INSERT INTO poc.changes VALUES(0x00FF,1)","changes","payload:varbinary:YES,id:int:NO","1\t00FF"),
+                    ("ALTER TABLE poc.changes ADD note VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL FIRST","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\tNULL\t00FF"),
+                    ("UPDATE poc.changes SET note='first' WHERE id=1","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\t6669727374\t00FF"),
+                    ("ALTER TABLE poc.changes DROP COLUMN payload","changes","note:varchar:YES,id:int:NO","1\t6669727374"),
+                    ("UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874"),
+                    ("RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874"),
+                    ("INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL"),
+                    ("DROP TABLE poc.renamed","renamed","",""),
+                    ("CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE=InnoDB","renamed","id:bigint:NO,b:varbinary:YES",""),
+                    ("INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE"),
+                    ("UPDATE poc.renamed SET b=NULL WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tNULL"),
+                    ("DELETE FROM poc.renamed WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES",""),
+                    ("DROP TABLE poc.renamed","renamed","","")
+                ]
+                let ddlStart=try h.boundary("source"),ddlNativeStart=try h.boundary("native"),ddlTargetStart=try h.boundary("target57")
+                let applying=try start("ddl",configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
+                _ = try h.sql("native","START REPLICA")
+                for (index,change) in changes.enumerated() {
+                    _ = try h.sql("source",change.0)
+                    let deadline=Date().addingTimeInterval(20)
+                    var applied=0
+                    repeat {
+                        let logs=try docker(["logs",applying]).stdout
+                        if let last=String(decoding:logs,as:UTF8.self).split(separator:"\n").last,
+                           let value=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any] {applied=value["transactionsApplied"] as? Int ?? 0}
+                        if applied==index+1 {break}
+                        if try docker(["inspect",applying,"--format","{{.State.Running}}"]).text != "true" {
+                            let stopped=try docker(["logs",applying])
+                            throw LabError("DDL stopped at step \(index+1): " + String(decoding:stopped.stderr,as:UTF8.self))
+                        }
+                        Thread.sleep(forTimeInterval:0.1)
+                    } while Date()<deadline
+                    try require(applied==index+1,"DDL did not reach step \(index+1)")
+                    let boundary=try h.boundary("source")
+                    let reached=try h.sql("native","SELECT SOURCE_POS_WAIT('\(boundary.file)',\(boundary.position),20)")
+                    try require(reached != "NULL" && reached != "-1","native DDL did not reach barrier")
+                    for service in h.services {
+                        let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)'")
+                        try require(schema == (change.2.isEmpty ? "NULL" : change.2),"\(service) DDL schema differs at step \(index+1)")
+                        if !change.2.isEmpty {
+                            let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)'")
+                            try require(engine == (service == "target57" ? "MyISAM" : "InnoDB"),"DDL engine mapping differs")
+                            if change.2.contains("note:") {
+                                let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)' AND COLUMN_NAME='note'")
+                                try require(collation == (service == "target57" ? "utf8mb4_unicode_ci" : "utf8mb4_0900_ai_ci"),"DDL collation mapping differs")
+                            }
+                            let fields=change.2.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.2.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.2.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
+                            let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.1) ORDER BY id")
+                            try require(rows == change.3,"\(service) DDL data differs at step \(index+1)")
+                            try rows.write(to:output.appendingPathComponent("\(service)-ddl-\(index+1).tsv"),atomically:true,encoding:.utf8)
+                        }
+                        if index==6 {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='changes'") == "0","renamed table remains")}
+                    }
+                    stage("passed DDL/DML step \(index+1)")
+                }
+                let ddlEnd=try h.boundary("source")
+                let ddlResult=try finish(applying,"ddl",success:true)
+                try require(ddlResult["appliedGTIDSet"] as? String == ddlEnd.gtids,"DDL applied GTID coverage differs")
+                try require(ddlResult["ddlApplied"] as? Int == 7 && ddlResult["rowsApplied"] as? Int == 7,"DDL counters differ")
+                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "7","DDL intent history missing")
+                try require(state("ddl","SELECT COUNT(*) FROM schemas WHERE current=1") == "0","dropped schema remains current")
+                try require(state("ddl","SELECT COUNT(*) FROM row_intents r LEFT JOIN schemas s ON s.id=r.schema_id WHERE s.id IS NULL") == "0","row intent lost historical schema")
+                _ = try h.sql("native","STOP REPLICA")
+                // Retain raw logs and independent mysqlbinlog DDL traces. CREATE
+                // intentionally maps InnoDB to MyISAM, so native engine parity
+                // is not asserted for these newly created tables.
+                for (service,from) in [("source",ddlStart),("native",ddlNativeStart),("target57",ddlTargetStart)] {
+                    let end=try h.boundary(service)
+                    _ = try h.capture(service,start:nil,end:nil)
+                    let file=output.appendingPathComponent(service+"/"+from.file)
+                    try require(from.file==end.file,"unexpected DDL binlog rotation")
+                    let decoded=try runner.run([h.decoder,"--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(from.position)","--stop-position=\(end.position)",file.path])
+                    try decoded.stdout.write(to:output.appendingPathComponent(service+"-ddl-binlog.txt"))
+                    let text=String(decoding:decoded.stdout,as:UTF8.self).uppercased()
+                    let expectedKinds=changes.map {String($0.0.split(separator:" ")[0])}
+                    let kinds=text.split(separator:"\n").compactMap {line -> String? in
+                        for verb in ["CREATE TABLE","ALTER TABLE","RENAME TABLE","DROP TABLE"] {
+                            if line.hasPrefix(verb+" ") {return String(verb.split(separator:" ")[0])}
+                        }
+                        for verb in ["INSERT INTO","UPDATE","DELETE FROM"] {
+                            if line.hasPrefix("### "+verb+" ") {return String(verb.split(separator:" ")[0])}
+                        }
+                        return nil
+                    }
+                    try require(kinds==expectedKinds,"DDL/DML binlog operations differ in count or source order")
+                    try writeJSON(kinds,to:output.appendingPathComponent(service+"-ddl-operation-kinds.json"))
+                }
+                // A valid source DDL outside the grammar stops before mutation.
+                let unsupported=try start("ddl-unsupported",configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
+                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DECIMAL(10,2) NULL")
+                _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
+                try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
+                try require(state("ddl-unsupported","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","unsupported DDL advanced checkpoint")
+                // A target SQL error leaves a pending DDL intent, never applied.
+                _ = try h.sql("target57","REVOKE CREATE ON poc.* FROM 'apply_fixture'@'%'")
+                let denied=try start("ddl-denied",configuration("ddl-denied",at:try h.boundary("source"),count:1));try waitForReader(denied)
+                _ = try h.sql("source","CREATE TABLE poc.denied(id INT PRIMARY KEY) ENGINE=InnoDB")
+                _ = try finish(denied,"ddl-denied",success:false,reason:"target SQL error")
+                try require(state("ddl-denied","SELECT status FROM ddl_intents") == "PENDING","failed DDL intent lost")
+                try require(state("ddl-denied","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","failed DDL advanced checkpoint")
+                report["ddl_mapping"]="source/native InnoDB; Swift MyISAM; explicit CREATE engine transformation"
+                report["ddl_steps"]=changes.map{$0.0};report["ddl_result"]=ddlResult
+            } else if mode == "gtid" {
                 // Additional accepted shapes: multi-row statement and key change.
                 let edgeStart = try h.boundary("source"), edgeNativeStart = try h.boundary("native"), edgeTargetStart = try h.boundary("target57")
                 let edge = try start("multirow",configuration("multirow",at:edgeStart,count:3)); try waitForReader(edge)
@@ -299,6 +405,6 @@ public enum DMLQualification {
         report["result"] = failure == nil ? "passed" : "failed"
         try writeJSON(report,to:output.appendingPathComponent("result.json"))
         if let failure { throw LabError("\(failure); evidence: \(output.path)") }
-        stage("PASS: DML data, binlogs and applied checkpoints")
+        stage(ddl ? "PASS: ordered DDL/DML, schemas, data, binlogs and checkpoints" : "PASS: DML data, binlogs and applied checkpoints")
     }
 }

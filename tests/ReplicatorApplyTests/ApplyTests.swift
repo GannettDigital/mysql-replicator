@@ -11,7 +11,7 @@ final class ApplyTests: XCTestCase {
     func config(_ path: String = "/tmp/unused-state", storage: [String:Any]? = nil) throws -> ApplyConfiguration {
         var object: [String:Any] = ["version":1,"stateDirectory":path,
             "source":["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":"gtid","start":["executedGTIDs":sid+":1-10"],"tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]],
-            "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true,"targetUUID":"00000000-0000-0000-0000-000000000001"],
+            "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true],
             "tables":[["database":"poc","table":"items","primaryKey":"id","columns":[["name":"id","type":"int","nullable":false],["name":"value","type":"varchar(100)","nullable":false,"collation":"utf8mb4_unicode_ci"],["name":"quantity","type":"bigint unsigned","nullable":false]]]]]
         object["storage"]=storage
         object["version"]=2; object.removeValue(forKey:"tables")

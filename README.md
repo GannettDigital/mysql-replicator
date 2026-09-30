@@ -2,7 +2,7 @@
 
 Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
-Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The first serial INSERT/UPDATE/DELETE applier now connects that pipeline to MySQL 5.7 MyISAM, with a local framed relay and SQLite state/row intents. DDL, resume/recovery and the REST status API remain unimplemented. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
+Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The first serial INSERT/UPDATE/DELETE applier now connects that pipeline to MySQL 5.7 MyISAM, with a local framed relay and SQLite state/row intents. A strict DDL prototype is implemented. Next is [native-compatible DDL completeness](PLAN/DDL_COMPLETENESS.md), starting by removing its forced engine/charset/collation rewrites. Resume/recovery remains future work; statistics will be read from SQLite without an embedded REST server. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
 Database dump/load and target provisioning are entirely external. The replicator starts from a prepared target and a known source position or executed GTID set; see [the start-boundary contract](PLAN/START_BOUNDARY.md).
 
@@ -45,6 +45,9 @@ MyISAM target through Swift, and compares data and binlog effects with the sourc
 and native 8.4 MyISAM replica. It checks both positional and GTID-only starts,
 multi-row/key changes, exact values, stopped progress on errors and row intents.
 Evidence and generated fixture configurations are under `artifacts/dml-suite/`.
+Run `make ddl-suite` for interleaved schema changes and DML; its evidence is under
+`artifacts/ddl-suite/`. Target UUID is discovered from the verified connection and
+stored in SQLite; remove `targetUUID` from old configuration files.
 Runtime files use a Docker-managed volume and are copied back for inspection.
 Docker build/startup progress is streamed to the terminal.
 
@@ -53,8 +56,10 @@ then run `.build/debug/mysql-replicator run --config apply.json --initialize`.
 The initial applier requires a **new state directory** and supports a deliberately
 limited schema and single-statement transaction subset. It never reopens state or
 retries uncertain writes. Review [supported behavior, setup, state ordering and
-limits](PLAN/DML_APPLY.md) before using it. Next is schema-change application;
-automatic recovery follows DML and DDL correctness. Version 2 configuration has no
+limits](PLAN/DML_APPLY.md) before using it. See [ordered DDL and its test suite](PLAN/DDL_APPLY.md) for the initial schema-change subset;
+that prototype's engine/collation policy is superseded by the [DDL completeness plan](PLAN/DDL_COMPLETENESS.md).
+First-start handoff, SQLite restart and audited skip/resolution follow DDL/DML correctness;
+see [the future recovery contract](PLAN/START_BOUNDARY.md). Version 2 configuration has no
 schema lists: discovery combines source table-map metadata with the prepared target.
 SQLite keeps timestamped deltas and periodic GTID snapshots. Under storage pressure,
 it prunes covered completed history older than `storage.historyRetentionSeconds`
@@ -108,7 +113,7 @@ Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git
 ## Design and evidence
 
 - [First DML applier](PLAN/DML_APPLY.md)
-- [Local binlog files, SQLite state and REST status](PLAN/RELAY_STATE_AND_STATUS.md)
+- [Local binlog files, SQLite state and external statistics readers](PLAN/RELAY_STATE_AND_STATUS.md)
 
 - [Ubuntu packaging results](PLAN/UBUNTU_PACKAGING_RESULTS.md)
 - [Current Phase 1 progress](PLAN/PHASE_1_PROGRESS.md)

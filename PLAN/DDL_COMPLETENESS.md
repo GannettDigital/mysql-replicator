@@ -1,0 +1,247 @@
+# DDL completeness and native engine behavior
+
+Decision update, 2026-09-30. This is the next implementation plan, not a claim
+that the revised behavior is implemented. It supersedes the prototype's explicit
+InnoDB-to-MyISAM CREATE rewrite and automatic collation substitution described in
+[the initial DDL checkpoint](DDL_APPLY.md).
+
+## Priority and scope
+
+1. Remove forced engine/charset/collation rewriting and establish native engine
+   selection and charset/default resolution as the reference.
+2. Broaden DDL support, schema discovery and subsequent INSERT/UPDATE/DELETE
+   coverage together. Publish the supported and rejected cases with evidence.
+3. After those correctness gates, implement first-start handoff, SQLite-based
+   restart/recovery and explicit operator resolution under
+   [the start-boundary plan](START_BOUNDARY.md).
+
+Statistics persist to SQLite for external readers; an embedded REST server or web
+interface is not a deliverable. Dump/load remains entirely external. Automation
+continues through SwiftPM and Make, retaining the mapped Docker build caches.
+
+## Engine selection: preserve the statement's meaning
+
+Configure and verify the source's default as InnoDB and both targets' default as
+MyISAM. A statement with no ENGINE clause uses the receiving server's default;
+the source's `default_storage_engine` setting is not replicated. An explicit
+InnoDB clause can instead create InnoDB on the replica. A MyISAM default alone
+does **not** turn it into an error. The existing prototype suite already observed
+that distinction. [MySQL cross-engine replication](https://dev.mysql.com/doc/refman/8.4/en/replication-solutions-diffengines.html).
+
+Therefore:
+
+- Stop synthesizing `ENGINE=MyISAM` in target SQL. Preserve omission, default
+  selection or an explicit engine request; never erase an explicit engine to make
+  incompatible DDL succeed. MyISAM remains a target deployment/preflight setting.
+- Use omitted ENGINE as the documented positive baseline. Qualify explicit
+  default selection separately: test the requested spelling `ENGINE=DEFAULT`
+  and the quoted `ENGINE='DEFAULT'` on the pinned servers, including actual logged
+  SQL and native apply. Do not assume both spellings parse or resolve identically.
+  The pinned MySQL resolver recognizes the name DEFAULT, while its grammar routes
+  ENGINE through `ident_or_text`; that alone is not end-to-end replication evidence.
+- Preserve actual native errors and stop on target failure. Do not shorten indexes,
+  drop options/constraints, change types or substitute collations to obtain success.
+  In particular, remove the prototype's automatic `utf8mb4_0900_ai_ci` to
+  `utf8mb4_unicode_ci` rewrite from the intended replication policy. Provisioning
+  compatibility is an external concern; unsupported replicated DDL is a diagnostic.
+- Explicit InnoDB is outside the intended MyISAM apply contract. Qualify a native
+  rejection profile using engine-creation restrictions and strict substitution
+  behavior before labeling a Swift rejection native-equivalent. Keep an unrestricted
+  native control that records InnoDB creation. If the production/reference profile
+  permits that creation, Swift's early rejection is a declared MyISAM-only coverage
+  restriction, not a native failure. Do not mutate the target into InnoDB and then
+  attempt to convert it back.
+
+`disabled_storage_engines` restricts creation/conversion without unloading the
+engine; investigate it rather than attempting to remove InnoDB needed by MySQL's
+own storage. Qualify it with `NO_ENGINE_SUBSTITUTION`, the source query's SQL mode,
+and both native-applier and ordinary SQL sessions on the pinned versions. An
+unavailable/disabled engine must not silently fall back. These are proposed fixture
+settings, not already verified deployment instructions.
+[Engine restrictions](https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_disabled_storage_engines),
+[engine selection and substitution](https://dev.mysql.com/doc/refman/8.4/en/storage-engine-setting.html).
+
+Local research reference: ignored `.upstream/mysql-server`, pinned commit
+`0896fcd61dec11a0904166911a0126f59daaa1bf`; inspect `sql/sys_vars.cc`
+(`Sys_default_storage_engine`, `NOT_IN_BINLOG`), `sql/sql_yacc.yy` (ENGINE grammar),
+`sql/parse_tree_helpers.cc` (`resolve_engine`), `sql/handler.cc`
+(`ha_resolve_by_name`) and `sql/sql_table.cc` (engine viability/substitution).
+Use `mysql-test/t/disabled_storage_engines.test` and relevant `mysql-test/suite/rpl/`
+and DDL tests as scenario sources, recording paths/revision and adapted expectations.
+Do not infer Swift support merely from an upstream test passing.
+
+## Character sets: event context and native default resolution
+
+The prototype's `columnSQL` emits `CHARACTER SET utf8mb4` whenever a collation is
+present. Its schema model records only the collation, its validator accepts a few
+utf8mb4 collations, and its DDL parser substitutes 0900 with unicode_ci. These are
+current subset restrictions, not a general character-set implementation. Remove
+those assumptions alongside the engine fix; a COLLATE clause does not imply utf8mb4.
+
+There are two distinct binlog sources of encoding information:
+
+- **QUERY_EVENT for DDL:** the SQL contains explicit clauses; status variables
+  carry `Q_CHARSET_CODE` (client charset, connection collation and server collation),
+  optional `Q_CHARSET_DATABASE_CODE` and `Q_DEFAULT_COLLATION_FOR_UTF8MB4`.
+  Native `Query_log_event::do_apply_event` restores this context before executing
+  the query and reports unknown required charsets/collations. The current bridge
+  preserves query status bytes but does not yet provide general context replay.
+- **TABLE_MAP_EVENT for rows:** `DEFAULT_CHARSET` or `COLUMN_CHARSET` optional
+  metadata carries collation IDs for character columns, including with MINIMAL
+  metadata in the pinned 8.4 implementation. FULL adds such fields as column names;
+  charset handling must not assume FULL is required. The table-map “default” is a
+  compact encoding for column metadata, **not** the database/server default used
+  when executing DDL. A new table need not produce a row map until later DML.
+
+Source references at the pinned revision:
+[`statement_events.h`](https://github.com/mysql/mysql-server/blob/0896fcd61dec11a0904166911a0126f59daaa1bf/libs/mysql/binlog/event/statement_events.h),
+[`rows_event.h`](https://github.com/mysql/mysql-server/blob/0896fcd61dec11a0904166911a0126f59daaa1bf/libs/mysql/binlog/event/rows_event.h),
+and [`sql/log_event.cc`](https://github.com/mysql/mysql-server/blob/0896fcd61dec11a0904166911a0126f59daaa1bf/sql/log_event.cc).
+The local sources show both status serialization and restoration; they are the
+implementation reference for the next native fixtures.
+
+Follow MySQL's resolution rules at the operation's historical boundary:
+
+| Definition | Resolution |
+| --- | --- |
+| Explicit CHARACTER SET and COLLATE | Use that pair and validate compatibility |
+| Only COLLATE | Use that collation's associated character set; do not prepend utf8mb4 |
+| Only CHARACTER SET | Use the selected character set's applicable default collation, including logged/version-specific context |
+| Neither on a column | Inherit the table's defaults |
+| Neither on a table | Inherit the database containing that table, even when the query's current database differs |
+| Neither on CREATE DATABASE | Use the effective server defaults in native query execution context, including replicated context where applicable |
+
+Changing a database/table default does not retroactively reinterpret existing
+column bytes. Distinguish default changes from explicit column/table character-set
+conversion. Connection/query encoding is also separate from stored column encoding.
+[Column rules](https://dev.mysql.com/doc/refman/8.4/en/charset-column.html),
+[table rules](https://dev.mysql.com/doc/refman/8.4/en/charset-table.html),
+[database rules](https://dev.mysql.com/doc/refman/8.4/en/charset-database.html).
+Local `sql/sql_table.cc::set_table_default_charset` resolves the owning schema's
+collation, and native query apply restores logged session context. Consequently,
+“use the target server default for every missing field” would also be wrong.
+
+Implementation requirements for this increment:
+
+1. Expose typed, bounded query status/context through the Rust/Swift interface and
+   diagnostic JSON as needed. Preserve original query bytes; decode/execute under
+   their actual client encoding rather than assuming every query is UTF-8. Qualify
+   session reset between DDL and the DML connection/binding settings.
+2. Preserve explicit/omitted clauses and let qualified native semantics determine
+   defaults. Extend internal discovered schema with character-set name/ID and
+   collation name/ID where relevant, queried from `information_schema.COLUMNS`,
+   `TABLES`, `SCHEMATA` and collation/charset catalogs. Validate supported ID/name
+   mappings across 8.4 and 5.7; no prefix guessing or arbitrary numeric remapping.
+3. Retain database/table defaults and resolved column encoding with historical schema
+   versions and provenance. Bootstrap discovery uses the prepared target at its
+   known boundary; subsequent defaults evolve in source order. For row decoding,
+   prefer event metadata and validate it against that history. If older/missing
+   metadata cannot be resolved safely, stop; never query today's source defaults
+   to fill a historical gap or guess utf8mb4.
+4. Expand exact byte/character-length handling and parameter binding for each newly
+   supported charset. The existing UTF-8/binary decoder and four-bytes-per-character
+   checks are insufficient for arbitrary charsets. Unknown or 5.7-incompatible
+   required collation/context stops with a precise diagnostic. Preserve the existing
+   externally provisioned DML-only compatibility subset as separately documented;
+   it does not authorize rewriting newly replicated DDL.
+
+Add native/Swift fixtures for latin1, utf8mb3, utf8mb4 and binary columns; mixed
+column charsets; COLLATE-only/CHARSET-only/neither; server/schema/table/column
+inheritance; fully qualified CREATE into a different database; defaults changed
+between events; ALTER DEFAULT versus CONVERT; query literals/identifiers with a
+different client encoding; `_bin` collation versus binary bytes; and unknown IDs or
+8.4-only collations on 5.7. Compare resolved metadata, HEX byte values, row decode,
+index byte lengths, errors and following DML under MINIMAL and FULL metadata.
+Include replay after later source default/schema changes to detect accidental use
+of present-day metadata. No silent transcoding, replacement characters or collation
+substitution may make a failing case pass.
+
+## Native-first qualification matrix
+
+Keep the topology: source MySQL 8.4 InnoDB, native MySQL 8.4 MyISAM reference,
+Swift-applied MySQL 5.7 MyISAM target; all produce binlogs. Source GTIDs remain
+ON/ON, targets OFF_PERMISSIVE/WARN, Swift apply sessions GTID_NEXT=AUTOMATIC.
+Test positional and GTID starts and the supported FULL/MINIMAL metadata modes.
+Native is a harness reference, not a production dependency.
+
+First measure each scenario on the native branch, with fresh state for expected
+failures. Then implement/qualify the Swift result. Keep a versioned matrix with
+statement/fixture ID, source acceptance and logged representation, settings,
+native result, 5.7 capability, Swift result, SQLSTATE/error/warnings, before/after
+schema and data, binlog effects, stopped boundary and evidence paths. Classify
+native success, native failure, 5.7 incompatibility and not-yet-implemented
+separately. A source-side syntax error produces no event to replicate.
+
+| Order | DDL family | Required cases and following DML |
+| --- | --- | --- |
+| A | Engine policy | Omitted/default/explicit engine; CREATE, drop/recreate and ALTER ENGINE; actual table engines on both replicas; engine restrictions and substitution modes |
+| B | Core table lifecycle | CREATE/DROP with conditional clauses, TRUNCATE, CREATE LIKE, same/cross-schema rename and multi-table rename/drop; missing objects, existing destinations and temporary-table/logging behavior |
+| C | Columns and defaults | ADD/DROP/MODIFY/CHANGE/RENAME COLUMN, FIRST/AFTER, multi-clause ALTER, nullability, literal/expression defaults and AUTO_INCREMENT; widen/narrow conversions, retained values, warnings and rejected forms |
+| D | Keys and indexes | CREATE/DROP INDEX, ALTER ADD/DROP PRIMARY/UNIQUE/secondary/composite/prefix indexes; duplicate data, key changes, byte limits, FULLTEXT/SPATIAL and unsupported 8.4 index forms |
+| E | Database and encoding | CREATE/ALTER/DROP DATABASE, default database context, database/table/column charset and collation, CONVERT TO CHARACTER SET, identifier quoting/case and renamed objects |
+| F | Remaining fleet DDL | Generated columns, CHECK/foreign keys, partitions, table options/row formats, ALGORITHM/LOCK, views, routines, triggers, events and CREATE SELECT; classify native logging, engine and 5.7 limits before claiming support |
+
+Each family is a qualification backlog, not unconditional acceptance of all SQL.
+Prioritize actual fleet migrations within it. Avoid accidental side effects such
+as replaying source row events into target triggers that fire again. Unsupported
+objects or row/key/type shapes must remain explicit gaps even if their CREATE SQL
+would execute successfully. For each supported schema change, prove subsequent
+INSERT/UPDATE/DELETE using that schema; broaden the decoder/schema validator and
+key handling as necessary. Preserve all existing DML regressions.
+
+Include the concrete long-index incompatibility: a unique utf8mb4 key whose byte
+length fits the source InnoDB layout but exceeds MyISAM's limit. Cover values
+below, at and above the boundary, composite and prefix keys, and ALTER on populated
+tables. Record SQL mode and page/row format; do not assume all non-unique oversized
+index forms fail rather than warn/truncate. The documented MyISAM key limit is
+1000 bytes; InnoDB limits depend on its layout. Test actual errors and effects,
+without making either reference succeed by editing the index.
+[MyISAM limits](https://dev.mysql.com/doc/refman/8.4/en/myisam-storage-engine.html),
+[index length semantics](https://dev.mysql.com/doc/refman/8.4/en/create-table.html).
+
+## Execution and schema history
+
+Prefer preserving source DDL semantics over an expanding SQL rewrite policy.
+Evaluate forwarding a validated single DDL statement with its query-event context,
+using parsing for classification, affected-object discovery and support checks.
+Do not turn the prototype into an unrestricted statement executor. Qualify source
+SQL mode, charset/collation, database, timestamp/time zone and other relevant query
+status variables; unknown semantic context blocks. Preserve native binlog-generated
+SQL forms as well as client spellings. Never split a multi-object/clause statement
+into independently committed rewrites to make it pass.
+
+Retain ordered DDL barriers and the durable intent before execution. After success,
+discover the actual target schema, verify it against the declared operation, retire
+affected historical versions and invalidate table-map/prepared-statement caches
+before following DML. Current source metadata cannot describe an older event.
+Conditional no-ops, implicit commits, rename dependencies and default-database
+changes each need boundary tests. Discover schemas internally, without config
+schema manifests.
+
+DDL on large instances can exceed the prototype's 10-second query timeout. Define
+and test a DDL-specific timeout/cancellation policy and metadata-lock behavior.
+A timed-out or disconnected statement may still execute: preserve its intent and
+block until its outcome is established. No automatic retry/recovery is introduced
+as part of this completeness increment.
+
+## Acceptance for the next increment
+
+- No hard-coded engine/charset or collation substitution remains in the accepted
+  DDL path; encoding follows event context and historically resolved native defaults.
+  Omitted/default engine cases are backed by actual source/native/Swift evidence;
+  configuration and session defaults are checked, not inferred from seeded tables.
+- The matrix enumerates supported cases and explicit gaps. Native successes in
+  the agreed common 8.4/5.7 subset pass schema/data/binlog comparisons; native
+  failures assert the expected category, diagnostic, partial effects and stop.
+- Every positive change has following DML and schema-cache checks. Every negative
+  has a later transaction that must not apply, with no false completed checkpoint.
+  Compare normalized effects and boundaries, not identical raw binlog bytes/GTIDs.
+- SQLite intents/history remain bounded under the existing pressure-triggered,
+  minimum-age cleanup, with pending references pinned. Run Swift/Rust tests and
+  DDL/DML suites through existing Make/SwiftPM automation; retain evidence.
+- The earlier 80-test/14-operation prototype result remains historical evidence
+  only. It does not pass this revised engine-policy or DDL-completeness gate.
+
+Recovery and operator skipping are the next separate implementation stage after
+these gates, as detailed in [START_BOUNDARY.md](START_BOUNDARY.md). Broader fleet
+coverage remains visible; neither this plan nor the old subset completes Phase 1.

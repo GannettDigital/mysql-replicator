@@ -74,9 +74,17 @@ public struct TargetConfiguration: Decodable {
     public let passwordEnvironment: String
     public let serverHostname: String
     public let caFile: String?
-    public let targetUUID: String
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
+    enum CodingKeys: String, CodingKey {case host,port,username,passwordEnvironment,serverHostname,caFile,nativeAutoStartDisabled,targetUUID}
+    public init(from decoder: Decoder) throws {
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
+        host=try c.decode(String.self,forKey:.host); port=try c.decode(Int.self,forKey:.port)
+        username=try c.decode(String.self,forKey:.username); passwordEnvironment=try c.decode(String.self,forKey:.passwordEnvironment)
+        serverHostname=try c.decode(String.self,forKey:.serverHostname); caFile=try c.decodeIfPresent(String.self,forKey:.caFile)
+        nativeAutoStartDisabled=try c.decode(Bool.self,forKey:.nativeAutoStartDisabled)
+    }
 }
 public struct ApplyConfiguration: Decodable {
     public let version: Int
@@ -91,7 +99,6 @@ public struct ApplyConfiguration: Decodable {
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
         _ = try source.validate()
         try require(!target.host.isEmpty && (1...65535).contains(target.port) && !target.username.isEmpty && !target.passwordEnvironment.isEmpty && !target.serverHostname.isEmpty,"invalid target connection")
-        try require(UUID(uuidString:target.targetUUID) != nil && target.targetUUID.lowercased() != source.sourceUUID.lowercased(),"invalid or identical source/target UUID")
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
         try policy.validate()
