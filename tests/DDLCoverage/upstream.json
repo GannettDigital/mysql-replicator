@@ -16,9 +16,9 @@
       "kind": "test",
       "sha256": "ff059c48c85c952073dab47f7a0c5a201b650035c0ed7ab99c958371e0166a77",
       "locator": {
-        "anchor": "create table if not exists t1 (b char(0) not null);",
-        "start_line": 16,
-        "end_line": 20
+        "start_line": 4,
+        "end_line": 20,
+        "anchor": "create table if not exists t1 (b char(0) not null);"
       },
       "dependencies": [],
       "result_refs": [
@@ -26,7 +26,7 @@
       ],
       "dependencies_reviewed": false,
       "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
+        "Selected section uses NO_ENGINE_SUBSTITUTION, same CHAR(0) NOT NULL definition and an already-present table; result records note 1050. Absent/different definitions and replication logging are not exercised by this section."
       ]
     },
     {
@@ -36,16 +36,14 @@
       "kind": "result",
       "sha256": "7eb656979cd6f4afec8bdb22038eb841960182cd85e3cdc6cb209565845596df",
       "locator": {
-        "anchor": "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';",
-        "start_line": 1,
-        "end_line": 1
+        "start_line": 12,
+        "end_line": 24,
+        "anchor": "create table if not exists t1 (b char(0) not null);"
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.create.like",
@@ -64,7 +62,7 @@
       ],
       "dependencies_reviewed": false,
       "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
+        "Selected section prepares populated t1 and t2; copied destination has no rows. Temporary tables shadow permanent names; PS protocol is disabled for warning_count and temporary engines are normalized. Defaults in result are InnoDB and utf8mb4_0900_ai_ci, not the 5.7 MyISAM fixture; runtime options/result selection need separate review."
       ]
     },
     {
@@ -74,16 +72,14 @@
       "kind": "result",
       "sha256": "7eb656979cd6f4afec8bdb22038eb841960182cd85e3cdc6cb209565845596df",
       "locator": {
-        "anchor": "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';",
-        "start_line": 1,
-        "end_line": 1
+        "start_line": 356,
+        "end_line": 422,
+        "anchor": "create table if not exists t3 like t1;"
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.drop.conditional",
@@ -102,7 +98,7 @@
       ],
       "dependencies_reviewed": false,
       "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
+        "Selected section assumes table1/table2 and view1..view4 absent; results show 42S02 without IF EXISTS and note 1051 with it. Present and mixed-present/missing nontransactional effects are not established. Earlier disconnect/wait setup and whole-file includes remain unreviewed."
       ]
     },
     {
@@ -112,16 +108,14 @@
       "kind": "result",
       "sha256": "78940ae065cd60a5755363e9dfcf8dcc83dc9a6988a3dfda052b747c86ef1e78",
       "locator": {
-        "anchor": "drop table if exists t1;",
-        "start_line": 1,
-        "end_line": 1
+        "start_line": 156,
+        "end_line": 175,
+        "anchor": "DROP TABLE IF EXISTS table1;"
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.rename.basic",
@@ -130,17 +124,19 @@
       "kind": "test",
       "sha256": "51a4c97cf14506b22a128bd9a5ef7acfcabf52b4b8e7b8dee6816d70bc174a54",
       "locator": {
-        "anchor": "rename table t0 to t1;",
-        "start_line": 13,
-        "end_line": 41
+        "start_line": 6,
+        "end_line": 43,
+        "anchor": "rename table t0 to t1;"
       },
-      "dependencies": [],
+      "dependencies": [
+        "mysql84.include.count-sessions"
+      ],
       "result_refs": [
         "mysql84.rename.basic.result"
       ],
       "dependencies_reviewed": false,
       "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
+        "Selected section snapshots session count, cleans t0..t9 and creates populated tables via CREATE SELECT. Covers rename chain, collisions and missing source; result masks accepted errors as Got one of the listed errors, so numeric errors come from test directives. Later locking/view/concurrency sections and transitive includes remain unreviewed."
       ]
     },
     {
@@ -150,16 +146,14 @@
       "kind": "result",
       "sha256": "ec4789b24aadbe8fe9d729d35800078683a5122652934574dc4797726079b05c",
       "locator": {
-        "anchor": "drop table if exists t0,t1,t2,t3,t4;",
-        "start_line": 1,
-        "end_line": 1
+        "start_line": 3,
+        "end_line": 42,
+        "anchor": "rename table t0 to t1;"
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.rpl.alter",
@@ -194,10 +188,8 @@
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.truncate.basic",
@@ -216,7 +208,7 @@
       ],
       "dependencies_reviewed": false,
       "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
+        "Selected section starts with two rows, checks count=0 after TRUNCATE, then count=1 after INSERT. Session/server engine defaults and row-binlog behavior need topology qualification."
       ]
     },
     {
@@ -226,16 +218,14 @@
       "kind": "result",
       "sha256": "5e3d934e31a6dfc39faa32f0ed208df1ee504914824740ac242e6cc90098a357",
       "locator": {
-        "anchor": "drop table if exists t1, t2;",
-        "start_line": 1,
-        "end_line": 1
+        "start_line": 2,
+        "end_line": 15,
+        "anchor": "truncate table t1;"
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.engine.disabled",
@@ -270,10 +260,8 @@
       },
       "dependencies": [],
       "result_refs": [],
-      "dependencies_reviewed": false,
-      "unresolved_dependencies": [
-        "Full transitive MTR setup and conditional includes require step 2 review."
-      ]
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     },
     {
       "id": "mysql84.grammar.create",
@@ -322,6 +310,165 @@
       "result_refs": [],
       "dependencies_reviewed": true,
       "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.truncate.missing",
+      "repository": "mysql84",
+      "path": "mysql-test/t/truncate.test",
+      "kind": "test",
+      "sha256": "c2e7106c228e9433e6d5ddec5c1b4c66e8853511f3fedc549888f6005bdde1ab",
+      "locator": {
+        "start_line": 25,
+        "end_line": 26,
+        "anchor": "truncate non_existing_table;"
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.truncate.missing.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Selected section reviewed; whole-file setup, runtime options and topology adaptation remain unqualified."
+      ]
+    },
+    {
+      "id": "mysql84.truncate.missing.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/truncate.result",
+      "kind": "result",
+      "sha256": "5e3d934e31a6dfc39faa32f0ed208df1ee504914824740ac242e6cc90098a357",
+      "locator": {
+        "start_line": 24,
+        "end_line": 25,
+        "anchor": "ERROR 42S02: Table 'test.non_existing_table' doesn't exist"
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.truncate.auto-increment",
+      "repository": "mysql84",
+      "path": "mysql-test/t/truncate.test",
+      "kind": "test",
+      "sha256": "c2e7106c228e9433e6d5ddec5c1b4c66e8853511f3fedc549888f6005bdde1ab",
+      "locator": {
+        "start_line": 32,
+        "end_line": 40,
+        "anchor": "truncate table t1;"
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.truncate.auto-increment.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Selected section reviewed; whole-file setup, runtime options and topology adaptation remain unqualified."
+      ]
+    },
+    {
+      "id": "mysql84.truncate.auto-increment.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/truncate.result",
+      "kind": "result",
+      "sha256": "5e3d934e31a6dfc39faa32f0ed208df1ee504914824740ac242e6cc90098a357",
+      "locator": {
+        "start_line": 26,
+        "end_line": 40,
+        "anchor": "truncate table t1;"
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.include.count-sessions",
+      "repository": "mysql84",
+      "path": "mysql-test/include/count_sessions.inc",
+      "kind": "include",
+      "sha256": "52731e2f86370ec98b853b885af2c9e6bf24adf9533dcc69b1c3090ec1303d2a",
+      "locator": {
+        "start_line": 21,
+        "end_line": 21,
+        "anchor": "let $count_sessions="
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.include.force-myisam",
+      "repository": "mysql84",
+      "path": "mysql-test/include/force_myisam_default.inc",
+      "kind": "include",
+      "sha256": "e634de39ce44afeb5e750411a4252b6a01e738893021cff2be1ef774aa6db25d",
+      "locator": {
+        "start_line": 1,
+        "end_line": 4,
+        "anchor": "default_storage_engine=MyISAM"
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.include.have-myisam",
+      "repository": "mysql84",
+      "path": "mysql-test/include/have_myisam.inc",
+      "kind": "include",
+      "sha256": "5d9effc6b4697f58aaaaec3bd1caded00e7a55110e8329d1d75606deb15ad62a",
+      "locator": {
+        "start_line": 1,
+        "end_line": 9,
+        "anchor": "--skip Test requires MyISAM."
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.rename.myisam-sdi",
+      "repository": "mysql84",
+      "path": "mysql-test/t/rename_myisam.test",
+      "kind": "test",
+      "sha256": "61d3174828e1fa5e4e5d6e3b972536a96be4f31250dae51a36be2c99248bc7b1",
+      "locator": {
+        "start_line": 1,
+        "end_line": 37,
+        "anchor": "RENAME TABLE t1 TO tt1;"
+      },
+      "dependencies": [
+        "mysql84.include.force-myisam",
+        "mysql84.include.have-myisam"
+      ],
+      "result_refs": [
+        "mysql84.rename.myisam-sdi.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Initial section needs MyISAM availability, force_myisam_default MTR recognition, datadir access and SDI filename normalization. Later lock/rollback sections and their transitive includes remain unreviewed; SDI filesystem checks do not transfer to MySQL 5.7."
+      ]
+    },
+    {
+      "id": "mysql84.rename.myisam-sdi.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/rename_myisam.result",
+      "kind": "result",
+      "sha256": "b4624c90c5769dd2936acc8359177a4f483530249373df5fd5fa857dd2546b54",
+      "locator": {
+        "start_line": 1,
+        "end_line": 21,
+        "anchor": "RENAME TABLE t1 TO tt1;"
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
     }
   ],
   "candidates": [
@@ -331,12 +478,23 @@
       "path": "mysql-test/t/create.test",
       "family": "B",
       "state": "pending_review",
-      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reason": "Selected sections mapped as related research; see scenario notes for exact matches versus contrasts. Whole-file review remains pending; no scenario is qualified.",
       "reference_ids": [
         "mysql84.create.conditional",
         "mysql84.create.like"
       ],
-      "scenario_ids": []
+      "scenario_ids": [
+        "ddl.table.create-if-not-exists.absent",
+        "ddl.table.create-if-not-exists.matching",
+        "ddl.table.create-if-not-exists.different",
+        "ddl.table.create-like.same-schema",
+        "ddl.table.create-like.cross-schema",
+        "ddl.table.create-like.existing-destination",
+        "ddl.table.create-like.missing-template",
+        "ddl.table.create-like.missing-database",
+        "ddl.table.create-like.conditional-existing",
+        "ddl.table.temporary.logging"
+      ]
     },
     {
       "id": "candidate.mysql-test.t.drop",
@@ -344,11 +502,16 @@
       "path": "mysql-test/t/drop.test",
       "family": "B",
       "state": "pending_review",
-      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reason": "Selected sections mapped as related research; see scenario notes for exact matches versus contrasts. Whole-file review remains pending; no scenario is qualified.",
       "reference_ids": [
         "mysql84.drop.conditional"
       ],
-      "scenario_ids": []
+      "scenario_ids": [
+        "ddl.table.drop.existing",
+        "ddl.table.drop-if-exists.present",
+        "ddl.table.drop-if-exists.absent",
+        "ddl.table.drop.multiple-partial"
+      ]
     },
     {
       "id": "candidate.mysql-test.t.rename",
@@ -356,11 +519,18 @@
       "path": "mysql-test/t/rename.test",
       "family": "B",
       "state": "pending_review",
-      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reason": "Selected sections mapped as related research; see scenario notes for exact matches versus contrasts. Whole-file review remains pending; no scenario is qualified.",
       "reference_ids": [
         "mysql84.rename.basic"
       ],
-      "scenario_ids": []
+      "scenario_ids": [
+        "ddl.table.rename.same-schema",
+        "ddl.table.rename.alter-spelling",
+        "ddl.table.rename.cross-schema",
+        "ddl.table.rename.destination-exists",
+        "ddl.table.rename.source-missing",
+        "ddl.table.rename.multiple-chain"
+      ]
     },
     {
       "id": "candidate.mysql-test.t.rename_myisam",
@@ -368,8 +538,10 @@
       "path": "mysql-test/t/rename_myisam.test",
       "family": "B",
       "state": "pending_review",
-      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
-      "reference_ids": [],
+      "reason": "Initial SDI rename section reviewed and MyISAM prerequisites pinned; 5.7 has no matching SDI fixture. Later locking and non-atomic rollback sections remain pending review.",
+      "reference_ids": [
+        "mysql84.rename.myisam-sdi"
+      ],
       "scenario_ids": []
     },
     {
@@ -378,11 +550,14 @@
       "path": "mysql-test/t/truncate.test",
       "family": "B",
       "state": "pending_review",
-      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reason": "Selected sections mapped as related research; see scenario notes for exact matches versus contrasts. Whole-file review remains pending; no scenario is qualified.",
       "reference_ids": [
         "mysql84.truncate.basic"
       ],
-      "scenario_ids": []
+      "scenario_ids": [
+        "ddl.table.truncate.populated",
+        "ddl.table.truncate.empty"
+      ]
     },
     {
       "id": "candidate.mysql-test.t.alter_table",

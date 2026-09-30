@@ -1,11 +1,13 @@
 # DDL coverage catalog implementation
 
-Definition, 2026-09-30, committed as `5270352`. **Step 1 is now implemented:**
+Definition, 2026-09-30, committed as `5270352`. **Steps 1–2 are implemented:**
 versioned JSON records/schemas, shared executable case registry, offline check and
-Markdown/JSON report commands. See [catalog usage and limits](../tests/DDLCoverage/README.md).
+Markdown/JSON report commands, pinned local upstream checking and candidate scanning. See [catalog usage and limits](../tests/DDLCoverage/README.md).
 The seed contains 55 scenarios and maps all 40 existing DDL/native cases, including
 one explicit DML-only classification. All qualifications remain unverified and all
-family inventories partial. Steps 2–4 below remain planned; existing integration
+family inventories partial. Selected lifecycle sections/results and prerequisites have
+been reviewed; contrast-only references and whole-file/transitive review gaps remain
+explicit. Steps 3–4 below remain planned; existing integration
 passes have not been promoted into assertion-level catalog evidence.
 This increment changes neither production replication behavior nor recovery policy.
 

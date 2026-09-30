@@ -234,7 +234,11 @@ public enum DDLCoverage {
         return lines.joined(separator: "\n") + "\n"
     }
     public static func run(root: URL, arguments: [String]) throws {
-        guard let command = arguments.first, ["check", "report"].contains(command) else { throw LabError("ddl-catalog supports check and report [--format markdown|json]; scan, upstream-check, evidence and verify remain planned") }
+        guard let command = arguments.first, ["check", "report", "scan", "upstream-check"].contains(command) else { throw LabError("ddl-catalog supports check, report, scan and upstream-check; evidence and verify remain planned") }
+        if ["scan", "upstream-check"].contains(command) {
+            let inventory = try load(directory: root.appendingPathComponent("tests/DDLCoverage"))
+            return try DDLUpstreamInspection.run(root: root, command: command, options: Array(arguments.dropFirst()), inventory: inventory)
+        }
         let options = Array(arguments.dropFirst())
         var format = "markdown"
         if command == "check" { try require(options.isEmpty, "ddl-catalog check accepts no arguments") }

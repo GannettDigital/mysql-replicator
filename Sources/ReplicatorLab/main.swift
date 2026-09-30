@@ -17,6 +17,8 @@ func main() throws -> Int32 {
           native-ddl-suite
           ddl-catalog check
           ddl-catalog report [--format markdown|json]
+          ddl-catalog upstream-check [--mysql-source PATH]
+          ddl-catalog scan [--mysql-source PATH]
           upstream-tests
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains

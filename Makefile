@@ -46,3 +46,10 @@ ddl-catalog-check:
 
 ddl-catalog-report:
 	@swift run replicator-lab ddl-catalog report $(ARGS)
+
+.PHONY: ddl-catalog-upstream-check ddl-catalog-scan
+ddl-catalog-upstream-check:
+	@swift run replicator-lab ddl-catalog upstream-check $(ARGS)
+
+ddl-catalog-scan:
+	@swift run replicator-lab ddl-catalog scan $(ARGS)

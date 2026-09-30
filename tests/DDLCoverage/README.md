@@ -1,9 +1,9 @@
 # DDL coverage catalog
 
-This is the first implementation step of the
+This implements steps 1–2 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
 reviewable checklist. It contains 55 scoped scenarios, 29 features across families
-A–F, four fixture profiles and 17 pinned research references. The shared registry
+A–F, four fixture profiles and 26 pinned research references. The shared registry
 contains 40 executable case declarations: 34 from `ddl-suite` and six from
 `native-ddl-suite`. The DML baseline case has an explicit non-DDL classification.
 All family inventories remain partial; broader feature rows must be split during
@@ -17,6 +17,8 @@ From the repository root:
 make ddl-catalog-check
 make ddl-catalog-report
 make ddl-catalog-report ARGS='--format json'
+make ddl-catalog-upstream-check
+make ddl-catalog-scan
 swift test --filter DDLCoverageTests
 ```
 
@@ -38,8 +40,8 @@ registry. They separate implementation, intent and qualification, and distinguis
 expected source/native/direct-5.7/Swift outcomes. JSON also includes required
 assertions, current case-definition file/line locations and gaps.
 
-Upstream scan/check, evidence import/export, assertion provenance and completeness
-`verify` are subsequent steps. These commands/options currently fail explicitly;
+Evidence import/export, assertion provenance and completeness `verify` are
+subsequent steps. These commands/options currently fail explicitly;
 no old suite pass is silently imported as coverage. `make upstream-tests` remains
 the Rust binlog codec test suite and has no DDL-completeness meaning.
 
@@ -54,9 +56,9 @@ the Rust binlog codec test suite and has no DDL-completeness meaning.
   FULL/MINIMAL in profile IDs means **row metadata**; both Swift profiles use FULL
   row images. No other positioning/metadata combinations are implied.
 - `upstream.json`: repository pin, selected file hashes/locators, associated result
-  files and candidate inventory. Relevant dependencies are explicitly unreviewed;
-  the checker validates these records without reading the ignored checkout. File
-  hash/anchor verification and include discovery are the next implementation step.
+  files and candidate inventory. Selected lifecycle sections and leaf prerequisites
+  are reviewed; remaining dependency gaps are explicit. The offline `check` validates
+  records without the checkout; `upstream-check` verifies them against local files.
 - `schema/*.schema.json`: version 1 strict object shapes. The Swift validator
   implements only their documented vocabulary: local `$defs`/`$ref`, object
   properties/required/additionalProperties=false, arrays/items/minItems/uniqueItems,
@@ -109,10 +111,90 @@ The compiled CLI produced the same report from a minimal temporary checkout with
 only the catalog and `compose.yaml`, without `.upstream`, `.git`, or artifacts.
 All 40 source locations resolved, all 26 ordered DDL/DML fixture definitions and
 the native/rejection SQL constants matched the committed baseline, and the 17
-reference hashes/locators matched the pinned local checkout. Permanent automated
-upstream checking remains step 2. No Docker suites were rerun for this metadata/
+reference hashes/locators matched the pinned local checkout. Automated upstream checking was added in step 2. No Docker suites were rerun for this metadata/
 declaration refactor; existing SQL and assertions were unchanged.
 
 Review outputs and the test log are retained locally in
 `artifacts/ddl-catalog-step1/`. They validate the catalog implementation, not the
 108 replication-profile obligations it currently declares.
+
+## Local upstream inspection (step 2)
+
+Both new commands default to `.upstream/mysql-server`, at the revision recorded in
+`upstream.json`. Override with `ARGS='--mysql-source /path/to/mysql-server'`, or use
+`swift run replicator-lab ddl-catalog scan --mysql-source /path/to/mysql-server`.
+They require local Git and OpenSSL, a clean checkout at the exact pin, and fetch
+nothing. Missing/wrong/dirty checkouts fail without resetting the source.
+
+`upstream-check` validates every pinned file's SHA256 and exactly one anchor match
+**within its declared line range**. It checks include/result/options paths and
+rejects a `dependencies_reviewed` claim if discovered direct dependencies are
+unrecorded, unresolved, or lead to unreviewed dependency references. A successful
+check can still have research gaps: see `review_gaps` in its JSON report. It does
+not run MTR or establish the server settings/results for our topology.
+
+`scan` first runs that checker, then searches `.test` files in the catalog's declared
+scan roots for DDL text, including statically reachable include-only wrappers.
+It follows literal `source`/`--source` directives using the including directory
+first, then `mysql-test/`, matching `client/mysqltest.cc::open_file`. Each file is
+visited once; cycles remain visible as edges. Missing literal paths, dynamic paths
+and unsupported include syntax remain unresolved. Branches and variables are not
+evaluated. Files with intentional non-UTF8 test bytes use replacement characters
+for ASCII text discovery; SHA256 always hashes the original bytes.
+
+The scanner records file hashes, include edges with line numbers, possible result
+variants through wrapper tests, per-test options/configuration/combinations, shell
+hooks, nearby suite settings and the possible default configuration. It marks newly discovered
+candidates `addition_for_review`. Existing records preserve their review states;
+family scope hints are not semantic classifications. Comments/SQL strings can
+produce false positives. Dynamic/generated SQL, unrecognized directives and suites
+outside the declared roots can produce omissions. Configuration/option-file includes, suite.pm, hooks
+and runtime result selection still need manual review. This is a candidate finder,
+not an MTR parser, execution trace, exhaustive language inventory or coverage gate.
+
+Reports go to ignored directories:
+
+- `artifacts/ddl-catalog-upstream-check/<run>/upstream-check.json`
+- `artifacts/ddl-catalog-scan/<run>/inventory.json` and `upstream-check.json`
+
+`inventory.json` contains candidate additions plus a file/include graph, including
+unresolved includes from scanned tests that the DDL heuristic did not select.
+Reports do not modify the catalog, expectations, source checkout or review states.
+Repeated scans of the same inputs produce identical JSON content; the containing
+run directory is unique. Progress messages describe each major scan phase.
+
+## Lifecycle reference review
+
+Section IDs and exact line ranges/hashes in `upstream.json` are authoritative.
+All mappings remain `related_reference`: the executable Swift fixtures were
+independently authored, not ported MTR cases.
+
+| Reference section | Reviewed behavior and setup | Remaining gap |
+| --- | --- | --- |
+| `mysql84.create.conditional` | Existing matching CHAR(0) NOT NULL definition; NO_ENGINE_SUBSTITUTION; result note 1050 | Absent/different definitions and source logging are not demonstrated |
+| `mysql84.create.like` | Populated template, empty copy, cross-schema copy, existing/missing object errors; temporary shadowing; PS warning-count handling | 8.4 InnoDB/default collation results are not 5.7 MyISAM expectations; native/Swift and logging observations needed |
+| `mysql84.drop.conditional` | Missing table(s): errors without IF EXISTS, note 1051 with it | Present/mixed-object drops and nontransactional partial effects need separate references and observations |
+| `mysql84.rename.basic` | Session-count setup, populated CREATE SELECT sources, simple rename/chains, collisions and missing source | Error lists are masked in `.result`; numeric/symbolic expectations come from `.test`; cross-schema/ALTER spelling and MyISAM partial effects remain gaps |
+| `mysql84.rename.myisam-sdi` | MyISAM availability/default prerequisites, datadir access and normalized SDI filenames | SDI filesystem checks do not transfer to 5.7; later locking/rollback sections remain pending |
+| `mysql84.truncate.basic` | Two rows, TRUNCATE, count=0, INSERT, count=1 | Empty-table variant and row-event/binlog qualification remain pending |
+| `mysql84.truncate.missing` | Missing table: 1146 / SQLSTATE 42S02 | Source rejection alone is not replicated rejection |
+| `mysql84.truncate.auto-increment` | TRUNCATE produces generated values 1,2; DELETE then produces 3,4 | Must establish actual native/MyISAM/Swift outcomes |
+
+Large files stay `pending_review` even where `scenario_ids` list reviewed sections.
+Leaf include/result review does not imply whole-test or replication qualification.
+All six family inventories remain partial and all 108 scenario/profile obligations
+remain unverified. Next is assertion/evidence integration, followed by native
+observations and implementation of the explicitly missing lifecycle variants.
+
+Step 2 validation on 2026-09-30: all 34 harness tests passed, including synthetic Git
+fixtures for pin/hash drift, locator ambiguity, include lookup/cycles, missing and
+dynamic includes, result variants, symlink rejection and deterministic scans. The
+real pinned checkout passed 26 reference checks (10 with explicit dependency-review
+gaps). The scan examined 2,244 tests, reported 2,102 candidates (2,093 additions)
+and hashed 5,462 files. Its 277 unresolved include expressions include intentional
+MTR meta-tests; they are review items, not automatically defects in MySQL.
+No production workload or Docker fixture was changed by this increment.
+
+The final test log and offline coverage report are retained in
+`artifacts/ddl-catalog-step2/`; the generated source inventory is in
+`artifacts/ddl-catalog-scan/20260930T203504Z-06d1c40b/`.

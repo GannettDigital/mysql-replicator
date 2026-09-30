@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "inventory_revision": "ddl-catalog-initial-v1",
+  "inventory_revision": "ddl-catalog-upstream-review-v2",
   "families": [
     {
       "id": "A",
@@ -28,8 +28,9 @@
         "mysql-test/common/binlog"
       ],
       "outstanding_questions": [
-        "Complete pinned upstream scenario review, including result variants and transitive setup.",
-        "Split remaining feature placeholders and reconcile actual fleet requirements."
+        "Selected lifecycle sections/results reviewed; whole files, transitive setup and runtime result variants remain partial.",
+        "Find exact references for absent/different conditional CREATE, present conditional DROP, mixed-object partial DROP, ALTER RENAME, cross-schema RENAME and empty TRUNCATE.",
+        "Establish 8.4 native / direct 5.7 / Swift behavior and per-assertion evidence; upstream default-engine results are research, not topology qualification."
       ]
     },
     {
@@ -789,7 +790,8 @@
       "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare all source/destination names and data; independently observe MyISAM effects of errors in multi-object statements."
       ],
       "operation": [
         "RENAME TABLE poc.changes TO poc.renamed",
@@ -802,7 +804,7 @@
         {
           "id": "mysql84.rename.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed populated source to absent destination; session-count setup and CREATE SELECT preparation differ from the handwritten fixture."
         },
         {
           "id": "mysql84.rpl.alter",
@@ -913,7 +915,8 @@
       ],
       "gaps": [
         "Existing fixture does not by itself establish every unbound warning/history/negative variant.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification."
+        "Wire required assertion IDs and evidence provenance; audit every required check before qualification.",
+        "Upstream section review: Reviewed populated source to absent destination; session-count setup and CREATE SELECT preparation differ from the handwritten fixture."
       ]
     },
     {
@@ -1060,7 +1063,8 @@
       "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Record initial rows and AUTO_INCREMENT before the statement; use a permanent table unless this scenario explicitly says temporary."
       ],
       "operation": [
         "TRUNCATE TABLE poc.renamed",
@@ -1075,7 +1079,7 @@
         {
           "id": "mysql84.truncate.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed populated table -> count=0 -> INSERT -> count=1; following row events and target binlogs remain separate obligations."
         }
       ],
       "required_profiles": [
@@ -1183,7 +1187,8 @@
       ],
       "gaps": [
         "Existing fixture does not by itself establish every unbound warning/history/negative variant.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification."
+        "Wire required assertion IDs and evidence provenance; audit every required check before qualification.",
+        "Upstream section review: Reviewed populated table -> count=0 -> INSERT -> count=1; following row events and target binlogs remain separate obligations."
       ]
     },
     {
@@ -1196,7 +1201,8 @@
       "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "DROP TABLE poc.renamed"
@@ -1208,7 +1214,7 @@
         {
           "id": "mysql84.drop.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: selected upstream section has missing objects, not a successful existing-table DROP."
         }
       ],
       "required_profiles": [
@@ -1313,7 +1319,8 @@
       ],
       "gaps": [
         "Existing fixture does not by itself establish every unbound warning/history/negative variant.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification."
+        "Wire required assertion IDs and evidence provenance; audit every required check before qualification.",
+        "Upstream section review: Related contrast only: selected upstream section has missing objects, not a successful existing-table DROP."
       ]
     },
     {
@@ -3183,7 +3190,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "CREATE TABLE IF NOT EXISTS into an absent name"
@@ -3195,7 +3203,7 @@
         {
           "id": "mysql84.create.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: the selected upstream section starts with an existing table; the absent-table variant still needs a native observation."
         }
       ],
       "required_profiles": [
@@ -3280,8 +3288,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: the selected upstream section starts with an existing table; the absent-table variant still needs a native observation."
       ]
     },
     {
@@ -3294,7 +3302,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "CREATE TABLE IF NOT EXISTS with an existing matching definition"
@@ -3306,7 +3315,7 @@
         {
           "id": "mysql84.create.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed matching-definition section: existing CHAR(0) NOT NULL table; result records note 1050. Replication logging/no-op semantics remain to be measured."
         }
       ],
       "required_profiles": [
@@ -3395,8 +3404,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed matching-definition section: existing CHAR(0) NOT NULL table; result records note 1050. Replication logging/no-op semantics remain to be measured."
       ]
     },
     {
@@ -3409,7 +3418,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "CREATE TABLE IF NOT EXISTS with an existing different definition"
@@ -3421,7 +3431,7 @@
         {
           "id": "mysql84.create.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: upstream repeats an identical definition. It does not establish handling of a different definition."
         }
       ],
       "required_profiles": [
@@ -3506,8 +3516,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: upstream repeats an identical definition. It does not establish handling of a different definition."
       ]
     },
     {
@@ -3520,7 +3530,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "DROP TABLE IF EXISTS with an existing table"
@@ -3532,7 +3543,7 @@
         {
           "id": "mysql84.drop.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: selected upstream conditional DROP uses missing objects. Prepare an existing target and observe schema/binlog effects separately."
         }
       ],
       "required_profiles": [
@@ -3621,8 +3632,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: selected upstream conditional DROP uses missing objects. Prepare an existing target and observe schema/binlog effects separately."
       ]
     },
     {
@@ -3635,7 +3646,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "DROP TABLE IF EXISTS with a missing table"
@@ -3647,7 +3659,7 @@
         {
           "id": "mysql84.drop.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed absent-table conditional DROP: result records note 1051. Source logging and replica warnings remain unmeasured."
         }
       ],
       "required_profiles": [
@@ -3732,8 +3744,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed absent-table conditional DROP: result records note 1051. Source logging and replica warnings remain unmeasured."
       ]
     },
     {
@@ -3746,7 +3758,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
         "CREATE TABLE LIKE a populated template in the same schema"
@@ -3758,7 +3771,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed populated template -> empty copied destination with matching SHOW CREATE; upstream uses InnoDB/default 8.4 collation, which must not be copied into 5.7 fixture assumptions."
         }
       ],
       "required_profiles": [
@@ -3847,8 +3860,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed populated template -> empty copied destination with matching SHOW CREATE; upstream uses InnoDB/default 8.4 collation, which must not be copied into 5.7 fixture assumptions."
       ]
     },
     {
@@ -3861,7 +3874,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
         "CREATE TABLE LIKE a populated template in another schema"
@@ -3873,7 +3887,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed mysqltest.t3 LIKE test.t1 after creating mysqltest; following temporary-table cases require separate treatment."
         }
       ],
       "required_profiles": [
@@ -3962,8 +3976,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed mysqltest.t3 LIKE test.t1 after creating mysqltest; following temporary-table cases require separate treatment."
       ]
     },
     {
@@ -3976,7 +3990,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
         "CREATE TABLE LIKE with an existing destination"
@@ -3988,7 +4003,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed existing destination: test expects 1050; result records SQLSTATE 42S01. This is source rejection, not evidence of an event rejected by a replica."
         }
       ],
       "required_profiles": [
@@ -4077,8 +4092,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed existing destination: test expects 1050; result records SQLSTATE 42S01. This is source rejection, not evidence of an event rejected by a replica."
       ]
     },
     {
@@ -4091,7 +4106,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
         "CREATE TABLE LIKE with a missing template"
@@ -4103,7 +4119,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed missing template: test expects ER_NO_SUCH_TABLE, result SQLSTATE 42S02. Source logging and topology observations remain pending."
         }
       ],
       "required_profiles": [
@@ -4188,8 +4204,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed missing template: test expects ER_NO_SUCH_TABLE, result SQLSTATE 42S02. Source logging and topology observations remain pending."
       ]
     },
     {
@@ -4202,7 +4218,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
         "CREATE TABLE LIKE into a missing schema"
@@ -4214,7 +4231,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed missing destination schema: test expects 1049, result SQLSTATE 42000. Source rejection does not exercise Swift apply."
         }
       ],
       "required_profiles": [
@@ -4299,8 +4316,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed missing destination schema: test expects 1049, result SQLSTATE 42000. Source rejection does not exercise Swift apply."
       ]
     },
     {
@@ -4313,7 +4330,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
         "CREATE TABLE IF NOT EXISTS LIKE with an existing destination"
@@ -4325,7 +4343,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed existing destination with IF NOT EXISTS: note 1050 and warning_count=1; PS protocol disabled for the count. Binlog/no-op behavior remains pending."
         }
       ],
       "required_profiles": [
@@ -4414,8 +4432,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed existing destination with IF NOT EXISTS: note 1050 and warning_count=1; PS protocol disabled for the count. Binlog/no-op behavior remains pending."
       ]
     },
     {
@@ -4428,7 +4446,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare all source/destination names and data; independently observe MyISAM effects of errors in multi-object statements."
       ],
       "operation": [
         "ALTER TABLE RENAME TO within the same schema"
@@ -4440,7 +4459,7 @@
         {
           "id": "mysql84.rename.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: selected section uses RENAME TABLE, not ALTER TABLE RENAME; locate a specific ALTER spelling section before qualification."
         }
       ],
       "required_profiles": [
@@ -4529,8 +4548,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: selected section uses RENAME TABLE, not ALTER TABLE RENAME; locate a specific ALTER spelling section before qualification."
       ]
     },
     {
@@ -4543,7 +4562,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare all source/destination names and data; independently observe MyISAM effects of errors in multi-object statements."
       ],
       "operation": [
         "RENAME TABLE across schemas"
@@ -4555,7 +4575,7 @@
         {
           "id": "mysql84.rename.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: selected section remains in one schema. Cross-schema engine/trigger/error behavior requires a separate reference and observation."
         }
       ],
       "required_profiles": [
@@ -4644,8 +4664,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: selected section remains in one schema. Cross-schema engine/trigger/error behavior requires a separate reference and observation."
       ]
     },
     {
@@ -4658,7 +4678,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare all source/destination names and data; independently observe MyISAM effects of errors in multi-object statements."
       ],
       "operation": [
         "RENAME TABLE to an existing name"
@@ -4670,7 +4691,7 @@
         {
           "id": "mysql84.rename.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed collision including self-rename: test expects ER_TABLE_EXISTS_ERROR; result deliberately masks the accepted error list."
         }
       ],
       "required_profiles": [
@@ -4755,8 +4776,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed collision including self-rename: test expects ER_TABLE_EXISTS_ERROR; result deliberately masks the accepted error list."
       ]
     },
     {
@@ -4769,7 +4790,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare all source/destination names and data; independently observe MyISAM effects of errors in multi-object statements."
       ],
       "operation": [
         "RENAME TABLE with a missing source"
@@ -4781,7 +4803,7 @@
         {
           "id": "mysql84.rename.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed missing source inside a multi-rename chain; single-source missing and MyISAM partial effects need separate observations."
         }
       ],
       "required_profiles": [
@@ -4866,8 +4888,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed missing source inside a multi-rename chain; single-source missing and MyISAM partial effects need separate observations."
       ]
     },
     {
@@ -4880,7 +4902,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare all source/destination names and data; independently observe MyISAM effects of errors in multi-object statements."
       ],
       "operation": [
         "Rename several tables in a dependency chain"
@@ -4892,7 +4915,7 @@
         {
           "id": "mysql84.rename.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed ordered rename chain using a spare name; data SELECTs and failed-chain cases are present. MyISAM rollback/partial effects are not established by default-engine results."
         }
       ],
       "required_profiles": [
@@ -4977,8 +5000,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed ordered rename chain using a spare name; data SELECTs and failed-chain cases are present. MyISAM rollback/partial effects are not established by default-engine results."
       ]
     },
     {
@@ -4991,7 +5014,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "Drop multiple tables with mixed existing/missing objects and inspect partial effects"
@@ -5003,7 +5027,7 @@
         {
           "id": "mysql84.drop.conditional",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: upstream drops two missing objects. It does not establish mixed existing/missing objects or MyISAM partial effects."
         }
       ],
       "required_profiles": [
@@ -5088,8 +5112,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: upstream drops two missing objects. It does not establish mixed existing/missing objects or MyISAM partial effects."
       ]
     },
     {
@@ -5102,7 +5126,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Record initial rows and AUTO_INCREMENT before the statement; use a permanent table unless this scenario explicitly says temporary."
       ],
       "operation": [
         "TRUNCATE an empty table"
@@ -5114,7 +5139,7 @@
         {
           "id": "mysql84.truncate.basic",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related contrast only: selected section truncates a populated table, not an already-empty table."
         }
       ],
       "required_profiles": [
@@ -5203,8 +5228,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related contrast only: selected section truncates a populated table, not an already-empty table."
       ]
     },
     {
@@ -5217,7 +5242,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Record initial rows and AUTO_INCREMENT before the statement; use a permanent table unless this scenario explicitly says temporary."
       ],
       "operation": [
         "TRUNCATE a missing table"
@@ -5227,9 +5253,9 @@
       ],
       "upstream_refs": [
         {
-          "id": "mysql84.truncate.basic",
+          "id": "mysql84.truncate.missing",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed missing-table TRUNCATE: test expects 1146 and result SQLSTATE 42S02; source rejection does not itself exercise replication."
         }
       ],
       "required_profiles": [
@@ -5314,8 +5340,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed missing-table TRUNCATE: test expects 1146 and result SQLSTATE 42S02; source rejection does not itself exercise replication."
       ]
     },
     {
@@ -5328,7 +5354,8 @@
       "implementation": "missing",
       "intent": "apply",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Record initial rows and AUTO_INCREMENT before the statement; use a permanent table unless this scenario explicitly says temporary."
       ],
       "operation": [
         "TRUNCATE with AUTO_INCREMENT and subsequent generated keys"
@@ -5338,9 +5365,9 @@
       ],
       "upstream_refs": [
         {
-          "id": "mysql84.truncate.basic",
+          "id": "mysql84.truncate.auto-increment",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Reviewed TRUNCATE resets generated values to 1,2; subsequent DELETE preserves counter and produces 3,4. MyISAM/native/Swift and logging observations remain pending."
         }
       ],
       "required_profiles": [
@@ -5429,8 +5456,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Reviewed TRUNCATE resets generated values to 1,2; subsequent DELETE preserves counter and produces 3,4. MyISAM/native/Swift and logging observations remain pending."
       ]
     },
     {
@@ -5443,7 +5470,8 @@
       "implementation": "missing",
       "intent": "observe",
       "prerequisites": [
-        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
+        "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
         "Temporary-table DDL logging and subsequent row behavior"
@@ -5455,7 +5483,7 @@
         {
           "id": "mysql84.create.like",
           "relationship": "related_reference",
-          "note": "Research reference for an independently authored scenario; upstream data/engine setup is not claimed equivalent to this fixture."
+          "note": "Related SQL behavior only: temporary objects shadow permanent names and temporary engine output is normalized. No row-binlog logging conclusion follows from this section."
         }
       ],
       "required_profiles": [
@@ -5540,8 +5568,8 @@
       ],
       "bindings": [],
       "gaps": [
-        "Reference is related research, not proof that this exact state variation has been inspected or ported.",
-        "Implementation and named tests are pending."
+        "Implementation and named tests are pending.",
+        "Upstream section review: Related SQL behavior only: temporary objects shadow permanent names and temporary engine output is normalized. No row-binlog logging conclusion follows from this section."
       ]
     },
     {

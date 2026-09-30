@@ -167,7 +167,7 @@ final class DDLCoverageTests: XCTestCase {
     }
     func testUnavailableEvidenceAndVerifyCommandsAreNotSilentlyAccepted() throws {
         let root = committed.deletingLastPathComponent().deletingLastPathComponent()
-        for args in [["verify"], ["scan"], ["report", "--evidence", "old-result.json"], ["check", "--format", "json"], ["report", "--format"]] {
+        for args in [["verify"], ["scan", "--unsupported"], ["report", "--evidence", "old-result.json"], ["check", "--format", "json"], ["report", "--format"]] {
             XCTAssertThrowsError(try DDLCoverage.run(root: root, arguments: args))
         }
     }
