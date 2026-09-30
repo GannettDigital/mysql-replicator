@@ -1,6 +1,17 @@
 import Foundation
 
 public enum DMLQualification {
+    private struct DDLChange {
+        let test: QualificationCase
+        let sql, table, schema, rows, collation: String
+        init(_ id: String, _ name: String, _ sql: String, _ table: String, _ schema: String,
+             _ rows: String, _ collation: String, file: String = #filePath, line: UInt = #line) {
+            test = QualificationCase(id, name, file: file, line: line)
+            self.sql = sql; self.table = table; self.schema = schema
+            self.rows = rows; self.collation = collation
+        }
+    }
+
     public static func run(root: URL, build: Bool = true, ddl: Bool = false) throws {
         let runner = ProcessRunner(root:root)
         let image = "mysql-replicator-packaging:dml"
@@ -28,6 +39,7 @@ public enum DMLQualification {
         var clients: [String] = [], started = false, failure: Error?
         var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":ddl ? "qualified_subset" : "not_exercised"]
         func stage(_ text: String) { FileHandle.standardError.write(Data(("\(ddl ? "DDL" : "DML") \(mode): " + text + "\n").utf8)) }
+        let cases = QualificationReporter(output: output, log: stage)
         stage("evidence: \(output.path)")
         func docker(_ args: [String]) throws -> CommandResult { try runner.run(["docker"] + args) }
         func record(_ name: String,_ args: [String]) throws -> CommandResult {
@@ -36,8 +48,9 @@ public enum DMLQualification {
             try require(r.status == 0,"\(name) failed; see evidence")
             return r
         }
-        func start(_ label: String,_ config: [String:Any]) throws -> String {
-            stage("starting \(label)")
+        func start(_ test: QualificationCase,_ config: [String:Any]) throws -> String {
+            try cases.begin(test)
+            let label = test.id
             try writeJSON(config,to:output.appendingPathComponent(label + ".json"))
             _ = try docker(["cp",output.appendingPathComponent(label + ".json").path,evidenceHelper + ":/evidence/" + label + ".json"])
             let name = h.project + "-" + label; clients.append(name)
@@ -54,7 +67,6 @@ public enum DMLQualification {
             let lines = String(decoding:logs.stderr,as:UTF8.self).split(separator:"\n")
             guard let last = lines.last,let object = try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any] else { throw LabError("missing \(label) diagnostic") }
             if let reason { try require((object["reason"] as? String ?? "").contains(reason),"\(label) failed for the wrong reason") }
-            stage("passed \(label)")
             return object
         }
         func waitForReader(_ name: String) throws {
@@ -119,7 +131,7 @@ public enum DMLQualification {
                 return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],"stateDirectory":"/evidence/state-" + label]
             }
             let positiveConfig = configuration("positive",at:sourceStart,count:4)
-            let client = try start("positive",positiveConfig); try waitForReader(client)
+            let client = try start(QualificationCase("positive", "Replicate INSERT, UPDATE and DELETE; compare rows, binlogs and SQLite checkpoints"),positiveConfig); try waitForReader(client)
             stage("running INSERT/UPDATE/DELETE workload")
             _ = try h.sql("source",Fixture.sql(transaction:false))
             let sourceEnd = try h.boundary("source")
@@ -139,85 +151,87 @@ public enum DMLQualification {
                 try FileManager.default.copyItem(at:dir.appendingPathComponent("operations.json"),to:dir.appendingPathComponent("positive-operations.json"))
             }
             try require(state("positive","SELECT target_uuid FROM state") == targetUUID,"discovered target UUID was not persisted")
+            try cases.pass("positive")
             report["positive"] = positive
             if ddl {
-                // SQL, table, ordered schema, exact rows, expected note collation.
-                let changes: [(String,String,String,String,String)] = [
-                    ("CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY)","changes","payload:varbinary:YES,id:int:NO","",""),
-                    ("INSERT INTO poc.changes VALUES(0x00FF,1)","changes","payload:varbinary:YES,id:int:NO","1\t00FF",""),
-                    ("ALTER TABLE poc.changes ADD note VARCHAR(20) NULL FIRST","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\tNULL\t00FF","utf8mb4_unicode_ci"),
-                    ("UPDATE poc.changes SET note='first' WHERE id=1","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\t6669727374\t00FF","utf8mb4_unicode_ci"),
-                    ("ALTER TABLE poc.changes DROP COLUMN payload","changes","note:varchar:YES,id:int:NO","1\t6669727374","utf8mb4_unicode_ci"),
-                    ("UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
-                    ("RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
-                    ("INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL","utf8mb4_unicode_ci"),
-                    ("DROP TABLE poc.renamed","renamed","","",""),
-                    ("CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE='DEFAULT'","renamed","id:bigint:NO,b:varbinary:YES","",""),
-                    ("INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
-                    ("TRUNCATE TABLE poc.renamed","renamed","id:bigint:NO,b:varbinary:YES","",""),
-                    ("INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
-                    ("UPDATE poc.renamed SET b=NULL WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tNULL",""),
-                    ("DELETE FROM poc.renamed WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","",""),
-                    ("DROP TABLE poc.renamed","renamed","","",""),
-                    ("CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY,note VARCHAR(20) COLLATE utf8mb4_bin) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
-                    ("INSERT INTO poc.changes VALUES(0x00FF,1,'last')","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t6C617374\t00FF","utf8mb4_bin"),
-                    ("UPDATE poc.changes SET note='done' WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t646F6E65\t00FF","utf8mb4_bin"),
-                    ("DELETE FROM poc.changes WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
-                    ("DROP TABLE poc.changes","changes","","",""),
-                    ("CREATE TABLE poc.defaults(id INT PRIMARY KEY,note VARCHAR(20) CHARACTER SET utf8mb4)","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
-                    ("INSERT INTO poc.defaults VALUES(1,'charset')","defaults","id:int:NO,note:varchar:YES","1\t63686172736574","utf8mb4_general_ci"),
-                    ("UPDATE poc.defaults SET note='checked' WHERE id=1","defaults","id:int:NO,note:varchar:YES","1\t636865636B6564","utf8mb4_general_ci"),
-                    ("DELETE FROM poc.defaults WHERE id=1","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
-                    ("DROP TABLE poc.defaults","defaults","","","")
+                // Named scenarios retain their definition locations in progress and evidence.
+                let changes: [DDLChange] = [
+                    .init("create-local-engine", "CREATE without ENGINE uses each server default", "CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY)","changes","payload:varbinary:YES,id:int:NO","",""),
+                    .init("insert-binary", "INSERT preserves binary bytes in the new table", "INSERT INTO poc.changes VALUES(0x00FF,1)","changes","payload:varbinary:YES,id:int:NO","1\t00FF",""),
+                    .init("add-column-first", "ADD nullable VARCHAR FIRST inherits the table charset and collation", "ALTER TABLE poc.changes ADD note VARCHAR(20) NULL FIRST","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\tNULL\t00FF","utf8mb4_unicode_ci"),
+                    .init("update-added-column", "UPDATE writes the newly added first column", "UPDATE poc.changes SET note='first' WHERE id=1","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\t6669727374\t00FF","utf8mb4_unicode_ci"),
+                    .init("drop-payload-column", "DROP COLUMN preserves remaining values and column order", "ALTER TABLE poc.changes DROP COLUMN payload","changes","note:varchar:YES,id:int:NO","1\t6669727374","utf8mb4_unicode_ci"),
+                    .init("update-primary-key", "UPDATE changes the primary key after dropping a column", "UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
+                    .init("rename-table", "RENAME preserves data and removes the old table name", "RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
+                    .init("insert-after-rename", "INSERT NULL uses the renamed table schema", "INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL","utf8mb4_unicode_ci"),
+                    .init("drop-renamed-table", "DROP removes the renamed table", "DROP TABLE poc.renamed","renamed","","",""),
+                    .init("recreate-default-engine", "Recreate a dropped table with quoted DEFAULT engine and unsigned BIGINT key", "CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE='DEFAULT'","renamed","id:bigint:NO,b:varbinary:YES","",""),
+                    .init("insert-unsigned-maximum", "INSERT preserves the maximum unsigned BIGINT key and binary payload", "INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
+                    .init("truncate-nonempty-table", "TRUNCATE empties a populated table while retaining its schema", "TRUNCATE TABLE poc.renamed","renamed","id:bigint:NO,b:varbinary:YES","",""),
+                    .init("insert-after-truncate", "INSERT reuses the same primary key after TRUNCATE", "INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
+                    .init("update-binary-null", "UPDATE sets the binary payload to NULL", "UPDATE poc.renamed SET b=NULL WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tNULL",""),
+                    .init("delete-unsigned-maximum", "DELETE finds the maximum unsigned BIGINT primary key", "DELETE FROM poc.renamed WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","",""),
+                    .init("drop-recreated-table", "DROP removes the recreated table", "DROP TABLE poc.renamed","renamed","","",""),
+                    .init("create-explicit-collation", "CREATE preserves explicit table defaults and a COLLATE-only column", "CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY,note VARCHAR(20) COLLATE utf8mb4_bin) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
+                    .init("insert-explicit-collation", "INSERT preserves text and binary values under explicit collation", "INSERT INTO poc.changes VALUES(0x00FF,1,'last')","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t6C617374\t00FF","utf8mb4_bin"),
+                    .init("update-explicit-collation", "UPDATE text uses the explicitly collated column", "UPDATE poc.changes SET note='done' WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t646F6E65\t00FF","utf8mb4_bin"),
+                    .init("delete-explicit-collation", "DELETE removes the row from the explicitly collated table", "DELETE FROM poc.changes WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
+                    .init("drop-explicit-collation", "DROP removes the table with explicit collation", "DROP TABLE poc.changes","changes","","",""),
+                    .init("create-charset-only", "CREATE with CHARACTER SET uses the logged compatible default collation", "CREATE TABLE poc.defaults(id INT PRIMARY KEY,note VARCHAR(20) CHARACTER SET utf8mb4)","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
+                    .init("insert-charset-only", "INSERT text into a column created with CHARACTER SET only", "INSERT INTO poc.defaults VALUES(1,'charset')","defaults","id:int:NO,note:varchar:YES","1\t63686172736574","utf8mb4_general_ci"),
+                    .init("update-charset-only", "UPDATE text in the column using the logged default collation", "UPDATE poc.defaults SET note='checked' WHERE id=1","defaults","id:int:NO,note:varchar:YES","1\t636865636B6564","utf8mb4_general_ci"),
+                    .init("delete-charset-only", "DELETE the row from the charset-only table", "DELETE FROM poc.defaults WHERE id=1","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
+                    .init("drop-charset-only", "DROP removes the charset-only table", "DROP TABLE poc.defaults","defaults","","","")
                 ]
                 let ddlStart=try h.boundary("source"),ddlNativeStart=try h.boundary("native"),ddlTargetStart=try h.boundary("target57")
-                let applying=try start("ddl",configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
+                let applying=try start(QualificationCase("ddl", "Apply ordered DDL and DML; verify schema history, unchanged SQL and binlog order"),configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
                 _ = try h.sql("native","START REPLICA")
                 for (index,change) in changes.enumerated() {
-                    let prefix=change.1=="defaults" ? "SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; " : ""
-                    _ = try h.sql("source",prefix+change.0)
-                    let deadline=Date().addingTimeInterval(20)
-                    var applied=0
-                    repeat {
-                        let logs=try docker(["logs",applying]).stdout
-                        if let last=String(decoding:logs,as:UTF8.self).split(separator:"\n").last,
-                           let value=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any] {applied=value["transactionsApplied"] as? Int ?? 0}
-                        if applied==index+1 {break}
-                        if try docker(["inspect",applying,"--format","{{.State.Running}}"]).text != "true" {
-                            let stopped=try docker(["logs",applying])
-                            throw LabError("DDL stopped at step \(index+1): " + String(decoding:stopped.stderr,as:UTF8.self))
-                        }
-                        Thread.sleep(forTimeInterval:0.1)
-                    } while Date()<deadline
-                    try require(applied==index+1,"DDL did not reach step \(index+1)")
-                    let boundary=try h.boundary("source")
-                    let reached=try h.sql("native","SELECT SOURCE_POS_WAIT('\(boundary.file)',\(boundary.position),20)")
-                    try require(reached != "NULL" && reached != "-1","native DDL did not reach barrier")
-                    for service in h.services {
-                        let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)'")
-                        try require(schema == (change.2.isEmpty ? "NULL" : change.2),"\(service) DDL schema differs at step \(index+1)")
-                        if !change.2.isEmpty {
-                            let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)'")
-                            try require(engine == (service == "source" ? "InnoDB" : "MyISAM"),"DDL local engine selection differs")
-                            if change.2.contains("note:") {
-                                let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)' AND COLUMN_NAME='note'")
-                                try require(collation == change.4,"DDL collation differs")
+                    try cases.run(change.test) {
+                        let prefix=change.table=="defaults" ? "SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; " : ""
+                        _ = try h.sql("source",prefix+change.sql)
+                        let deadline=Date().addingTimeInterval(20)
+                        var applied=0
+                        repeat {
+                            let logs=try docker(["logs",applying]).stdout
+                            if let last=String(decoding:logs,as:UTF8.self).split(separator:"\n").last,
+                               let value=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any] {applied=value["transactionsApplied"] as? Int ?? 0}
+                            if applied==index+1 {break}
+                            if try docker(["inspect",applying,"--format","{{.State.Running}}"]).text != "true" {
+                                let stopped=try docker(["logs",applying])
+                                throw LabError("applier stopped before the expected transaction count: " + String(decoding:stopped.stderr,as:UTF8.self))
                             }
-                            let fields=change.2.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.2.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.2.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
-                            let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.1) ORDER BY id")
-                            try require(rows == change.3,"\(service) DDL data differs at step \(index+1)")
-                            try rows.write(to:output.appendingPathComponent("\(service)-ddl-\(index+1).tsv"),atomically:true,encoding:.utf8)
+                            Thread.sleep(forTimeInterval:0.1)
+                        } while Date()<deadline
+                        try require(applied==index+1,"applier did not reach the expected transaction count")
+                        let boundary=try h.boundary("source")
+                        let reached=try h.sql("native","SELECT SOURCE_POS_WAIT('\(boundary.file)',\(boundary.position),20)")
+                        try require(reached != "NULL" && reached != "-1","native DDL did not reach barrier")
+                        for service in h.services {
+                            let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                            try require(schema == (change.schema.isEmpty ? "NULL" : change.schema),"\(service) schema differs")
+                            if !change.schema.isEmpty {
+                                let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                                try require(engine == (service == "source" ? "InnoDB" : "MyISAM"),"DDL local engine selection differs")
+                                if change.schema.contains("note:") {
+                                    let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)' AND COLUMN_NAME='note'")
+                                    try require(collation == change.collation,"DDL collation differs")
+                                }
+                                let fields=change.schema.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.schema.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.schema.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
+                                let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.table) ORDER BY id")
+                                try require(rows == change.rows,"\(service) rows differ")
+                                try rows.write(to:output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"),atomically:true,encoding:.utf8)
+                            }
+                            if change.test.id=="rename-table" {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='changes'") == "0","renamed table remains")}
                         }
-                        if index==6 {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='changes'") == "0","renamed table remains")}
                     }
-                    stage("passed DDL/DML step \(index+1)")
                 }
                 let ddlEnd=try h.boundary("source")
                 let ddlResult=try finish(applying,"ddl",success:true)
                 try require(ddlResult["appliedGTIDSet"] as? String == ddlEnd.gtids,"DDL applied GTID coverage differs")
                 try require(ddlResult["ddlApplied"] as? Int == 12 && ddlResult["rowsApplied"] as? Int == 14,"DDL counters differ")
                 try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "12","DDL intent history missing")
-                let expectedCreates=changes.filter{$0.0.hasPrefix("CREATE TABLE")}.map{$0.0}.joined(separator:"\n")
+                let expectedCreates=changes.filter{$0.sql.hasPrefix("CREATE TABLE")}.map{$0.sql}.joined(separator:"\n")
                 try require(state("ddl","SELECT target_sql FROM ddl_intents WHERE target_sql LIKE 'CREATE TABLE%' ORDER BY rowid")==expectedCreates,"CREATE SQL was rewritten")
                 try require(state("ddl","SELECT COUNT(*) FROM schemas WHERE current=1") == "0","dropped schema remains current")
                 try require(state("ddl","SELECT COUNT(*) FROM row_intents r LEFT JOIN schemas s ON s.id=r.schema_id WHERE s.id IS NULL") == "0","row intent lost historical schema")
@@ -232,7 +246,7 @@ public enum DMLQualification {
                     let decoded=try runner.run([h.decoder,"--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(from.position)","--stop-position=\(end.position)",file.path])
                     try decoded.stdout.write(to:output.appendingPathComponent(service+"-ddl-binlog.txt"))
                     let text=String(decoding:decoded.stdout,as:UTF8.self).uppercased()
-                    let expectedKinds=changes.map {String($0.0.split(separator:" ")[0])}
+                    let expectedKinds=changes.map {String($0.sql.split(separator:" ")[0])}
                     let kinds=text.split(separator:"\n").compactMap {line -> String? in
                         for verb in ["CREATE TABLE","ALTER TABLE","RENAME TABLE","DROP TABLE","TRUNCATE TABLE"] {
                             if line.hasPrefix(verb+" ") {return String(verb.split(separator:" ")[0])}
@@ -245,37 +259,42 @@ public enum DMLQualification {
                     try require(kinds==expectedKinds,"DDL/DML binlog operations differ in count or source order")
                     try writeJSON(kinds,to:output.appendingPathComponent(service+"-ddl-operation-kinds.json"))
                 }
-                for (label,sql,reason) in [
-                    ("explicit_innodb","CREATE TABLE poc.explicit_innodb(id INT PRIMARY KEY) ENGINE=InnoDB","no engine rewriting"),
-                    ("collation_0900","CREATE TABLE poc.collation_0900(id INT PRIMARY KEY,v VARCHAR(12) COLLATE utf8mb4_0900_ai_ci)","no substitution"),
-                    ("charset_default","CREATE TABLE poc.charset_default(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET utf8mb4)","no collation substitution"),
-                    ("charset_latin1","CREATE TABLE poc.charset_latin1(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET latin1)","unsupported discovered character set")
+                try cases.pass("ddl")
+                for (test,sql,reason) in [
+                    (QualificationCase("explicit_innodb", "Reject explicit InnoDB without engine rewriting or applying following DDL"),"CREATE TABLE poc.explicit_innodb(id INT PRIMARY KEY) ENGINE=InnoDB","no engine rewriting"),
+                    (QualificationCase("collation_0900", "Reject unsupported 0900 collation without substitution or applying following DDL"),"CREATE TABLE poc.collation_0900(id INT PRIMARY KEY,v VARCHAR(12) COLLATE utf8mb4_0900_ai_ci)","no substitution"),
+                    (QualificationCase("charset_default", "Reject an incompatible charset default without applying following DDL"),"CREATE TABLE poc.charset_default(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET utf8mb4)","no collation substitution"),
+                    (QualificationCase("charset_latin1", "Reject unsupported latin1 row encoding before applying DDL"),"CREATE TABLE poc.charset_latin1(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET latin1)","unsupported discovered character set")
                 ] {
-                    let rejected=try start(label,configuration(label,at:try h.boundary("source"),count:2));try waitForReader(rejected)
+                    let label = test.id
+                    let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:2));try waitForReader(rejected)
                     _ = try h.sql("source",sql+"; CREATE TABLE poc.after_\(label)(id INT PRIMARY KEY)")
                     _ = try finish(rejected,label,success:false,reason:reason)
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0","DDL rejection advanced progress")
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME IN ('\(label)','after_\(label)')")=="0","rejected or following DDL was applied")
+                    try cases.pass(label)
                 }
                 // A valid source DDL outside the grammar stops before mutation.
-                let unsupported=try start("ddl-unsupported",configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
+                let unsupported=try start(QualificationCase("ddl-unsupported", "Reject unsupported DECIMAL column before target mutation or checkpoint advance"),configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
                 _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DECIMAL(10,2) NULL")
                 _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
                 try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
                 try require(state("ddl-unsupported","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","unsupported DDL advanced checkpoint")
+                try cases.pass("ddl-unsupported")
                 // A target SQL error leaves a pending DDL intent, never applied.
                 _ = try h.sql("target57","REVOKE CREATE ON poc.* FROM 'apply_fixture'@'%'")
-                let denied=try start("ddl-denied",configuration("ddl-denied",at:try h.boundary("source"),count:1));try waitForReader(denied)
+                let denied=try start(QualificationCase("ddl-denied", "Keep a pending DDL intent and stop when target CREATE permission is denied"),configuration("ddl-denied",at:try h.boundary("source"),count:1));try waitForReader(denied)
                 _ = try h.sql("source","CREATE TABLE poc.denied(id INT PRIMARY KEY)")
                 _ = try finish(denied,"ddl-denied",success:false,reason:"target SQL error")
                 try require(state("ddl-denied","SELECT status FROM ddl_intents") == "PENDING","failed DDL intent lost")
                 try require(state("ddl-denied","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","failed DDL advanced checkpoint")
+                try cases.pass("ddl-denied")
                 report["ddl_policy"]="unchanged DDL; source InnoDB and both replicas MyISAM via local defaults"
-                report["ddl_steps"]=changes.map{$0.0};report["ddl_result"]=ddlResult
+                report["ddl_steps"]=changes.map{$0.sql};report["ddl_result"]=ddlResult
             } else if mode == "gtid" {
                 // Additional accepted shapes: multi-row statement and key change.
                 let edgeStart = try h.boundary("source"), edgeNativeStart = try h.boundary("native"), edgeTargetStart = try h.boundary("target57")
-                let edge = try start("multirow",configuration("multirow",at:edgeStart,count:3)); try waitForReader(edge)
+                let edge = try start(QualificationCase("multirow", "Replicate multirow INSERT and DELETE with a primary-key update"),configuration("multirow",at:edgeStart,count:3)); try waitForReader(edge)
                 _ = try h.sql("source","INSERT INTO poc.items VALUES(10,'ten',10),(11,'eleven',18446744073709551615); UPDATE poc.items SET id=12,value='twelve' WHERE id=11; DELETE FROM poc.items WHERE id IN (10,12)")
                 let edgeResult = try finish(edge,"multirow",success:true)
                 try require(edgeResult["rowsApplied"] as? Int == 5 && h.rows("target57") == Fixture.final,"multirow/key-change application differs")
@@ -290,6 +309,7 @@ public enum DMLQualification {
                     let dir = output.appendingPathComponent(service)
                     try FileManager.default.copyItem(at:dir.appendingPathComponent("operations.json"),to:dir.appendingPathComponent("multirow-operations.json"))
                 }
+                try cases.pass("multirow")
                 // Exact wire/bind values get an independent HEX-based SQL oracle;
                 // the mysqlbinlog text normalizer deliberately covers only items.
                 for service in h.services {
@@ -297,7 +317,7 @@ public enum DMLQualification {
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.exact_values(id BIGINT PRIMARY KEY,u INT UNSIGNED NOT NULL,b BIGINT UNSIGNED NOT NULL,t VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,v VARBINARY(100) NULL) ENGINE=\(engine)")
                 }
                 let exactConfig = configuration("exact-values",at:try h.boundary("source"),count:3)
-                let exact = try start("exact-values",exactConfig); try waitForReader(exact)
+                let exact = try start(QualificationCase("exact-values", "Preserve integer extremes, UTF-8 and binary bytes, NULL and empty values"),exactConfig); try waitForReader(exact)
                 _ = try h.sql("native","START REPLICA")
                 func verifyExact(_ count: Int,_ expected: String) throws {
                     let end = Date().addingTimeInterval(15)
@@ -328,13 +348,14 @@ public enum DMLQualification {
                 try verifyExact(3,"0\t4294967295\t18446744073709551615\tNULL") // ProcessRunner trims the final tab.
                 _ = try finish(exact,"exact-values",success:true)
                 _ = try h.sql("native","STOP REPLICA")
+                try cases.pass("exact-values")
                 report["exact_values"] = "integer_extremes_utf8_binary_null_empty_passed"
                 // One process discovers two new names and a non-leading key.
                 for service in h.services {
                     let engine = service == "source" ? "InnoDB" : "MyISAM"
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.ordered_a(payload VARCHAR(30) NULL,k BIGINT UNSIGNED PRIMARY KEY) ENGINE=\(engine); CREATE TABLE poc.ordered_b(flag INT NOT NULL,blob_value VARBINARY(10) NULL,k INT PRIMARY KEY) ENGINE=\(engine)")
                 }
-                let discovery=try start("discovery",configuration("discovery",at:try h.boundary("source"),count:4)); try waitForReader(discovery)
+                let discovery=try start(QualificationCase("discovery", "Discover multiple tables with non-leading primary keys and persist their schemas"),configuration("discovery",at:try h.boundary("source"),count:4)); try waitForReader(discovery)
                 _ = try h.sql("native","START REPLICA")
                 _ = try h.sql("source","INSERT INTO poc.ordered_a VALUES('first',18446744073709551615); INSERT INTO poc.ordered_b VALUES(-1,0x00FF,17); UPDATE poc.ordered_a SET payload='changed' WHERE k=18446744073709551615; DELETE FROM poc.ordered_b WHERE k=17")
                 _ = try finish(discovery,"discovery",success:true)
@@ -347,34 +368,42 @@ public enum DMLQualification {
                 }
                 try require(state("discovery","SELECT COUNT(*) FROM schemas") == "2","schema discovery was not persisted")
                 _ = try h.sql("native","STOP REPLICA")
+                try cases.pass("discovery")
                 report["automatic_discovery"]="multiple_tables_nonleading_keys_MINIMAL_and_FULL"
-                for label in ["absent-schema","incompatible-schema"] {
+                for test in [
+                    QualificationCase("absent-schema", "Reject a missing target table without advancing the checkpoint"),
+                    QualificationCase("incompatible-schema", "Reject target primary-key signedness incompatible with source metadata")
+                ] {
+                    let label = test.id
                     let table=label == "absent-schema" ? "absent_schema" : "incompatible_schema"
                     _ = try h.sql("source","SET SESSION sql_log_bin=0; CREATE TABLE poc.\(table)(k INT UNSIGNED PRIMARY KEY) ENGINE=InnoDB")
                     if label == "incompatible-schema" {
                         _ = try h.sql("target57","CREATE TABLE poc.\(table)(k INT PRIMARY KEY) ENGINE=MyISAM")
                     }
-                    let rejected=try start(label,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
+                    let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
                     _ = try h.sql("source","INSERT INTO poc.\(table) VALUES(1)")
                     _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "single primary-key" : "signedness")
                     try require(state(label,"SELECT transactions_applied FROM state") == "0","invalid schema advanced checkpoint")
+                    try cases.pass(label)
                 }
                 // Existing state is never silently reset or used for an unsafe replay.
-                _ = try finish(start("existing",positiveConfig),"existing",success:false,reason:"state directory must be new")
+                _ = try finish(start(QualificationCase("existing", "Reject initialization over an existing replication state directory"),positiveConfig),"existing",success:false,reason:"state directory must be new")
+                try cases.pass("existing")
                 let afterSchemaFailures=try h.boundary("source")
                 _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(afterSchemaFailures.file)',SOURCE_LOG_POS=\(afterSchemaFailures.position)")
                 // Before-image mismatch must publish no applied transaction.
                 _ = try h.sql("target57","UPDATE poc.items SET value='drift' WHERE id=1")
                 let beforeMismatch = try h.rows("target57")
-                let mismatch = try start("mismatch",configuration("mismatch",at:try h.boundary("source"),count:1)); try waitForReader(mismatch)
+                let mismatch = try start(QualificationCase("mismatch", "Reject a before-image mismatch without changing rows or advancing progress"),configuration("mismatch",at:try h.boundary("source"),count:1)); try waitForReader(mismatch)
                 _ = try h.sql("source","UPDATE poc.items SET value='next' WHERE id=1")
                 _ = try finish(mismatch,"mismatch",success:false,reason:"before-image mismatch")
                 try require(h.rows("target57") == beforeMismatch && state("mismatch","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "BLOCKED|0|0","mismatch mutated or advanced target")
+                try cases.pass("mismatch")
                 _ = try h.sql("target57","UPDATE poc.items SET value='next' WHERE id=1")
                 // Native's known multi-statement MyISAM rejection: Swift is
                 // allowed to reject the shape before its first target write.
                 let rejectedRows = try h.rows("target57")
-                let multiple = try start("multistatement",configuration("multistatement",at:try h.boundary("source"),count:1)); try waitForReader(multiple)
+                let multiple = try start(QualificationCase("multistatement", "Reject a multi-statement transaction; confirm native MyISAM error 1837"),configuration("multistatement",at:try h.boundary("source"),count:1)); try waitForReader(multiple)
                 _ = try h.sql("native","START REPLICA")
                 _ = try h.sql("source","BEGIN; INSERT INTO poc.items VALUES(99,'reject',99); UPDATE poc.items SET value='not-applied' WHERE id=1; COMMIT")
                 _ = try finish(multiple,"multistatement",success:false,reason:"single-statement")
@@ -383,34 +412,40 @@ public enum DMLQualification {
                 try require(h.status()["Last_SQL_Errno"] == "1837","native rejection differs")
                 try require(h.rows("target57") == rejectedRows && state("multistatement","SELECT transactions_applied FROM state") == "0","unsupported group partially applied")
                 _ = try h.sql("native","STOP REPLICA")
+                try cases.pass("multistatement")
                 // Native channel exclusion is checked even before source capture.
                 _ = try h.sql("target57","CHANGE MASTER TO MASTER_HOST='source',MASTER_USER='invalid-fixture',MASTER_PASSWORD='invalid',MASTER_CONNECT_RETRY=1,MASTER_SSL=1; START SLAVE IO_THREAD")
-                _ = try finish(start("native-channel",configuration("native-channel",at:try h.boundary("source"),count:1)),"native-channel",success:false,reason:"native replication channel")
+                _ = try finish(start(QualificationCase("native-channel", "Refuse to start while a native replication channel is running"),configuration("native-channel",at:try h.boundary("source"),count:1)),"native-channel",success:false,reason:"native replication channel")
+                try cases.pass("native-channel")
                 _ = try h.sql("target57","STOP SLAVE; RESET SLAVE ALL")
                 _ = try h.sql("target57","CREATE TRIGGER poc.reject_trigger BEFORE INSERT ON poc.items FOR EACH ROW SET NEW.value='trigger'")
-                let trigger = try start("trigger",configuration("trigger",at:try h.boundary("source"),count:1)); try waitForReader(trigger)
+                let trigger = try start(QualificationCase("trigger", "Reject a target table with a trigger before applying rows"),configuration("trigger",at:try h.boundary("source"),count:1)); try waitForReader(trigger)
                 _ = try h.sql("source","INSERT INTO poc.items VALUES(88,'trigger-rejected',88)")
                 _ = try finish(trigger,"trigger",success:false,reason:"triggers are unsupported")
                 _ = try h.sql("target57","DROP TRIGGER poc.reject_trigger")
                 try require(h.rows("target57") == rejectedRows,"preflight rejection changed rows")
+                try cases.pass("trigger")
                 // A later row error cannot roll back an earlier MyISAM write.
                 _ = try h.sql("target57","INSERT INTO poc.items VALUES(21,'collision',21)")
-                let partial = try start("partial",configuration("partial",at:try h.boundary("source"),count:1)); try waitForReader(partial)
+                let partial = try start(QualificationCase("partial", "Record partial MyISAM writes and pending intent after a duplicate-key failure"),configuration("partial",at:try h.boundary("source"),count:1)); try waitForReader(partial)
                 _ = try h.sql("source","INSERT INTO poc.items VALUES(20,'first',20),(21,'second',21)")
                 _ = try finish(partial,"partial",success:false,reason:"primary key already exists")
                 try require(h.sql("target57","SELECT id,value FROM poc.items WHERE id IN (20,21) ORDER BY id") == "20\tfirst\n21\tcollision","partial MyISAM effects differ")
                 try require(state("partial","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||COALESCE(applied_position,'NULL') FROM state") == "BLOCKED|0|0|NULL","partial group advanced checkpoint")
                 try require(state("partial","SELECT ordinal||'|'||status FROM row_intents ORDER BY ordinal") == "0|DONE\n1|PENDING","partial row intents differ")
+                try cases.pass("partial")
                 // Missing DELETE row is an error, not an idempotent success.
                 _ = try h.sql("target57","DELETE FROM poc.items WHERE id=3")
-                let missing = try start("missing",configuration("missing",at:try h.boundary("source"),count:1)); try waitForReader(missing)
+                let missing = try start(QualificationCase("missing", "Stop on a missing DELETE row without advancing the checkpoint"),configuration("missing",at:try h.boundary("source"),count:1)); try waitForReader(missing)
                 _ = try h.sql("source","DELETE FROM poc.items WHERE id=3")
                 _ = try finish(missing,"missing",success:false,reason:"missing row")
                 try require(state("missing","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","missing delete advanced checkpoint")
+                try cases.pass("missing")
                 report["negative_checks"] = ["existing_state","before_image_mismatch","multistatement_native_1837","native_channel","trigger","partial_multirow","missing_delete"]
                 report["extended_dml"] = "multirow_insert_delete_and_primary_key_update_passed"
             }
-        } catch { failure = error; report["error"] = String(describing:error) }
+        } catch { failure = cases.fail(error); report["error"] = String(describing:failure!) }
+        report["cases"] = cases.results
         stage("cleaning up")
         var cleanup: [String] = []
         for client in clients {

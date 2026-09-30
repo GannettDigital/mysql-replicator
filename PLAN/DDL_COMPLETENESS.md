@@ -245,8 +245,11 @@ reporting convention across test suites, starting with the DDL/DML case loop in
 - Capture source locations at the case definition rather than the shared logging
   helper, and keep line numbers generated rather than manually maintained.
 
-This is pending implementation. Record the requirement now; leave the user's
-currently running suite and its code unchanged until that run finishes.
+Implemented for `ddl-suite`, `dml-suite` and `native-ddl-suite`: case definitions
+capture their source locations, and progress/failures share IDs with incremental
+`cases.json` and final result entries. Success is reported after the scenario's
+assertions complete, not merely when its applier process exits. The shared reporter
+is available for extending this convention to the other harness suites.
 
 ## Acceptance for the next increment
 

@@ -99,6 +99,28 @@ InnoDB, unsupported collation, incompatible charset-only defaults, unsupported
 latin1 row encoding, unsupported type and denied CREATE. Rejections assert stopped
 progress; engine/charset cases also assert that later DDL is not applied.
 
+Case output includes a stable ID, a description of the expected behavior, and the
+repository-relative file and line where that case is defined. For example, a case
+is reported as `passed [add-column-first] ADD nullable VARCHAR FIRST inherits the
+table charset and collation (Sources/ReplicatorLabCore/DMLQualification.swift:<line>)`.
+The source line is captured automatically; search for the case ID if reviewing a
+run from an older revision. Cases emit `starting` before work and `passed` only after
+all their assertions. A failure retains the same identity and the failing assertion.
+
+Each run writes incremental `cases.json` records (`id`, `name`, `source_file`,
+`source_line`, `status`, optional `parent_id` and `error`), also included in final
+`result.json` (`cases` for DDL/DML, `case_results` alongside the native observation
+matrix). DDL row snapshots use `<server>-ddl-<case-id>.tsv` filenames. These reporting
+changes do not alter the SQL workloads or replication assertions.
+
+Reporting follow-up after `cdcaead`: `swift test --filter ReplicatorLabTests`
+passed all 17 harness tests, including three reporting tests. Both native DDL
+profiles and both position/GTID modes of `ddl-suite` and `dml-suite` passed with
+cleanup. The Swift suites used `ARGS=--skip-build` because the replication runtime
+was unchanged. All 94 saved case records matched console output and pointed to
+their actual definition lines. Logs and the run index are in
+`artifacts/case-reporting-validation/`.
+
 Validation completed on 2026-09-30: 82 Swift tests and 2 Rust tests passed;
 the 82 Swift tests also passed with AddressSanitizer (the Rust archive is not
 instrumented). Both native engine profiles, both Swift DDL modes and both DML
