@@ -25,23 +25,23 @@ public struct CaptureConfiguration: Decodable {
     /// Schema and GTID/position metadata must come from the same verified
     /// post-seed boundary. All DDL is rejected during this inspection window.
     public let start: Start
-    public let tables: [Table]
+    public let tables: [Table]?
     public let nonBlocking: Bool?
     public let stopAfterTransactions: Int?
     public let idleTimeoutSeconds: Int?
     public let maximumEventBytes: UInt32?
 
     public func validate() throws -> DumpStart {
-        guard version == 1, !host.isEmpty, (1...65535).contains(port), !username.isEmpty, !passwordEnvironment.isEmpty,
+        guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty, !passwordEnvironment.isEmpty,
               !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,
-              ["file-position", "gtid"].contains(mode), !tables.isEmpty, tables.count <= 256,
+              ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
               (1...300).contains(idleTimeoutSeconds ?? 15),
               (23...16*1024*1024).contains(maximumEventBytes ?? 4*1024*1024),
               stopAfterTransactions == nil || (1...1_000_000).contains(stopAfterTransactions!) else {
             throw CaptureError("invalid live capture configuration")
         }
         var seen: Set<String> = []
-        for table in tables {
+        for table in tables ?? [] {
             guard !table.database.isEmpty, !table.table.isEmpty, !table.database.utf8.contains(0), !table.table.utf8.contains(0),
                   !table.columns.isEmpty, table.columns.count <= 256,
                   seen.insert(table.database + "\0" + table.table).inserted else { throw CaptureError("invalid/duplicate live schema entry") }

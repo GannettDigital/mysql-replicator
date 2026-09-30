@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 3. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 4. Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -33,6 +33,11 @@ typedef struct {
  * History is mandatory for rows, even if optional wire metadata happens to exist.
  */
 typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; rc_bytes bytes; } rc_value;
+/* TABLE_MAP metadata. kind=0 means missing/unsupported wire interpretation;
+ * collation=0 means unavailable/not applicable; name may be empty in MINIMAL.
+ * maximum_bytes is populated for VARCHAR/VARBINARY (wire type 15). */
+typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name; } rc_column;
+int32_t rc_result_column(const rc_result *result, uint32_t column, rc_column *out);
 uint32_t replicator_codec_abi_version(void);
 uint64_t replicator_codec_capabilities(void); /* bit 0: bounded offline decoder */
 int32_t rc_decoder_create(uint32_t max_event_bytes, rc_decoder **out);

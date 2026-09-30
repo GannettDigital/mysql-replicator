@@ -31,12 +31,15 @@ final class StreamProcessor {
     var announcementCount = 0
     var receivedBytes: UInt64 = 0
     var firstGroup = true
+    let resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?
     let emitEvent: (LiveRecord) throws -> Void
     let emitTransaction: (CompleteTransaction) throws -> Void
 
     init(config: CaptureConfiguration, includeRaw: Bool,
          emitEvent: @escaping (LiveRecord) throws -> Void,
-         emitTransaction: @escaping (CompleteTransaction) throws -> Void) throws {
+         emitTransaction: @escaping (CompleteTransaction) throws -> Void,
+         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil) throws {
+        self.resolveSchema = resolveSchema
         self.config = config; self.includeRaw = includeRaw
         self.excluded = try GTIDSet(config.start.executedGTIDs)
         self.completeGTIDs = self.excluded
@@ -138,16 +141,28 @@ final class StreamProcessor {
         try check(offset == current.position, "source event gap without a GTID exclusion heartbeat")
         var schema: TableSchema?
         if type == 19 {
-            // Probe the map with the same Rust codec, then bind the caller's
-            // frozen historical schema. No parallel Swift metadata/value parser
-            // and no query against a potentially newer information_schema.
+            // Probe with the same codec, then bind discovered wire/target metadata
+            // (or explicit legacy debug history). Never query the source's
+            // current information_schema to interpret historical events.
             let probe = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024)
             _ = try probe.decode(format!, at: 4)
             let identity = try probe.decode(frame, at: UInt64(format!.count)+4)
-            guard let table = config.tables.first(where: { $0.database == identity.database && $0.table == identity.table }),
-                  let id = identity.tableID else { throw CaptureError("table map outside supplied historical schema") }
-            schema = TableSchema(offset: decoderOffset, eventSHA256: identity.sha256, database: table.database,
-                table: table.table, tableID: id, columns: table.columns)
+            guard let db = identity.database, let name = identity.table, let id = identity.tableID else {throw CaptureError("missing table identity")}
+            let columns: [ColumnInterpretation]
+            if config.version == 2 {
+                if let resolveSchema { columns = try resolveSchema(identity.atSourcePosition(offset),current) }
+                else {
+                    guard let wire = identity.wireColumns else {throw CaptureError("missing wire schema")}
+                    columns = try wire.map { c in
+                        guard let kind = c.interpretation else {throw CaptureError("missing/unsupported wire signedness or charset")}
+                        return kind
+                    }
+                }
+            } else {
+                guard let table = (config.tables ?? []).first(where:{$0.database==db && $0.table==name}) else {throw CaptureError("table map outside supplied historical schema")}
+                columns = table.columns
+            }
+            schema = TableSchema(offset:decoderOffset,eventSHA256:identity.sha256,database:db,table:name,tableID:id,columns:columns)
         }
         let event = try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw).atSourcePosition(offset)
         if case .query(let query) = event.control {

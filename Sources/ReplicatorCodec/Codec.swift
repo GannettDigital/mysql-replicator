@@ -70,12 +70,22 @@ public struct DecodedRow: Equatable, Encodable {
     public let before: [DecodedValue]?
     public let after: [DecodedValue]?
 }
+public struct WireColumn: Codable, Equatable {
+    public let interpretation: ColumnInterpretation?
+    public let type: UInt32
+    public let maximumBytes: UInt32
+    public let nullable: Bool
+    public let collation: UInt32
+    public let primaryKey: Bool
+    public let name: String?
+}
 public struct DecodedEvent: Equatable, Encodable {
-    public let schemaVersion = 2
+    public let schemaVersion = 3
     public let offset: String
     public let eventSize: UInt32
     public let control: BinlogControl?
     public let rowFlags: UInt32?
+    public var wireColumns: [WireColumn]? = nil
     public let eventType: UInt32
     public let eventName: String
     public let timestamp: UInt32
@@ -96,10 +106,12 @@ public struct DecodedEvent: Equatable, Encodable {
     /// contiguous input-stream offsets (GTID filtering may omit source ranges).
     /// Changes only the observation coordinate, never event bytes or headers.
     public func atSourcePosition(_ position: UInt64) -> DecodedEvent {
-        DecodedEvent(offset: String(position), eventSize: eventSize, control: control, rowFlags: rowFlags,
+        var result = DecodedEvent(offset: String(position), eventSize: eventSize, control: control, rowFlags: rowFlags,
             eventType: eventType, eventName: eventName, timestamp: timestamp, serverID: serverID,
             nextPosition: nextPosition, flags: flags, sha256: sha256, tableID: tableID, database: database,
             table: table, number: number, detailBase64: detailBase64, detailText: detailText, rows: rows, rawBase64: rawBase64)
+        result.wireColumns = wireColumns
+        return result
     }
 }
 
@@ -113,7 +125,7 @@ public final class BinlogDecoder {
     public let maximumEventBytes: UInt32
     public init(maximumEventBytes: UInt32 = 4 * 1024 * 1024) throws {
         self.maximumEventBytes = maximumEventBytes
-        guard Codec.abiVersion == 3, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 4, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         let status = rc_decoder_create(maximumEventBytes, &context)
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
     }
@@ -202,12 +214,22 @@ public final class BinlogDecoder {
             case 35: control = .previousGTIDs
             default: control = nil
             }
-            return DecodedEvent(offset: String(offset), eventSize: info.event_size, control: control,
+            var decoded = DecodedEvent(offset: String(offset), eventSize: info.event_size, control: control,
                 rowFlags: [23,24,25,30,31,32].contains(info.event_type) ? info.payload_flags : nil, eventType: info.event_type, eventName: String(decoding: bytes(info.name), as: UTF8.self), timestamp: info.timestamp, serverID: info.server_id, nextPosition: info.next_position, flags: info.flags, sha256: digest,
                 tableID: info.column_count == 0 ? nil : String(info.table_id), database: database, table: table,
                 number: [4,16,33].contains(info.event_type) ? String(info.number) : nil,
                 detailBase64: detail.isEmpty ? nil : detail.base64EncodedString(), detailText: [2,4,15].contains(info.event_type) ? String(data: detail, encoding: .utf8) : nil,
                 rows: rows, rawBase64: includeRaw ? bytes(info.raw).base64EncodedString() : nil)
+            if info.event_type == 19 {
+                decoded.wireColumns = try (0..<info.column_count).map { index in
+                    var c = rc_column()
+                    guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
+                    let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary][c.kind]
+                    return WireColumn(interpretation:kind,type:c.column_type,maximumBytes:c.maximum_bytes,nullable:c.nullable != 0,
+                        collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name))
+                }
+            }
+            return decoded
         } catch { failed = true; throw error }
     }
 }

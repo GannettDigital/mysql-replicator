@@ -1,14 +1,14 @@
 # Schema discovery and bounded state history
 
-Review of the first DML checkpoint (`d188f58`). These are the next changes, not
-capabilities of that checkpoint. Remove schema descriptions from production
-configuration; retain discovered schema as internal replication state. Filters
-are a separate later feature and must not be inferred from schema metadata.
+Implementation following the first DML checkpoint (`d188f58`). Version 2 apply
+configuration removes manual schema lists. Discovered schema remains internal
+state. SQLite history is timestamped and pruned by minimum age only under storage
+pressure. Filters remain a separate feature; discovery never implies filtering.
 
-## What the current schema does
+## What the reviewed checkpoint required
 
 `poc.items` is a fixture/example, not a hard-coded production table. However, the
-current implementation requires a manually supplied manifest twice:
+reviewed implementation required a manually supplied manifest twice:
 
 - `source.tables[].columns` supplies signedness and text/binary interpretation to
   the Rust decoder at each TABLE_MAP event. Other tables are rejected.
@@ -20,7 +20,7 @@ current implementation requires a manually supplied manifest twice:
 
 Relevant code: `ReplicatorCapture/StreamProcessor.swift`,
 `ReplicatorApply/Configuration.swift`, `TargetSession.swift`, and `StateStore.swift`.
-The POC is schema-dependent but has no automatic schema discovery/evolution. Its
+That checkpoint had no automatic schema discovery/evolution. Its
 manual table list also acts as an accidental allowlist; this is not a filtering
 implementation and must not become the production interface.
 
@@ -59,9 +59,8 @@ manifest for normal replication.
 The local pinned MySQL 8.4.8 source supports this distinction:
 `sql/log_event.cc:11207` initializes signedness and character metadata before the
 FULL-only branch; FULL adds column names and primary-key metadata.
-`sql/sys_vars.cc:1547` defaults `binlog_row_metadata` to MINIMAL. The current Rust
-adapter already checks wire signedness against supplied history but does not yet
-expose enough table-map metadata to replace the manifest. Absence of metadata
+`sql/sys_vars.cc:1547` defaults `binlog_row_metadata` to MINIMAL. The Rust
+adapter now exposes this metadata through ABI 4 and event JSON schema 3. Absence of metadata
 must be handled explicitly; do not assume every event carries all optional fields.
 
 Introduce a versioned configuration migration. Reject legacy manual schema fields
@@ -77,7 +76,7 @@ failure for unsupported types/shapes. Source-only inspection should use sufficie
 wire metadata or fail clearly; explicit historical metadata can remain an offline
 fixture/debugging facility, separate from production replication configuration.
 
-## What SQLite currently writes
+## What the reviewed SQLite checkpoint wrote
 
 The singleton `state` row contains `applied_gtids`, overwritten after every fully
 verified source group. It is not an appended series of full GTID sets. This row
@@ -86,8 +85,7 @@ and is not a dedicated last-applied time.
 
 `groups` and `row_intents` append transaction/row history with no timestamps or
 pruning. They retain completed work as well as incomplete work. The framed relay
-is also unrotated and bounded by a stop-at-limit policy. These are current POC
-limitations, not implemented retention policies.
+is also unrotated and bounded by a stop-at-limit policy. Those were limitations of the reviewed checkpoint.
 
 ## Selected checkpoint and retention approach
 
@@ -112,10 +110,12 @@ until a periodic timer.
   dedicated `last_applied_at` and checkpoint-snapshot times. Local observation
   time and any available source commit time are separate fields. Time alone is
   never proof of completion or a safe purge boundary.
-- Rotate/prune historical snapshots, completed journal records and diagnostics
-  using configurable age and count/size limits. Publish a durable covering
-  snapshot before deleting covered deltas. Always retain the authoritative
-  current coverage and any references still needed by outstanding work.
+- When storage approaches its configured limit, prune historical snapshots and
+  completed journal records older than a configurable minimum age. Age alone
+  does not trigger cleanup, and young records are not evicted to stay running.
+  Publish a durable covering snapshot before deleting covered deltas. Always
+  retain current coverage and outstanding work. If eligible history cannot
+  release sufficient space, stop with a storage-pressure diagnostic.
 - Never purge incomplete/uncertain intents, their relay bytes, required schema
   versions, or pinned error evidence. Relay segment retention follows those same
   references. On space pressure with no safe eviction, stop/block rather than
@@ -132,10 +132,93 @@ identify actual application and snapshot times. A simulated interrupted compacti
 must leave a committed snapshot-plus-delta representation. This metadata check
 is not permission to retry uncertain MyISAM writes.
 
-## Sequence
+## Implemented discovery contract
 
-Next: automatic metadata discovery for the existing DML subset, without schema
-in config. Add timestamped checkpoint/history compaction as a bounded-state
-increment. Continue with ordered DDL and schema-cache evolution. Full target
-crash/reconnect recovery remains after DML and DDL correctness; filtering and REST
-remain separate later work. None of these changes brings dump/load into scope.
+Apply config and nested source config require `version: 2`, without `tables`.
+Legacy version/schema lists fail validation; remove them only after acknowledging
+that this is no longer a table allowlist. Source-only debug inspection still
+accepts version 1 explicit history; version 2 resolves sufficient wire metadata.
+Offline fixture manifests remain independent from production configuration.
+
+Source MINIMAL metadata supplies types, lengths, signedness and encoding; FULL
+also supplies names and keys, which are checked when present. Missing required
+interpretations and duplicate/conflicting metadata fail before target writes.
+Names and keys absent under MINIMAL rely on the externally prepared target's
+matching column order. This cannot independently certify a load or detect a
+preexisting permutation of indistinguishable columns.
+
+The initial cache is bounded to 64 tables, 256 columns each. Each first discovery
+records source coordinate, table-map hash, discovery time, target description and
+wire description in `schemas`; row intents reference its ID. Repeated maps are
+validated against that description. DDL still stops the stream; versioned cache
+refresh/evolution belongs to the next increment.
+
+Supported wire text collations are 45, 46, 224 and 255 (utf8mb4, including 8.4's
+0900 default). The target uses its supported legacy utf8mb4 collation. They are
+recorded separately, not asserted to have identical sorting semantics. This
+compatibility is limited to the current subset: integer primary-key predicates,
+no text indexes, and source-computed values applied and verified byte for byte.
+Text predicates, indexes and richer schema behavior require separate qualification.
+
+## Storage policy
+
+The optional `storage` object accepts these defaults:
+
+| Setting | Default | Meaning |
+| --- | ---: | --- |
+| `maximumSQLiteBytes` | 268435456 | Total budget for DB, WAL and SHM; 8 MiB–1 GiB |
+| `minimumFreeDiskBytes` | 536870912 | Disk reserve, plus working headroom checked before writes |
+| `pruneAtPercent` | 80 | Trigger as occupied main-database pages approach their budget |
+| `historyRetentionSeconds` | 86400 | Minimum age before completed history is eligible |
+| `snapshotEveryTransactions` | 1000 | Periodic cumulative GTID snapshot cadence |
+
+The main database receives roughly one third of the total budget. Remaining
+space bounds WAL growth and maintenance; `max_page_count` is a separate hard
+limit, with cache spilling disabled. Cleanup also starts when disk free space
+approaches the reserve plus two SQLite budgets; writes stop before falling below
+the reserve plus one SQLite budget. These are conservative POC limits.
+
+Each completed group durably records one GTID delta, its end coordinate and
+completion timestamp with the counters. `last_applied_at` is distinct from lifecycle
+`updated_at`. Read authoritative coverage as the latest snapshot plus subsequent
+APPLIED groups, not a potentially stale snapshot alone. No full GTID set is
+rewritten per group. Snapshots occur at cadence, pressure cleanup and clean stop.
+
+Cleanup commits a covering snapshot first, then deletes eligible APPLIED groups
+and their intents in batches of up to 128, and older superseded snapshots. Pending
+groups/intents and current schema records remain pinned. Incremental vacuum and
+WAL truncation reclaim space; a blocked WAL checkpoint causes a diagnostic stop.
+Young or pinned history can cause a budget stop instead of deletion. If SQLite
+cannot record a failure, stderr remains the diagnostic fallback. Other processes
+can still consume disk unexpectedly; I/O/full errors are fatal, never success.
+
+SQLite schema version is 2. Inspect `schemas`, `groups`, `row_intents`, `snapshots`
+and the singleton `state`. Old state is never migrated or reopened by this POC.
+The raw `relay.frames` file still has its independent stop-at-limit budget (default
+256 MiB); segment rotation and re-download are later work. No target recovery or
+uncertain-write retry is introduced by metadata compaction.
+
+## Validation and next work
+
+`make test` covers wire metadata across the ABI, malformed/conflicting metadata,
+pressure/age gating, pinned intents, exact retained GTID coverage and budget stops.
+`make test-asan` checks Swift/C result ownership; Rust is not sanitizer-instrumented.
+`make dml-suite` uses schema-free version 2 config, MINIMAL/FULL source metadata,
+multiple discovered tables with non-leading keys, exact values and absent or
+incompatible targets, alongside the existing native/data/binlog comparisons.
+
+Continue with ordered DDL and schema-cache evolution. Full target crash/reconnect
+recovery follows DML and DDL correctness; filtering and REST remain separate.
+Dump/load management remains external.
+
+Recorded validation (2026-09-29/30): 75 Swift tests pass with Swift/C/CLI
+AddressSanitizer (Rust uninstrumented), and the Rust panic-containment test passes.
+The filtered macOS sanitizer runner hit a platform loader restriction; the full
+suite passed. Both Docker DML cases and cleanup passed:
+
+- `20260930T062958Z-e863299a-position-autocommit-myisam` (MINIMAL, file/position).
+- `20260930T063110Z-162d6b40-auto-autocommit-myisam` (FULL, GTID plus discovery/error cases).
+
+Evidence is retained under `artifacts/dml-suite/`; test/build logs are under
+`artifacts/schema-retention-validation/`. No performance or crash/recovery
+qualification is implied.

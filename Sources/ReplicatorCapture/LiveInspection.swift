@@ -76,9 +76,10 @@ public enum LiveInspection {
     public static func run(configuration config: CaptureConfiguration, password: String,
                            includeRaw: Bool = false, cancellation: CaptureCancellation = .init(),
                            emitEvent: @escaping (LiveRecord) throws -> Void,
-                           emitTransaction: @escaping (CompleteTransaction) throws -> Void) throws -> LiveSummary {
+                           emitTransaction: @escaping (CompleteTransaction) throws -> Void,
+                           resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil) throws -> LiveSummary {
         let start = try config.validate()
-        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction)
+        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema)
         func summary() -> LiveSummary {
             LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,
                 eventBytesReceived: String(processor.receivedBytes), heartbeats: processor.heartbeatCount,

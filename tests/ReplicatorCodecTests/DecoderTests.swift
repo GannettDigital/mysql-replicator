@@ -5,6 +5,33 @@ import ReplicatorLabCore
 import CReplicatorCodec
 
 final class DecoderTests: XCTestCase, BinlogFixtures {
+    func testAutomaticWireMetadataSurvivesResetAndRejectsConflictingTLVs() throws {
+        let fde = frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
+        let offset=UInt64(4+fde.count)
+        // Independently authored INT UNSIGNED, VARCHAR(10) utf8mb4 table map.
+        let base=Data([123,0,0,0,0,0,0,0,3])+Data("poc".utf8)+Data([0,1,120,0,2,3,15,2,40,0,2])
+        let minimal=Data([1,1,128,2,1,45])
+        let full=minimal+Data([4,5,2,105,100,1,118,8,1,0])
+        for metadata in [minimal,full] {
+            let decoder=try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+            let event=try decoder.decode(self.event(19,base+metadata,at:offset),at:offset)
+            try decoder.reset()
+            let columns=try XCTUnwrap(event.wireColumns)
+            XCTAssertEqual(columns.map(\.interpretation),[.unsigned,.utf8])
+            XCTAssertEqual(columns.map(\.nullable),[false,true])
+            XCTAssertEqual(columns.map(\.maximumBytes),[0,40])
+            XCTAssertEqual(columns[1].collation,45)
+            XCTAssertEqual(columns.map(\.name),metadata==minimal ? [nil,nil] : ["id","v"])
+            XCTAssertEqual(columns[0].primaryKey,metadata==full)
+        }
+        for metadata in [minimal+Data([1,1,0]),minimal+Data([3,1,45]),minimal+Data([4,2,1,105])] {
+            let decoder=try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+            failure(2) {_ = try decoder.decode(self.event(19,base+metadata,at:offset),at:offset)}
+        }
+        let decoder=try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+        let missing=try decoder.decode(event(19,base,at:offset),at:offset)
+        XCTAssertEqual(missing.wireColumns?.map(\.interpretation),[nil,nil])
+    }
     func testRecordedCorpusMatchesIndependentMySQLReference() throws {
         let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: recorded.appendingPathComponent("manifest.json"))) as! [[String: Any]]
         for entry in manifest {

@@ -2,12 +2,11 @@
 
 Phase 1 is in progress.
 
-Reviewed DML checkpoint: `d188f58`, including Docker-managed runtime files and live
-build/startup output. The follow-up harness run passes 71 Swift tests and both DML
-start modes. Next is removing manual schema manifests from production config and
-adding timestamped, bounded checkpoint/history retention; see [the review and
-implementation plan](SCHEMA_DISCOVERY_AND_RETENTION.md). Those changes are planned,
-not part of the committed DML implementation.
+Reviewed DML checkpoint: `d188f58`. The current follow-up implements automatic
+schema discovery (version 2 configuration), ABI 4/event JSON 3 metadata and bounded
+SQLite history. Cleanup removes covered completed records older than the minimum
+age only when storage approaches its limit. See [the implementation and storage
+policy](SCHEMA_DISCOVERY_AND_RETENTION.md). DDL, resume and REST remain unimplemented.
  The reviewed GTID/reference checkpoint is commit `42c36d3`. See [the current implementation evidence](PHASE_1_PROGRESS.md).
 
 Previous decoder checkpoint (`9378bf4`): 30 Swift tests and one Rust panic-containment test pass; all 30 Swift tests also pass with Swift/C/CLI AddressSanitizer instrumentation. Rust itself remains uninstrumented. Ubuntu run `replicator-ubuntu-20260929t230511z-5a362b66` passed, including the production inspector; all 36 source-file JSON events match the host output. Local evidence is under `artifacts/decoder/` and `artifacts/ubuntu/<run>/`.
@@ -22,7 +21,7 @@ Ubuntu live run `20260930T030250Z-17f7bd18-auto-autocommit-myisam` passed all 15
 
 Scope update: dump/load management and target provisioning are entirely external. Replace the earlier dump preparation/verification proposal with a tool-independent known-boundary handoff. The first serial end-to-end MyISAM applier now includes the minimum relay/state/intent support it needs. Schema-change application follows DML. Crash/reconnect recovery implementation and qualification come only after both DML and DDL pass their correctness gates; REST status is not an applier prerequisite. GTID mode now permits a seed set without positional context. See [the boundary contract and next increment](START_BOUNDARY.md).
 
-Next storage/runtime design is updated: raw events live in local binlog/relay files; SQLite holds state, GTID/file-position checkpoints, recovery intents, diagnostics and counter snapshots. A read-only REST API exposes live status/statistics. The initial applier implements a bounded framed relay and minimum state/intents; retention, reopening/recovery and REST remain planned; see [relay state and status](RELAY_STATE_AND_STATUS.md).
+Next storage/runtime design is updated: raw events live in local binlog/relay files; SQLite holds state, GTID/file-position checkpoints, recovery intents, diagnostics and counter snapshots. A read-only REST API exposes live status/statistics. The initial applier implements a bounded framed relay and minimum state/intents; relay rotation, reopening/recovery and REST remain planned; see [relay state and status](RELAY_STATE_AND_STATUS.md).
 
 Current DML increment: `run --config FILE --initialize` applies one-table,
 one-statement committed groups to MySQL 5.7 MyISAM with exact before/after checks,
@@ -36,7 +35,7 @@ modes, exact-value and partial-failure cases. See [scope and validation](DML_APP
 Implemented and validated:
 
 - Independent repository, approved architecture and accepted native-reference contract.
-- Rust/Swift C ABI version 3 with bounded offline event/row decoding, owned typed results, CRC/framing/resource checks, poisoned contexts and schema-history validation. `mysql-replicator inspect` emits NDJSON from a local file; capability bit 0 is set. See [offline inspection](OFFLINE_INSPECT.md) for the limited supported subset.
+- Rust/Swift C ABI version 4 with bounded offline event/row decoding, owned typed results, CRC/framing/resource checks, poisoned contexts and schema-history validation. `mysql-replicator inspect` emits NDJSON from a local file; capability bit 0 is set. See [offline inspection](OFFLINE_INSPECT.md) for the limited supported subset.
 - SwiftPM `replicator-lab` replaces the Python harness. Make coordinates Cargo and SwiftPM; no Python or shell workflow script is required.
 - Four-case native suite: positive autocommit and expected error 1837 under both positional and GTID auto-positioning. Exact rows, receiver/applier status, boundaries, GTID coverage, engines, rollback behavior and cleanup are asserted.
 - Physical binlog capture plus checksum-verified mysqlbinlog reference decoding and ordered logical operation comparison for the fixed fixture schema. Source/native effects and unchanged future Swift target are checked independently of final rows.

@@ -1,8 +1,8 @@
 {
-  "version": 1,
+  "version": 2,
   "stateDirectory": "./replica-state",
   "source": {
-    "version": 1,
+    "version": 2,
     "host": "REPLACE_SOURCE_HOST",
     "port": 3306,
     "username": "capture",
@@ -12,8 +12,9 @@
     "serverID": 9100,
     "sourceUUID": "REPLACE_SOURCE_UUID",
     "mode": "gtid",
-    "start": { "executedGTIDs": "REPLACE_SNAPSHOT_GTID_SET" },
-    "tables": [{ "database": "poc", "table": "items", "columns": ["signed", "utf8", "unsigned"] }]
+    "start": {
+      "executedGTIDs": "REPLACE_SNAPSHOT_GTID_SET"
+    }
   },
   "target": {
     "host": "REPLACE_TARGET_HOST",
@@ -25,12 +26,11 @@
     "nativeAutoStartDisabled": true,
     "targetUUID": "REPLACE_TARGET_UUID"
   },
-  "tables": [{
-    "database": "poc", "table": "items", "primaryKey": "id",
-    "columns": [
-      { "name": "id", "type": "int", "nullable": false },
-      { "name": "value", "type": "varchar(100)", "nullable": false, "collation": "utf8mb4_unicode_ci" },
-      { "name": "quantity", "type": "bigint unsigned", "nullable": false }
-    ]
-  }]
+  "storage": {
+    "maximumSQLiteBytes": 268435456,
+    "minimumFreeDiskBytes": 536870912,
+    "pruneAtPercent": 80,
+    "historyRetentionSeconds": 86400,
+    "snapshotEveryTransactions": 1000
+  }
 }

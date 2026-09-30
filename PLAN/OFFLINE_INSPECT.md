@@ -15,7 +15,7 @@ make build
 
 Stdout contains one JSON object per complete, successfully decoded event. Diagnostics are JSON on stderr and any failure exits nonzero. Earlier valid events may already have been printed when a later event fails. No row from the failed event is printed. Consumers must check exit status; this is not an atomic export or proof that a source transaction committed.
 
-Add `--include-raw` to include the complete original event as base64. It is omitted by default. Query/detail bytes are represented as base64 with a UTF-8 display field where valid. Integer **values**, GTID sequence/XID/rotation-position values, physical offsets and table IDs are decimal strings so JSON consumers cannot round them through floating point. Event JSON schema version 2 retains GTID SID bytes in `detailBase64` and also renders typed controls (named GTID identity, anonymous marker, query metadata, XID and rotation). See [the versioning contract](TRANSACTION_ASSEMBLY.md#abi-and-json-versioning).
+Add `--include-raw` to include the complete original event as base64. It is omitted by default. Query/detail bytes are represented as base64 with a UTF-8 display field where valid. Integer **values**, GTID sequence/XID/rotation-position values, physical offsets and table IDs are decimal strings so JSON consumers cannot round them through floating point. Event JSON schema version 3 adds `wireColumns` for table-map metadata, retains GTID SID bytes in `detailBase64` and also renders typed controls (named GTID identity, anonymous marker, query metadata, XID and rotation). See [the versioning contract](TRANSACTION_ASSEMBLY.md#abi-and-json-versioning).
 
 Rows have `operation`, optional `before`/`after` arrays, and tagged values:
 

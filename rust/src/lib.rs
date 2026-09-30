@@ -3,7 +3,10 @@
 use mysql_common::{
     binlog::{
         consts::{BinlogChecksumAlg, BinlogVersion},
-        events::{Event, EventData, FormatDescriptionEvent, OptionalMetaExtractor, TableMapEvent},
+        events::{
+            Event, EventData, FormatDescriptionEvent, OptionalMetaExtractor, OptionalMetadataField,
+            TableMapEvent,
+        },
         value::BinlogValue,
     },
     constants::ColumnType,
@@ -76,6 +79,25 @@ pub struct EventView {
     raw: Bytes,
     error: Bytes,
     fingerprint: Bytes,
+}
+#[repr(C)]
+pub struct ColumnView {
+    kind: u32,
+    column_type: u32,
+    maximum_bytes: u32,
+    nullable: u32,
+    collation: u32,
+    primary_key: u32,
+    name: Bytes,
+}
+struct MapColumn {
+    kind: u32,
+    column_type: u32,
+    maximum_bytes: u32,
+    nullable: u32,
+    collation: u32,
+    primary_key: u32,
+    name: Vec<u8>,
 }
 #[repr(C)]
 pub struct ValueView {
@@ -154,6 +176,7 @@ pub struct Batch {
     raw: Vec<u8>,
     error: Vec<u8>,
     fingerprint: Vec<u8>,
+    map_columns: Vec<MapColumn>,
     rows: Vec<[Vec<Cell>; 2]>,
     columns: usize,
     payload_flags: u32,
@@ -178,6 +201,7 @@ impl Batch {
             raw: vec![],
             error: vec![],
             fingerprint: vec![],
+            map_columns: vec![],
             rows: vec![],
             columns: 0,
             payload_flags: 0,
@@ -565,8 +589,55 @@ impl Decoder {
                     SCHEMA,
                     "historical column count differs",
                 )?;
+                // The upstream extractor otherwise accepts duplicate/conflicting
+                // TLVs with last/first-wins semantics. Fail before decoding rows.
+                let mut seen = std::collections::HashSet::new();
+                let mut charset = false;
+                let mut primary = false;
+                for field in table.iter_optional_meta() {
+                    let field = parsed(field)?;
+                    ensure(
+                        seen.insert(std::mem::discriminant(&field)),
+                        MALFORMED,
+                        "duplicate table metadata",
+                    )?;
+                    match field {
+                        OptionalMetadataField::DefaultCharset(_)
+                        | OptionalMetadataField::ColumnCharset(_) => {
+                            ensure(!charset, MALFORMED, "conflicting charset metadata")?;
+                            charset = true;
+                        }
+                        OptionalMetadataField::SimplePrimaryKey(_)
+                        | OptionalMetadataField::PrimaryKeyWithPrefix(_) => {
+                            ensure(!primary, MALFORMED, "conflicting primary key metadata")?;
+                            primary = true;
+                        }
+                        _ => (),
+                    }
+                }
                 let optional = parsed(OptionalMetaExtractor::new(table.iter_optional_meta()))?;
                 let mut signedness = optional.iter_signedness();
+                let mut charsets = optional.iter_charset();
+                let names = optional
+                    .iter_column_name()
+                    .take(n + 1)
+                    .map(|x| parsed(x).map(|x| x.name_raw().to_vec()))
+                    .collect::<Checked<Vec<_>>>()?;
+                ensure(
+                    names.is_empty() || names.len() == n,
+                    MALFORMED,
+                    "column name count differs",
+                )?;
+                let keys = optional
+                    .iter_primary_key()
+                    .take(n + 1)
+                    .map(parsed)
+                    .collect::<Checked<Vec<_>>>()?;
+                ensure(
+                    keys.len() <= n && keys.iter().all(|x| *x < n as u64),
+                    MALFORMED,
+                    "invalid source primary key metadata",
+                )?;
                 for i in 0..n {
                     let ty = table
                         .get_column_type(i)
@@ -580,8 +651,11 @@ impl Decoder {
                         i,
                         kinds.get(i).copied().unwrap_or(if numeric { 2 } else { 5 }),
                     )?;
+                    let mut kind = 0;
+                    let mut collation = 0;
                     if numeric {
                         if let Some(unsigned) = signedness.next() {
+                            kind = if unsigned { 3 } else { 2 };
                             if let Some(kind) = kinds.get(i) {
                                 ensure(
                                     unsigned == (*kind == 3),
@@ -590,9 +664,32 @@ impl Decoder {
                                 )?;
                             }
                         }
+                    } else if let Some(charset) = charsets.next() {
+                        collation = parsed(charset)? as u32;
+                        kind = match collation {
+                            63 => 5,
+                            45 | 46 | 224 | 255 => 4,
+                            _ => 0,
+                        };
                     }
+                    let meta = table.get_column_metadata(i).unwrap_or(&[]);
+                    let maximum_bytes = if ty as u8 == 15 && meta.len() == 2 {
+                        u16::from_le_bytes([meta[0], meta[1]]) as u32
+                    } else {
+                        0
+                    };
+                    out.map_columns.push(MapColumn {
+                        kind,
+                        column_type: ty as u32,
+                        maximum_bytes,
+                        nullable: table.null_bitmask()[i] as u32,
+                        collation,
+                        primary_key: keys.contains(&(i as u64)) as u32,
+                        name: names.get(i).cloned().unwrap_or_default(),
+                    });
                 }
                 drop(signedness);
+                drop(charsets);
                 drop(optional);
                 let total: usize = self
                     .tables
@@ -697,7 +794,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    3
+    4
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
@@ -827,6 +924,31 @@ pub unsafe extern "C" fn rc_result_event(result: *const Batch, out: *mut EventVi
     }
     unsafe {
         *out = (&*result).view();
+    }
+    0
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_result_column(
+    result: *const Batch,
+    column: u32,
+    out: *mut ColumnView,
+) -> i32 {
+    if result.is_null() || out.is_null() {
+        return ARG;
+    }
+    let Some(c) = (unsafe { &*result }).map_columns.get(column as usize) else {
+        return ARG;
+    };
+    unsafe {
+        *out = ColumnView {
+            kind: c.kind,
+            column_type: c.column_type,
+            maximum_bytes: c.maximum_bytes,
+            nullable: c.nullable,
+            collation: c.collation,
+            primary_key: c.primary_key,
+            name: Bytes::new(&c.name),
+        };
     }
     0
 }

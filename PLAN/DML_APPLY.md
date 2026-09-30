@@ -6,10 +6,9 @@ DDL, automatic reconnect, recovery/reopening of existing state, and REST serving
 remain unimplemented. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 
-The reviewed checkpoint is `d188f58`. Its schema lists are temporary POC inputs,
-not the intended production interface. The next increment replaces them with
-[automatic discovery and bounded state history](SCHEMA_DISCOVERY_AND_RETENTION.md).
-The usage below describes the currently committed implementation.
+The reviewed checkpoint is `d188f58`. The current increment replaces its manual
+schema lists with [automatic discovery and bounded state history](SCHEMA_DISCOVERY_AND_RETENTION.md).
+The usage below describes the current working implementation.
 
 ## Run or review
 
@@ -24,7 +23,7 @@ back before cleanup removes that volume.
 
 For a separately prepared target, start with the checked-in
 [configuration template](../examples/apply.example.json). **Replace its placeholders
-and schema with the external snapshot/handoff's actual metadata before running.**
+with the connection identities and external starting boundary before running.**
 The template is not a ready-to-run fixture. Set the two named password environment
 variables, then run:
 
@@ -43,7 +42,7 @@ Source `mode: "gtid"` now accepts a start containing only `executedGTIDs`.
 `mode: "file-position"` requires `file` and `position`, plus the seed GTID set
 (which may be empty if unavailable). File and position, when present in GTID mode,
 are checked as the additional bootstrap bound. Neither mode invents target GTIDs.
-The operator supplies a matching historical schema and prepared target; these
+The operator supplies a prepared target matching the starting boundary; these
 checks do not certify the external snapshot/load.
 
 `stopAfterTransactions` / `nonBlocking` on `source` provide bounded qualification
@@ -60,17 +59,17 @@ in ordinary apply progress. Relay files do contain source row bytes.
 - MySQL 5.7 target, UUID distinct from the source, OFF_PERMISSIVE/WARN, ROW/FULL/CRC32
   binary logging enabled globally and on the apply session. The deployment must
   set `--skip-slave-start` and assert `target.nativeAutoStartDisabled: true`.
-- Complete committed source groups with one row statement affecting one declared
+- Complete committed source groups with one row statement affecting one discovered
   table. Multi-row events/statements and primary-key changes are supported within
   this subset. Multi-statement groups are rejected before any target mutation,
   consistent with the accepted native MyISAM expected-negative reference.
 - ASCII SQL identifiers (quoted, never interpolated unescaped); a single full,
   nonnullable integer primary key; no other indexes, triggers, generated/auto-
-  increment columns or partitioned targets. The manifest gives ordered column
-  names, types, nullability and text collation, checked against the target.
+  increment columns or partitioned targets. Discovery obtains ordered column names, types, nullability and text collation
+  from the target, validates source wire metadata and rechecks under the apply lock.
 - Declared types: signed/unsigned INT and BIGINT, VARCHAR(n) with utf8mb4_bin,
   utf8mb4_unicode_ci or utf8mb4_general_ci, and VARBINARY(n); lengths 1–16383.
-  NULL is permitted only by the manifest. Missing row-image fields are errors.
+  NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
   Scope/type/shape validation covers the whole source group before writing.
 
 Target preflight checks every native channel and performance_schema worker/receiver
@@ -133,8 +132,8 @@ its connection and is never automatically retried. A target/host crash can lose
 MyISAM data despite durable local metadata; there is no crash-safe recovery claim.
 
 Relay size defaults to 256 MiB and can be set to 1 MiB–1 GiB using
-`maximumRelayBytes`; reaching it stops the attempt. This milestone has no retention,
-purge or re-download implementation. The transaction decoder's existing resource
+`maximumRelayBytes`; reaching it stops the attempt. Relay segment purge and re-download remain unimplemented. SQLite history has
+separate pressure-triggered retention and a hard budget; see the [storage policy](SCHEMA_DISCOVERY_AND_RETENTION.md#storage-policy). The transaction decoder's existing resource
 bounds still apply. These are local qualification limits, not a large-instance
 capacity claim.
 

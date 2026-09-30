@@ -61,7 +61,37 @@ final class TargetSession {
         _ = try query("SET SESSION autocommit=1")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
-        for table in config.tables { try verifySchema(table) }
+
+    }
+    private(set) var discovered: [String:ApplyTable] = [:]
+    func discover(_ event: DecodedEvent) throws -> ApplyTable {
+        guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
+        let identity = database + "\0" + name
+        let table: ApplyTable
+        if let cached = discovered[identity] { table = cached }
+        else {
+            try require(discovered.count < 64,"discovered schema limit reached")
+            let binds = [MySQLData(string:database),MySQLData(string:name)]
+            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+            let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
+            try require(keys.count == 1,"discovered target requires a single primary-key column")
+            table = ApplyTable(database:database,table:name,columns:try columns.map { row in
+                guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
+                return ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+            },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
+            try table.validate(); try verifySchema(table)
+        }
+        try require(wire.count == table.columns.count,"source/target column count differs")
+        for (w,c) in zip(wire,table.columns) {
+            let type: UInt32 = c.type.hasPrefix("bigint") ? 8 : c.type.hasPrefix("int") ? 3 : 15
+            try require(w.type == type && w.interpretation == c.interpretation && w.nullable == c.nullable,"source/target type, signedness, encoding or nullability differs")
+            if type == 15 {
+                try require(w.maximumBytes == UInt32(c.width! * (c.interpretation == .utf8 ? 4 : 1)),"source/target column width differs")
+            }
+            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
+        }
+        discovered[identity] = table
+        return table
     }
     private func normalizeType(_ type: String) -> String {
         type.replacingOccurrences(of:#"^(int|bigint)\([0-9]+\)"#,with:"$1",options:.regularExpression)

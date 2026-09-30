@@ -36,7 +36,7 @@ public enum ApplyRun {
             _ = try LiveInspection.run(configuration:configuration.source,password:sourcePassword,includeRaw:true,cancellation:cancellation,
                 emitEvent:state.append,emitTransaction: { group in
                     try state.begin(group)
-                    let mutations = try DMLPlan.make(group,tables:configuration.tables)
+                    let mutations = try DMLPlan.make(group,tables:Array(target.discovered.values))
                     try target.lock(mutations[0].table)
                     var locked = true
                     defer { if locked { try? target.unlock() } }
@@ -49,6 +49,13 @@ public enum ApplyRun {
                     try state.complete(group,rowCount:mutations.count)
                     try target.unlock(); locked = false
                     try emitProgress(summary("RUNNING"))
+                },resolveSchema: { event, coordinate in
+                    let table = try target.discover(event)
+                    try state.schema(table,event:event,coordinate:coordinate)
+                    return try (event.wireColumns ?? []).map { column in
+                        guard let kind = column.interpretation else {throw ApplyError("missing wire interpretation")}
+                        return kind
+                    }
                 })
             try state.stopped()
             return summary("STOPPED")

@@ -104,6 +104,7 @@ public enum DMLQualification {
                 _ = try h.sql(service,"CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(engine); INSERT INTO poc.items VALUES(1,'seed-one',1),(2,'seed-two',2)")
             }
             _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            if mode == "gtid" { _ = try h.sql("source","SET GLOBAL binlog_row_metadata=FULL") }
             let uuid = try h.sql("source","SELECT @@server_uuid"), targetUUID = try h.sql("target57","SELECT @@server_uuid")
             let sourceStart = try h.boundary("source"), nativeStart = try h.boundary("native"), targetStart = try h.boundary("target57")
             let clause: String
@@ -113,9 +114,8 @@ public enum DMLQualification {
             func configuration(_ label: String,at boundary: Boundary,count: Int) -> [String:Any] {
                 var start: [String:Any] = ["executedGTIDs":boundary.gtids]
                 if mode == "file-position" { start["file"] = boundary.file; start["position"] = boundary.position }
-                let source: [String:Any] = ["version":1,"host":"source","port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem","serverID":9100,"sourceUUID":uuid,"mode":mode,"start":start,"tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]],"stopAfterTransactions":count]
-                let columns: [[String:Any]] = [["name":"id","type":"int","nullable":false],["name":"value","type":"varchar(100)","nullable":false,"collation":"utf8mb4_unicode_ci"],["name":"quantity","type":"bigint unsigned","nullable":false]]
-                return ["version":1,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true,"targetUUID":targetUUID],"tables":[["database":"poc","table":"items","primaryKey":"id","columns":columns]],"stateDirectory":"/evidence/state-" + label]
+                let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem","serverID":9100,"sourceUUID":uuid,"mode":mode,"start":start,"stopAfterTransactions":count]
+                return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true,"targetUUID":targetUUID],"stateDirectory":"/evidence/state-" + label]
             }
             let positiveConfig = configuration("positive",at:sourceStart,count:4)
             let client = try start("positive",positiveConfig); try waitForReader(client)
@@ -128,7 +128,7 @@ public enum DMLQualification {
             try require(reached != "NULL" && reached != "-1","native did not converge")
             for service in h.services { try require(h.rows(service) == Fixture.final,"\(service) rows differ") }
             try require(h.sql("target57","SELECT @@GLOBAL.gtid_executed").isEmpty,"Swift injected source GTIDs into target")
-            try require(state("positive","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||applied_position||'|'||applied_gtids FROM state") == "STOPPED|4|4|\(sourceEnd.position)|\(sourceEnd.gtids)","SQLite applied checkpoint differs")
+            try require(state("positive","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||applied_position||'|'||(SELECT gtids FROM snapshots ORDER BY id DESC LIMIT 1) FROM state") == "STOPPED|4|4|\(sourceEnd.position)|\(sourceEnd.gtids)","SQLite applied checkpoint differs")
             try require(state("positive","SELECT COUNT(*) FROM row_intents WHERE status='DONE'") == "4","missing completed row intents")
             _ = try h.sql("native","STOP REPLICA")
             let nativeEnd = try h.boundary("native"), targetEnd = try h.boundary("target57")
@@ -162,11 +162,7 @@ public enum DMLQualification {
                     let engine = service == "source" ? "InnoDB" : "MyISAM"
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.exact_values(id BIGINT PRIMARY KEY,u INT UNSIGNED NOT NULL,b BIGINT UNSIGNED NOT NULL,t VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,v VARBINARY(100) NULL) ENGINE=\(engine)")
                 }
-                var exactConfig = configuration("exact-values",at:try h.boundary("source"),count:3)
-                var exactSource = exactConfig["source"] as! [String:Any]
-                exactSource["tables"] = [["database":"poc","table":"exact_values","columns":["signed","unsigned","unsigned","utf8","binary"]]]
-                exactConfig["source"] = exactSource
-                exactConfig["tables"] = [["database":"poc","table":"exact_values","primaryKey":"id","columns":[["name":"id","type":"bigint","nullable":false],["name":"u","type":"int unsigned","nullable":false],["name":"b","type":"bigint unsigned","nullable":false],["name":"t","type":"varchar(100)","nullable":true,"collation":"utf8mb4_bin"],["name":"v","type":"varbinary(100)","nullable":true]]]]
+                let exactConfig = configuration("exact-values",at:try h.boundary("source"),count:3)
                 let exact = try start("exact-values",exactConfig); try waitForReader(exact)
                 _ = try h.sql("native","START REPLICA")
                 func verifyExact(_ count: Int,_ expected: String) throws {
@@ -199,8 +195,40 @@ public enum DMLQualification {
                 _ = try finish(exact,"exact-values",success:true)
                 _ = try h.sql("native","STOP REPLICA")
                 report["exact_values"] = "integer_extremes_utf8_binary_null_empty_passed"
+                // One process discovers two new names and a non-leading key.
+                for service in h.services {
+                    let engine = service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.ordered_a(payload VARCHAR(30) NULL,k BIGINT UNSIGNED PRIMARY KEY) ENGINE=\(engine); CREATE TABLE poc.ordered_b(flag INT NOT NULL,blob_value VARBINARY(10) NULL,k INT PRIMARY KEY) ENGINE=\(engine)")
+                }
+                let discovery=try start("discovery",configuration("discovery",at:try h.boundary("source"),count:4)); try waitForReader(discovery)
+                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("source","INSERT INTO poc.ordered_a VALUES('first',18446744073709551615); INSERT INTO poc.ordered_b VALUES(-1,0x00FF,17); UPDATE poc.ordered_a SET payload='changed' WHERE k=18446744073709551615; DELETE FROM poc.ordered_b WHERE k=17")
+                _ = try finish(discovery,"discovery",success:true)
+                let discoveryEnd=try h.boundary("source")
+                let discoveryWait=try h.sql("native","SELECT SOURCE_POS_WAIT('\(discoveryEnd.file)',\(discoveryEnd.position),15)")
+                try require(discoveryWait != "NULL" && discoveryWait != "-1","discovery native barrier failed")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT payload,k FROM poc.ordered_a") == "changed\t18446744073709551615","discovered ordered columns differ")
+                    try require(h.sql(service,"SELECT COUNT(*) FROM poc.ordered_b") == "0","discovered second table differs")
+                }
+                try require(state("discovery","SELECT COUNT(*) FROM schemas") == "2","schema discovery was not persisted")
+                _ = try h.sql("native","STOP REPLICA")
+                report["automatic_discovery"]="multiple_tables_nonleading_keys_MINIMAL_and_FULL"
+                for label in ["absent-schema","incompatible-schema"] {
+                    let table=label == "absent-schema" ? "absent_schema" : "incompatible_schema"
+                    _ = try h.sql("source","SET SESSION sql_log_bin=0; CREATE TABLE poc.\(table)(k INT UNSIGNED PRIMARY KEY) ENGINE=InnoDB")
+                    if label == "incompatible-schema" {
+                        _ = try h.sql("target57","CREATE TABLE poc.\(table)(k INT PRIMARY KEY) ENGINE=MyISAM")
+                    }
+                    let rejected=try start(label,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
+                    _ = try h.sql("source","INSERT INTO poc.\(table) VALUES(1)")
+                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "single primary-key" : "signedness")
+                    try require(state(label,"SELECT transactions_applied FROM state") == "0","invalid schema advanced checkpoint")
+                }
                 // Existing state is never silently reset or used for an unsafe replay.
                 _ = try finish(start("existing",positiveConfig),"existing",success:false,reason:"state directory must be new")
+                let afterSchemaFailures=try h.boundary("source")
+                _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(afterSchemaFailures.file)',SOURCE_LOG_POS=\(afterSchemaFailures.position)")
                 // Before-image mismatch must publish no applied transaction.
                 _ = try h.sql("target57","UPDATE poc.items SET value='drift' WHERE id=1")
                 let beforeMismatch = try h.rows("target57")
@@ -226,7 +254,9 @@ public enum DMLQualification {
                 _ = try finish(start("native-channel",configuration("native-channel",at:try h.boundary("source"),count:1)),"native-channel",success:false,reason:"native replication channel")
                 _ = try h.sql("target57","STOP SLAVE; RESET SLAVE ALL")
                 _ = try h.sql("target57","CREATE TRIGGER poc.reject_trigger BEFORE INSERT ON poc.items FOR EACH ROW SET NEW.value='trigger'")
-                _ = try finish(start("trigger",configuration("trigger",at:try h.boundary("source"),count:1)),"trigger",success:false,reason:"triggers are unsupported")
+                let trigger = try start("trigger",configuration("trigger",at:try h.boundary("source"),count:1)); try waitForReader(trigger)
+                _ = try h.sql("source","INSERT INTO poc.items VALUES(88,'trigger-rejected',88)")
+                _ = try finish(trigger,"trigger",success:false,reason:"triggers are unsupported")
                 _ = try h.sql("target57","DROP TRIGGER poc.reject_trigger")
                 try require(h.rows("target57") == rejectedRows,"preflight rejection changed rows")
                 // A later row error cannot roll back an earlier MyISAM write.

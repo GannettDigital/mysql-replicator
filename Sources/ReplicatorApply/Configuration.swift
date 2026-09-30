@@ -13,7 +13,7 @@ func quoted(_ name: String) throws -> String {
     try require(!name.isEmpty && name.utf8.count <= 64 && !name.contains("\0") && name.unicodeScalars.allSatisfy { $0.isASCII }, "invalid SQL identifier")
     return "`" + name.replacingOccurrences(of:"`",with:"``") + "`"
 }
-public struct ApplyColumn: Codable {
+public struct ApplyColumn: Codable, Equatable {
     public let name: String
     public let type: String
     public let nullable: Bool
@@ -51,7 +51,7 @@ public struct ApplyColumn: Codable {
         }
     }
 }
-public struct ApplyTable: Codable {
+public struct ApplyTable: Codable, Equatable {
     public let database: String
     public let table: String
     public let columns: [ApplyColumn]
@@ -82,22 +82,19 @@ public struct ApplyConfiguration: Decodable {
     public let version: Int
     public let source: CaptureConfiguration
     public let target: TargetConfiguration
-    public let tables: [ApplyTable]
+    public let tables: [ApplyTable]?
     public let stateDirectory: String
     public let maximumRelayBytes: UInt64?
+    public let storage: StoragePolicy?
+    var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate() throws {
-        try require(version == 1 && !stateDirectory.isEmpty,"invalid apply configuration")
+        try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
         _ = try source.validate()
         try require(!target.host.isEmpty && (1...65535).contains(target.port) && !target.username.isEmpty && !target.passwordEnvironment.isEmpty && !target.serverHostname.isEmpty,"invalid target connection")
         try require(UUID(uuidString:target.targetUUID) != nil && target.targetUUID.lowercased() != source.sourceUUID.lowercased(),"invalid or identical source/target UUID")
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
-        try require(!tables.isEmpty && tables.count <= 64 && Set(tables.map(\.identity)).count == tables.count,"invalid table scope")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
-        try require(tables.count == source.tables.count,"capture/apply scope mismatch")
-        for t in tables {
-            try t.validate()
-            try require(source.tables.contains { $0.database == t.database && $0.table == t.table && $0.columns == t.columns.map(\.interpretation) },"capture/apply schema mismatch")
-        }
+        try policy.validate()
     }
 }
 
@@ -140,5 +137,28 @@ func exactImage(_ lhs: [DecodedValue]?, _ rhs: [DecodedValue]?) -> Bool {
     return zip(lhs,rhs).allSatisfy { a,b in
         if case .text(let x) = a, case .text(let y) = b { return x.utf8.elementsEqual(y.utf8) }
         return a == b
+    }
+}
+
+public struct StoragePolicy: Codable {
+    public var maximumSQLiteBytes: Int64 = 256 * 1024 * 1024
+    public var minimumFreeDiskBytes: Int64 = 512 * 1024 * 1024
+    public var pruneAtPercent: Int = 80
+    public var historyRetentionSeconds: Int = 86400
+    public var snapshotEveryTransactions: Int = 1000
+    public init() {}
+    enum CodingKeys: String, CodingKey {case maximumSQLiteBytes, minimumFreeDiskBytes, pruneAtPercent, historyRetentionSeconds, snapshotEveryTransactions}
+    public init(from decoder: Decoder) throws {
+        self.init(); let c = try decoder.container(keyedBy:CodingKeys.self)
+        maximumSQLiteBytes = try c.decodeIfPresent(Int64.self,forKey:.maximumSQLiteBytes) ?? maximumSQLiteBytes
+        minimumFreeDiskBytes = try c.decodeIfPresent(Int64.self,forKey:.minimumFreeDiskBytes) ?? minimumFreeDiskBytes
+        pruneAtPercent = try c.decodeIfPresent(Int.self,forKey:.pruneAtPercent) ?? pruneAtPercent
+        historyRetentionSeconds = try c.decodeIfPresent(Int.self,forKey:.historyRetentionSeconds) ?? historyRetentionSeconds
+        snapshotEveryTransactions = try c.decodeIfPresent(Int.self,forKey:.snapshotEveryTransactions) ?? snapshotEveryTransactions
+    }
+    func validate() throws {
+        try require((8*1024*1024...1024*1024*1024).contains(maximumSQLiteBytes),"SQLite limit must be 8 MiB to 1 GiB")
+        try require((1*1024*1024...Int64.max/2).contains(minimumFreeDiskBytes),"invalid free-disk reserve")
+        try require((50...90).contains(pruneAtPercent) && (1...31536000).contains(historyRetentionSeconds) && (1...10000).contains(snapshotEveryTransactions),"invalid retention/checkpoint policy")
     }
 }
