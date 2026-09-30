@@ -2,6 +2,12 @@
 
 Phase 1 is in progress.
 
+Current follow-up after `3618fd4`: [native engine/charset defaults](DDL_NATIVE_DEFAULTS.md)
+remove DDL compatibility rewriting, resolve inherited defaults from discovered schema,
+add typed Rust query-context decoding and TRUNCATE, and broaden the native/Swift
+fixtures. General DDL/type/charset coverage and recovery are still open. The earlier
+prototype validation below remains tied to that checkpoint.
+
 Reviewed DML checkpoint: `d188f58`. The current follow-up implements automatic
 schema discovery (version 2 configuration), ABI 4/event JSON 3 metadata and bounded
 SQLite history. Cleanup removes covered completed records older than the minimum
@@ -9,7 +15,7 @@ age only when storage approaches its limit. See [the implementation and storage
 policy](SCHEMA_DISCOVERY_AND_RETENTION.md). That work is committed as `e8c0e77`.
 The current follow-up adds discovered target UUIDs and a strict ordered DDL subset
 with versioned schema/DDL intents; see [DDL application](DDL_APPLY.md). Its forced engine/charset/collation rewrites are superseded by the
-[next DDL completeness plan](DDL_COMPLETENESS.md) and still need code changes.
+[next DDL completeness plan](DDL_COMPLETENESS.md) and are replaced in the foundation follow-up.
 Resume/recovery and operator skip/resolution remain future work. Statistics will
 be read from SQLite; an embedded REST API is no longer planned. The DDL increment passes 80 Swift tests normally and
 with Swift/C/CLI AddressSanitizer, the Rust test, both strengthened DDL start modes

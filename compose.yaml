@@ -15,14 +15,14 @@ services:
     volumes: ["source-data:/var/lib/mysql"]
   native:
     <<: *mysql
-    command: ["--server-id=8402", "--log-bin=binlog", "--log-replica-updates=ON", "--relay-log=relay-bin", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_NATIVE_GTID_MODE:-OFF_PERMISSIVE}", "--enforce-gtid-consistency=${FIXTURE_NATIVE_GTID_CONSISTENCY:-WARN}", "--replica-parallel-workers=0", "--replica-exec-mode=STRICT", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1"]
+    command: ["--server-id=8402", "--disabled-storage-engines=${FIXTURE_DISABLED_ENGINES:-}", "--log-bin=binlog", "--log-replica-updates=ON", "--relay-log=relay-bin", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_NATIVE_GTID_MODE:-OFF_PERMISSIVE}", "--enforce-gtid-consistency=${FIXTURE_NATIVE_GTID_CONSISTENCY:-WARN}", "--replica-parallel-workers=0", "--replica-exec-mode=STRICT", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1"]
     volumes: ["native-data:/var/lib/mysql"]
   target57:
     <<: *mysql
     image: mysql-replicator-fixture:5.7.42-setpriv
     platform: linux/amd64
     build: ./docker/mysql57
-    command: ["--server-id=5701", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_TARGET57_GTID_MODE:-OFF_PERMISSIVE}", "--enforce-gtid-consistency=${FIXTURE_TARGET57_GTID_CONSISTENCY:-WARN}", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start"]
+    command: ["--server-id=5701", "--disabled-storage-engines=${FIXTURE_DISABLED_ENGINES:-}", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=${FIXTURE_TARGET57_GTID_MODE:-OFF_PERMISSIVE}", "--enforce-gtid-consistency=${FIXTURE_TARGET57_GTID_CONSISTENCY:-WARN}", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start"]
     volumes: ["target57-data:/var/lib/mysql"]
 networks:
   fixture:

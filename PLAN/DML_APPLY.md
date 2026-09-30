@@ -2,8 +2,8 @@
 
 This increment connects the existing live reader/decoder/transaction assembler to
 MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
-A [strict DDL prototype](DDL_APPLY.md) is now available; its engine/collation
-rewrites must be removed under the [DDL completeness plan](DDL_COMPLETENESS.md).
+The [native engine/charset DDL foundation](DDL_NATIVE_DEFAULTS.md) replaces the
+initial prototype rewrites. Broader coverage follows the [DDL completeness plan](DDL_COMPLETENESS.md).
 Automatic reconnect and recovery/reopening of existing state remain unimplemented.
 Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.

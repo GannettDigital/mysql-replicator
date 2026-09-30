@@ -18,6 +18,7 @@ public struct ApplyColumn: Codable, Equatable {
     public let type: String
     public let nullable: Bool
     public let collation: String?
+    public var characterSet: String? = nil
     var interpretation: ColumnInterpretation {
         if type.hasPrefix("varchar(") { return .utf8 }
         if type.hasPrefix("varbinary(") { return .binary }
@@ -33,8 +34,9 @@ public struct ApplyColumn: Codable, Equatable {
         let string = type.range(of:#"^(varchar|varbinary)\([1-9][0-9]*\)$"#,options:.regularExpression) != nil
         try require(integer || (string && (1...16383).contains(width ?? 0)), "unsupported declared column type")
         if interpretation == .utf8 {
+            try require(characterSet == nil || characterSet == "utf8mb4", "unsupported discovered character set; no charset conversion is performed")
             try require(["utf8mb4_bin","utf8mb4_unicode_ci","utf8mb4_general_ci"].contains(collation ?? ""), "unsupported varchar collation")
-        } else { try require(collation == nil, "collation on non-text column") }
+        } else { try require(collation == nil && characterSet == nil, "encoding on non-text column") }
     }
     func validate(_ value: DecodedValue) throws {
         if value == .null { try require(nullable, "NULL in nonnullable column"); return }
@@ -56,6 +58,8 @@ public struct ApplyTable: Codable, Equatable {
     public let table: String
     public let columns: [ApplyColumn]
     public let primaryKey: String
+    public var defaultCharacterSet: String? = nil
+    public var defaultCollation: String? = nil
     var identity: String { database + "\0" + table }
     var keyIndex: Int { columns.firstIndex { $0.name == primaryKey }! }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }

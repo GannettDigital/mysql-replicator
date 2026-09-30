@@ -100,6 +100,7 @@ public enum DMLQualification {
             report["native_auto_start"] = "disabled_by_verified_container_startup_argument"
             _ = try h.sql("source","CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'capture_fixture'@'%'; CREATE USER 'native_fixture'@'%' IDENTIFIED BY 'fixture-native-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'native_fixture'@'%'")
             for service in h.services {
+                if ddl && service != "source" {_ = try h.sql(service,"SET GLOBAL default_storage_engine=MyISAM; SET GLOBAL default_tmp_storage_engine=MyISAM")}
                 let engine = service == "source" ? "InnoDB" : "MyISAM"
                 _ = try h.sql(service,"CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(engine); INSERT INTO poc.items VALUES(1,'seed-one',1),(2,'seed-two',2)")
             }
@@ -140,27 +141,41 @@ public enum DMLQualification {
             try require(state("positive","SELECT target_uuid FROM state") == targetUUID,"discovered target UUID was not persisted")
             report["positive"] = positive
             if ddl {
-                let changes: [(String,String,String,String)] = [
-                    ("CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY) ENGINE=InnoDB","changes","payload:varbinary:YES,id:int:NO",""),
-                    ("INSERT INTO poc.changes VALUES(0x00FF,1)","changes","payload:varbinary:YES,id:int:NO","1\t00FF"),
-                    ("ALTER TABLE poc.changes ADD note VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL FIRST","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\tNULL\t00FF"),
-                    ("UPDATE poc.changes SET note='first' WHERE id=1","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\t6669727374\t00FF"),
-                    ("ALTER TABLE poc.changes DROP COLUMN payload","changes","note:varchar:YES,id:int:NO","1\t6669727374"),
-                    ("UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874"),
-                    ("RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874"),
-                    ("INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL"),
-                    ("DROP TABLE poc.renamed","renamed","",""),
-                    ("CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE=InnoDB","renamed","id:bigint:NO,b:varbinary:YES",""),
-                    ("INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE"),
-                    ("UPDATE poc.renamed SET b=NULL WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tNULL"),
-                    ("DELETE FROM poc.renamed WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES",""),
-                    ("DROP TABLE poc.renamed","renamed","","")
+                // SQL, table, ordered schema, exact rows, expected note collation.
+                let changes: [(String,String,String,String,String)] = [
+                    ("CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY)","changes","payload:varbinary:YES,id:int:NO","",""),
+                    ("INSERT INTO poc.changes VALUES(0x00FF,1)","changes","payload:varbinary:YES,id:int:NO","1\t00FF",""),
+                    ("ALTER TABLE poc.changes ADD note VARCHAR(20) NULL FIRST","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\tNULL\t00FF","utf8mb4_unicode_ci"),
+                    ("UPDATE poc.changes SET note='first' WHERE id=1","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\t6669727374\t00FF","utf8mb4_unicode_ci"),
+                    ("ALTER TABLE poc.changes DROP COLUMN payload","changes","note:varchar:YES,id:int:NO","1\t6669727374","utf8mb4_unicode_ci"),
+                    ("UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
+                    ("RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
+                    ("INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL","utf8mb4_unicode_ci"),
+                    ("DROP TABLE poc.renamed","renamed","","",""),
+                    ("CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE='DEFAULT'","renamed","id:bigint:NO,b:varbinary:YES","",""),
+                    ("INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
+                    ("TRUNCATE TABLE poc.renamed","renamed","id:bigint:NO,b:varbinary:YES","",""),
+                    ("INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
+                    ("UPDATE poc.renamed SET b=NULL WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tNULL",""),
+                    ("DELETE FROM poc.renamed WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","",""),
+                    ("DROP TABLE poc.renamed","renamed","","",""),
+                    ("CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY,note VARCHAR(20) COLLATE utf8mb4_bin) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
+                    ("INSERT INTO poc.changes VALUES(0x00FF,1,'last')","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t6C617374\t00FF","utf8mb4_bin"),
+                    ("UPDATE poc.changes SET note='done' WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t646F6E65\t00FF","utf8mb4_bin"),
+                    ("DELETE FROM poc.changes WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
+                    ("DROP TABLE poc.changes","changes","","",""),
+                    ("CREATE TABLE poc.defaults(id INT PRIMARY KEY,note VARCHAR(20) CHARACTER SET utf8mb4)","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
+                    ("INSERT INTO poc.defaults VALUES(1,'charset')","defaults","id:int:NO,note:varchar:YES","1\t63686172736574","utf8mb4_general_ci"),
+                    ("UPDATE poc.defaults SET note='checked' WHERE id=1","defaults","id:int:NO,note:varchar:YES","1\t636865636B6564","utf8mb4_general_ci"),
+                    ("DELETE FROM poc.defaults WHERE id=1","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
+                    ("DROP TABLE poc.defaults","defaults","","","")
                 ]
                 let ddlStart=try h.boundary("source"),ddlNativeStart=try h.boundary("native"),ddlTargetStart=try h.boundary("target57")
                 let applying=try start("ddl",configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
                 _ = try h.sql("native","START REPLICA")
                 for (index,change) in changes.enumerated() {
-                    _ = try h.sql("source",change.0)
+                    let prefix=change.1=="defaults" ? "SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; " : ""
+                    _ = try h.sql("source",prefix+change.0)
                     let deadline=Date().addingTimeInterval(20)
                     var applied=0
                     repeat {
@@ -183,10 +198,10 @@ public enum DMLQualification {
                         try require(schema == (change.2.isEmpty ? "NULL" : change.2),"\(service) DDL schema differs at step \(index+1)")
                         if !change.2.isEmpty {
                             let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)'")
-                            try require(engine == (service == "target57" ? "MyISAM" : "InnoDB"),"DDL engine mapping differs")
+                            try require(engine == (service == "source" ? "InnoDB" : "MyISAM"),"DDL local engine selection differs")
                             if change.2.contains("note:") {
                                 let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.1)' AND COLUMN_NAME='note'")
-                                try require(collation == (service == "target57" ? "utf8mb4_unicode_ci" : "utf8mb4_0900_ai_ci"),"DDL collation mapping differs")
+                                try require(collation == change.4,"DDL collation differs")
                             }
                             let fields=change.2.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.2.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.2.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
                             let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.1) ORDER BY id")
@@ -200,14 +215,15 @@ public enum DMLQualification {
                 let ddlEnd=try h.boundary("source")
                 let ddlResult=try finish(applying,"ddl",success:true)
                 try require(ddlResult["appliedGTIDSet"] as? String == ddlEnd.gtids,"DDL applied GTID coverage differs")
-                try require(ddlResult["ddlApplied"] as? Int == 7 && ddlResult["rowsApplied"] as? Int == 7,"DDL counters differ")
-                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "7","DDL intent history missing")
+                try require(ddlResult["ddlApplied"] as? Int == 12 && ddlResult["rowsApplied"] as? Int == 14,"DDL counters differ")
+                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "12","DDL intent history missing")
+                let expectedCreates=changes.filter{$0.0.hasPrefix("CREATE TABLE")}.map{$0.0}.joined(separator:"\n")
+                try require(state("ddl","SELECT target_sql FROM ddl_intents WHERE target_sql LIKE 'CREATE TABLE%' ORDER BY rowid")==expectedCreates,"CREATE SQL was rewritten")
                 try require(state("ddl","SELECT COUNT(*) FROM schemas WHERE current=1") == "0","dropped schema remains current")
                 try require(state("ddl","SELECT COUNT(*) FROM row_intents r LEFT JOIN schemas s ON s.id=r.schema_id WHERE s.id IS NULL") == "0","row intent lost historical schema")
                 _ = try h.sql("native","STOP REPLICA")
-                // Retain raw logs and independent mysqlbinlog DDL traces. CREATE
-                // intentionally maps InnoDB to MyISAM, so native engine parity
-                // is not asserted for these newly created tables.
+                // Both replicas must select MyISAM through their local defaults.
+                // Source DDL is retained unchanged; no engine/collation rewriting.
                 for (service,from) in [("source",ddlStart),("native",ddlNativeStart),("target57",ddlTargetStart)] {
                     let end=try h.boundary(service)
                     _ = try h.capture(service,start:nil,end:nil)
@@ -218,7 +234,7 @@ public enum DMLQualification {
                     let text=String(decoding:decoded.stdout,as:UTF8.self).uppercased()
                     let expectedKinds=changes.map {String($0.0.split(separator:" ")[0])}
                     let kinds=text.split(separator:"\n").compactMap {line -> String? in
-                        for verb in ["CREATE TABLE","ALTER TABLE","RENAME TABLE","DROP TABLE"] {
+                        for verb in ["CREATE TABLE","ALTER TABLE","RENAME TABLE","DROP TABLE","TRUNCATE TABLE"] {
                             if line.hasPrefix(verb+" ") {return String(verb.split(separator:" ")[0])}
                         }
                         for verb in ["INSERT INTO","UPDATE","DELETE FROM"] {
@@ -229,6 +245,18 @@ public enum DMLQualification {
                     try require(kinds==expectedKinds,"DDL/DML binlog operations differ in count or source order")
                     try writeJSON(kinds,to:output.appendingPathComponent(service+"-ddl-operation-kinds.json"))
                 }
+                for (label,sql,reason) in [
+                    ("explicit_innodb","CREATE TABLE poc.explicit_innodb(id INT PRIMARY KEY) ENGINE=InnoDB","no engine rewriting"),
+                    ("collation_0900","CREATE TABLE poc.collation_0900(id INT PRIMARY KEY,v VARCHAR(12) COLLATE utf8mb4_0900_ai_ci)","no substitution"),
+                    ("charset_default","CREATE TABLE poc.charset_default(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET utf8mb4)","no collation substitution"),
+                    ("charset_latin1","CREATE TABLE poc.charset_latin1(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET latin1)","unsupported discovered character set")
+                ] {
+                    let rejected=try start(label,configuration(label,at:try h.boundary("source"),count:2));try waitForReader(rejected)
+                    _ = try h.sql("source",sql+"; CREATE TABLE poc.after_\(label)(id INT PRIMARY KEY)")
+                    _ = try finish(rejected,label,success:false,reason:reason)
+                    try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0","DDL rejection advanced progress")
+                    try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME IN ('\(label)','after_\(label)')")=="0","rejected or following DDL was applied")
+                }
                 // A valid source DDL outside the grammar stops before mutation.
                 let unsupported=try start("ddl-unsupported",configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
                 _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DECIMAL(10,2) NULL")
@@ -238,11 +266,11 @@ public enum DMLQualification {
                 // A target SQL error leaves a pending DDL intent, never applied.
                 _ = try h.sql("target57","REVOKE CREATE ON poc.* FROM 'apply_fixture'@'%'")
                 let denied=try start("ddl-denied",configuration("ddl-denied",at:try h.boundary("source"),count:1));try waitForReader(denied)
-                _ = try h.sql("source","CREATE TABLE poc.denied(id INT PRIMARY KEY) ENGINE=InnoDB")
+                _ = try h.sql("source","CREATE TABLE poc.denied(id INT PRIMARY KEY)")
                 _ = try finish(denied,"ddl-denied",success:false,reason:"target SQL error")
                 try require(state("ddl-denied","SELECT status FROM ddl_intents") == "PENDING","failed DDL intent lost")
                 try require(state("ddl-denied","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","failed DDL advanced checkpoint")
-                report["ddl_mapping"]="source/native InnoDB; Swift MyISAM; explicit CREATE engine transformation"
+                report["ddl_policy"]="unchanged DDL; source InnoDB and both replicas MyISAM via local defaults"
                 report["ddl_steps"]=changes.map{$0.0};report["ddl_result"]=ddlResult
             } else if mode == "gtid" {
                 // Additional accepted shapes: multi-row statement and key change.

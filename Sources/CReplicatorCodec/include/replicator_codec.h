@@ -38,6 +38,14 @@ typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; r
  * maximum_bytes is populated for VARCHAR/VARBINARY (wire type 15). */
 typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name; } rc_column;
 int32_t rc_result_column(const rc_result *result, uint32_t column, rc_column *out);
+/* Additive ABI 4 query-context API. present uses MySQL Q_* status tag bits.
+ * No pointers in output. Unknown, truncated or duplicate status fields fail. */
+typedef struct {
+    uint64_t sql_mode;
+    uint32_t present, flags2, charset_client, collation_connection, collation_server,
+        collation_database, default_collation_utf8mb4;
+} rc_query_context;
+int32_t rc_query_context_decode(const uint8_t *bytes, uint64_t length, rc_query_context *out);
 uint32_t replicator_codec_abi_version(void);
 uint64_t replicator_codec_capabilities(void); /* bit 0: bounded offline decoder */
 int32_t rc_decoder_create(uint32_t max_event_bytes, rc_decoder **out);

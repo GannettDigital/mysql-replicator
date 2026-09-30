@@ -1,7 +1,7 @@
 # DDL completeness and native engine behavior
 
-Decision update, 2026-09-30. This is the next implementation plan, not a claim
-that the revised behavior is implemented. It supersedes the prototype's explicit
+Decision update, 2026-09-30. The [engine/charset foundation](DDL_NATIVE_DEFAULTS.md)
+implements the first slice of this plan. The broader matrix remains a backlog. It supersedes the prototype's explicit
 InnoDB-to-MyISAM CREATE rewrite and automatic collation substitution described in
 [the initial DDL checkpoint](DDL_APPLY.md).
 
@@ -18,6 +18,11 @@ InnoDB-to-MyISAM CREATE rewrite and automatic collation substitution described i
 Statistics persist to SQLite for external readers; an embedded REST server or web
 interface is not a deliverable. Dump/load remains entirely external. Automation
 continues through SwiftPM and Make, retaining the mapped Docker build caches.
+
+Current native findings: bare `ENGINE=DEFAULT` fails with syntax error 1064 on the
+pinned servers; quoted `ENGINE='DEFAULT'` also requires a qualified temporary-engine
+default to select MyISAM. Omitted ENGINE is the preferred positive baseline. See
+the foundation document for the measured settings and current implementation limits.
 
 ## Engine selection: preserve the statement's meaning
 
@@ -56,8 +61,8 @@ Therefore:
 engine; investigate it rather than attempting to remove InnoDB needed by MySQL's
 own storage. Qualify it with `NO_ENGINE_SUBSTITUTION`, the source query's SQL mode,
 and both native-applier and ordinary SQL sessions on the pinned versions. An
-unavailable/disabled engine must not silently fall back. These are proposed fixture
-settings, not already verified deployment instructions.
+unavailable/disabled engine must not silently fall back. The first native fixture now measures these settings on the pinned versions;
+production deployment compatibility remains unqualified.
 [Engine restrictions](https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_disabled_storage_engines),
 [engine selection and substitution](https://dev.mysql.com/doc/refman/8.4/en/storage-engine-setting.html).
 
@@ -223,6 +228,25 @@ and test a DDL-specific timeout/cancellation policy and metadata-lock behavior.
 A timed-out or disconnected statement may still execute: preserve its intent and
 block until its outcome is established. No automatic retry/recovery is introduced
 as part of this completeness increment.
+
+## Test-harness reporting follow-up
+
+Review feedback, 2026-09-30: numeric messages such as `passed DDL/DML step 1`
+do not explain the scenario or help locate its implementation. Apply the following
+reporting convention across test suites, starting with the DDL/DML case loop in
+`Sources/ReplicatorLabCore/DMLQualification.swift`:
+
+- Give every case a stable, searchable ID and a descriptive name explaining the
+  operation and behavior being checked; ordinal progress may be additional context.
+- Include the case definition's repository-relative source path and line number
+  in progress output so the scenario can be found directly in the codebase.
+- Use the same case identity in start/pass/failure messages and saved results;
+  failures should also identify the specific assertion that failed.
+- Capture source locations at the case definition rather than the shared logging
+  helper, and keep line numbers generated rather than manually maintained.
+
+This is pending implementation. Record the requirement now; leave the user's
+currently running suite and its code unchanged until that run finishes.
 
 ## Acceptance for the next increment
 

@@ -39,7 +39,9 @@ public enum ApplyRun {
                 emitEvent:state.append,emitTransaction: { group in
                     try state.begin(group)
                     if group.outcome == .statement {
-                        let plan=try target.prepareDDL(DDLStatement.from(group))
+                        let statement=try DDLStatement.from(group)
+                        guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
+                        let plan=try target.prepareDDL(statement,query:query)
                         try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                         try require(!cancellation.isCancelled,"apply cancelled")
                         try target.applyDDL(plan)

@@ -8,12 +8,13 @@ final class DDLTests: XCTestCase {
     func parse(_ sql: String,database: String?="poc") throws -> DDLStatement {
         try DDLStatement.parse(QueryControl(database:database,sql:Data(sql.utf8),errorCode:0,statusVariables:Data()))
     }
-    func testCreateMapsExplicitEncodingAndPreservesColumnOrderAndNonLeadingKey() throws {
-        let result=try parse("CREATE TABLE `poc`.`new``name` (payload VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL, k BIGINT UNSIGNED, PRIMARY KEY(k)) ENGINE=InnoDB;")
-        guard case .create(let table)=result else {return XCTFail("not CREATE")}
+    func testCreatePreservesExplicitEncodingAndColumnOrderWithoutEngineRewrite() throws {
+        let result=try parse("CREATE TABLE `poc`.`new``name` (payload VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL, k BIGINT UNSIGNED, PRIMARY KEY(k));")
+        guard case .create(let table,_)=result else {return XCTFail("not CREATE")}
         XCTAssertEqual(table.table,"new`name")
         XCTAssertEqual(table.columns.map(\.name),["payload","k"])
-        XCTAssertEqual(table.columns[0].collation,"utf8mb4_unicode_ci")
+        XCTAssertEqual(table.columns[0].collation,"utf8mb4_0900_ai_ci")
+        XCTAssertEqual(table.columns[0].characterSet,"utf8mb4")
         XCTAssertFalse(table.columns[1].nullable)
         XCTAssertEqual(table.primaryKey,"k")
     }
@@ -28,7 +29,8 @@ final class DDLTests: XCTestCase {
     func testUnsupportedDDLNeverFallsThroughToRawSQL() throws {
         for sql in [
             "CREATE TEMPORARY TABLE t(k INT PRIMARY KEY) ENGINE=InnoDB",
-            "CREATE TABLE t(k INT PRIMARY KEY) ENGINE=MyISAM",
+            "CREATE TABLE t(k INT PRIMARY KEY) ENGINE=InnoDB",
+            "CREATE TABLE t(k INT PRIMARY KEY) ENGINE=DEFAULT",
             "CREATE TABLE t(k INT PRIMARY KEY) ENGINE=InnoDB AS SELECT 1",
             "CREATE TABLE t(k INT PRIMARY KEY AUTO_INCREMENT) ENGINE=InnoDB",
             "CREATE TABLE t(k INT PRIMARY KEY,v VARCHAR(10)) ENGINE=InnoDB",
@@ -38,11 +40,29 @@ final class DDLTests: XCTestCase {
             "ALTER TABLE t ADD n INT, ADD m INT", "ALTER TABLE t MODIFY k BIGINT",
             "ALTER TABLE t ADD n INT PRIMARY KEY", "ALTER TABLE t ADD n INT /*!80000 INVISIBLE */",
             "DROP TABLE IF EXISTS t", "DROP TABLE t,other", "DROP TABLE t; DROP DATABASE poc",
-            "RENAME TABLE t TO otherdb.t", "TRUNCATE TABLE t", "CREATE DATABASE d",
-            "ALTER TABLE t ADD n VARCHAR(10) CHARACTER SET latin1 COLLATE latin1_bin",
+            "RENAME TABLE t TO otherdb.t", "CREATE DATABASE d",
             "ALTER TABLE t ADD n INT DEFAULT (1+1)", "DROP TABLE \"t\"", "DROP TABLE t -- comment"
         ] {XCTAssertThrowsError(try parse(sql),sql)}
         XCTAssertThrowsError(try parse("DROP TABLE t",database:nil))
+    }
+    func testOmittedDefaultsCollateOnlyAndQuotedEngineRemainUnresolvedUntilTargetDiscovery() throws {
+        for engine in [""," ENGINE=MyISAM"," ENGINE='DEFAULT'"] {
+            guard case .create(let table,_)=try parse("CREATE TABLE t(id INT PRIMARY KEY,v VARCHAR(10),b VARCHAR(5) COLLATE utf8mb4_bin)"+engine) else {return XCTFail("not CREATE")}
+            XCTAssertNil(table.columns[1].collation);XCTAssertNil(table.columns[1].characterSet)
+            XCTAssertEqual(table.columns[2].collation,"utf8mb4_bin");XCTAssertNil(table.columns[2].characterSet)
+        }
+        XCTAssertEqual(try parse("TRUNCATE TABLE t"),.truncate(TableName(database:"poc",table:"t")))
+        guard case .create(let table,_)=try parse("CREATE TABLE t(id INT PRIMARY KEY) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci") else {return XCTFail("not CREATE")}
+        XCTAssertEqual(table.defaultCharacterSet,"utf8mb4");XCTAssertEqual(table.defaultCollation,"utf8mb4_unicode_ci")
+    }
+    func testTypedQueryContextRequiresCompleteCharsetAndSQLModeMetadata() throws {
+        let status=Data([1,0,0,0,0,0,0,0,0,4,45,0,224,0,255,0,18,45,0])
+        let query=QueryControl(database:"poc",sql:Data(),errorCode:0,statusVariables:status)
+        let context=try QuerySessionContext(query:query)
+        XCTAssertEqual(context.clientCharset,45);XCTAssertEqual(context.defaultUTF8MB4Collation,45)
+        for bytes in [Data(),Data(status.dropLast()),status+Data([255])] {
+            XCTAssertThrowsError(try QuerySessionContext(query:QueryControl(database:"poc",sql:Data(),errorCode:0,statusVariables:bytes)))
+        }
     }
     func testTargetUUIDIsNotAConfigurationInput() throws {
         let fields: [String:Any]=["host":"target","port":3306,"username":"u","passwordEnvironment":"P","serverHostname":"target","nativeAutoStartDisabled":true]

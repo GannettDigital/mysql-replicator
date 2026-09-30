@@ -35,3 +35,7 @@ dml-suite:
 .PHONY: ddl-suite
 ddl-suite:
 	swift run replicator-lab ddl-suite $(ARGS)
+
+.PHONY: native-ddl-suite
+native-ddl-suite:
+	swift run replicator-lab native-ddl-suite

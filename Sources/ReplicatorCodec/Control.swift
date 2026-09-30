@@ -1,4 +1,5 @@
 import Foundation
+import CReplicatorCodec
 
 /// File positions are only meaningful within the same source history. This
 /// value carries no assertion about durability, execution, or source lineage.
@@ -24,7 +25,7 @@ public struct QueryControl: Equatable, Encodable {
     public let database: String?
     public let sql: Data
     public let errorCode: UInt32
-    /// Kept byte-exact, not interpreted as session settings by this increment.
+    /// Byte-exact status; typed context is available through the Rust adapter.
     public let statusVariables: Data
 }
 
@@ -54,5 +55,28 @@ public enum BinlogControl: Equatable, Encodable {
         case .rotate(let destination):
             try c.encode("rotate", forKey: .kind); try c.encode(destination, forKey: .destination)
         }
+    }
+}
+
+public struct QuerySessionContext {
+    public let sqlMode: UInt64
+    public let clientCharset: UInt32
+    public let connectionCollation: UInt32
+    public let serverCollation: UInt32
+    public let databaseCollation: UInt32?
+    public let defaultUTF8MB4Collation: UInt32
+    public init(query: QueryControl) throws {
+        var value=rc_query_context()
+        let status=query.statusVariables.withUnsafeBytes {bytes in
+            rc_query_context_decode(bytes.bindMemory(to:UInt8.self).baseAddress,UInt64(bytes.count),&value)
+        }
+        let required:UInt32=(1<<1)|(1<<4) // Q_SQL_MODE_CODE and Q_CHARSET_CODE
+        guard status==0, value.present & required == required else {
+            throw NSError(domain:"QuerySessionContext",code:Int(status),userInfo:[NSLocalizedDescriptionKey:"missing, unknown or malformed DDL query context"])
+        }
+        sqlMode=value.sql_mode;clientCharset=value.charset_client
+        connectionCollation=value.collation_connection;serverCollation=value.collation_server
+        databaseCollation=value.present & (1<<8) != 0 ? value.collation_database : nil
+        defaultUTF8MB4Collation=value.present & (1<<18) != 0 ? value.default_collation_utf8mb4 : 45
     }
 }

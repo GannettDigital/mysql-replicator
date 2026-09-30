@@ -67,6 +67,10 @@ final class TargetSession {
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
 
     }
+    func resetDMLSession() throws {
+        _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+        _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
+    }
     var discovered: [String:ApplyTable] = [:]
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
         guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
@@ -91,13 +95,16 @@ final class TargetSession {
     }
     func readSchema(database: String,name: String) throws -> ApplyTable {
         let binds = [MySQLData(string:database),MySQLData(string:name)]
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
         try require(keys.count == 1,"discovered target requires a single primary-key column")
-        let table = ApplyTable(database:database,table:name,columns:try columns.map { row in
+        var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
             guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
-            return ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+            var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+            column.characterSet=row.column("CHARACTER_SET_NAME")?.string;return column
         },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
+        let encoding=try tableEncoding(TableName(database:database,table:name))
+        table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
         try table.validate(); try verifySchema(table)
         return table
     }
@@ -107,10 +114,12 @@ final class TargetSession {
     func verifySchema(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         try require(try scalar("SELECT ENGINE AS v FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds) == "MyISAM","target table is absent or not MyISAM")
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLLATION_NAME,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let encoding=try tableEncoding(TableName(database:t.database,table:t.table))
+        try require(encoding.characterSet==t.defaultCharacterSet && encoding.collation==t.defaultCollation,"target table defaults differ from historical schema")
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("EXTRA")?.string == "","target schema differs from historical manifest")
+            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == "","target schema differs from historical manifest")
         }
         let keys = try query("SELECT INDEX_NAME,COLUMN_NAME,SUB_PART FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",binds).0
         try require(keys.count == 1 && keys[0].column("INDEX_NAME")?.string == "PRIMARY" && keys[0].column("COLUMN_NAME")?.string == t.primaryKey && keys[0].column("SUB_PART")?.buffer == nil,"initial applier requires only the declared full primary-key index")

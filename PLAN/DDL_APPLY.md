@@ -1,4 +1,7 @@
-# Initial ordered DDL prototype
+# Initial ordered DDL prototype — checkpoint 3618fd4
+
+**Implementation follow-up:** [native engine/charset defaults](DDL_NATIVE_DEFAULTS.md)
+now replace the rewrites in this historical checkpoint and add TRUNCATE.
 
 **Review update, 2026-09-30:** the engine/collation rewriting below is a description
 of the current prototype, not the accepted policy for the next increment.

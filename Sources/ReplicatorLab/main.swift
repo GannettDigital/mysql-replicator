@@ -14,6 +14,7 @@ func main() throws -> Int32 {
           live-suite [--skip-build]
           dml-suite [--skip-build]
           ddl-suite [--skip-build]
+          native-ddl-suite
           upstream-tests
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
@@ -24,6 +25,10 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command == "native-ddl-suite" {
+        try require(args.isEmpty,"native-ddl-suite accepts no arguments")
+        try NativeDDLQualification.run(root:root); return 0
+    }
     if command == "dml-suite" || command == "ddl-suite" {
         try require(args.isEmpty || args == ["--skip-build"], "DML/DDL suite accepts only --skip-build")
         try DMLQualification.run(root: root, build: args.isEmpty, ddl: command == "ddl-suite")

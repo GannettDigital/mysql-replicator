@@ -1,5 +1,6 @@
 //! Strict bounded offline adapter around the pinned mysql_common codec.
 //! No transport, transaction/application policy, or JSON serialization lives here.
+mod query_context;
 use mysql_common::{
     binlog::{
         consts::{BinlogChecksumAlg, BinlogVersion},

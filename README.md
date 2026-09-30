@@ -2,7 +2,7 @@
 
 Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
-Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The first serial INSERT/UPDATE/DELETE applier now connects that pipeline to MySQL 5.7 MyISAM, with a local framed relay and SQLite state/row intents. A strict DDL prototype is implemented. Next is [native-compatible DDL completeness](PLAN/DDL_COMPLETENESS.md), starting by removing its forced engine/charset/collation rewrites. Resume/recovery remains future work; statistics will be read from SQLite without an embedded REST server. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
+Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The first serial INSERT/UPDATE/DELETE applier now connects that pipeline to MySQL 5.7 MyISAM, with a local framed relay and SQLite state/row intents. The first [native engine/charset DDL slice](PLAN/DDL_NATIVE_DEFAULTS.md) removes compatibility rewrites and adds TRUNCATE, discovered defaults and native-reference fixtures. Broader [DDL completeness](PLAN/DDL_COMPLETENESS.md) remains in progress. Resume/recovery remains future work; statistics will be read from SQLite without an embedded REST server. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
 Database dump/load and target provisioning are entirely external. The replicator starts from a prepared target and a known source position or executed GTID set; see [the start-boundary contract](PLAN/START_BOUNDARY.md).
 
@@ -57,7 +57,7 @@ The initial applier requires a **new state directory** and supports a deliberate
 limited schema and single-statement transaction subset. It never reopens state or
 retries uncertain writes. Review [supported behavior, setup, state ordering and
 limits](PLAN/DML_APPLY.md) before using it. See [ordered DDL and its test suite](PLAN/DDL_APPLY.md) for the initial schema-change subset;
-that prototype's engine/collation policy is superseded by the [DDL completeness plan](PLAN/DDL_COMPLETENESS.md).
+the [native-default follow-up](PLAN/DDL_NATIVE_DEFAULTS.md) supersedes its engine/charset rewriting.
 First-start handoff, SQLite restart and audited skip/resolution follow DDL/DML correctness;
 see [the future recovery contract](PLAN/START_BOUNDARY.md). Version 2 configuration has no
 schema lists: discovery combines source table-map metadata with the prepared target.
@@ -74,6 +74,7 @@ Automation lives in the SwiftPM executable `replicator-lab`. Make coordinates th
 make build
 make test
 make native-suite
+make native-ddl-suite
 make upstream-tests
 make ubuntu-smoke
 ```
@@ -82,6 +83,7 @@ Equivalent SwiftPM harness commands:
 
 ```sh
 swift run replicator-lab native-suite
+swift run replicator-lab native-ddl-suite
 swift run replicator-lab upstream-tests
 swift run replicator-lab verify-evidence artifacts/native-suite/<case-directory>
 ```
