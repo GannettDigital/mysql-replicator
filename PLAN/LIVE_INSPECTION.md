@@ -16,7 +16,7 @@ Build with `make build`, then run:
 Set the password through the environment variable named by `passwordEnvironment`.
 The JSON configuration below is illustrative: replace the UUID, binlog boundary,
 GTID set and column interpretations with metadata from the **same verified seed
-boundary**. The tool does not establish that seed or validate its snapshot.
+boundary**. The tool does not establish that seed or validate its snapshot. Dump/load management remains entirely external; see [the production start-boundary contract](START_BOUNDARY.md). The current inspector requires both positional context and a GTID set even in GTID mode; the planned production interface will accept either known start form.
 
 ```json
 {
@@ -142,9 +142,10 @@ Docker Desktop still uses its own kernel and amd64 emulation.
 
 Review the distinction between source coordinates and synthetic context, absence
 of progress on incomplete groups, frozen-schema handling, queue bounds, TLS patch
-and source/native comparisons. Next work is local raw relay files plus SQLite
-state/checkpoints/diagnostics/counters, followed by read-only REST status and
-controlled apply. See [the storage/runtime design](RELAY_STATE_AND_STATUS.md).
+and source/native comparisons. Next work is a small serial MyISAM applier with the local relay and SQLite
+intent/checkpoint support it needs: INSERT/UPDATE/DELETE first, then schema changes.
+Crash/reconnect recovery implementation and qualification follow only after both
+DML and DDL correctness gates pass. Read-only REST status follows the initial capture/apply state. See [the storage/runtime design](RELAY_STATE_AND_STATUS.md).
 
 ## Recorded validation
 

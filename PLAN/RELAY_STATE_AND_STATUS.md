@@ -2,15 +2,19 @@
 
 ## Accepted storage split
 
-Raw binlog events belong in local relay/binlog files, **not SQLite BLOB rows**. SQLite stores replication state and indexes into those files, historical schema, bootstrap provenance, pending MyISAM/DDL recovery intents, diagnostics and statistics. This supersedes the earlier proposal to put the entire raw event stream in SQLite. The existing packaging probe qualifies SQLite durability primitives only; the production file relay, state store and REST API are not implemented yet.
+Raw binlog events belong in local relay/binlog files, **not SQLite BLOB rows**. SQLite stores replication state and indexes into those files, historical schema, externally supplied start-boundary provenance, pending MyISAM/DDL recovery intents, diagnostics and statistics. This supersedes the earlier proposal to put the entire raw event stream in SQLite. The existing packaging probe qualifies SQLite durability primitives only; the production file relay, state store and REST API are not implemented yet.
 
 Use one state directory and supervised process per source/target pair initially. Keep source history identity separate from a source filename, which may be reused after reset or source replacement. A relay location identifies a local segment, byte range and digest; source coordinates identify the upstream file/position and GTID. They must not be conflated: GTID dump startup may begin within a source file and may include artificial protocol events. Phase 2 must define and test the local segment format and coordinate mapping before live resume. Store original event frames without rewriting their headers; keep transport-only pseudo-events separate from source progress. Complete downloaded source files can be inspected directly with the existing offline inspector.
+
+## External initialization
+
+Dump/load and target provisioning are completely external. Accept a prepared target and known file/position or executed GTID set with matching identity, scope and historical schema; see [the start-boundary contract](START_BOUNDARY.md). SQLite records this supplied baseline and replication progress, not dump contents or load progress. Capture-only state never claims an applied target checkpoint. Initializing existing state must fail; ordinary restart uses its durable checkpoint.
 
 ## SQLite metadata
 
 Persist at least:
 
-- Stream/source/target identities, configuration and filter scope, bootstrap boundary, schema versions and state schema version.
+- Stream/source/target identities, configuration and filter scope, externally supplied baseline, schema versions and state schema version.
 - Stream lifecycle state (`STARTING`, `RUNNING`, `RECONNECTING`, `BLOCKED`, `STOPPED`), separate capture/apply status, last transition/update times and durable diagnostic references.
 - Received position for observation; durable relay byte ranges and complete captured transaction boundary/GTID set for recovery; fully applied source file/position and GTID set; current transaction and outstanding row/DDL intent. An incomplete transaction never enters the completed GTID set. Received-only progress must be labelled volatile.
 - Relay manifest: segment identity, source history/coordinate range, durable length, validation/checksum information, transaction completeness and retention pins. Index transactions/events only as needed to locate bytes; do not duplicate event payloads or every decoded row in SQLite.
@@ -50,8 +54,10 @@ Return an internally consistent status generation. Label volatile received progr
 
 ## Phase integration and acceptance
 
-- **Phase 2:** implement local file capture and SQLite metadata together, manifest/restart verification, raw-file and state-indexed inspection, receive/durable positions and capture counters. Add the REST status/stats/diagnostics endpoints with apply fields explicitly unavailable until an applier exists. Prove concurrent reads do not impede capture.
-- **Phase 3:** add exact applied source GTID/file-position progress, row/DDL intents and applied counters to the same state model and REST snapshot. Show partial MyISAM effects and durable BLOCKED/resume history without presenting them as a completed transaction.
+- **First DML increment (Phase 2/3 interleaved):** implement the serial INSERT/UPDATE/DELETE applier and the minimum file relay/SQLite baseline, row intents, diagnostic and applied-checkpoint support it requires. Verify actual 5.7 MyISAM rows and binlog effects against source intent and the native reference. Preserve the storage ordering above; stop on uncertain/interrupted apply until recovery is qualified.
+- **Second DDL increment:** add ordered schema-change application, historical schema updates and DDL intent/boundary records. Verify supported schema transformations and DDL immediately followed by DML against actual schemas, rows and binlogs. Unsupported DDL stops without guessing; no automatic recovery claim yet.
+- **Third increment, after DML and DDL correctness are solid:** implement and qualify recovery; test relay append/fsync/metadata-commit windows together with crashes around target writes, lost SQL responses, partial transactions, interrupted DDL/implicit commits, applied-checkpoint commits and target restart. Verify reconciliation or the required durable block, including actual target effects. Capture-only replay tests do not establish application recovery.
+- **Runtime visibility:** add coherent read-only REST status/stats/diagnostics after capture/apply state exists. Expose separate received/durable/applied progress, outstanding intents and blocked/resume history. REST implementation is not a prerequisite for the first applier; prove concurrent readers cannot impede replication when adding it.
 - **Phase 5:** measure append/fsync and metadata-commit latency separately; qualify disk limits/retention, snapshot counter overhead and slow/disconnected REST clients on the fleet resource profiles.
 
 Required fault cases include crashes during append, after file fsync but before SQLite commit, after metadata commit, during rotation/publication and during purge; partial local frames, SQLite I/O/full/corruption, missing segment with successful re-download, purged upstream history, and source-history mismatch. Tests must prove that no durable pointer moves ahead of durable bytes, no incomplete GTID is excluded on reconnect, no counter advances applied progress, and no HTTP reader holds storage resources while stalled. Preserve relay manifest/files and a consistent SQLite state export as harness evidence.

@@ -4,7 +4,7 @@ Date: 2026-09-28. Applies to [REPLICATOR_TECHNICAL_PLAN.md](REPLICATOR_TECHNICAL
 
 ## Decision
 
-Use **a Swift capture reader on MySQLNIO/SwiftNIO, and the Rust `mysql_common` binlog codec behind a narrow C ABI**. Keep local relay files, SQLite metadata/journals, transaction assembly, schema history, target application, diagnostics, bootstrap and the CLI in Swift. Statically link the Rust adapter into the Swift executable. Use Go's reader and selected Go/MySQL/Rust fixtures as independent test references.
+Use **a Swift capture reader on MySQLNIO/SwiftNIO, and the Rust `mysql_common` binlog codec behind a narrow C ABI**. Keep local relay files, SQLite metadata/journals, transaction assembly, schema history, target application, diagnostics, replication-state initialization from an external boundary and the CLI in Swift. Database dump/load management is excluded; see [the start-boundary contract](START_BOUNDARY.md). Statically link the Rust adapter into the Swift executable. Use Go's reader and selected Go/MySQL/Rust fixtures as independent test references.
 
 This replaces the earlier “try native Swift, decide in Phase 2” approach. We will not build two production decoders or port the full Go decoder into Swift. Phase 2 qualifies the selected architecture rather than running an open-ended language comparison.
 

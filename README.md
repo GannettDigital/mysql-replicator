@@ -4,6 +4,8 @@ Direct MySQL replication POC: Swift capture/application, Rust mysql_common decod
 
 Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The file relay/SQLite state store, REST status API and target apply are not implemented yet. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
+Database dump/load and target provisioning are entirely external. The planned replicator starts from a prepared target and a known source position or executed GTID set; see [the start-boundary contract and next increment](PLAN/START_BOUNDARY.md).
+
 ## Offline binlog inspection
 
 ```sh

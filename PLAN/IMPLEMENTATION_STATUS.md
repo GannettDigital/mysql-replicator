@@ -12,6 +12,8 @@ Current live increment: verified-TLS Swift capture supports file/position and GT
 
 Ubuntu live run `20260930T030250Z-17f7bd18-auto-autocommit-myisam` passed all 15 checks and cleanup. Positional and GTID readers emit identical complete-group JSON across rotation; source/mysqlbinlog/native MyISAM comparisons, explicit replay/resume, clean nonblocking EOF, disconnect, certificate/identity rejection and purged-history error 1236 pass. Evidence is in `artifacts/live-suite/<run>/` and test/build logs in `artifacts/live-capture-validation/`. The shipped static Ubuntu binary was exercised under Docker Desktop amd64 emulation.
 
+Scope update: dump/load management and target provisioning are entirely external. Replace the earlier dump preparation/verification proposal with a tool-independent known-boundary handoff. The next implementation increment is the first serial end-to-end MyISAM applier, including the minimum relay/state/intent support it needs. Schema-change application follows DML. Crash/reconnect recovery implementation and qualification come only after both DML and DDL pass their correctness gates; REST status is not an applier prerequisite. The current inspector still requires both positional context and a seed GTID set; production GTID-only initialization remains to implement. See [the boundary contract and next increment](START_BOUNDARY.md).
+
 Next storage/runtime design is updated: raw events live in local binlog/relay files; SQLite holds state, GTID/file-position checkpoints, recovery intents, diagnostics and counter snapshots. A read-only REST API exposes live status/statistics. These are planned Phase 2/3 deliverables, not implemented capabilities; see [relay state and status](RELAY_STATE_AND_STATUS.md).
 
 Implemented and validated:

@@ -41,3 +41,6 @@ context:
  and asses a viablity of building such binary in swift.
 
  deliverable:  a planning doc to build such tooling in phases, starting with initial phase to build a harness, and final phases that include full on testing, similar how we did that for maxwell mysql consumer.  
+
+
+Accepted scope clarification: database dump/load management, including parallel MySQL Shell export/import, remains entirely external. The replicator assumes an already prepared target and accepts a known source file/position or executed GTID set with matching historical schema and scope. It does not parse/modify/load database dumps or manage target provisioning. See [START_BOUNDARY.md](START_BOUNDARY.md).
