@@ -20,11 +20,11 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         let bundles = DDLCoverageCases.swiftProfiles.map { DDLCoverageEvidence.Bundle(profile: $0, stale: false, passed: true, cases: matchingCases(), origin: "fixture") }
         let after = try DDLCoverageEvidence.report(inventory, bundles: bundles)
         XCTAssertEqual((before["assertion_summary"] as! [String: Int])["passed"], 0)
-        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["passed"], 12)
-        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["partial_scenario_profiles"], 6)
+        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["passed"], 44)
+        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["partial_scenario_profiles"], 22)
         XCTAssertEqual((after["assertion_summary"] as! [String: Int])["verified_scenario_profiles"], 0)
         let rows = after["scenarios"] as! [[String: Any]]
-        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count, 3)
+        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count, 11)
         XCTAssertThrowsError(try DDLCoverageEvidence.report(inventory, bundles: [bundles[0], bundles[0]]))
     }
     func testMissingAssertionAndParentOrCleanupFailureCannotBecomeCoverage() throws {

@@ -245,10 +245,13 @@ final class StateStore {
         let time=timestamp()
         try atomic {
             if let ddl {
-                if let old=schemas[ddl.statement.name.identity] {
-                    try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
+                if ddl.preservesSchema {newSchemaID=schemas[ddl.statement.name.identity]?.0}
+                else {
+                    if let old=schemas[ddl.statement.name.identity] {
+                        try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
+                    }
+                    if let after=ddl.after {newSchemaID=try insertSchema(after,event:group.events[1],coordinate:group.end)}
                 }
-                if let after=ddl.after {newSchemaID=try insertSchema(after,event:group.events[1],coordinate:group.end)}
                 try execute("UPDATE ddl_intents SET status='DONE',completed_at=?,after_schema_id=? WHERE gtid=?",[time,newSchemaID.map(String.init),pendingGTID])
             }
             try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,pendingGTID])

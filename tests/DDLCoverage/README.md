@@ -2,10 +2,10 @@
 
 This implements steps 1–2 and the first partial-evidence slice of step 3 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
-reviewable checklist. It contains 55 scoped scenarios, 29 features across families
+reviewable checklist. It contains 56 scoped scenarios, 29 features across families
 A–F, four fixture profiles and 26 pinned research references. The shared registry
-contains 46 executable case declarations: 40 from `ddl-suite` and six from
-`native-ddl-suite`. The DML baseline case has an explicit non-DDL classification.
+contains 97 executable case declarations: 79 from `ddl-suite` and 18 from
+`native-ddl-suite`. Baseline, setup/cleanup and extra research regressions have explicit non-catalog classifications.
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
 
@@ -219,9 +219,11 @@ make ddl-catalog-report ARGS='--format json --evidence artifacts/ddl-suite/POSIT
 `POSITION_RUN` and `GTID_RUN` are placeholders for the actual run directories.
 Compare `assertion_summary` and each scenario's `profile_evidence`: these show
 passed/required assertions, missing assertion IDs and partial profile counts.
-The catalog has 470 required assertion/profile obligations across 108 scenario /
-profile combinations. Three scenarios currently have two instrumented assertions
-each in two profiles: at most 12 passing obligations and six partial combinations.
+The catalog has 638 required assertion/profile obligations across 132 scenario /
+profile combinations. Eleven scenarios currently have two instrumented assertions
+each in two Swift profiles: at most 44 passing obligations and 22 partial combinations.
+The denominator increased because earlier research obligations remain, native
+profiles were added, and replica-only missing-template failure has its own contract.
 Full scenario verification remains zero until the other obligations are bound.
 This measures DML following those DDL operations, not all standalone DML coverage.
 
@@ -255,3 +257,34 @@ verifications. Registered case declarations increased from 40 to 46. The saved
 [before/after comparison](../../artifacts/ddl-coverage-increment-20260930/README.md)
 contains exact reproduction commands and distinguishes new cases from newly recorded
 evidence for existing checks. Those artifacts are local and ignored by Git.
+
+## Conditional/LIKE and following DML increment
+
+`NativeLifecycleQualification.swift` supplies twelve named source/native/direct-5.7
+observations per native profile. `lifecycle-matrix.json` records source boundaries,
+logging, diagnostics and metadata. These are research artifacts, not imported
+catalog assertion evidence. Source failures cannot prove Swift rejection.
+
+`DDLCoverageCases.changes` adds 38 ordered steps for conditional CREATE (absent,
+matching, different), conditional DROP (present, absent), LIKE (same/cross schema,
+conditional existing), following DML and cleanup. Together with the existing
+steps this is 70 statements, 27 DDL and 56 affected DML rows per profile. Multirow
+operations and key changes follow schema discovery; exact hex oracles distinguish
+UTF-8, trailing spaces, embedded NUL, NULL and empty values. Whitespace-preserving
+SQL output prevents an empty final field from disappearing in the row oracle.
+
+A separate `ddl-like-missing-template` test prepares a source-only template,
+emits valid source DDL, and compares native error 1146 to Swift's fail-stop,
+including unchanged applied state and a blocked following event. All templates
+stay inside the existing single-primary-key/type subset. General index/default/
+AUTO_INCREMENT inheritance and temporary-table LIKE are not qualified.
+
+Validation on 2026-09-30: all 57 applier/harness unit tests passed; both native
+profiles passed all 18 named cases; both expanded Swift profiles passed all 79
+named cases, including cleanup. The combined report records 44 / 638 passing
+assertion/profile obligations and 22 partial combinations, compared with the
+saved predecessor's 12 / 470 and six partial combinations. Full verification
+remains zero. The [comparison and reproduction commands](../../artifacts/ddl-conditional-like-20260930/README.md)
+include exact evidence paths and explain the increased denominator. These artifacts
+are local and ignored by Git. The reviewed predecessor is commit `6f07e0b`;
+the conditional/LIKE implementation is the next review slice.

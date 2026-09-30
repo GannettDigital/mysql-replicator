@@ -52,11 +52,16 @@ public final class NativeHarness {
                                      "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN"].merging(composeEnvironment) { _, new in new },
                        timeout: timeout, checked: checked, onOutput: onOutput)
     }
-    func sql(_ service: String, _ statement: String, headers: Bool = false) throws -> String {
+    func sql(_ service: String, _ statement: String, headers: Bool = false, preserveWhitespace: Bool = false) throws -> String {
         let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
-        return try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
+        let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
                             "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
-                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement]).text
+                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+        if preserveWhitespace {
+            let output=String(decoding:result.stdout,as:UTF8.self)
+            return output.hasSuffix("\n") ? String(output.dropLast()) : output
+        }
+        return result.text
     }
     func boundary(_ service: String) throws -> Boundary {
         let fields = try sql(service, service == "target57" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS").components(separatedBy: "\t")

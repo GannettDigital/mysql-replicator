@@ -6,16 +6,30 @@ enum DDLCoverageCases {
     struct DDLChange {
         let test: QualificationCase
         let sql, table, schema, rows, collation: String
+        let database: String
+        let warnings: [Int]
+        let affectedRows: Int
+        var isDML: Bool { ["INSERT","UPDATE","DELETE"].contains(String(sql.split(separator:" ")[0])) }
+        var exactColumns: String {
+            schema.split(separator:",").map { entry in
+                let parts=entry.split(separator:":").map(String.init)
+                let name=parts[0],base=parts[1],nullable=parts[2]
+                let type=base == "varchar" ? "varchar(20)" : base == "varbinary" ? "varbinary(10)" : base == "bigint" ? "bigint unsigned" : base
+                return [name,type,nullable,"<NULL>",name == "id" ? "PRI" : "","",base == "varchar" ? "utf8mb4" : "",base == "varchar" ? collation : ""].joined(separator:":")
+            }.joined(separator:"\n")
+        }
         init(_ id: String, _ name: String, _ sql: String, _ table: String, _ schema: String,
-             _ rows: String, _ collation: String, file: String = #filePath, line: UInt = #line) {
+             _ rows: String, _ collation: String, database: String = "poc", warnings: [Int] = [], affectedRows: Int = 1, file: String = #filePath, line: UInt = #line) {
             test = QualificationCase(id, name, file: file, line: line)
             self.sql = sql; self.table = table; self.schema = schema
             self.rows = rows; self.collation = collation
+            self.database=database; self.warnings=warnings; self.affectedRows=affectedRows
         }
     }
 
     static let positive = QualificationCase("positive", "Replicate INSERT, UPDATE and DELETE; compare rows, binlogs and SQLite checkpoints")
     static let group = QualificationCase("ddl", "Apply ordered DDL and DML; verify schema history, unchanged SQL and binlog order")
+    static let missingTemplate = QualificationCase("ddl-like-missing-template", "Stop on a missing replica LIKE template before applying DDL or following events")
     static let unsupported = QualificationCase("ddl-unsupported", "Reject unsupported DECIMAL column before target mutation or checkpoint advance")
     static let denied = QualificationCase("ddl-denied", "Keep a pending DDL intent and stop when target CREATE permission is denied")
 
@@ -51,7 +65,45 @@ enum DDLCoverageCases {
         .init("insert-charset-only", "INSERT text into a column created with CHARACTER SET only", "INSERT INTO poc.defaults VALUES(1,'charset')","defaults","id:int:NO,note:varchar:YES","1\t63686172736574","utf8mb4_general_ci"),
         .init("update-charset-only", "UPDATE text in the column using the logged default collation", "UPDATE poc.defaults SET note='checked' WHERE id=1","defaults","id:int:NO,note:varchar:YES","1\t636865636B6564","utf8mb4_general_ci"),
         .init("delete-charset-only", "DELETE the row from the charset-only table", "DELETE FROM poc.defaults WHERE id=1","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
-        .init("drop-charset-only", "DROP removes the charset-only table", "DROP TABLE poc.defaults","defaults","","","")
+        .init("drop-charset-only", "DROP removes the charset-only table", "DROP TABLE poc.defaults","defaults","","",""),
+        .init("create-if-absent", "Conditional CREATE creates an absent table with explicit text collation", "CREATE TABLE IF NOT EXISTS poc.lifecycle (note VARCHAR(20) COLLATE utf8mb4_bin,id INT PRIMARY KEY) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "lifecycle", "note:varchar:YES,id:int:NO", "", "utf8mb4_bin"),
+        .init("insert-after-create-if-absent", "Multirow INSERT distinguishes NULL, empty text and signed INT minimum", "INSERT INTO poc.lifecycle VALUES(NULL,-2147483648),('seed',1),('',2)", "lifecycle", "note:varchar:YES,id:int:NO", "-2147483648\tNULL\n1\t73656564\n2\t", "utf8mb4_bin", affectedRows: 3),
+        .init("update-after-create-if-absent", "UPDATE moves signed INT minimum to maximum and writes exact UTF-8", "UPDATE poc.lifecycle SET id=2147483647,note=CONVERT(0xF09F988065CC81 USING utf8mb4) WHERE id=-2147483648", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564\n2\t\n2147483647\tF09F988065CC81", "utf8mb4_bin"),
+        .init("delete-after-create-if-absent", "Multirow DELETE preserves the remaining seed row", "DELETE FROM poc.lifecycle WHERE id IN (2,2147483647)", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564", "utf8mb4_bin", affectedRows: 2),
+        .init("create-if-matching", "Conditional CREATE with matching definition retains populated destination", "CREATE TABLE IF NOT EXISTS poc.lifecycle (note VARCHAR(20) COLLATE utf8mb4_bin,id INT PRIMARY KEY) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564", "utf8mb4_bin", warnings: [1050]),
+        .init("insert-after-create-if-matching", "INSERT NULL follows conditional CREATE with matching definition", "INSERT INTO poc.lifecycle VALUES(NULL,2)", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564\n2\tNULL", "utf8mb4_bin"),
+        .init("update-after-create-if-matching", "UPDATE changes primary key and preserves quote, backslash and NUL bytes", "UPDATE poc.lifecycle SET id=3,note=CONVERT(0x275C00 USING utf8mb4) WHERE id=2", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564\n3\t275C00", "utf8mb4_bin"),
+        .init("delete-after-create-if-matching", "DELETE uses the original schema after conditional CREATE", "DELETE FROM poc.lifecycle WHERE id=3", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564", "utf8mb4_bin"),
+        .init("create-if-different", "Conditional CREATE with different definition retains populated destination", "CREATE TABLE IF NOT EXISTS poc.lifecycle(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10))", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564", "utf8mb4_bin", warnings: [1050]),
+        .init("insert-after-create-if-different", "INSERT NULL follows conditional CREATE with different definition", "INSERT INTO poc.lifecycle VALUES(NULL,2)", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564\n2\tNULL", "utf8mb4_bin"),
+        .init("update-after-create-if-different", "UPDATE changes primary key and preserves quote, backslash and NUL bytes", "UPDATE poc.lifecycle SET id=3,note=CONVERT(0x275C00 USING utf8mb4) WHERE id=2", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564\n3\t275C00", "utf8mb4_bin"),
+        .init("delete-after-create-if-different", "DELETE uses the original schema after conditional CREATE", "DELETE FROM poc.lifecycle WHERE id=3", "lifecycle", "note:varchar:YES,id:int:NO", "1\t73656564", "utf8mb4_bin"),
+        .init("like-same", "CREATE LIKE same-schema copies local template metadata but no rows", "CREATE TABLE poc.cloned LIKE poc.lifecycle", "cloned", "note:varchar:YES,id:int:NO", "", "utf8mb4_bin"),
+        .init("insert-after-like-same", "Multirow INSERT into LIKE clone distinguishes empty and NULL text", "INSERT INTO poc.cloned VALUES('clone',1),('',2),(NULL,3)", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65\n2\t\n3\tNULL", "utf8mb4_bin", affectedRows: 3),
+        .init("update-after-like-same", "UPDATE moves the clone key and preserves UTF-8 and trailing spaces", "UPDATE poc.cloned SET id=4,note=CONVERT(0xC3A92020 USING utf8mb4) WHERE id=3", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65\n2\t\n4\tC3A92020", "utf8mb4_bin"),
+        .init("delete-after-like-same", "Multirow DELETE leaves the clone-specific value intact", "DELETE FROM poc.cloned WHERE id IN (2,4)", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65", "utf8mb4_bin", affectedRows: 2),
+        .init("like-cross", "CREATE LIKE cross-schema copies local template metadata but no rows", "CREATE TABLE otherdb.cloned LIKE poc.lifecycle", "cloned", "note:varchar:YES,id:int:NO", "", "utf8mb4_bin", database: "otherdb"),
+        .init("insert-after-like-cross", "Multirow INSERT into LIKE clone distinguishes empty and NULL text", "INSERT INTO otherdb.cloned VALUES('clone',1),('',2),(NULL,3)", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65\n2\t\n3\tNULL", "utf8mb4_bin", database: "otherdb", affectedRows: 3),
+        .init("update-after-like-cross", "UPDATE moves the clone key and preserves UTF-8 and trailing spaces", "UPDATE otherdb.cloned SET id=4,note=CONVERT(0xC3A92020 USING utf8mb4) WHERE id=3", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65\n2\t\n4\tC3A92020", "utf8mb4_bin", database: "otherdb"),
+        .init("delete-after-like-cross", "Multirow DELETE leaves the clone-specific value intact", "DELETE FROM otherdb.cloned WHERE id IN (2,4)", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65", "utf8mb4_bin", database: "otherdb", affectedRows: 2),
+        .init("like-conditional", "Conditional CREATE LIKE preserves destination values distinct from the template", "CREATE TABLE IF NOT EXISTS poc.cloned LIKE poc.lifecycle", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65", "utf8mb4_bin", warnings: [1050]),
+        .init("insert-after-like-conditional", "INSERT follows conditional LIKE without replacing destination rows", "INSERT INTO poc.cloned VALUES(NULL,2)", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65\n2\tNULL", "utf8mb4_bin"),
+        .init("update-after-like-conditional", "UPDATE changes the key and writes empty text after conditional LIKE", "UPDATE poc.cloned SET id=3,note='' WHERE id=2", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65\n3\t", "utf8mb4_bin"),
+        .init("delete-after-like-conditional", "DELETE follows conditional LIKE using retained column order", "DELETE FROM poc.cloned WHERE id=3", "cloned", "note:varchar:YES,id:int:NO", "1\t636C6F6E65", "utf8mb4_bin"),
+        .init("drop-if-present", "Conditional DROP present table logs and advances the replication stream", "DROP TABLE IF EXISTS poc.lifecycle", "lifecycle", "", "", ""),
+        .init("recreate-after-drop-if-present", "Recreate dropped name with a different schema and unsigned BIGINT key", "CREATE TABLE poc.lifecycle(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10))", "lifecycle", "id:bigint:NO,b:varbinary:YES", "", ""),
+        .init("insert-after-drop-if-present", "Multirow INSERT distinguishes empty binary and NULL at unsigned BIGINT limits", "INSERT INTO poc.lifecycle VALUES(0,X''),(18446744073709551615,NULL)", "lifecycle", "id:bigint:NO,b:varbinary:YES", "0\t\n18446744073709551615\tNULL", "", affectedRows: 2),
+        .init("update-after-drop-if-present", "UPDATE moves unsigned maximum key and writes exact binary bytes", "UPDATE poc.lifecycle SET id=1,b=0x00FF275C WHERE id=18446744073709551615", "lifecycle", "id:bigint:NO,b:varbinary:YES", "0\t\n1\t00FF275C", ""),
+        .init("delete-after-drop-if-present", "Multirow DELETE empties the recreated table", "DELETE FROM poc.lifecycle", "lifecycle", "id:bigint:NO,b:varbinary:YES", "", "", affectedRows: 2),
+        .init("prepare-absent-drop", "DROP prepares an absent name for conditional DROP", "DROP TABLE poc.lifecycle", "lifecycle", "", "", ""),
+        .init("drop-if-absent", "Conditional DROP absent table logs and advances the replication stream", "DROP TABLE IF EXISTS poc.lifecycle", "lifecycle", "", "", "", warnings: [1051]),
+        .init("recreate-after-drop-if-absent", "Recreate dropped name with a different schema and unsigned BIGINT key", "CREATE TABLE poc.lifecycle(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10))", "lifecycle", "id:bigint:NO,b:varbinary:YES", "", ""),
+        .init("insert-after-drop-if-absent", "Multirow INSERT distinguishes empty binary and NULL at unsigned BIGINT limits", "INSERT INTO poc.lifecycle VALUES(0,X''),(18446744073709551615,NULL)", "lifecycle", "id:bigint:NO,b:varbinary:YES", "0\t\n18446744073709551615\tNULL", "", affectedRows: 2),
+        .init("update-after-drop-if-absent", "UPDATE moves unsigned maximum key and writes exact binary bytes", "UPDATE poc.lifecycle SET id=1,b=0x00FF275C WHERE id=18446744073709551615", "lifecycle", "id:bigint:NO,b:varbinary:YES", "0\t\n1\t00FF275C", ""),
+        .init("delete-after-drop-if-absent", "Multirow DELETE empties the recreated table", "DELETE FROM poc.lifecycle", "lifecycle", "id:bigint:NO,b:varbinary:YES", "", "", affectedRows: 2),
+        .init("cleanup-poc-lifecycle", "DROP cleans up poc.lifecycle", "DROP TABLE poc.lifecycle", "lifecycle", "", "", ""),
+        .init("cleanup-poc-cloned", "DROP cleans up poc.cloned", "DROP TABLE poc.cloned", "cloned", "", "", ""),
+        .init("cleanup-otherdb-cloned", "DROP cleans up otherdb.cloned", "DROP TABLE otherdb.cloned", "cloned", "", "", "", database: "otherdb")
     ]
 
     static let rejections: [(QualificationCase, String, String)] = [
@@ -74,7 +126,15 @@ enum DDLCoverageCases {
     static let evidenceContracts: [String: [String: [String]]] = [
         "ddl.table.rename.same-schema": ["schema-effects": ["rename-table"], "following-dml": ["insert-after-rename", "update-after-rename", "delete-after-rename"]],
         "ddl.table.truncate.populated": ["schema-effects": ["truncate-nonempty-table"], "following-dml": ["insert-after-truncate", "update-binary-null", "delete-unsigned-maximum"]],
-        "ddl.table.truncate.empty": ["schema-effects": ["truncate-empty-table"], "following-dml": ["insert-after-empty-truncate", "update-after-empty-truncate", "delete-after-empty-truncate"]]
+        "ddl.table.truncate.empty": ["schema-effects": ["truncate-empty-table"], "following-dml": ["insert-after-empty-truncate", "update-after-empty-truncate", "delete-after-empty-truncate"]],
+        "ddl.table.create-if-not-exists.absent": ["schema-effects": ["create-if-absent"], "following-dml": ["insert-after-create-if-absent", "update-after-create-if-absent", "delete-after-create-if-absent"]],
+        "ddl.table.create-if-not-exists.matching": ["schema-effects": ["create-if-matching"], "following-dml": ["insert-after-create-if-matching", "update-after-create-if-matching", "delete-after-create-if-matching"]],
+        "ddl.table.create-if-not-exists.different": ["schema-effects": ["create-if-different"], "following-dml": ["insert-after-create-if-different", "update-after-create-if-different", "delete-after-create-if-different"]],
+        "ddl.table.create-like.same-schema": ["schema-effects": ["like-same"], "following-dml": ["insert-after-like-same", "update-after-like-same", "delete-after-like-same"]],
+        "ddl.table.create-like.cross-schema": ["schema-effects": ["like-cross"], "following-dml": ["insert-after-like-cross", "update-after-like-cross", "delete-after-like-cross"]],
+        "ddl.table.create-like.conditional-existing": ["schema-effects": ["like-conditional"], "following-dml": ["insert-after-like-conditional", "update-after-like-conditional", "delete-after-like-conditional"]],
+        "ddl.table.drop-if-exists.present": ["schema-effects": ["drop-if-present"], "following-dml": ["recreate-after-drop-if-present", "insert-after-drop-if-present", "update-after-drop-if-present", "delete-after-drop-if-present"]],
+        "ddl.table.drop-if-exists.absent": ["schema-effects": ["drop-if-absent"], "following-dml": ["recreate-after-drop-if-absent", "insert-after-drop-if-absent", "update-after-drop-if-absent", "delete-after-drop-if-absent"]]
     ]
     static func assertion(for caseID: String) -> String? {
         evidenceContracts.values.flatMap { $0 }.first { $0.value.contains(caseID) }?.key
@@ -92,9 +152,10 @@ enum DDLCoverageCases {
         var key: String { suite + "/" + test.id }
     }
     static var registry: [Entry] {
-        let top = [positive, group, unsupported, denied] + rejections.map { $0.0 }
+        let top = [positive, group, unsupported, denied, missingTemplate] + rejections.map { $0.0 }
         return top.map { Entry(suite: "ddl-suite", test: $0, profiles: swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
             + changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
+            + NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }
             + native.map { Entry(suite: "native-ddl-suite", test: $0.0, profiles: nativeProfiles, parent: nil, isGroup: false) }
     }
 }

@@ -9,8 +9,8 @@ Database dump/load and target provisioning are entirely external. The replicator
 The [DDL coverage catalog](tests/DDLCoverage/README.md) now provides an offline
 checklist: `make ddl-catalog-check` validates it and `make ddl-catalog-report`
 prints its current implementation and coverage gaps. All qualifications remain
-unverified without explicit evidence. The first named schema/data evidence slice
-reports partial coverage for rename and TRUNCATE; see the catalog usage for
+unverified without explicit evidence. The named schema/data evidence slice
+reports partial coverage for rename, TRUNCATE, conditional CREATE/DROP and CREATE LIKE; see the catalog usage for
 `--evidence` and its limitations. `make ddl-catalog-upstream-check`
 checks the pinned local MySQL source; `make ddl-catalog-scan` produces a candidate
 and dependency inventory for review. Completeness gates follow the
@@ -57,7 +57,13 @@ and native 8.4 MyISAM replica. It checks both positional and GTID-only starts,
 multi-row/key changes, exact values, stopped progress on errors and row intents.
 Evidence and generated fixture configurations are under `artifacts/dml-suite/`.
 Run `make ddl-suite` for interleaved schema changes and DML; its evidence is under
-`artifacts/ddl-suite/`. Target UUID is discovered from the verified connection and
+`artifacts/ddl-suite/`. The suite now includes 70 ordered statements with following
+multirow INSERT/DELETE, primary-key changes, integer boundaries, and exact UTF-8,
+binary, NULL and empty values. Conditional CREATE/DROP and permanent-table CREATE
+LIKE preserve the source SQL. LIKE validates the replica's local template and
+copies its supported metadata without copying rows. Unsupported types, secondary
+indexes, triggers, generated columns and partitioning remain outside this slice.
+Target UUID is discovered from the verified connection and
 stored in SQLite; remove `targetUUID` from old configuration files.
 Runtime files use a Docker-managed volume and are copied back for inspection.
 Docker build/startup progress is streamed to the terminal.

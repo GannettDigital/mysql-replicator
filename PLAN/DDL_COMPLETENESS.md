@@ -31,8 +31,46 @@ versioned scenario/profile/reference records, a shared case registry, and offlin
 `ddl-catalog-check` / `ddl-catalog-report` Make targets. The family matrix is the
 starting taxonomy, not an exhaustive mapping of MySQL's tests. Existing fixture
 passes remain historical evidence for their tested subsets; catalog qualification
-is still unverified. Pinned upstream scanning/review and assertion/evidence
-integration remain the next prerequisites before extending table lifecycle support.
+remains partial. Pinned source scanning/review and named metadata/data evidence now
+support the bounded lifecycle slice below; boundary-specific binlog/history and
+query-context obligations remain gaps.
+
+## Conditional CREATE/DROP and CREATE LIKE slice
+
+The applier accepts `CREATE TABLE IF NOT EXISTS`, `DROP TABLE IF EXISTS`, and
+permanent `CREATE TABLE [IF NOT EXISTS] destination LIKE template`. Definitions and
+templates retain the existing supported type/key restrictions. The source SQL is
+executed unchanged. Conditional CREATE with an existing destination preserves its
+actual schema and data even when the proposed supported definition differs; SQLite
+retains that schema version while completing the logged no-op's intent/checkpoint.
+DROP of an absent table completes a no-op intent without inventing a schema.
+
+LIKE discovers and validates the local template, including its engine, column
+order, primary key and encoding defaults. It copies these defaults across schemas
+rather than inheriting the destination database's defaults. A newly created clone
+must be empty. MySQL opens the template even if IF NOT EXISTS preserves an existing
+destination; the replicator requires it too. No engine/charset rewrite is added.
+
+Native/direct-5.7 tests measure absent/matching/different conditional CREATE,
+present/absent conditional DROP, same/cross-schema LIKE, existing destinations,
+missing template/schema, and conditional LIKE with a missing template. Source
+rejections (1050/1146/1049) emit no event; they are not applier tests. The separate
+replica-only missing-template case starts from a valid source statement and
+requires native error 1146 and Swift fail-stop, with the following event unapplied.
+
+The 70-statement Swift/native stream adds following multirow inserts/deletes,
+primary-key changes, signed INT and unsigned BIGINT boundaries, UTF-8/NUL/quote/
+backslash/trailing-space bytes, and NULL versus empty text/binary values in both
+position/MINIMAL-metadata and GTID/FULL-metadata profiles. All row images are FULL.
+It does not expand supported row types, indexes, generated columns, temporary
+tables, partitions, multi-object DDL or restart/recovery. Secondary-index and
+AUTO_INCREMENT inheritance in LIKE remain explicitly unqualified.
+
+The pinned implementation reference is `sql/sql_table.cc::mysql_create_like_table`
+at MySQL commit `0896fcd61dec11a0904166911a0126f59daaa1bf`: under ROW logging,
+permanent destination plus permanent template logs the original LIKE statement;
+temporary template/destination branches need separate work. Native observations
+and catalog assertions remain distinct evidence, with no full completeness claim.
 
 ## Engine selection: preserve the statement's meaning
 

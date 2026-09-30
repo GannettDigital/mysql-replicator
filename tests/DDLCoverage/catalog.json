@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "inventory_revision": "ddl-catalog-lifecycle-evidence-v3",
+  "inventory_revision": "2026-09-30-conditional-like-dml",
   "families": [
     {
       "id": "A",
@@ -235,7 +235,8 @@
         "ddl.table.create-like.existing-destination",
         "ddl.table.create-like.missing-template",
         "ddl.table.create-like.missing-database",
-        "ddl.table.create-like.conditional-existing"
+        "ddl.table.create-like.conditional-existing",
+        "ddl.table.create-like.replica-missing-template"
       ]
     },
     {
@@ -3197,17 +3198,20 @@
       "feature": "table.create.conditional",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
-      "intent": "observe",
+      "implementation": "implemented",
+      "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
-        "CREATE TABLE IF NOT EXISTS into an absent name"
+        "CREATE TABLE IF NOT EXISTS poc.lifecycle (note VARCHAR(20) COLLATE utf8mb4_bin,id INT PRIMARY KEY) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "INSERT INTO poc.lifecycle VALUES(NULL,-2147483648),('seed',1),('',2)",
+        "UPDATE poc.lifecycle SET id=2147483647,note=CONVERT(0xF09F988065CC81 USING utf8mb4) WHERE id=-2147483648",
+        "DELETE FROM poc.lifecycle WHERE id IN (2,2147483647)"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3218,23 +3222,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3243,26 +3249,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3271,10 +3277,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3294,12 +3356,67 @@
         {
           "id": "metadata-effects",
           "description": "Compare actual schema/default/engine effects."
+        },
+        {
+          "id": "schema-effects",
+          "description": "Compare actual affected schemas, engines, defaults and retained values."
+        },
+        {
+          "id": "following-dml",
+          "description": "Verify subsequent DML with exact values and updated schema interpretation."
+        },
+        {
+          "id": "normalized-binlog",
+          "description": "Compare logical binlog effects and source order; do not compare raw bytes/GTIDs."
+        },
+        {
+          "id": "source-boundary",
+          "description": "Verify checkpoint behavior against whether the source actually logged an event."
+        },
+        {
+          "id": "schema-history",
+          "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "create-if-absent",
+            "insert-after-create-if-absent",
+            "update-after-create-if-absent",
+            "delete-after-create-if-absent"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-create-if-absent"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Related contrast only: the selected upstream section starts with an existing table; the absent-table variant still needs a native observation."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3309,17 +3426,20 @@
       "feature": "table.create.conditional",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
+      "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
-        "CREATE TABLE IF NOT EXISTS with an existing matching definition"
+        "CREATE TABLE IF NOT EXISTS poc.lifecycle (note VARCHAR(20) COLLATE utf8mb4_bin,id INT PRIMARY KEY) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+        "INSERT INTO poc.lifecycle VALUES(NULL,2)",
+        "UPDATE poc.lifecycle SET id=3,note=CONVERT(0x275C00 USING utf8mb4) WHERE id=2",
+        "DELETE FROM poc.lifecycle WHERE id=3"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3330,23 +3450,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3355,26 +3477,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3383,10 +3505,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3412,10 +3590,45 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "create-if-matching",
+            "insert-after-create-if-matching",
+            "update-after-create-if-matching",
+            "delete-after-create-if-matching"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-create-if-matching"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed matching-definition section: existing CHAR(0) NOT NULL table; result records note 1050. Replication logging/no-op semantics remain to be measured."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3425,17 +3638,20 @@
       "feature": "table.create.conditional",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
-      "intent": "observe",
+      "implementation": "implemented",
+      "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
-        "CREATE TABLE IF NOT EXISTS with an existing different definition"
+        "CREATE TABLE IF NOT EXISTS poc.lifecycle(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10))",
+        "INSERT INTO poc.lifecycle VALUES(NULL,2)",
+        "UPDATE poc.lifecycle SET id=3,note=CONVERT(0x275C00 USING utf8mb4) WHERE id=2",
+        "DELETE FROM poc.lifecycle WHERE id=3"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3446,23 +3662,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3471,26 +3689,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3499,10 +3717,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3522,12 +3796,67 @@
         {
           "id": "metadata-effects",
           "description": "Compare actual schema/default/engine effects."
+        },
+        {
+          "id": "schema-effects",
+          "description": "Compare actual affected schemas, engines, defaults and retained values."
+        },
+        {
+          "id": "following-dml",
+          "description": "Verify subsequent DML with exact values and updated schema interpretation."
+        },
+        {
+          "id": "normalized-binlog",
+          "description": "Compare logical binlog effects and source order; do not compare raw bytes/GTIDs."
+        },
+        {
+          "id": "source-boundary",
+          "description": "Verify checkpoint behavior against whether the source actually logged an event."
+        },
+        {
+          "id": "schema-history",
+          "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "create-if-different",
+            "insert-after-create-if-different",
+            "update-after-create-if-different",
+            "delete-after-create-if-different"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-create-if-different"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Related contrast only: upstream repeats an identical definition. It does not establish handling of a different definition."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3537,17 +3866,21 @@
       "feature": "table.drop.conditional",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
+      "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
-        "DROP TABLE IF EXISTS with an existing table"
+        "DROP TABLE IF EXISTS poc.lifecycle",
+        "CREATE TABLE poc.lifecycle(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10))",
+        "INSERT INTO poc.lifecycle VALUES(0,X''),(18446744073709551615,NULL)",
+        "UPDATE poc.lifecycle SET id=1,b=0x00FF275C WHERE id=18446744073709551615",
+        "DELETE FROM poc.lifecycle"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3558,23 +3891,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3583,26 +3918,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3611,10 +3946,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3640,10 +4031,46 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "drop-if-present",
+            "recreate-after-drop-if-present",
+            "insert-after-drop-if-present",
+            "update-after-drop-if-present",
+            "delete-after-drop-if-present"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-drop-if-present"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Related contrast only: selected upstream conditional DROP uses missing objects. Prepare an existing target and observe schema/binlog effects separately."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3653,17 +4080,21 @@
       "feature": "table.drop.conditional",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
-      "intent": "observe",
+      "implementation": "implemented",
+      "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare the exact existing/absent object state named by this scenario; record session SQL mode and inspect source logging before asserting a replica effect."
       ],
       "operation": [
-        "DROP TABLE IF EXISTS with a missing table"
+        "DROP TABLE IF EXISTS poc.lifecycle",
+        "CREATE TABLE poc.lifecycle(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10))",
+        "INSERT INTO poc.lifecycle VALUES(0,X''),(18446744073709551615,NULL)",
+        "UPDATE poc.lifecycle SET id=1,b=0x00FF275C WHERE id=18446744073709551615",
+        "DELETE FROM poc.lifecycle"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3674,23 +4105,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1051.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3699,26 +4132,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1051.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3727,10 +4160,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1051.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1051.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1051.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1051.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3750,12 +4239,68 @@
         {
           "id": "metadata-effects",
           "description": "Compare actual schema/default/engine effects."
+        },
+        {
+          "id": "schema-effects",
+          "description": "Compare actual affected schemas, engines, defaults and retained values."
+        },
+        {
+          "id": "following-dml",
+          "description": "Verify subsequent DML with exact values and updated schema interpretation."
+        },
+        {
+          "id": "normalized-binlog",
+          "description": "Compare logical binlog effects and source order; do not compare raw bytes/GTIDs."
+        },
+        {
+          "id": "source-boundary",
+          "description": "Verify checkpoint behavior against whether the source actually logged an event."
+        },
+        {
+          "id": "schema-history",
+          "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "drop-if-absent",
+            "recreate-after-drop-if-absent",
+            "insert-after-drop-if-absent",
+            "update-after-drop-if-absent",
+            "delete-after-drop-if-absent"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-drop-if-absent"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed absent-table conditional DROP: result records note 1051. Source logging and replica warnings remain unmeasured."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3765,17 +4310,20 @@
       "feature": "table.create.like",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
+      "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
-        "CREATE TABLE LIKE a populated template in the same schema"
+        "CREATE TABLE poc.cloned LIKE poc.lifecycle",
+        "INSERT INTO poc.cloned VALUES('clone',1),('',2),(NULL,3)",
+        "UPDATE poc.cloned SET id=4,note=CONVERT(0xC3A92020 USING utf8mb4) WHERE id=3",
+        "DELETE FROM poc.cloned WHERE id IN (2,4)"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3786,23 +4334,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3811,26 +4361,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3839,10 +4389,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3868,10 +4474,45 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "like-same",
+            "insert-after-like-same",
+            "update-after-like-same",
+            "delete-after-like-same"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-like-same"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed populated template -> empty copied destination with matching SHOW CREATE; upstream uses InnoDB/default 8.4 collation, which must not be copied into 5.7 fixture assumptions."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3881,17 +4522,20 @@
       "feature": "table.create.like",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
+      "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
-        "CREATE TABLE LIKE a populated template in another schema"
+        "CREATE TABLE otherdb.cloned LIKE poc.lifecycle",
+        "INSERT INTO otherdb.cloned VALUES('clone',1),('',2),(NULL,3)",
+        "UPDATE otherdb.cloned SET id=4,note=CONVERT(0xC3A92020 USING utf8mb4) WHERE id=3",
+        "DELETE FROM otherdb.cloned WHERE id IN (2,4)"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -3902,23 +4546,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3927,26 +4573,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -3955,10 +4601,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -3984,10 +4686,45 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "like-cross",
+            "insert-after-like-cross",
+            "update-after-like-cross",
+            "delete-after-like-cross"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-like-cross"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed mysqltest.t3 LIKE test.t1 after creating mysqltest; following temporary-table cases require separate treatment."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -3998,7 +4735,7 @@
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
       "implementation": "missing",
-      "intent": "apply",
+      "intent": "observe",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
@@ -4018,23 +4755,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "rejection",
+            "error_number": 1050,
+            "warnings": "Capture MySQL client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4043,26 +4782,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event; this cannot qualify the applier.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "rejection",
+            "error_number": 1050,
+            "warnings": "Capture MySQL client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4071,10 +4810,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event; this cannot qualify the applier.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1050,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1050,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1050,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1050,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
           }
         }
       ],
@@ -4100,10 +4895,26 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-like-existing"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed existing destination: test expects 1050; result records SQLSTATE 42S01. This is source rejection, not evidence of an event rejected by a replica."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT.",
+        "Source rejection does not demonstrate Swift apply behavior; replica-only missing template is a separate scenario."
       ]
     },
     {
@@ -4134,23 +4945,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture MySQL client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4159,26 +4972,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event; this cannot qualify the applier.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture MySQL client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4187,10 +5000,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event; this cannot qualify the applier.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
           }
         }
       ],
@@ -4212,10 +5081,26 @@
           "description": "Compare actual schema/default/engine effects."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-like-missing-template"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed missing template: test expects ER_NO_SUCH_TABLE, result SQLSTATE 42S02. Source logging and topology observations remain pending."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT.",
+        "Source rejection does not demonstrate Swift apply behavior; replica-only missing template is a separate scenario."
       ]
     },
     {
@@ -4246,23 +5131,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "rejection",
+            "error_number": 1049,
+            "warnings": "Capture MySQL client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4271,26 +5158,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event; this cannot qualify the applier.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "rejection",
+            "error_number": 1049,
+            "warnings": "Capture MySQL client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4299,10 +5186,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event; this cannot qualify the applier.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1049,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1049,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1049,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1049,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
           }
         }
       ],
@@ -4324,10 +5267,26 @@
           "description": "Compare actual schema/default/engine effects."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-like-missing-database"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed missing destination schema: test expects 1049, result SQLSTATE 42000. Source rejection does not exercise Swift apply."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT.",
+        "Source rejection does not demonstrate Swift apply behavior; replica-only missing template is a separate scenario."
       ]
     },
     {
@@ -4337,17 +5296,20 @@
       "feature": "table.create.like",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
+      "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
         "Prepare template engine/charset and schema explicitly; upstream default InnoDB/utf8mb4_0900_ai_ci is not a 5.7 MyISAM fixture contract."
       ],
       "operation": [
-        "CREATE TABLE IF NOT EXISTS LIKE with an existing destination"
+        "CREATE TABLE IF NOT EXISTS poc.cloned LIKE poc.lifecycle",
+        "INSERT INTO poc.cloned VALUES(NULL,2)",
+        "UPDATE poc.cloned SET id=3,note='' WHERE id=2",
+        "DELETE FROM poc.cloned WHERE id=3"
       ],
       "following_workload": [
-        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+        "Execute the bound following DML and compare exact byte values on source, native 8.4 and Swift 5.7."
       ],
       "upstream_refs": [
         {
@@ -4358,23 +5320,25 @@
       ],
       "required_profiles": [
         "swift.position.metadata-minimal",
-        "swift.gtid.metadata-full"
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
       ],
       "expectations": [
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4383,26 +5347,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -4411,10 +5375,66 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Target warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Replica warnings are not separately collected.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect note 1050.",
+            "partial_effects": "Compare local schema, engine, defaults and retained rows."
           }
         }
       ],
@@ -4440,10 +5460,45 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "like-conditional",
+            "insert-after-like-conditional",
+            "update-after-like-conditional",
+            "delete-after-like-conditional"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-like-conditional"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native lifecycle matrix records source logging, direct 5.7 errors/warnings and native metadata; not yet imported as named assertion evidence."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Reviewed existing destination with IF NOT EXISTS: note 1050 and warning_count=1; PS protocol disabled for the count. Binlog/no-op behavior remains pending."
+        "Native matrix is research evidence; native-profile assertion import remains unimplemented.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history assertions remain unbound.",
+        "Scope: permanent tables with supported row types and one single-column primary key; no secondary indexes, triggers, generated columns, partitions or AUTO_INCREMENT."
       ]
     },
     {
@@ -6854,6 +7909,130 @@
         "Implementation and named tests are pending.",
         "Pinned upstream scenario/implementation reference review is pending."
       ]
+    },
+    {
+      "id": "ddl.table.create-like.replica-missing-template",
+      "name": "CREATE LIKE fails when a valid source template is absent on both replicas",
+      "family": "B",
+      "feature": "table.create.like",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "reject",
+      "prerequisites": [
+        "Prepare the source-only template with sql_log_bin=0; both replicas lack the template. Start both appliers before emitting CREATE LIKE."
+      ],
+      "operation": [
+        "CREATE TABLE poc.failed_like LIKE poc.only_source"
+      ],
+      "following_workload": [
+        "CREATE TABLE poc.after_failed_like(id INT PRIMARY KEY) must remain unapplied."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.create.like",
+          "relationship": "related_reference",
+          "note": "Independently authored replica divergence variant of missing-template handling; source succeeds and logs this statement."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture native Last_SQL_Errno.",
+            "partial_effects": "No destination or following table."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "single primary-key",
+            "warnings": "Capture fail-stop diagnostic.",
+            "partial_effects": "No target DDL intent or completed checkpoint; later event remains unapplied."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "rejection",
+            "error_number": 1146,
+            "warnings": "Capture native Last_SQL_Errno.",
+            "partial_effects": "No destination or following table."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "single primary-key",
+            "warnings": "Capture fail-stop diagnostic.",
+            "partial_effects": "No target DDL intent or completed checkpoint; later event remains unapplied."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "diagnostic",
+          "description": "Assert the expected diagnostic/error category."
+        },
+        {
+          "id": "partial-effects",
+          "description": "Compare target data/schema and pending intents after rejection."
+        },
+        {
+          "id": "stopped-boundary",
+          "description": "Ensure rejected work did not become a completed checkpoint."
+        },
+        {
+          "id": "following-event-blocked",
+          "description": "Verify a later source event remains unapplied."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "ddl-like-missing-template"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [],
+          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract."
+        }
+      ],
+      "gaps": [
+        "Named rejection assertion import remains unbound; aggregate pass alone does not qualify this scenario."
+      ]
     }
   ],
   "case_classifications": [
@@ -6861,6 +8040,31 @@
       "suite": "ddl-suite",
       "case_id": "positive",
       "reason": "Baseline INSERT/UPDATE/DELETE regression before DDL; retained in execution but not counted as DDL feature coverage."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "prepare-absent-drop",
+      "reason": "Ordered lifecycle setup/cleanup; retained in aggregate SQL/binlog/history checks but does not independently qualify a DDL feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "cleanup-poc-lifecycle",
+      "reason": "Ordered lifecycle setup/cleanup; retained in aggregate SQL/binlog/history checks but does not independently qualify a DDL feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "cleanup-poc-cloned",
+      "reason": "Ordered lifecycle setup/cleanup; retained in aggregate SQL/binlog/history checks but does not independently qualify a DDL feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "cleanup-otherdb-cloned",
+      "reason": "Ordered lifecycle setup/cleanup; retained in aggregate SQL/binlog/history checks but does not independently qualify a DDL feature."
+    },
+    {
+      "suite": "native-ddl-suite",
+      "case_id": "native-like-conditional-missing",
+      "reason": "Additional native template-resolution precedence regression; confirms error 1146 and no event even with IF NOT EXISTS and an existing destination."
     }
   ]
 }

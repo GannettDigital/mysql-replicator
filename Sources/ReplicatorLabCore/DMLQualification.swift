@@ -107,10 +107,12 @@ public enum DMLQualification {
             _ = try h.sql("source","CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'capture_fixture'@'%'; CREATE USER 'native_fixture'@'%' IDENTIFIED BY 'fixture-native-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'native_fixture'@'%'")
             for service in h.services {
                 if ddl && service != "source" {_ = try h.sql(service,"SET GLOBAL default_storage_engine=MyISAM; SET GLOBAL default_tmp_storage_engine=MyISAM")}
+                if ddl {_ = try h.sql(service,"CREATE DATABASE otherdb CHARACTER SET latin1 COLLATE latin1_bin")}
                 let engine = service == "source" ? "InnoDB" : "MyISAM"
                 _ = try h.sql(service,"CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(engine); INSERT INTO poc.items VALUES(1,'seed-one',1),(2,'seed-two',2)")
             }
             _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            if ddl {_ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON otherdb.* TO 'apply_fixture'@'%'")}
             if mode == "gtid" { _ = try h.sql("source","SET GLOBAL binlog_row_metadata=FULL") }
             if let coverageInputs {
                 coverageRuntime = try DDLCoverageEvidence.runtime(h, image: image, profileID: coverageProfile,
@@ -181,33 +183,40 @@ public enum DMLQualification {
                         try require(reached != "NULL" && reached != "-1","native DDL did not reach barrier")
                         func checkSchemaAndRows() throws -> Any {
                             var observations: [String: Any] = ["sql": change.sql, "source_warnings": warnings, "source_boundary": boundary.json]
-                            if assertionID != nil { try require(warnings.isEmpty, "unexpected source warnings for selected lifecycle assertion") }
+                            if assertionID != nil {
+                                let codes=try warnings.split(separator:"\n").map { line -> Int in
+                                    let fields=line.split(separator:"\t")
+                                    guard fields.count>=2,let code=Int(fields[1]) else {throw LabError("malformed source warning: \(line)")}
+                                    return code
+                                }
+                                try require(codes==change.warnings,"unexpected source warnings: \(warnings)")
+                            }
                             for service in h.services {
-                                let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                                let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='\(change.table)'")
                                 try require(schema == (change.schema.isEmpty ? "NULL" : change.schema),"\(service) schema differs")
                                 if !change.schema.isEmpty {
-                                    let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                                    let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='\(change.table)'")
                                     try require(engine == (service == "source" ? "InnoDB" : "MyISAM"),"DDL local engine selection differs")
                                     if change.schema.contains("note:") {
-                                        let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)' AND COLUMN_NAME='note'")
+                                        let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='\(change.table)' AND COLUMN_NAME='note'")
                                         try require(collation == change.collation,"DDL collation differs")
                                     }
                                     let fields=change.schema.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.schema.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.schema.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
-                                    let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.table) ORDER BY id")
+                                    let rows=try h.sql(service,"SELECT \(fields) FROM \(change.database).\(change.table) ORDER BY id",preserveWhitespace:true)
                                     try require(rows == change.rows,"\(service) rows differ")
                                     try rows.write(to:output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"),atomically:true,encoding:.utf8)
                                 }
                                 if assertionID != nil {
-                                    let columns = try h.sql(service,"SELECT CONCAT(COLUMN_NAME,':',IF(DATA_TYPE IN ('int','bigint'),CONCAT(DATA_TYPE,IF(COLUMN_TYPE LIKE '%unsigned%',' unsigned','')),COLUMN_TYPE),':',IS_NULLABLE,':',IFNULL(COLUMN_DEFAULT,'<NULL>'),':',COLUMN_KEY,':',EXTRA,':',IFNULL(CHARACTER_SET_NAME,''),':',IFNULL(COLLATION_NAME,'')) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)' ORDER BY ORDINAL_POSITION")
-                                    let expected = change.schema.contains("note:") ? "note:varchar(20):YES:<NULL>:::utf8mb4:utf8mb4_unicode_ci\nid:int:NO:<NULL>:PRI:::" : "id:bigint unsigned:NO:<NULL>:PRI:::\nb:varbinary(10):YES:<NULL>::::"
+                                    let columns = try h.sql(service,"SELECT CONCAT(COLUMN_NAME,':',IF(DATA_TYPE IN ('int','bigint'),CONCAT(DATA_TYPE,IF(COLUMN_TYPE LIKE '%unsigned%',' unsigned','')),COLUMN_TYPE),':',IS_NULLABLE,':',IFNULL(COLUMN_DEFAULT,'<NULL>'),':',COLUMN_KEY,':',EXTRA,':',IFNULL(CHARACTER_SET_NAME,''),':',IFNULL(COLLATION_NAME,'')) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='\(change.table)' ORDER BY ORDINAL_POSITION")
+                                    let expected = change.exactColumns
                                     try require(columns == expected, "\(service) exact column/default/key metadata differs: \(columns)")
-                                    let defaults = try h.sql(service,"SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
-                                    try require(defaults == "utf8mb4_unicode_ci", "\(service) table default collation differs")
+                                    let defaults = try h.sql(service,"SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='\(change.table)'")
+                                    try require(defaults == (change.schema.isEmpty ? "" : "utf8mb4_unicode_ci"), "\(service) table default collation differs")
                                     observations[service] = ["columns": columns, "table_collation": defaults, "schema": schema, "expected_rows": change.rows,
-                                        "observed_rows": try String(contentsOf: output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"), encoding: .utf8),
-                                        "engine": try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")]
+                                        "observed_rows": change.schema.isEmpty ? "" : try String(contentsOf: output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"), encoding: .utf8),
+                                        "engine": try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='\(change.table)'")]
                                 }
-                                if change.test.id=="rename-table" {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='changes'") == "0","renamed table remains")}
+                                if change.test.id=="rename-table" {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(change.database)' AND TABLE_NAME='changes'") == "0","renamed table remains")}
                             }
                             return observations
                         }
@@ -219,8 +228,11 @@ public enum DMLQualification {
                 let ddlEnd=try h.boundary("source")
                 let ddlResult=try finish(applying,"ddl",success:true)
                 try require(ddlResult["appliedGTIDSet"] as? String == ddlEnd.gtids,"DDL applied GTID coverage differs")
-                try require(ddlResult["ddlApplied"] as? Int == 13 && ddlResult["rowsApplied"] as? Int == 19,"DDL counters differ")
-                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "13","DDL intent history missing")
+                let ddlCount=changes.filter{!$0.isDML}.count,rowCount=changes.filter{$0.isDML}.reduce(0){$0+$1.affectedRows}
+                try require(ddlResult["ddlApplied"] as? Int == ddlCount && ddlResult["rowsApplied"] as? Int == rowCount,"DDL counters differ")
+                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == String(ddlCount),"DDL intent history missing")
+                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE target_sql LIKE 'CREATE TABLE IF NOT EXISTS%' AND before_schema_id IS NOT NULL AND before_schema_id=after_schema_id") == "3","conditional CREATE retired an unchanged schema")
+                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE target_sql LIKE 'DROP TABLE IF EXISTS%' AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE'") == "1","absent DROP did not complete its no-op intent")
                 let expectedCreates=changes.filter{$0.sql.hasPrefix("CREATE TABLE")}.map{$0.sql}.joined(separator:"\n")
                 try require(state("ddl","SELECT target_sql FROM ddl_intents WHERE target_sql LIKE 'CREATE TABLE%' ORDER BY rowid")==expectedCreates,"CREATE SQL was rewritten")
                 try require(state("ddl","SELECT COUNT(*) FROM schemas WHERE current=1") == "0","dropped schema remains current")
@@ -236,7 +248,7 @@ public enum DMLQualification {
                     let decoded=try runner.run([h.decoder,"--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(from.position)","--stop-position=\(end.position)",file.path])
                     try decoded.stdout.write(to:output.appendingPathComponent(service+"-ddl-binlog.txt"))
                     let text=String(decoding:decoded.stdout,as:UTF8.self).uppercased()
-                    let expectedKinds=changes.map {String($0.sql.split(separator:" ")[0])}
+                    let expectedKinds=changes.flatMap {Array(repeating:String($0.sql.split(separator:" ")[0]),count:$0.isDML ? $0.affectedRows : 1)}
                     let kinds=text.split(separator:"\n").compactMap {line -> String? in
                         for verb in ["CREATE TABLE","ALTER TABLE","RENAME TABLE","DROP TABLE","TRUNCATE TABLE"] {
                             if line.hasPrefix(verb+" ") {return String(verb.split(separator:" ")[0])}
@@ -250,6 +262,27 @@ public enum DMLQualification {
                     try writeJSON(kinds,to:output.appendingPathComponent(service+"-ddl-operation-kinds.json"))
                 }
                 try cases.pass("ddl")
+                // Source accepts this statement, but both replicas lack its
+                // externally prepared template. Qualify an actual apply failure.
+                _ = try h.sql("source","SET SESSION sql_log_bin=0; CREATE TABLE poc.only_source(id INT PRIMARY KEY)")
+                let missingStart=try h.boundary("source")
+                let missing=try start(DDLCoverageCases.missingTemplate,configuration("ddl-like-missing-template",at:missingStart,count:2));try waitForReader(missing)
+                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("source","CREATE TABLE poc.failed_like LIKE poc.only_source; CREATE TABLE poc.after_failed_like(id INT PRIMARY KEY)")
+                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"single primary-key")
+                let failureDeadline=Date().addingTimeInterval(20)
+                var nativeFailure=try h.status()
+                while nativeFailure["Last_SQL_Errno"] == "0" && Date()<failureDeadline {
+                    Thread.sleep(forTimeInterval:0.2);nativeFailure=try h.status()
+                }
+                try require(nativeFailure["Last_SQL_Errno"] == "1146" && nativeFailure["Replica_SQL_Running"] == "No","native did not stop on missing LIKE template")
+                try require(state("ddl-like-missing-template","SELECT lifecycle||'|'||transactions_applied||'|'||COALESCE(applied_position,'NULL') FROM state") == "BLOCKED|0|NULL","missing LIKE template advanced checkpoint")
+                for service in ["native","target57"] {
+                    try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME IN ('failed_like','after_failed_like')") == "0","replica applied failed LIKE or following DDL")
+                }
+                try writeJSON(nativeFailure,to:output.appendingPathComponent("native-like-missing-template-status.json"))
+                _ = try h.sql("native","STOP REPLICA")
+                try cases.pass(DDLCoverageCases.missingTemplate.id)
                 for (test,sql,reason) in DDLCoverageCases.rejections {
                     let label = test.id
                     let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:2));try waitForReader(rejected)

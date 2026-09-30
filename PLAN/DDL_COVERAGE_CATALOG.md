@@ -3,17 +3,17 @@
 Definition, 2026-09-30, committed as `5270352`. **Steps 1–2 are implemented:**
 versioned JSON records/schemas, shared executable case registry, offline check and
 Markdown/JSON report commands, pinned local upstream checking and candidate scanning. See [catalog usage and limits](../tests/DDLCoverage/README.md).
-The catalog contains 55 scenarios and now maps 46 DDL/native case declarations,
-including one explicit DML-only classification. All family inventories remain
+The catalog contains 56 scenarios and now maps 97 DDL/native case declarations,
+including explicitly classified baseline/setup/cleanup cases. All family inventories remain
 partial. Without selected evidence, qualifications remain unverified. The first
 Step 3 slice imports checksummed, fingerprinted schema/data assertions for rename
-and populated/empty TRUNCATE. Selected lifecycle sections/results and prerequisites
+and populated/empty TRUNCATE, conditional CREATE/DROP and CREATE LIKE. Selected lifecycle sections/results and prerequisites
 have been reviewed; contrast-only references and whole-file/transitive review gaps
 remain explicit. Step 3 is partially implemented: boundary/binlog/history and
 query-context qualification, export and completeness verification remain pending.
 Step 4 remains pending; historical integration passes have not been promoted into
 assertion-level catalog evidence.
-This increment changes neither production replication behavior nor recovery policy.
+The conditional/LIKE slice extends the bounded production DDL grammar; recovery policy is unchanged.
 
 ## What defines the checklist
 
@@ -337,23 +337,40 @@ case results and successful completion/cleanup. Dirty builds are identified by
 content, and changed sources/contracts produce stale evidence. Failed runs retain
 assertion diagnostics. Per-event applier session context remains an explicit gap.
 
+## Conditional/LIKE implementation increment
+
+Native observation now precedes the implementation: twelve additional cases run
+in both native profiles, including direct SQL on 5.7. Successful conditional
+no-ops log events; CREATE LIKE copies the receiving node's local template engine,
+column/default/key metadata and no rows. Source-only errors and replica-only
+missing-template failure have separate catalog contracts.
+
+The ordered Swift suite grows from 32 to 70 statements (27 DDL, 56 affected DML
+rows), adding eight scenario contracts with metadata and following-DML assertions.
+Both file-position/MINIMAL and GTID/FULL metadata profiles execute multirow
+operations, key moves, integer limits and exact text/binary values. The registry
+has 97 declarations (79 Swift-suite and 18 native-suite); the catalog has 56
+scenarios and 132 scenario/profile combinations. Its 638 assertion/profile
+obligations retain the earlier observation requirements, add the implementation
+checks, add native profiles and add a replica-only missing-template contract.
+The successful 2026-09-30 rerun records growth from 12 to 44 passing
+obligations and from six to 22 partial combinations. See the local
+[comparison artifacts](../artifacts/ddl-conditional-like-20260930/README.md) for
+exact run paths and reproduction commands. No full verification is
+inferred from these passes. Native matrix results are not yet imported as named
+assertion evidence.
+
 The next changes, in priority order, are:
 
 1. Bind boundary-specific normalized row/binlog effects, SQLite applied position /
-   GTIDs and schema-history/cache invalidation for these same three scenarios.
-   Establish warning/context contracts before promoting them to verified. Test
-   the evidence gate with a deliberately wrong expected row or checkpoint.
-2. Add native/direct-5.7 observations for conditional CREATE (absent, matching,
-   different), conditional DROP (present, absent), and CREATE LIKE (empty copy,
-   defaults/engine/index inheritance, existing destination, missing template/schema).
-   Record whether each source statement logs an event before adding Swift support.
-3. Add ALTER RENAME, cross-schema rename and multi-object error/partial-effect
-   tests, then column/default/index variants. Use the reviewed MTR sections and
-   additional exact references; do not infer engine equivalence from filenames.
-4. Give standalone DML its own obligations/evidence mapping: multi-row operations,
-   primary-key updates, exact binary/UTF-8/NULL and integer boundaries, mismatch /
-   missing-row/duplicate-key failures and MyISAM partial effects. The DDL catalog
-   currently counts only DML following a specific DDL; the separate dml-suite
-   baseline and negative cases are not silently included in these coverage totals.
+   GTIDs and schema-history/cache invalidation. Establish warning/context contracts
+   and test the evidence gate with deliberately wrong expected rows/checkpoints
+   before promoting any scenario to verified.
+2. Extend LIKE template qualification to additional supported indexes/defaults
+   only after native comparisons, then ALTER RENAME, cross-schema rename and
+   multi-object error/partial-effect tests. Keep temporary-table logging separate.
+3. Give standalone DML its own obligations/evidence mapping. These catalog totals
+   count only DML following a specific DDL; standalone DML baseline/negative cases
+   are not silently included.
 
 Recovery, skip controls and dump/load management stay outside this increment.

@@ -12,15 +12,18 @@ enum ColumnPlacement: Equatable {case last, first, after(String)}
 enum DDLEngine: Equatable {case omitted,defaultEngine,myISAM}
 enum DDLStatement: Equatable {
     case create(ApplyTable,DDLEngine = .omitted)
+    case createIfAbsent(ApplyTable,DDLEngine)
+    case createLike(TableName,TableName,ifNotExists:Bool)
     case add(TableName,ApplyColumn,ColumnPlacement)
     case dropColumn(TableName,String)
     case rename(TableName,TableName)
     case drop(TableName)
+    case dropIfPresent(TableName)
     case truncate(TableName)
     var name: TableName {
         switch self {
-        case .create(let t,_): return TableName(database:t.database,table:t.table)
-        case .add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.truncate(let t): return t
+        case .create(let t,_),.createIfAbsent(let t,_): return TableName(database:t.database,table:t.table)
+        case .add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
     }
     static func parse(_ query: QueryControl) throws -> DDLStatement {
@@ -39,6 +42,13 @@ struct PreparedDDL {
     let before: ApplyTable?
     let after: ApplyTable?
     let sql: String
+    var preservesSchema: Bool {
+        switch statement {
+        case .createIfAbsent, .createLike(_,_,true): return before != nil && before == after
+        case .dropIfPresent: return before == nil && after == nil
+        default: return false
+        }
+    }
 }
 
 /// Classification and schema prediction for a bounded grammar. The original SQL
@@ -141,45 +151,53 @@ private struct DDLParser {
     mutating func parse() throws -> DDLStatement {
         let result: DDLStatement
         if take("CREATE") {
-            try expect("TABLE");let table=try name();try expect("(")
-            var columns=[ApplyColumn](),key: String?
-            repeat {
-                if take("PRIMARY") {
-                    try expect("KEY");try expect("(");let name=try identifier();try expect(")")
-                    try require(key==nil,"multiple DDL primary keys");key=name
-                } else {
-                    let (column,primary)=try column();columns.append(column)
-                    try require(columns.count<=256,"DDL column limit exceeded")
-                    if primary {try require(key==nil,"multiple DDL primary keys");key=column.name}
+            try expect("TABLE")
+            let conditional=take("IF")
+            if conditional {try expect("NOT");try expect("EXISTS")}
+            let table=try name()
+            if take("LIKE") {
+                result = .createLike(table,try name(),ifNotExists:conditional)
+            } else {
+                try expect("(")
+                var columns=[ApplyColumn](),key: String?
+                repeat {
+                    if take("PRIMARY") {
+                        try expect("KEY");try expect("(");let name=try identifier();try expect(")")
+                        try require(key==nil,"multiple DDL primary keys");key=name
+                    } else {
+                        let (column,primary)=try column();columns.append(column)
+                        try require(columns.count<=256,"DDL column limit exceeded")
+                        if primary {try require(key==nil,"multiple DDL primary keys");key=column.name}
+                    }
+                } while take(",")
+                try expect(")")
+                var tableCharset:String?,tableCollation:String?,options=Set<String>()
+                var engine=DDLEngine.omitted
+                while index<tokens.count && !isNext(";") {
+                    let option:String
+                    if take("ENGINE") {
+                        _ = take("=");option="engine"
+                        if take("MYISAM") || take("'MYISAM'") {engine = .myISAM}
+                        else if take("'DEFAULT'") {engine = .defaultEngine}
+                        else {throw ApplyError("explicit engine is outside the MyISAM DDL contract (no engine rewriting)")}
+                    } else {
+                        _ = take("DEFAULT")
+                        if take("CHARACTER") {try expect("SET");_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
+                        else if take("CHARSET") {_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
+                        else if take("COLLATE") {_ = take("=");tableCollation=try identifier().lowercased();option="collation"}
+                        else {throw ApplyError("unsupported CREATE TABLE option")}
+                    }
+                    try require(options.insert(option).inserted,"duplicate CREATE TABLE option")
                 }
-            } while take(",")
-            try expect(")")
-            var tableCharset:String?,tableCollation:String?,options=Set<String>()
-            var engine=DDLEngine.omitted
-            while index<tokens.count && !isNext(";") {
-                let option:String
-                if take("ENGINE") {
-                    _ = take("=");option="engine"
-                    if take("MYISAM") || take("'MYISAM'") {engine = .myISAM}
-                    else if take("'DEFAULT'") {engine = .defaultEngine}
-                    else {throw ApplyError("explicit engine is outside the MyISAM DDL contract (no engine rewriting)")}
-                } else {
-                    _ = take("DEFAULT")
-                    if take("CHARACTER") {try expect("SET");_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
-                    else if take("CHARSET") {_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
-                    else if take("COLLATE") {_ = take("=");tableCollation=try identifier().lowercased();option="collation"}
-                    else {throw ApplyError("unsupported CREATE TABLE option")}
+                guard let key else {throw ApplyError("DDL CREATE requires a primary key")}
+                columns=columns.map { c in
+                    if c.name != key {return c}
+                    var keyColumn=ApplyColumn(name:c.name,type:c.type,nullable:false,collation:c.collation);keyColumn.characterSet=c.characterSet;return keyColumn
                 }
-                try require(options.insert(option).inserted,"duplicate CREATE TABLE option")
+                var schema=ApplyTable(database:table.database,table:table.table,columns:columns,primaryKey:key)
+                schema.defaultCharacterSet=tableCharset;schema.defaultCollation=tableCollation
+                result = conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
             }
-            guard let key else {throw ApplyError("DDL CREATE requires a primary key")}
-            columns=columns.map { c in
-                if c.name != key {return c}
-                var keyColumn=ApplyColumn(name:c.name,type:c.type,nullable:false,collation:c.collation);keyColumn.characterSet=c.characterSet;return keyColumn
-            }
-            var schema=ApplyTable(database:table.database,table:table.table,columns:columns,primaryKey:key)
-            schema.defaultCharacterSet=tableCharset;schema.defaultCollation=tableCollation
-            result = .create(schema,engine)
         } else if take("ALTER") {
             try expect("TABLE");let table=try name()
             if take("ADD") {
@@ -196,7 +214,11 @@ private struct DDLParser {
             try expect("TABLE");let from=try name();try expect("TO");let to=try name()
             try require(from.database==to.database && from != to,"DDL rename requires distinct names in one database")
             result = .rename(from,to)
-        } else if take("DROP") {try expect("TABLE");result = .drop(try name())}
+        } else if take("DROP") {
+            try expect("TABLE");let conditional=take("IF")
+            if conditional {try expect("EXISTS")}
+            let table=try name();result = conditional ? .dropIfPresent(table) : .drop(table)
+        }
         else if take("TRUNCATE") {_ = take("TABLE");result = .truncate(try name())}
         else {throw ApplyError("unsupported DDL statement")}
         _ = take(";")
@@ -256,26 +278,48 @@ extension TargetSession {
         // Require a known ASCII-compatible client encoding. Connection/server/
         // legacy database collations cannot affect these qualified statements.
         try require([8,33,45,46,83,192,224,255].contains(context.clientCharset),"unsupported DDL client charset")
-        if case .create(_,let engine)=statement,engine != .myISAM {
-            try require(try scalar("SELECT @@SESSION.default_storage_engine AS v")=="MyISAM","DDL requires target default_storage_engine=MyISAM")
-        }
-        if case .create(_, .defaultEngine)=statement {
-            try require(try scalar("SELECT @@SESSION.default_tmp_storage_engine AS v")=="MyISAM","ENGINE='DEFAULT' requires qualified target temporary-engine default")
-        }
         let name=statement.name
-        let before:ApplyTable?
-        if case .create=statement {try require(!(try tableExists(name)),"DDL CREATE target already exists");before=nil}
-        else {
+        // Read the local LIKE template even when IF NOT EXISTS keeps the
+        // destination. MySQL opens the template before testing the destination.
+        var template:ApplyTable?
+        func checkedSchema(_ name:TableName) throws -> ApplyTable {
             let current=try readSchema(database:name.database,name:name.table)
             if let cached=discovered[name.identity] {try require(current==cached,"target schema drift before DDL")}
-            before=current
+            return current
+        }
+        if case .createLike(_,let source,_)=statement {template=try checkedSchema(source)}
+        let exists=try tableExists(name)
+        let before:ApplyTable?
+        switch statement {
+        case .create,.createLike(_,_,false):
+            try require(!exists,"DDL CREATE target already exists");before=nil
+        case .createIfAbsent,.createLike(_,_,true),.dropIfPresent:
+            if exists {before=try checkedSchema(name)}
+            else {
+                try require(discovered[name.identity]==nil,"target schema disappeared before DDL")
+                before=nil
+            }
+        default: before=try checkedSchema(name)
         }
         var after:ApplyTable?
         switch statement {
-        case .create(let table,_):
+        case .create(let table,let engine),.createIfAbsent(let table,let engine):
+            if let before {after=before;break}
+            if engine != .myISAM {
+                try require(try scalar("SELECT @@SESSION.default_storage_engine AS v")=="MyISAM","DDL requires target default_storage_engine=MyISAM")
+            }
+            if engine == .defaultEngine {
+                try require(try scalar("SELECT @@SESSION.default_tmp_storage_engine AS v")=="MyISAM","ENGINE='DEFAULT' requires qualified target temporary-engine default")
+            }
             let parent=try databaseEncoding(name.database)
             let encoding=try resolveEncoding(charset:table.defaultCharacterSet,collation:table.defaultCollation,parent:parent,context:context)
             after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context)},primaryKey:table.primaryKey,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation)
+        case .createLike:
+            if let before {after=before}
+            else {
+                let template=template!
+                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKey:template.primaryKey,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation)
+            }
         case .add(_,let column,let placement):
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
             let column=try resolveColumn(column,parent:encoding,context:context)
@@ -295,7 +339,7 @@ extension TargetSession {
         case .rename(_,let destination):
             try require(!(try tableExists(destination)),"DDL RENAME destination exists")
             after=ApplyTable(database:destination.database,table:destination.table,columns:before!.columns,primaryKey:before!.primaryKey,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation)
-        case .drop: after=nil
+        case .drop,.dropIfPresent: after=nil
         case .truncate: after=before
         }
         try after?.validate()
@@ -311,6 +355,7 @@ extension TargetSession {
         _ = try query(plan.sql,textProtocol:true)
         try resetDMLSession()
         if let after=plan.after {try require(try readSchema(database:after.database,name:after.table)==after,"DDL target after-schema mismatch")}
+        if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(plan.statement.name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}
         if case .truncate=plan.statement {try require(try scalar("SELECT COUNT(*) AS v FROM \(plan.statement.name.sql)")=="0","TRUNCATE did not empty the table")}
         if plan.after?.identity != plan.statement.name.identity {try require(!(try tableExists(plan.statement.name)),"DDL source table remains after rename/drop")}
         discovered.removeValue(forKey:plan.statement.name.identity)
