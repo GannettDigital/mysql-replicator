@@ -24,6 +24,16 @@ pinned servers; quoted `ENGINE='DEFAULT'` also requires a qualified temporary-en
 default to select MyISAM. Omitted ENGINE is the preferred positive baseline. See
 the foundation document for the measured settings and current implementation limits.
 
+## Coverage checklist prerequisite
+
+Before extending table lifecycle support, implement the
+[DDL coverage catalog](DDL_COVERAGE_CATALOG.md). Its definition specifies the
+pinned upstream inventory, scenario/profile contracts, mappings to named tests,
+evidence qualification and SwiftPM/Make validation. The current family matrix is
+the starting taxonomy; it is not an exhaustive mapping of MySQL's tests. Existing
+native/Swift fixture passes remain valid for their tested subsets. Catalog tools
+and a complete upstream-to-scenario mapping are still to be implemented.
+
 ## Engine selection: preserve the statement's meaning
 
 Configure and verify the source's default as InnoDB and both targets' default as
