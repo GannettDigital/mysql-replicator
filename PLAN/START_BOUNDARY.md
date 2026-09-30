@@ -12,7 +12,7 @@ The planned production configuration supplies:
 
 - Source identity/history and target identity, connection/TLS settings, and stream identity.
 - One selected start mode: a source binlog filename plus the position of the next event at a complete boundary; or the executed source GTID set already represented by the prepared target for the configured scope. The latter is an exclusion set, not the next GTID to set on a target session.
-- The fixed database/table scope and authoritative historical schema valid at that boundary, including the metadata needed to decode rows. If both coordinate forms are provided, they must refer to the same boundary; never substitute a later sample of source state.
+- A prepared target whose schema/data match that boundary. Discover schema internally from target metadata and source table maps; do not require column/key descriptions in production configuration. Explicit include/exclude rules are a separate later feature. If both coordinate forms are provided, they must refer to the same boundary; never substitute a later sample of source state.
 - An explicit operator declaration that the target is ready at this boundary. An optional opaque external provisioning reference is useful for diagnostics, but no dump files, hashes, format or loader progress are required inputs.
 
 The operator owns snapshot/load correctness. Startup validates syntax, identities, schema compatibility and available history, and refuses active/connecting native channels or uncertain ownership before target writes. These checks cannot prove that every loaded row matches the asserted boundary. A filtered stream's seed GTID set stays bound to that scope; adding previously omitted data requires another externally established baseline.
@@ -30,6 +30,12 @@ Its metadata contains `gtidExecuted` in `@.json`; the source binlog filename/pos
 The exact export/import versions and 8.4-to-5.7 MyISAM load compatibility need separate operational qualification. Merely recording coordinates does not establish a consistent or successfully loaded snapshot. These notes describe the boundary of responsibility, not a new dump/load runbook.
 
 ## Next implementation increment
+
+The reviewed DML checkpoint is `d188f58`. Its manual schema manifests are temporary
+POC inputs. The immediate follow-up is [automatic schema discovery and bounded
+checkpoint/history retention](SCHEMA_DISCOVERY_AND_RETENTION.md), before ordered
+DDL/schema evolution. These requirements supersede manual-schema configuration
+references in the earlier plans; they do not change the external load contract.
 
 Implementation order is DML correctness, then DDL correctness, then crash/reconnect recovery. Start with the serial DML applier:
 

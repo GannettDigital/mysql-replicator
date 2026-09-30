@@ -1,6 +1,14 @@
 # Implementation status
 
-Phase 1 is in progress. The reviewed GTID/reference checkpoint is commit `42c36d3`. See [the current implementation evidence](PHASE_1_PROGRESS.md).
+Phase 1 is in progress.
+
+Reviewed DML checkpoint: `d188f58`, including Docker-managed runtime files and live
+build/startup output. The follow-up harness run passes 71 Swift tests and both DML
+start modes. Next is removing manual schema manifests from production config and
+adding timestamped, bounded checkpoint/history retention; see [the review and
+implementation plan](SCHEMA_DISCOVERY_AND_RETENTION.md). Those changes are planned,
+not part of the committed DML implementation.
+ The reviewed GTID/reference checkpoint is commit `42c36d3`. See [the current implementation evidence](PHASE_1_PROGRESS.md).
 
 Previous decoder checkpoint (`9378bf4`): 30 Swift tests and one Rust panic-containment test pass; all 30 Swift tests also pass with Swift/C/CLI AddressSanitizer instrumentation. Rust itself remains uninstrumented. Ubuntu run `replicator-ubuntu-20260929t230511z-5a362b66` passed, including the production inspector; all 36 source-file JSON events match the host output. Local evidence is under `artifacts/decoder/` and `artifacts/ubuntu/<run>/`.
 

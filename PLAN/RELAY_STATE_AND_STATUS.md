@@ -2,7 +2,7 @@
 
 ## Accepted storage split
 
-Raw binlog events belong in local relay/binlog files, **not SQLite BLOB rows**. SQLite stores replication state and indexes into those files, historical schema, externally supplied start-boundary provenance, pending MyISAM/DDL recovery intents, diagnostics and statistics. This supersedes the earlier proposal to put the entire raw event stream in SQLite. The existing packaging probe qualifies SQLite durability primitives only; the production file relay, state store and REST API are not implemented yet.
+Raw binlog events belong in local relay/binlog files, **not SQLite BLOB rows**. SQLite stores replication state and indexes into those files, historical schema, externally supplied start-boundary provenance, pending MyISAM/DDL recovery intents, diagnostics and statistics. This supersedes the earlier proposal to put the entire raw event stream in SQLite. The first DML checkpoint implements a bounded framed relay and minimum SQLite state/intents. Segmentation, retention, reopening/recovery and REST remain unimplemented.
 
 Use one state directory and supervised process per source/target pair initially. Keep source history identity separate from a source filename, which may be reused after reset or source replacement. A relay location identifies a local segment, byte range and digest; source coordinates identify the upstream file/position and GTID. They must not be conflated: GTID dump startup may begin within a source file and may include artificial protocol events. Phase 2 must define and test the local segment format and coordinate mapping before live resume. Store original event frames without rewriting their headers; keep transport-only pseudo-events separate from source progress. Complete downloaded source files can be inspected directly with the existing offline inspector.
 
@@ -21,6 +21,21 @@ Persist at least:
 - Last receive, durable capture and apply times, counter snapshots, source/apply error history, disconnect/reconnect diagnostics and explicit human resume history.
 
 For MyISAM, retain the accepted write-ahead row-intent protocol. An intent references pinned relay bytes, schema version, transaction/row ordinal, target identity and the expected mutation/reconciliation state. Reconstruct row images from the retained bytes where practical; persist only the additional key/expected-state information needed for reliable recovery. This journal is replication state, not a second event store. Its referenced bytes cannot be purged while the intent or a repair diagnostic needs them. Applied source GTIDs advance only after all required row operations have been verified, independently of target-local GTIDs.
+
+## Timestamped checkpoints and retained history
+
+The current singleton applied GTID set is overwritten on every completed group;
+it is not an append-only series of full sets. Its `updated_at` also records
+lifecycle changes. Group/row-intent history currently has no timestamps or pruning.
+
+The next design uses durably committed per-group deltas plus periodically compacted
+cumulative GTID snapshots. Add creation/completion/last-applied/snapshot timestamps
+and bounded age/count/size retention for completed history and diagnostics. Never
+expire cumulative executed coverage or outstanding intents and their referenced
+relay/schema records. Snapshot publication must precede pruning covered deltas;
+current progress is snapshot plus subsequent committed deltas. Do not delay durable
+apply recording until a timer or rotate the live SQLite file in place. See the
+[design, source-code review and acceptance checks](SCHEMA_DISCOVERY_AND_RETENTION.md).
 
 ## Durability across files and SQLite
 

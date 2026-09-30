@@ -12,6 +12,15 @@ The proposed replacement is a logical replication system. It must explicitly own
 
 **Implementation selected: Swift capture reader using MySQLNIO/SwiftNIO, plus Rust `mysql_common` decoding through our own C ABI.** Keep the rest of the service in Swift and statically link the codec. Port useful upstream test vectors, not the full decoder. This replaces the earlier plan to make the implementation choice after Phase 2.
 
+**Follow-up to DML checkpoint `d188f58`:** production configuration must not contain
+manual schema definitions. Discover source wire metadata and target schema
+internally, then evolve that history in binlog order. Configuration filters are
+separate later work. Replace per-group full-set serialization with durable applied
+deltas and periodic GTID snapshots; timestamp and bound completed journal/history
+retention without losing applied coverage or pending work. See [the concrete
+schema/state follow-up](SCHEMA_DISCOVERY_AND_RETENTION.md). This supersedes earlier
+manual-schema input requirements.
+
 **Scope decision: database dump/load management is entirely external.** The replicator starts from an operator-supplied known file/position or executed GTID set, with matching source identity, scope and historical schema. It does not create, parse, transform, transfer, load or verify database dumps, orchestrate MySQL Shell, or rebuild targets. See [the start-boundary contract](START_BOUNDARY.md). Binlog streaming through the MySQL dump protocol remains core replication functionality.
 
 Three corrections to the input assumptions determine the plan:

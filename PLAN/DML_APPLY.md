@@ -6,6 +6,11 @@ DDL, automatic reconnect, recovery/reopening of existing state, and REST serving
 remain unimplemented. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 
+The reviewed checkpoint is `d188f58`. Its schema lists are temporary POC inputs,
+not the intended production interface. The next increment replaces them with
+[automatic discovery and bounded state history](SCHEMA_DISCOVERY_AND_RETENTION.md).
+The usage below describes the currently committed implementation.
+
 ## Run or review
 
 For the self-contained three-server test, use `make dml-suite`. It builds a static

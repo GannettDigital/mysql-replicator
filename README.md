@@ -54,7 +54,9 @@ The initial applier requires a **new state directory** and supports a deliberate
 limited schema and single-statement transaction subset. It never reopens state or
 retries uncertain writes. Review [supported behavior, setup, state ordering and
 limits](PLAN/DML_APPLY.md) before using it. Next is schema-change application;
-automatic recovery follows DML and DDL correctness.
+automatic recovery follows DML and DDL correctness. The immediate follow-up removes
+manual schema definitions from config and bounds checkpoint/history retention;
+see [the schema/state review](PLAN/SCHEMA_DISCOVERY_AND_RETENTION.md).
 
 ## Repository automation
 
