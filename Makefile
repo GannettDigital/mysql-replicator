@@ -27,3 +27,7 @@ test-asan: codec
 .PHONY: live-suite
 live-suite:
 	swift run replicator-lab live-suite $(ARGS)
+
+.PHONY: dml-suite
+dml-suite:
+	swift run replicator-lab dml-suite $(ARGS)

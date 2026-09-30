@@ -1,0 +1,176 @@
+# First serial DML applier
+
+This increment connects the existing live reader/decoder/transaction assembler to
+MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
+DDL, automatic reconnect, recovery/reopening of existing state, and REST serving
+remain unimplemented. The order remains DML correctness, then DDL correctness,
+then crash/reconnect recovery. Dump/load and target provisioning remain external.
+
+## Run or review
+
+For the self-contained three-server test, use `make dml-suite`. It builds a static
+Ubuntu 16.04 x86_64 image tagged `mysql-replicator-packaging:dml`. To reuse an image
+built from the same code, use `make dml-suite ARGS=--skip-build`. The harness prints
+stage progress and streams Docker build/startup output to the terminal; the
+initial image compilation can take several minutes. Runtime certificates, configs
+and state live in a per-case Docker volume, avoiding Docker Desktop host bind
+mounts. Closed state is copied back for SQLite assertions; all evidence is copied
+back before cleanup removes that volume.
+
+For a separately prepared target, start with the checked-in
+[configuration template](../examples/apply.example.json). **Replace its placeholders
+and schema with the external snapshot/handoff's actual metadata before running.**
+The template is not a ready-to-run fixture. Set the two named password environment
+variables, then run:
+
+```sh
+make build
+.build/debug/mysql-replicator run --config apply.json --initialize
+```
+
+The state directory's parent must already exist; the state directory itself must
+not exist. Initialization creates it exclusively with private permissions. An
+existing directory is rejected, including a cleanly stopped previous run. There
+is no resume or checkpoint-reset command in this increment. Never delete state
+and reuse an old baseline against a partially changed target.
+
+Source `mode: "gtid"` now accepts a start containing only `executedGTIDs`.
+`mode: "file-position"` requires `file` and `position`, plus the seed GTID set
+(which may be empty if unavailable). File and position, when present in GTID mode,
+are checked as the additional bootstrap bound. Neither mode invents target GTIDs.
+The operator supplies a matching historical schema and prepared target; these
+checks do not certify the external snapshot/load.
+
+`stopAfterTransactions` / `nonBlocking` on `source` provide bounded qualification
+runs. Otherwise the command follows the source until stopped or an error occurs.
+Stdout contains one progress JSON record per fully applied source group; stderr
+contains the final summary or a structured error. SIGINT/SIGTERM stop the attempt;
+they do not enable reopening or retry. Passwords and row values are not printed
+in ordinary apply progress. Relay files do contain source row bytes.
+
+## Declared subset and checks
+
+- MySQL 8.4 GTID-ON InnoDB source with ROW/FULL/CRC32, as qualified by live inspect;
+  verified TLS with CA/hostname checking on both connections.
+- MySQL 5.7 target, UUID distinct from the source, OFF_PERMISSIVE/WARN, ROW/FULL/CRC32
+  binary logging enabled globally and on the apply session. The deployment must
+  set `--skip-slave-start` and assert `target.nativeAutoStartDisabled: true`.
+- Complete committed source groups with one row statement affecting one declared
+  table. Multi-row events/statements and primary-key changes are supported within
+  this subset. Multi-statement groups are rejected before any target mutation,
+  consistent with the accepted native MyISAM expected-negative reference.
+- ASCII SQL identifiers (quoted, never interpolated unescaped); a single full,
+  nonnullable integer primary key; no other indexes, triggers, generated/auto-
+  increment columns or partitioned targets. The manifest gives ordered column
+  names, types, nullability and text collation, checked against the target.
+- Declared types: signed/unsigned INT and BIGINT, VARCHAR(n) with utf8mb4_bin,
+  utf8mb4_unicode_ci or utf8mb4_general_ci, and VARBINARY(n); lengths 1–16383.
+  NULL is permitted only by the manifest. Missing row-image fields are errors.
+  Scope/type/shape validation covers the whole source group before writing.
+
+Target preflight checks every native channel and performance_schema worker/receiver
+state, failing on missing privileges or indeterminate results. This initial version
+rejects even retained stopped channels; explicit stopped-channel adoption is later
+work. It acquires one server-wide advisory writer lock and checks ownership/channel
+state before each source group. Administrative native starts and other writers
+must be excluded operationally; native replication does not honor this lock.
+
+MySQL 5.7's `skip-slave-start` is a startup option, not the queryable system
+variable added in 8.0.24. `nativeAutoStartDisabled` is an operator assertion,
+not proof from SQL; the harness verifies the actual container startup arguments.
+See [MySQL's system-variable worklog](https://dev.mysql.com/worklog/task/?id=14450).
+The SQL channel/worker checks remain mandatory regardless of this assertion.
+
+The target account needs SELECT/INSERT/UPDATE/DELETE/LOCK TABLES for declared
+tables, REPLICATION CLIENT, SUPER (MySQL 5.7 requires it to set the session
+[GTID_NEXT](https://dev.mysql.com/doc/refman/5.7/en/replication-options-gtids.html)), SELECT on the queried performance_schema replication
+status tables, and TRIGGER visibility for declared tables (global/schema/table
+TRIGGER grant). That last privilege prevents an empty metadata result from hiding
+triggers; the applier creates none. It needs no schema creation or GTID_PURGED
+mutation privileges. The fixture grants these explicitly.
+
+## Apply and state ordering
+
+Each apply session sets `GTID_NEXT=AUTOMATIC`, autocommit, strict SQL mode and utf8mb4.
+The source GTID remains local replication identity, never a target SQL GTID. There
+is no target transaction pretending to make MyISAM rows atomic.
+
+The applier holds a MyISAM WRITE table lock while validating the current schema,
+reading the exact old row, issuing bound SQL, verifying affected-row count and
+reading the exact result. Integer primary keys identify rows. Text comparisons
+use stored UTF-8 bytes, not collation or Swift's canonical Unicode equivalence;
+binary values and full unsigned 64-bit values remain exact. INSERT requires an
+absent key; UPDATE/DELETE require the full matching before image. Key changes also
+require the destination key to be absent. Drift is an error, never an upsert.
+
+Raw live events, including required format/rotation/heartbeat context, go to
+`relay.frames`. Each record contains little-endian UInt32 metadata length and
+UInt32 event length, then UTF-8 JSON metadata (`kind`, `file`, `observedPosition`)
+and original event bytes. It is a version-1 private framed relay, not a physical
+source binlog accepted directly by mysqlbinlog. Source event headers are unchanged.
+
+`state.sqlite` uses WAL/FULL and stores identities, schema/baseline metadata, group
+source boundaries and relay byte references, per-row event offset/row ordinal
+intents, completion, applied GTID/position, counts and diagnostics. Raw events and
+decoded rows are not copied into SQLite. Before any mutation, relay data is synced
+and the group reference is committed, then the row's PENDING intent is committed.
+After readback verification the row becomes DONE. Only after every row is DONE does
+one SQLite transaction mark the source group applied and advance the applied
+checkpoint/counters. Table locks remain held through that commit.
+
+Baseline GTIDs are externally asserted coverage; initialization does not count them
+as work performed by this process or claim a locally verified applied position.
+Received relay bytes, a pending group and completed target writes are distinct.
+If a later row fails, earlier MyISAM mutations remain; the last whole-group applied
+checkpoint stays unchanged, and the journal records the partial work. Failures set
+BLOCKED where storage is writable and exit nonzero. An uncertain SQL outcome closes
+its connection and is never automatically retried. A target/host crash can lose
+MyISAM data despite durable local metadata; there is no crash-safe recovery claim.
+
+Relay size defaults to 256 MiB and can be set to 1 MiB–1 GiB using
+`maximumRelayBytes`; reaching it stops the attempt. This milestone has no retention,
+purge or re-download implementation. The transaction decoder's existing resource
+bounds still apply. These are local qualification limits, not a large-instance
+capacity claim.
+
+## Validation scope
+
+The DML suite runs both file/position and GTID-only starts. All three branches are
+now active: source 8.4 InnoDB, native 8.4 MyISAM and Swift-applied 5.7 MyISAM.
+The initial workload compares exact final rows, ordered source/native/Swift binlog
+operations through MySQL's independent decoder, anonymous target GTID behavior,
+and SQLite applied boundaries/counters. Additional cases cover multi-row statements,
+key changes, before-image mismatch, existing-state refusal, native-channel exclusion,
+trigger rejection, missing DELETE rows, partial multi-row failure and the known
+native multi-statement error 1837. Extended multi-row/key-change history is also
+compared through mysqlbinlog. A separate table uses an independent SQL HEX oracle
+after each group for integer extremes, quotes, backslashes, NUL/tab, multibyte
+UTF-8, distinct Unicode encodings, trailing spaces, binary bytes, NULL and empty
+binary values; these are outside the narrow mysqlbinlog text normalizer.
+
+Unit tests exercise group-wide validation, exact UINT64_MAX/null/length behavior,
+UTF-8 byte equality, GTID-only configuration, raw relay preservation, unfinished
+intent rejection and atomic whole-group checkpoint advancement. They do not claim
+crash/reconnect recovery. That qualification follows DDL correctness.
+
+## Recorded validation
+
+- 70 Swift tests pass normally and with Swift/C/CLI AddressSanitizer. Rust itself
+  is not instrumented by that run.
+- Ubuntu 16.04 amd64 Docker runs
+  `20260930T050203Z-868edb4a-position-autocommit-myisam` and
+  `20260930T050243Z-ca3f136e-auto-autocommit-myisam` pass, including cleanup.
+  Their `result.json`, independent binlogs/operations, exact-value SQL snapshots,
+  progress/diagnostics, framed relay and SQLite journals are under
+  `artifacts/dml-suite/`. Failed development runs are preserved separately there.
+- The tested runtime image ID is
+  `sha256:56fdba74089ae501f45549a952fd6b55e57f4d9c77bff0fa1a37cb6e9b0f0fc1`.
+  The host reference mysqlbinlog is 8.4.6; fixture servers are 8.4.8 and 5.7.42.
+- Persistent BuildKit Swift/Cargo caches reduced the observed warm build step to
+  about 18 seconds. Swift entry points are recompiled to ensure fresh linkage to
+  external Rust archives. See [packaging caches](../packaging/README.md).
+
+The harness reads copied SQLite snapshots only after the writer exits. During
+a run it waits on JSON progress. The live relay/SQLite files remain inside Docker
+until copied, so the VM and host never share live WAL locks/mmap. This is harness
+coordination, not recovery qualification.

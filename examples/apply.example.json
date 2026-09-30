@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "stateDirectory": "./replica-state",
+  "source": {
+    "version": 1,
+    "host": "REPLACE_SOURCE_HOST",
+    "port": 3306,
+    "username": "capture",
+    "passwordEnvironment": "REPLICATOR_SOURCE_PASSWORD",
+    "serverHostname": "REPLACE_SOURCE_TLS_HOSTNAME",
+    "caFile": "/REPLACE/source-ca.pem",
+    "serverID": 9100,
+    "sourceUUID": "REPLACE_SOURCE_UUID",
+    "mode": "gtid",
+    "start": { "executedGTIDs": "REPLACE_SNAPSHOT_GTID_SET" },
+    "tables": [{ "database": "poc", "table": "items", "columns": ["signed", "utf8", "unsigned"] }]
+  },
+  "target": {
+    "host": "REPLACE_TARGET_HOST",
+    "port": 3306,
+    "username": "applier",
+    "passwordEnvironment": "REPLICATOR_TARGET_PASSWORD",
+    "serverHostname": "REPLACE_TARGET_TLS_HOSTNAME",
+    "caFile": "/REPLACE/target-ca.pem",
+    "nativeAutoStartDisabled": true,
+    "targetUUID": "REPLACE_TARGET_UUID"
+  },
+  "tables": [{
+    "database": "poc", "table": "items", "primaryKey": "id",
+    "columns": [
+      { "name": "id", "type": "int", "nullable": false },
+      { "name": "value", "type": "varchar(100)", "nullable": false, "collation": "utf8mb4_unicode_ci" },
+      { "name": "quantity", "type": "bigint unsigned", "nullable": false }
+    ]
+  }]
+}

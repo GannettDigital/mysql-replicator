@@ -1,0 +1,107 @@
+import XCTest
+import Foundation
+import CSQLite
+@testable import ReplicatorApply
+@testable import ReplicatorCapture
+@testable import ReplicatorCodec
+
+final class ApplyTests: XCTestCase {
+    let sid = "8ba09bde-bc41-11f1-8272-ba06e9024a03"
+    var root: URL { URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
+    func config(_ path: String = "/tmp/unused-state") throws -> ApplyConfiguration {
+        let object: [String:Any] = ["version":1,"stateDirectory":path,
+            "source":["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":"gtid","start":["executedGTIDs":sid+":1-10"],"tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]],
+            "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true,"targetUUID":"00000000-0000-0000-0000-000000000001"],
+            "tables":[["database":"poc","table":"items","primaryKey":"id","columns":[["name":"id","type":"int","nullable":false],["name":"value","type":"varchar(100)","nullable":false,"collation":"utf8mb4_unicode_ci"],["name":"quantity","type":"bigint unsigned","nullable":false]]]]]
+        return try JSONDecoder().decode(ApplyConfiguration.self,from:JSONSerialization.data(withJSONObject:object))
+    }
+    func groups() throws -> [CompleteTransaction] {
+        let history = try JSONDecoder().decode(SchemaHistory.self,from:Data(contentsOf:root.appendingPathComponent("tests/ReplicatorCodecTests/Schema/source-positive.json")))
+        var groups: [CompleteTransaction] = []
+        try Inspection.inspectTransactions(file:root.appendingPathComponent("tests/ReplicatorLabTests/Fixtures/source-positive.binlog"),sourceFile:"binlog.000003",history:history,includeRaw:true) { if $0.start.position >= 1589 { groups.append($0) } }
+        return groups
+    }
+    func testRecordedDMLPlanPreservesValuesOrderAndSourceIdentity() throws {
+        let c = try config(); try c.validate()
+        let plans = try groups().flatMap { try DMLPlan.make($0,tables:c.tables) }
+        XCTAssertEqual(plans.map { $0.row.operation },["insert","update","delete","update"])
+        XCTAssertEqual(plans[0].row.after,[.signed(3),.text("inserted"),.unsigned(UInt64.max)])
+        XCTAssertEqual(plans[1].row.before,[.signed(1),.text("seed-one"),.unsigned(1)])
+        XCTAssertEqual(plans.map(\.rowIndex),[0,0,0,0])
+    }
+    func testMultiStatementGroupRejectedBeforePlanningAnyMutation() throws {
+        let c = try config(), g = try groups()
+        let combined = CompleteTransaction(start:g[0].start,end:g[1].end,gtid:g[0].gtid,anonymous:false,outcome:.committed,events:g[0].events + g[1].events)
+        XCTAssertThrowsError(try DMLPlan.make(combined,tables:c.tables))
+        let opaque = CompleteTransaction(start:g[0].start,end:g[0].end,gtid:g[0].gtid,anonymous:false,outcome:.statement,events:g[0].events)
+        XCTAssertThrowsError(try DMLPlan.make(opaque,tables:c.tables))
+    }
+    func testFullImageTypesNullAndLengthAreStrict() throws {
+        let c = try config().tables[0].columns
+        XCTAssertThrowsError(try c[0].validate(.signed(Int64(Int32.max)+1)))
+        XCTAssertThrowsError(try c[2].validate(.signed(-1)))
+        XCTAssertThrowsError(try c[2].validate(.absent))
+        XCTAssertThrowsError(try c[1].validate(.null))
+        XCTAssertThrowsError(try c[1].validate(.text(String(repeating:"a",count:101))))
+        XCTAssertNoThrow(try c[1].validate(.text("quotes '\\ emoji 🐈 \0")))
+        XCTAssertNoThrow(try c[2].validate(.unsigned(UInt64.max)))
+    }
+    func testGTIDOnlyConfigurationDoesNotInventPosition() throws {
+        let c = try config(); try c.validate()
+        XCTAssertNil(c.source.start.file); XCTAssertNil(c.source.start.position)
+        let p = try StreamProcessor(config:c.source,includeRaw:false,emitEvent:{_ in},emitTransaction:{_ in})
+        XCTAssertTrue(p.atOrAfterBootstrap(BinlogCoordinate(file:"binlog.000123",position:123)))
+    }
+    func sqlite(_ path: URL, _ sql: String) throws -> [[String]] {
+        var db: OpaquePointer?, stmt: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(path.path,&db,SQLITE_OPEN_READONLY,nil),SQLITE_OK)
+        defer { sqlite3_finalize(stmt); sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_prepare_v2(db,sql,-1,&stmt,nil),SQLITE_OK)
+        var rows: [[String]] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            rows.append((0..<sqlite3_column_count(stmt)).map { i in sqlite3_column_text(stmt,i).map { String(cString:$0) } ?? "NULL" })
+        }
+        return rows
+    }
+    func testJournalRetainsRawBytesAndDoesNotAdvanceBeforeWholeGroup() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:parent) }
+        let c = try config(parent.appendingPathComponent("state").path)
+        let store = try StateStore(configuration:c)
+        XCTAssertThrowsError(try StateStore(configuration:c))
+        let group = try groups()[0]
+        for event in group.events {
+            try store.append(LiveRecord(kind:"event",file:group.start.file,observedPosition:String(event.nextPosition),event:event,rawBase64:nil))
+        }
+        try store.begin(group)
+        let mutation = try DMLPlan.make(group,tables:c.tables)[0]
+        try store.intent(0,mutation)
+        let db = store.directory.appendingPathComponent("state.sqlite")
+        XCTAssertEqual(try sqlite(db,"SELECT transactions_applied,rows_applied,applied_file,active_gtid FROM state"),[["0","0","NULL",sid+":11"]])
+        XCTAssertEqual(try sqlite(db,"SELECT status,source_event_offset FROM row_intents"),[["PENDING",mutation.eventOffset]])
+        XCTAssertThrowsError(try store.complete(group,rowCount:1))
+        try store.rowDone(0)
+        XCTAssertEqual(try sqlite(db,"SELECT transactions_applied FROM state"),[["0"]])
+        try store.complete(group,rowCount:1)
+        XCTAssertEqual(try sqlite(db,"SELECT transactions_applied,rows_applied,applied_position,applied_gtids FROM state"),[["1","1","1885",sid+":1-11"]])
+        XCTAssertThrowsError(try store.begin(group))
+        try store.block("test diagnostic")
+        XCTAssertEqual(try sqlite(db,"SELECT lifecycle,diagnostic FROM state"),[["BLOCKED","test diagnostic"]])
+        let raw = try Data(contentsOf:store.directory.appendingPathComponent("relay.frames"))
+        XCTAssertNotNil(raw.range(of:Data(base64Encoded:group.events[0].rawBase64!)!))
+        let columns = try sqlite(db,"SELECT name FROM pragma_table_info('row_intents')").flatMap{$0}
+        XCTAssertEqual(columns,["gtid","ordinal","source_event_offset","source_row","status"])
+    }
+    func testTextRowEqualityPreservesUnicodeEncodingAndTrailingSpaces() {
+        XCTAssertEqual("é","e\u{301}") // Swift's usual equivalence is too broad here.
+        XCTAssertFalse(exactImage([.text("é")],[.text("e\u{301}")]))
+        XCTAssertFalse(exactImage([.text("a")],[.text("a ")]))
+        XCTAssertTrue(exactImage([.text("é"),.null],[.text("é"),.null]))
+    }
+    func testIdentifierQuotingDoesNotPermitSQLInjection() throws {
+        XCTAssertEqual(try quoted("a`b; DROP TABLE x"),"`a``b; DROP TABLE x`")
+        XCTAssertThrowsError(try quoted("a\0b"))
+        XCTAssertThrowsError(try quoted(String(repeating:"a",count:65)))
+    }
+}

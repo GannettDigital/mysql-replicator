@@ -14,7 +14,7 @@ RUN curl -fsSL https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip -o /t
 FROM toolchain AS build
 WORKDIR /workspace
 COPY packaging/Probe/Package.swift packaging/Probe/Package.resolved packaging/Probe/
-RUN swift package --package-path packaging/Probe resolve --force-resolved-versions
+RUN --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked swift package --package-path packaging/Probe resolve --force-resolved-versions
 COPY packaging/rust packaging/rust
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
@@ -23,7 +23,7 @@ COPY Vendor Vendor
 COPY Package.swift Package.resolved ./
 COPY Sources Sources
 COPY rust rust
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target make -f packaging/Makefile build
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target,sharing=locked --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked --mount=type=cache,target=/workspace/.build,sharing=locked make -f packaging/Makefile build
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS runtime
 COPY --from=build /out/packaging-probe /usr/local/bin/packaging-probe
 COPY --from=build /out/mysql-replicator /usr/local/bin/mysql-replicator

@@ -1,0 +1,14 @@
+services:
+  source:
+    command: ["--server-id=8401", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=ON", "--enforce-gtid-consistency=ON", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--ssl-ca=/evidence/tls/ca.pem", "--ssl-cert=/evidence/tls/server.pem", "--ssl-key=/evidence/tls/server-key.pem", "--require-secure-transport=ON"]
+    volumes:
+      - "dml-evidence:/evidence:ro"
+  target57:
+    command: ["--server-id=5701", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=OFF_PERMISSIVE", "--enforce-gtid-consistency=WARN", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start", "--ssl-ca=/evidence/tls/ca.pem", "--ssl-cert=/evidence/tls/server.pem", "--ssl-key=/evidence/tls/server-key.pem", "--require-secure-transport=ON"]
+    volumes:
+      - "dml-evidence:/evidence:ro"
+
+volumes:
+  dml-evidence:
+    external: true
+    name: "${REPLICATOR_DML_EVIDENCE_VOLUME:?fixture evidence volume required}"

@@ -52,3 +52,15 @@ ABI 3 and event JSON schema 2 now expose typed GTID/query/XID/rotation controls,
 ## Subsequent live inspection increment
 
 The native Swift/NIO reader now feeds live MySQL 8.4 dump frames into the existing Rust decoder and Swift assembler. It supports verified TLS, positional/GTID starts, rotation, heartbeats, bounded queues and event/transaction JSON. Live schema metadata must correspond to the supplied bootstrap boundary; DDL stops the stream. Read [live inspection](LIVE_INSPECTION.md) and [current status](IMPLEMENTATION_STATUS.md) for the validation and limits. File relay/SQLite persistence, REST status, automatic recovery and target apply remain pending.
+
+
+## First serial DML increment
+
+The [first DML applier](DML_APPLY.md) now implements the declared one-table,
+single-statement INSERT/UPDATE/DELETE subset on MySQL 5.7 MyISAM. It includes
+GTID-only initialization, raw framed relay storage, SQLite intents/checkpoints and
+the three-server DML harness. All 70 Swift tests pass normally and under Swift-side
+AddressSanitizer; both Ubuntu DML start modes and their extended cases pass.
+This supersedes the earlier pending status for minimum storage and target apply.
+DDL is next, then crash/reconnect recovery; those and REST remain unimplemented.
+The remaining Phase 1 inventory, broader decoder and fleet gates still apply.

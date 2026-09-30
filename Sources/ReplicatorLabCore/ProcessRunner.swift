@@ -41,7 +41,7 @@ public final class ProcessRunner {
     public init(root: URL) { self.root = root }
 
     public func run(_ arguments: [String], environment: [String: String] = [:],
-                    timeout: TimeInterval = 120, checked: Bool = true) throws -> CommandResult {
+                    timeout: TimeInterval = 120, checked: Bool = true, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
         try require(!arguments.isEmpty, "empty command")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("replicator-command-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -62,18 +62,39 @@ public final class ProcessRunner {
         process.standardError = errors
         let completion = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in completion.signal() }
+        let liveOut = try FileHandle(forReadingFrom:outURL), liveErr = try FileHandle(forReadingFrom:errURL)
+        defer { try? liveOut.close(); try? liveErr.close() }
+        func drain() throws {
+            guard let onOutput else { return }
+            for file in [liveOut,liveErr] {
+                // Bound each poll so a chatty child cannot starve the timeout.
+                if let data = try file.read(upToCount:64*1024), !data.isEmpty { onOutput(data) }
+            }
+        }
         try process.run()
-        if completion.wait(timeout: .now() + timeout) == .timedOut {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        var finished = false
+        repeat {
+            finished = completion.wait(timeout:.now() + 0.1) == .success
+            try drain()
+        } while !finished && ProcessInfo.processInfo.systemUptime < deadline
+        if !finished {
             process.terminate()
             if completion.wait(timeout: .now() + 3) == .timedOut {
                 kill(process.processIdentifier, SIGKILL)
                 process.waitUntilExit()
             }
+            try drain()
             throw LabError("command timed out: \(arguments.first!)")
         }
         let outSize = try outURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         let errSize = try errURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         try require(outSize <= 128 * 1024 * 1024 && errSize <= 128 * 1024 * 1024, "command output exceeds lab limit")
+        if let onOutput {
+            for file in [liveOut,liveErr] {
+                if let rest = try file.readToEnd(), !rest.isEmpty { onOutput(rest) }
+            }
+        }
         let result = CommandResult(stdout: try Data(contentsOf: outURL), stderr: try Data(contentsOf: errURL), status: process.terminationStatus)
         if checked && result.status != 0 {
             throw LabError("command \(arguments.first!) exited \(result.status): " + String(decoding: result.stderr.suffix(16_384), as: UTF8.self))

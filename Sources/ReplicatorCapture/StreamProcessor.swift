@@ -65,12 +65,17 @@ final class StreamProcessor {
         return result
     }
     func atOrAfterBootstrap(_ at: BinlogCoordinate) -> Bool {
-        if at.file == config.start.file { return at.position >= config.start.position }
+        guard let initialFile = config.start.file, let initialPosition = config.start.position else {
+            // GTID-only starts rely on the caller's externally established set
+            // and matching historical schema. No synthetic position is invented.
+            return config.mode == "gtid"
+        }
+        if at.file == initialFile { return at.position >= initialPosition }
         func parts(_ name: String) -> (String, UInt64)? {
             guard let dot = name.lastIndex(of: "."), let n = UInt64(name[name.index(after: dot)...]) else { return nil }
             return (String(name[..<dot]), n)
         }
-        guard let a = parts(at.file), let b = parts(config.start.file) else { return false }
+        guard let a = parts(at.file), let b = parts(initialFile) else { return false }
         return a.0 == b.0 && a.1 > b.1
     }
     func consume(_ frame: Data) throws {
@@ -89,7 +94,7 @@ final class StreamProcessor {
             } else {
                 try check(cursor == nil && assembler == nil, "unexpected rotation announcement")
                 if config.mode == "file-position" {
-                    try check(target == BinlogCoordinate(file: config.start.file, position: UInt64(config.start.position)), "source changed requested positional start")
+                    try check(target == BinlogCoordinate(file: config.start.file!, position: UInt64(config.start.position!)), "source changed requested positional start")
                 } else { try check(target.position == 4, "GTID file announcement must begin at position 4") }
             }
             announced = target; announcementCount += 1

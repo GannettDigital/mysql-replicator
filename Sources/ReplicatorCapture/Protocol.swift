@@ -54,7 +54,7 @@ public struct GTIDSet: Equatable {
         guard let uuid = UUID(uuidString: sid), let n = UInt64(sequence) else { return false }
         return sids.first { $0.uuid == uuid }?.intervals.contains { $0.contains(n) } ?? false
     }
-    mutating func include(sid: String, sequence: String) throws {
+    public mutating func include(sid: String, sequence: String) throws {
         guard let uuid = UUID(uuidString: sid) else { throw CaptureError("invalid observed SID") }
         let components = canonical.split(separator: ",").map(String.init)
         var updated = components.map { $0.hasPrefix(uuid.uuidString.lowercased() + ":") ? $0 + ":" + sequence : $0 }

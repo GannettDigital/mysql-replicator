@@ -44,8 +44,9 @@ boundary**. The tool does not establish that seed or validate its snapshot. Dump
 ```
 
 `mode: "gtid"` sends COM_BINLOG_DUMP_GTID with the supplied executed set. The source
-selects a file; the supplied file/position still bounds the historical schema
-window. File-position mode sends COM_BINLOG_DUMP and checks the source's announced
+selects a file. File/position may be omitted; the operator must supply the
+historical schema matching the seed GTID set. When supplied, file and position
+must both be present and additionally bound the historical schema window. File-position mode sends COM_BINLOG_DUMP and checks the source's announced
 start exactly. Use a nonzero client server ID distinct from the source and other
 active readers. Untagged GTIDs only; bounds are 64 SIDs, 4096 intervals per SID
 and 1 MiB of text. UUIDs and intervals are canonicalized and merged.

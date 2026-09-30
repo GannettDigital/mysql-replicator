@@ -15,10 +15,13 @@ build:
 	clang $(PACKAGING_CFLAGS) -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c /opt/sqlite/sqlite3.c -o /out/native/sqlite3.o
 	llvm-ar rcs /out/native/libsqlite3.a /out/native/sqlite3.o
 	cargo build --manifest-path packaging/rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) -j 2
+	# SwiftPM cannot track external Rust archives; force just the entry point to relink.
+	touch packaging/Probe/Sources/PackagingProbe/main.swift
 	swift build --package-path packaging/Probe --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native -Xlinker -L/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release
 	cp packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe /out/packaging-probe
 	cargo build --manifest-path rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) --target-dir packaging/rust/target -j 2
-	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions
+	touch Sources/ReplicatorCLI/main.swift
+	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
 	cp .build/x86_64-swift-linux-musl/release/mysql-replicator /out/mysql-replicator
 	file /out/packaging-probe /out/mysql-replicator > /out/evidence/elf.txt
 	readelf -h -l -d /out/packaging-probe >> /out/evidence/elf.txt

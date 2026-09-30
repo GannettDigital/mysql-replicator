@@ -12,6 +12,7 @@ func main() throws -> Int32 {
                        [--native-engine MyISAM|InnoDB] [--native-init-automatic]
           ubuntu-smoke [--skip-build]
           live-suite [--skip-build]
+          dml-suite [--skip-build]
           upstream-tests
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
@@ -22,6 +23,11 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command == "dml-suite" {
+        try require(args.isEmpty || args == ["--skip-build"], "dml-suite accepts only --skip-build")
+        try DMLQualification.run(root: root, build: args.isEmpty)
+        return 0
+    }
     if command == "live-suite" {
         try require(args.isEmpty || args == ["--skip-build"], "live-suite accepts only --skip-build")
         try LiveQualification.run(root: root, build: args.isEmpty)

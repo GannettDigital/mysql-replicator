@@ -3,8 +3,8 @@ import ReplicatorCodec
 
 public struct CaptureConfiguration: Decodable {
     public struct Start: Decodable {
-        public let file: String
-        public let position: UInt32
+        public let file: String?
+        public let position: UInt32?
         public let executedGTIDs: String
     }
     public struct Table: Decodable {
@@ -34,7 +34,6 @@ public struct CaptureConfiguration: Decodable {
     public func validate() throws -> DumpStart {
         guard version == 1, !host.isEmpty, (1...65535).contains(port), !username.isEmpty, !passwordEnvironment.isEmpty,
               !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,
-              !start.file.isEmpty, !start.file.utf8.contains(0), start.file.utf8.count <= 255, start.position >= 4,
               ["file-position", "gtid"].contains(mode), !tables.isEmpty, tables.count <= 256,
               (1...300).contains(idleTimeoutSeconds ?? 15),
               (23...16*1024*1024).contains(maximumEventBytes ?? 4*1024*1024),
@@ -47,8 +46,11 @@ public struct CaptureConfiguration: Decodable {
                   !table.columns.isEmpty, table.columns.count <= 256,
                   seen.insert(table.database + "\0" + table.table).inserted else { throw CaptureError("invalid/duplicate live schema entry") }
         }
+        if let file = start.file, let position = start.position {
+            guard !file.isEmpty, !file.utf8.contains(0), file.utf8.count <= 255, position >= 4 else { throw CaptureError("invalid start coordinate") }
+        } else if mode != "gtid" || start.file != nil || start.position != nil { throw CaptureError("file-position requires both fields; GTID mode permits neither") }
         let set = try GTIDSet(start.executedGTIDs)
-        return mode == "gtid" ? .gtid(set) : .position(file: start.file, position: start.position)
+        return mode == "gtid" ? .gtid(set) : .position(file: start.file!, position: start.position!)
     }
 }
 

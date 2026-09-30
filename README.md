@@ -2,9 +2,9 @@
 
 Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
-Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The file relay/SQLite state store, REST status API and target apply are not implemented yet. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
+Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The first serial INSERT/UPDATE/DELETE applier now connects that pipeline to MySQL 5.7 MyISAM, with a local framed relay and SQLite state/row intents. DDL, resume/recovery and the REST status API remain unimplemented. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
-Database dump/load and target provisioning are entirely external. The planned replicator starts from a prepared target and a known source position or executed GTID set; see [the start-boundary contract and next increment](PLAN/START_BOUNDARY.md).
+Database dump/load and target provisioning are entirely external. The replicator starts from a prepared target and a known source position or executed GTID set; see [the start-boundary contract](PLAN/START_BOUNDARY.md).
 
 ## Offline binlog inspection
 
@@ -32,6 +32,30 @@ make live-suite
 
 The live reader uses verified TLS and either file/position or GTID starts, follows rotation and stops with diagnostics on errors. It emits complete source groups but does not persist progress or apply them. See [configuration, limits and review points](PLAN/LIVE_INSPECTION.md). `make live-suite` compares the Ubuntu CLI against MySQL source/native binlogs, and tests replay, disconnects, certificate failures and purged history.
 
+## First DML applier
+
+```sh
+make dml-suite
+# Reuse an image built from this exact code:
+make dml-suite ARGS=--skip-build
+```
+
+This three-server harness applies live source INSERT/UPDATE/DELETE to the 5.7
+MyISAM target through Swift, and compares data and binlog effects with the source
+and native 8.4 MyISAM replica. It checks both positional and GTID-only starts,
+multi-row/key changes, exact values, stopped progress on errors and row intents.
+Evidence and generated fixture configurations are under `artifacts/dml-suite/`.
+Runtime files use a Docker-managed volume and are copied back for inspection.
+Docker build/startup progress is streamed to the terminal.
+
+For an externally prepared target, adapt [the configuration template](examples/apply.example.json),
+then run `.build/debug/mysql-replicator run --config apply.json --initialize`.
+The initial applier requires a **new state directory** and supports a deliberately
+limited schema and single-statement transaction subset. It never reopens state or
+retries uncertain writes. Review [supported behavior, setup, state ordering and
+limits](PLAN/DML_APPLY.md) before using it. Next is schema-change application;
+automatic recovery follows DML and DDL correctness.
+
 ## Repository automation
 
 Automation lives in the SwiftPM executable `replicator-lab`. Make coordinates the Rust static-library prerequisite and provides short aliases. Python and shell workflow scripts have been removed.
@@ -52,9 +76,9 @@ swift run replicator-lab upstream-tests
 swift run replicator-lab verify-evidence artifacts/native-suite/<case-directory>
 ```
 
-`make native-suite` runs four isolated cases: autocommit success and expected native error 1837, each using file/position and GTID auto-positioning. A negative case passes only when the expected error, receiver state, failure boundary, partial rows and logical binlog effects match. Unrelated errors fail the suite. Each case preserves observed native outcome separately from assertion results. Swift apply remains explicitly pending.
+`make native-suite` runs four isolated cases: autocommit success and expected native error 1837, each using file/position and GTID auto-positioning. A negative case passes only when the expected error, receiver state, failure boundary, partial rows and logical binlog effects match. Unrelated errors fail the suite. Each case preserves observed native outcome separately from assertion results. That native-only suite still leaves the Swift target untouched; `dml-suite` exercises the applier.
 
-The three servers have no published ports, use unique Compose projects and disposable volumes, and are cleaned up after each case. Evidence stays under `artifacts/native-suite/`. Source GTIDs remain ON with consistency ON; both targets use OFF_PERMISSIVE/WARN. Target client sessions initialize GTID_NEXT=AUTOMATIC. The native reference and future Swift target are separate servers.
+The three servers have no published ports, use unique Compose projects and disposable volumes, and are cleaned up after each case. Evidence stays under `artifacts/native-suite/`. Source GTIDs remain ON with consistency ON; both targets use OFF_PERMISSIVE/WARN. Target client sessions initialize GTID_NEXT=AUTOMATIC. The native reference and Swift target are separate servers.
 
 For individual diagnostics:
 
@@ -70,14 +94,15 @@ The raw transaction/MyISAM smoke intentionally returns exit 1 for the verified n
 
 ## Prerequisites and limits
 
-Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git, OpenSSL, and a MySQL 8.4 `mysqlbinlog` in PATH. Set `MYSQLBINLOG=/absolute/path/to/mysqlbinlog` when needed. The tested reference client is 8.4.6; the servers are 8.4.8 and 5.7.42. That patch difference is recorded in evidence. This is not Ubuntu 16.04 release qualification.
+Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git, OpenSSL, the SQLite CLI, and a MySQL 8.4 `mysqlbinlog` in PATH. Set `MYSQLBINLOG=/absolute/path/to/mysqlbinlog` when needed. The tested reference client is 8.4.6; the servers are 8.4.8 and 5.7.42. That patch difference is recorded in evidence. This is not Ubuntu 16.04 release qualification.
 
-`mysqlbinlog` always receives `--no-defaults` to prevent host option files from filtering events, and `--verify-binlog-checksum`. The independent Swift normalizer covers only the known fixture schema: signed INT key, unescaped printable ASCII VARCHAR, and BIGINT UNSIGNED. It preserves UINT64_MAX as an exact string and verifies the signed/unsigned dual rendering. It is not the production decoder or a general lossless mysqlbinlog text converter. The live suite splits its rotation comparison into two recorded file windows. Arbitrary types/strings, DDL and other tables require further qualification.
+`mysqlbinlog` always receives `--no-defaults` to prevent host option files from filtering events, and `--verify-binlog-checksum`. The independent Swift normalizer covers only the known fixture schema: signed INT key, unescaped printable ASCII VARCHAR, and BIGINT UNSIGNED. It preserves UINT64_MAX as an exact string and verifies the signed/unsigned dual rendering. It is not the production decoder or a general lossless mysqlbinlog text converter. The live suite splits its rotation comparison into two recorded file windows. The DML suite separately checks additional exact values with an SQL HEX oracle; the text normalizer remains limited to this fixture. Broader types, schemas and DDL require further qualification.
 
 `make test` builds and tests the Rust adapter, then runs SwiftPM tests without Docker. `make test-asan` instruments the Swift/C callers and CLI with AddressSanitizer; Rust instrumentation remains separate. Make clears Swift build products after building Rust to prevent stale static-library links. After `make codec`, direct `swift test` also works. `swift run replicator-lab` does not need the Rust archive. `make upstream-tests` fetches the pinned codec, explicitly enables its binlog test feature, uses a committed test lockfile, and writes a fixture catalog. Its test-only C++ dependencies are described in [upstream qualification](tests/Upstream/README.md). Production Rust dependencies exclude that test feature.
 
 ## Design and evidence
 
+- [First DML applier](PLAN/DML_APPLY.md)
 - [Local binlog files, SQLite state and REST status](PLAN/RELAY_STATE_AND_STATUS.md)
 
 - [Ubuntu packaging results](PLAN/UBUNTU_PACKAGING_RESULTS.md)

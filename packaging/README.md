@@ -12,6 +12,23 @@ make ubuntu-smoke ARGS=--skip-build
 
 Prerequisites: Docker with Linux/amd64 execution support, host SwiftPM, OpenSSL and network access for the first build. The first build downloads the SDK and dependencies. No Swift, Rust or SQLite installation is made on the host by the Docker build. The lab command uses a fresh private Docker network and disposable database volumes, publishes no ports, and removes its containers/network/volumes on success or failure. It does not touch existing database containers. Test certificates and synthetic credentials are local fixture material.
 
+## Persistent build caches
+
+Docker BuildKit cache mounts retain the production `.build`, the probe's `.build`,
+Cargo registry/git downloads and the musl Cargo target directory across image
+rebuilds. Swift dependency compilation survives source `COPY` changes. Compiler
+caches are locked during a build so concurrent harness builds cannot modify them
+at once. These caches live in the Docker builder's managed storage, not in the
+host macOS `.build`; no host-path setup is needed. Pruning Docker build caches
+makes the next build cold again.
+
+The Make build touches each Swift executable's entry point after building its
+Rust archive. That forces a cheap recompile/relink while preserving dependency
+objects, so SwiftPM cannot silently reuse an executable linked to an older Rust
+archive. Source and lockfile changes are still checked by the build tools.
+`--skip-build` skips that verification entirely; use it only for an image already
+built from the code being tested.
+
 ## What is built
 
 The builder uses pinned Swift 6.2.1 and Rust 1.93.1 images and the checksum-verified Swift 6.2.1 Static Linux SDK. The builder runs on Docker's native CPU architecture; Swift and Rust cross-compile to x86_64 musl. C sources, including SQLite and zstd, use the same SDK sysroot. Native host build tools remain glibc programs; none of their libraries are linked into the target executable.

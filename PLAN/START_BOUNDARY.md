@@ -46,6 +46,13 @@ Only after both DML and DDL correctness gates pass, implement and qualify automa
 
 Phase 2 storage, Phase 3 apply and the relevant Phase 4 schema work may be interleaved to deliver DML then DDL before recovery. Their full qualification gates and remaining Phase 1 inventory/type/fleet work still stand. Dump/load management remains external throughout.
 
-## Current implementation limitation
+## Current implementation
 
-Checkpoint `d7725b2` implements volatile live inspection only. Its config currently requires file/position as well as a seed GTID set, including in GTID mode, to bound the frozen schema window. The production contract above intentionally allows either start form; accepting a GTID-only known boundary needs implementation and tests. State initialization, relay persistence, restart and REST status are still planned.
+The first [DML applier](DML_APPLY.md) accepts either file/position or a GTID-only
+seed, persists raw relay events and SQLite state/intents, and applies the declared
+single-statement DML subset. `run --initialize` asserts an externally prepared
+handoff; it refuses existing state directories and all retained native channels,
+even stopped ones. Deployment asserts native auto-start is disabled; SQL checks
+verify no native channels/workers are present or active. Reopening state, explicit
+stopped-channel adoption, DDL and REST serving remain unimplemented. The future
+resume behavior above is a contract for a later increment, not current behavior.
