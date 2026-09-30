@@ -39,3 +39,10 @@ ddl-suite:
 .PHONY: native-ddl-suite
 native-ddl-suite:
 	swift run replicator-lab native-ddl-suite
+
+.PHONY: ddl-catalog-check ddl-catalog-report
+ddl-catalog-check:
+	@swift run replicator-lab ddl-catalog check $(ARGS)
+
+ddl-catalog-report:
+	@swift run replicator-lab ddl-catalog report $(ARGS)

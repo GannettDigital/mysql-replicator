@@ -1,0 +1,637 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "id": "swift.position.metadata-minimal",
+      "suite": "ddl-suite",
+      "description": "Swift positional / MINIMAL row metadata",
+      "positioning": "file-position",
+      "row_metadata": "MINIMAL",
+      "row_image": "FULL",
+      "servers": [
+        {
+          "role": "source",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_metadata",
+              "value": "MINIMAL",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "native84",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "target57",
+          "version": "5.7.42",
+          "image_reference": "docker/mysql57/Dockerfile FROM mysql:5.7.42-debian@sha256:8ba532f113f22d112fd3f8cbf9173c2a151c8699c968238cb0a6442818427fbf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "gtid_next",
+              "value": "AUTOMATIC",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "sql_mode",
+              "value": "per-event source SQL mode for DDL; reset for DML",
+              "basis": "query_context"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        }
+      ],
+      "unresolved": [
+        "These are configured requirements; effective runtime settings and build fingerprints are not yet attached to catalog evidence."
+      ]
+    },
+    {
+      "id": "swift.gtid.metadata-full",
+      "suite": "ddl-suite",
+      "description": "Swift GTID / FULL row metadata",
+      "positioning": "gtid",
+      "row_metadata": "FULL",
+      "row_image": "FULL",
+      "servers": [
+        {
+          "role": "source",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_metadata",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "native84",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "target57",
+          "version": "5.7.42",
+          "image_reference": "docker/mysql57/Dockerfile FROM mysql:5.7.42-debian@sha256:8ba532f113f22d112fd3f8cbf9173c2a151c8699c968238cb0a6442818427fbf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "gtid_next",
+              "value": "AUTOMATIC",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "sql_mode",
+              "value": "per-event source SQL mode for DDL; reset for DML",
+              "basis": "query_context"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        }
+      ],
+      "unresolved": [
+        "These are configured requirements; effective runtime settings and build fingerprints are not yet attached to catalog evidence."
+      ]
+    },
+    {
+      "id": "native.unrestricted",
+      "suite": "native-ddl-suite",
+      "description": "Native unrestricted-engine observation",
+      "positioning": "gtid",
+      "row_metadata": "MINIMAL",
+      "row_image": "FULL",
+      "servers": [
+        {
+          "role": "source",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_metadata",
+              "value": "MINIMAL",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "native84",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "target57",
+          "version": "5.7.42",
+          "image_reference": "docker/mysql57/Dockerfile FROM mysql:5.7.42-debian@sha256:8ba532f113f22d112fd3f8cbf9173c2a151c8699c968238cb0a6442818427fbf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        }
+      ],
+      "unresolved": [
+        "These are configured requirements; effective runtime settings and build fingerprints are not yet attached to catalog evidence."
+      ]
+    },
+    {
+      "id": "native.restricted",
+      "suite": "native-ddl-suite",
+      "description": "Native observation with InnoDB disabled on targets",
+      "positioning": "gtid",
+      "row_metadata": "MINIMAL",
+      "row_image": "FULL",
+      "servers": [
+        {
+          "role": "source",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "ON",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_metadata",
+              "value": "MINIMAL",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "InnoDB",
+              "basis": "expected_default"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "(empty)",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "native84",
+          "version": "8.4.8",
+          "image_reference": "mysql:8.4.8-oracle@sha256:2952e3be7807f06fc18de50b3ea1a632d5c70d63482ff7d7376fe3aa8999babf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "InnoDB",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        },
+        {
+          "role": "target57",
+          "version": "5.7.42",
+          "image_reference": "docker/mysql57/Dockerfile FROM mysql:5.7.42-debian@sha256:8ba532f113f22d112fd3f8cbf9173c2a151c8699c968238cb0a6442818427fbf",
+          "settings": [
+            {
+              "name": "gtid_mode",
+              "value": "OFF_PERMISSIVE",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "enforce_gtid_consistency",
+              "value": "WARN",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_format",
+              "value": "ROW",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "binlog_row_image",
+              "value": "FULL",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "default_tmp_storage_engine",
+              "value": "MyISAM",
+              "basis": "fixture_configuration"
+            },
+            {
+              "name": "disabled_storage_engines",
+              "value": "InnoDB",
+              "basis": "fixture_configuration"
+            }
+          ],
+          "unresolved": [
+            "Capture effective SQL mode, server/session charset and collation, runtime image identity and per-event context in future evidence manifests."
+          ]
+        }
+      ],
+      "unresolved": [
+        "These are configured requirements; effective runtime settings and build fingerprints are not yet attached to catalog evidence."
+      ]
+    }
+  ]
+}

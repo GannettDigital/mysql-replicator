@@ -6,10 +6,12 @@ Phase 1 is in progress. The repository contains a bounded Rust decoder behind a 
 
 Database dump/load and target provisioning are entirely external. The replicator starts from a prepared target and a known source position or executed GTID set; see [the start-boundary contract](PLAN/START_BOUNDARY.md).
 
-The [DDL coverage catalog implementation plan](PLAN/DDL_COVERAGE_CATALOG.md)
-defines how upstream MySQL scenarios, named harness cases and measured outcomes
-will form a reviewable checklist. Catalog commands are planned; `make upstream-tests`
-currently qualifies the Rust binlog codec only.
+The [DDL coverage catalog](tests/DDLCoverage/README.md) now provides an offline
+checklist: `make ddl-catalog-check` validates it and `make ddl-catalog-report`
+prints its current implementation and coverage gaps. All qualifications remain
+unverified until assertion/evidence integration; upstream scanning and completeness
+gates follow the [implementation plan](PLAN/DDL_COVERAGE_CATALOG.md).
+`make upstream-tests` qualifies the Rust binlog codec only.
 
 ## Offline binlog inspection
 

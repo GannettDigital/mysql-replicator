@@ -1,0 +1,432 @@
+{
+  "schema_version": 1,
+  "repositories": [
+    {
+      "id": "mysql84",
+      "url": "https://github.com/mysql/mysql-server",
+      "revision": "0896fcd61dec11a0904166911a0126f59daaa1bf",
+      "local_path": ".upstream/mysql-server"
+    }
+  ],
+  "references": [
+    {
+      "id": "mysql84.create.conditional",
+      "repository": "mysql84",
+      "path": "mysql-test/t/create.test",
+      "kind": "test",
+      "sha256": "ff059c48c85c952073dab47f7a0c5a201b650035c0ed7ab99c958371e0166a77",
+      "locator": {
+        "anchor": "create table if not exists t1 (b char(0) not null);",
+        "start_line": 16,
+        "end_line": 20
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.create.conditional.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.create.conditional.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/create.result",
+      "kind": "result",
+      "sha256": "7eb656979cd6f4afec8bdb22038eb841960182cd85e3cdc6cb209565845596df",
+      "locator": {
+        "anchor": "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.create.like",
+      "repository": "mysql84",
+      "path": "mysql-test/t/create.test",
+      "kind": "test",
+      "sha256": "ff059c48c85c952073dab47f7a0c5a201b650035c0ed7ab99c958371e0166a77",
+      "locator": {
+        "anchor": "Test for CREATE TABLE .. LIKE ..",
+        "start_line": 288,
+        "end_line": 333
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.create.like.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.create.like.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/create.result",
+      "kind": "result",
+      "sha256": "7eb656979cd6f4afec8bdb22038eb841960182cd85e3cdc6cb209565845596df",
+      "locator": {
+        "anchor": "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.drop.conditional",
+      "repository": "mysql84",
+      "path": "mysql-test/t/drop.test",
+      "kind": "test",
+      "sha256": "1a6db77b4e49ffadc823d99b244cef5cb4de5641b3c86ae070bdfcb12e37a2bf",
+      "locator": {
+        "anchor": "DROP TABLE IF EXISTS table1;",
+        "start_line": 226,
+        "end_line": 238
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.drop.conditional.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.drop.conditional.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/drop.result",
+      "kind": "result",
+      "sha256": "78940ae065cd60a5755363e9dfcf8dcc83dc9a6988a3dfda052b747c86ef1e78",
+      "locator": {
+        "anchor": "drop table if exists t1;",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.rename.basic",
+      "repository": "mysql84",
+      "path": "mysql-test/t/rename.test",
+      "kind": "test",
+      "sha256": "51a4c97cf14506b22a128bd9a5ef7acfcabf52b4b8e7b8dee6816d70bc174a54",
+      "locator": {
+        "anchor": "rename table t0 to t1;",
+        "start_line": 13,
+        "end_line": 41
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.rename.basic.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.rename.basic.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/rename.result",
+      "kind": "result",
+      "sha256": "ec4789b24aadbe8fe9d729d35800078683a5122652934574dc4797726079b05c",
+      "locator": {
+        "anchor": "drop table if exists t0,t1,t2,t3,t4;",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.rpl.alter",
+      "repository": "mysql84",
+      "path": "mysql-test/suite/rpl/t/rpl_alter.test",
+      "kind": "test",
+      "sha256": "75bcbb09238494c8bfb93540a4d0468f3c40d7b97742d7a599d0e76440344064",
+      "locator": {
+        "anchor": "alter table mysqltest.t1 add m int;",
+        "start_line": 1,
+        "end_line": 18
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.rpl.alter.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.rpl.alter.result",
+      "repository": "mysql84",
+      "path": "mysql-test/suite/rpl/r/rpl_alter.result",
+      "kind": "result",
+      "sha256": "23bf237e243296673b788ec41a4dd5d7e3783a2684bf074412f3dff1d3e56a5d",
+      "locator": {
+        "anchor": "include/rpl/init_source_replica.inc",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.truncate.basic",
+      "repository": "mysql84",
+      "path": "mysql-test/t/truncate.test",
+      "kind": "test",
+      "sha256": "c2e7106c228e9433e6d5ddec5c1b4c66e8853511f3fedc549888f6005bdde1ab",
+      "locator": {
+        "anchor": "truncate table t1;",
+        "start_line": 8,
+        "end_line": 16
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.truncate.basic.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.truncate.basic.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/truncate.result",
+      "kind": "result",
+      "sha256": "5e3d934e31a6dfc39faa32f0ed208df1ee504914824740ac242e6cc90098a357",
+      "locator": {
+        "anchor": "drop table if exists t1, t2;",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.engine.disabled",
+      "repository": "mysql84",
+      "path": "mysql-test/t/disabled_storage_engines.test",
+      "kind": "test",
+      "sha256": "6ac9e798731d8f2cd467bf595585ec4d1398bf6e6303892348e1122eaad9481d",
+      "locator": {
+        "anchor": "WL#8594",
+        "start_line": 1,
+        "end_line": 9
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.engine.disabled.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.engine.disabled.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/disabled_storage_engines.result",
+      "kind": "result",
+      "sha256": "3a634b0cdfd97e34cc8e08d4fd2c48b8557c6281d439fcd3f2343189f14e585f",
+      "locator": {
+        "anchor": "CALL mtr.add_suppression(\"default_storage_engine is set to a disabled storage engine .*\");",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Full transitive MTR setup and conditional includes require step 2 review."
+      ]
+    },
+    {
+      "id": "mysql84.grammar.create",
+      "repository": "mysql84",
+      "path": "sql/sql_yacc.yy",
+      "kind": "grammar",
+      "sha256": "60db95246dd6d459330c927c44f897c81d9366cecaa02884698573f3ae800155",
+      "locator": {
+        "anchor": "create_table_stmt:",
+        "start_line": 3217,
+        "end_line": 3248
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.execute.like",
+      "repository": "mysql84",
+      "path": "sql/sql_table.cc",
+      "kind": "implementation",
+      "sha256": "902c513067cbba367d0da4210a2b537b5d341f976c5bf5757d16088820e029e5",
+      "locator": {
+        "anchor": "bool mysql_create_like_table(",
+        "start_line": 11048,
+        "end_line": 11053
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.query.apply",
+      "repository": "mysql84",
+      "path": "sql/log_event.cc",
+      "kind": "implementation",
+      "sha256": "3093357c6c47ec2e083fcf7d87269b0cc0d15566d8b6a7d5aa5921aae9090866",
+      "locator": {
+        "anchor": "int Query_log_event::do_apply_event(",
+        "start_line": 4432,
+        "end_line": 4437
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": true,
+      "unresolved_dependencies": []
+    }
+  ],
+  "candidates": [
+    {
+      "id": "candidate.mysql-test.t.create",
+      "repository": "mysql84",
+      "path": "mysql-test/t/create.test",
+      "family": "B",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [
+        "mysql84.create.conditional",
+        "mysql84.create.like"
+      ],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.drop",
+      "repository": "mysql84",
+      "path": "mysql-test/t/drop.test",
+      "family": "B",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [
+        "mysql84.drop.conditional"
+      ],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.rename",
+      "repository": "mysql84",
+      "path": "mysql-test/t/rename.test",
+      "family": "B",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [
+        "mysql84.rename.basic"
+      ],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.rename_myisam",
+      "repository": "mysql84",
+      "path": "mysql-test/t/rename_myisam.test",
+      "family": "B",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.truncate",
+      "repository": "mysql84",
+      "path": "mysql-test/t/truncate.test",
+      "family": "B",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [
+        "mysql84.truncate.basic"
+      ],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.alter_table",
+      "repository": "mysql84",
+      "path": "mysql-test/t/alter_table.test",
+      "family": "C",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.suite.rpl.t.rpl_alter",
+      "repository": "mysql84",
+      "path": "mysql-test/suite/rpl/t/rpl_alter.test",
+      "family": "C",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [
+        "mysql84.rpl.alter"
+      ],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.disabled_storage_engines",
+      "repository": "mysql84",
+      "path": "mysql-test/t/disabled_storage_engines.test",
+      "family": "A",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [
+        "mysql84.engine.disabled"
+      ],
+      "scenario_ids": []
+    },
+    {
+      "id": "candidate.mysql-test.t.create_if_not_exists",
+      "repository": "mysql84",
+      "path": "mysql-test/t/create_if_not_exists.test",
+      "family": "F",
+      "state": "pending_review",
+      "reason": "Only selected sections have research locators; the file and its dependencies have not been exhaustively classified.",
+      "reference_ids": [],
+      "scenario_ids": []
+    }
+  ]
+}

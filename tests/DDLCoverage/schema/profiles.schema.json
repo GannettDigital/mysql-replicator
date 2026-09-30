@@ -1,0 +1,157 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "suite": {
+            "type": "string",
+            "enum": [
+              "ddl-suite",
+              "native-ddl-suite"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "positioning": {
+            "type": "string",
+            "enum": [
+              "file-position",
+              "gtid"
+            ]
+          },
+          "row_metadata": {
+            "type": "string",
+            "enum": [
+              "MINIMAL",
+              "FULL"
+            ]
+          },
+          "row_image": {
+            "type": "string",
+            "enum": [
+              "FULL"
+            ]
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "source",
+                    "native84",
+                    "target57"
+                  ]
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "image_reference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "settings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+                      },
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "basis": {
+                        "type": "string",
+                        "enum": [
+                          "fixture_configuration",
+                          "expected_default",
+                          "query_context"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "value",
+                      "basis"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1
+                },
+                "unresolved": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 0
+                }
+              },
+              "required": [
+                "role",
+                "version",
+                "image_reference",
+                "settings",
+                "unresolved"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 3
+          },
+          "unresolved": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "id",
+          "suite",
+          "description",
+          "positioning",
+          "row_metadata",
+          "row_image",
+          "servers",
+          "unresolved"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "profiles"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mysql-replicator:ddl-coverage:profiles:1",
+  "title": "DDL coverage profiles",
+  "$defs": {}
+}

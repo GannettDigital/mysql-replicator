@@ -1,17 +1,6 @@
 import Foundation
 
 public enum DMLQualification {
-    private struct DDLChange {
-        let test: QualificationCase
-        let sql, table, schema, rows, collation: String
-        init(_ id: String, _ name: String, _ sql: String, _ table: String, _ schema: String,
-             _ rows: String, _ collation: String, file: String = #filePath, line: UInt = #line) {
-            test = QualificationCase(id, name, file: file, line: line)
-            self.sql = sql; self.table = table; self.schema = schema
-            self.rows = rows; self.collation = collation
-        }
-    }
-
     public static func run(root: URL, build: Bool = true, ddl: Bool = false) throws {
         let runner = ProcessRunner(root:root)
         let image = "mysql-replicator-packaging:dml"
@@ -131,7 +120,7 @@ public enum DMLQualification {
                 return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],"stateDirectory":"/evidence/state-" + label]
             }
             let positiveConfig = configuration("positive",at:sourceStart,count:4)
-            let client = try start(QualificationCase("positive", "Replicate INSERT, UPDATE and DELETE; compare rows, binlogs and SQLite checkpoints"),positiveConfig); try waitForReader(client)
+            let client = try start(DDLCoverageCases.positive,positiveConfig); try waitForReader(client)
             stage("running INSERT/UPDATE/DELETE workload")
             _ = try h.sql("source",Fixture.sql(transaction:false))
             let sourceEnd = try h.boundary("source")
@@ -155,36 +144,9 @@ public enum DMLQualification {
             report["positive"] = positive
             if ddl {
                 // Named scenarios retain their definition locations in progress and evidence.
-                let changes: [DDLChange] = [
-                    .init("create-local-engine", "CREATE without ENGINE uses each server default", "CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY)","changes","payload:varbinary:YES,id:int:NO","",""),
-                    .init("insert-binary", "INSERT preserves binary bytes in the new table", "INSERT INTO poc.changes VALUES(0x00FF,1)","changes","payload:varbinary:YES,id:int:NO","1\t00FF",""),
-                    .init("add-column-first", "ADD nullable VARCHAR FIRST inherits the table charset and collation", "ALTER TABLE poc.changes ADD note VARCHAR(20) NULL FIRST","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\tNULL\t00FF","utf8mb4_unicode_ci"),
-                    .init("update-added-column", "UPDATE writes the newly added first column", "UPDATE poc.changes SET note='first' WHERE id=1","changes","note:varchar:YES,payload:varbinary:YES,id:int:NO","1\t6669727374\t00FF","utf8mb4_unicode_ci"),
-                    .init("drop-payload-column", "DROP COLUMN preserves remaining values and column order", "ALTER TABLE poc.changes DROP COLUMN payload","changes","note:varchar:YES,id:int:NO","1\t6669727374","utf8mb4_unicode_ci"),
-                    .init("update-primary-key", "UPDATE changes the primary key after dropping a column", "UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
-                    .init("rename-table", "RENAME preserves data and removes the old table name", "RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
-                    .init("insert-after-rename", "INSERT NULL uses the renamed table schema", "INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL","utf8mb4_unicode_ci"),
-                    .init("drop-renamed-table", "DROP removes the renamed table", "DROP TABLE poc.renamed","renamed","","",""),
-                    .init("recreate-default-engine", "Recreate a dropped table with quoted DEFAULT engine and unsigned BIGINT key", "CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE='DEFAULT'","renamed","id:bigint:NO,b:varbinary:YES","",""),
-                    .init("insert-unsigned-maximum", "INSERT preserves the maximum unsigned BIGINT key and binary payload", "INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
-                    .init("truncate-nonempty-table", "TRUNCATE empties a populated table while retaining its schema", "TRUNCATE TABLE poc.renamed","renamed","id:bigint:NO,b:varbinary:YES","",""),
-                    .init("insert-after-truncate", "INSERT reuses the same primary key after TRUNCATE", "INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
-                    .init("update-binary-null", "UPDATE sets the binary payload to NULL", "UPDATE poc.renamed SET b=NULL WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tNULL",""),
-                    .init("delete-unsigned-maximum", "DELETE finds the maximum unsigned BIGINT primary key", "DELETE FROM poc.renamed WHERE id=18446744073709551615","renamed","id:bigint:NO,b:varbinary:YES","",""),
-                    .init("drop-recreated-table", "DROP removes the recreated table", "DROP TABLE poc.renamed","renamed","","",""),
-                    .init("create-explicit-collation", "CREATE preserves explicit table defaults and a COLLATE-only column", "CREATE TABLE poc.changes(payload VARBINARY(10) NULL,id INT PRIMARY KEY,note VARCHAR(20) COLLATE utf8mb4_bin) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
-                    .init("insert-explicit-collation", "INSERT preserves text and binary values under explicit collation", "INSERT INTO poc.changes VALUES(0x00FF,1,'last')","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t6C617374\t00FF","utf8mb4_bin"),
-                    .init("update-explicit-collation", "UPDATE text uses the explicitly collated column", "UPDATE poc.changes SET note='done' WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","1\t646F6E65\t00FF","utf8mb4_bin"),
-                    .init("delete-explicit-collation", "DELETE removes the row from the explicitly collated table", "DELETE FROM poc.changes WHERE id=1","changes","payload:varbinary:YES,id:int:NO,note:varchar:YES","","utf8mb4_bin"),
-                    .init("drop-explicit-collation", "DROP removes the table with explicit collation", "DROP TABLE poc.changes","changes","","",""),
-                    .init("create-charset-only", "CREATE with CHARACTER SET uses the logged compatible default collation", "CREATE TABLE poc.defaults(id INT PRIMARY KEY,note VARCHAR(20) CHARACTER SET utf8mb4)","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
-                    .init("insert-charset-only", "INSERT text into a column created with CHARACTER SET only", "INSERT INTO poc.defaults VALUES(1,'charset')","defaults","id:int:NO,note:varchar:YES","1\t63686172736574","utf8mb4_general_ci"),
-                    .init("update-charset-only", "UPDATE text in the column using the logged default collation", "UPDATE poc.defaults SET note='checked' WHERE id=1","defaults","id:int:NO,note:varchar:YES","1\t636865636B6564","utf8mb4_general_ci"),
-                    .init("delete-charset-only", "DELETE the row from the charset-only table", "DELETE FROM poc.defaults WHERE id=1","defaults","id:int:NO,note:varchar:YES","","utf8mb4_general_ci"),
-                    .init("drop-charset-only", "DROP removes the charset-only table", "DROP TABLE poc.defaults","defaults","","","")
-                ]
+                let changes = DDLCoverageCases.changes
                 let ddlStart=try h.boundary("source"),ddlNativeStart=try h.boundary("native"),ddlTargetStart=try h.boundary("target57")
-                let applying=try start(QualificationCase("ddl", "Apply ordered DDL and DML; verify schema history, unchanged SQL and binlog order"),configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
+                let applying=try start(DDLCoverageCases.group,configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
                 _ = try h.sql("native","START REPLICA")
                 for (index,change) in changes.enumerated() {
                     try cases.run(change.test) {
@@ -260,12 +222,7 @@ public enum DMLQualification {
                     try writeJSON(kinds,to:output.appendingPathComponent(service+"-ddl-operation-kinds.json"))
                 }
                 try cases.pass("ddl")
-                for (test,sql,reason) in [
-                    (QualificationCase("explicit_innodb", "Reject explicit InnoDB without engine rewriting or applying following DDL"),"CREATE TABLE poc.explicit_innodb(id INT PRIMARY KEY) ENGINE=InnoDB","no engine rewriting"),
-                    (QualificationCase("collation_0900", "Reject unsupported 0900 collation without substitution or applying following DDL"),"CREATE TABLE poc.collation_0900(id INT PRIMARY KEY,v VARCHAR(12) COLLATE utf8mb4_0900_ai_ci)","no substitution"),
-                    (QualificationCase("charset_default", "Reject an incompatible charset default without applying following DDL"),"CREATE TABLE poc.charset_default(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET utf8mb4)","no collation substitution"),
-                    (QualificationCase("charset_latin1", "Reject unsupported latin1 row encoding before applying DDL"),"CREATE TABLE poc.charset_latin1(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET latin1)","unsupported discovered character set")
-                ] {
+                for (test,sql,reason) in DDLCoverageCases.rejections {
                     let label = test.id
                     let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:2));try waitForReader(rejected)
                     _ = try h.sql("source",sql+"; CREATE TABLE poc.after_\(label)(id INT PRIMARY KEY)")
@@ -275,7 +232,7 @@ public enum DMLQualification {
                     try cases.pass(label)
                 }
                 // A valid source DDL outside the grammar stops before mutation.
-                let unsupported=try start(QualificationCase("ddl-unsupported", "Reject unsupported DECIMAL column before target mutation or checkpoint advance"),configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
+                let unsupported=try start(DDLCoverageCases.unsupported,configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
                 _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DECIMAL(10,2) NULL")
                 _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
                 try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
@@ -283,7 +240,7 @@ public enum DMLQualification {
                 try cases.pass("ddl-unsupported")
                 // A target SQL error leaves a pending DDL intent, never applied.
                 _ = try h.sql("target57","REVOKE CREATE ON poc.* FROM 'apply_fixture'@'%'")
-                let denied=try start(QualificationCase("ddl-denied", "Keep a pending DDL intent and stop when target CREATE permission is denied"),configuration("ddl-denied",at:try h.boundary("source"),count:1));try waitForReader(denied)
+                let denied=try start(DDLCoverageCases.denied,configuration("ddl-denied",at:try h.boundary("source"),count:1));try waitForReader(denied)
                 _ = try h.sql("source","CREATE TABLE poc.denied(id INT PRIMARY KEY)")
                 _ = try finish(denied,"ddl-denied",success:false,reason:"target SQL error")
                 try require(state("ddl-denied","SELECT status FROM ddl_intents") == "PENDING","failed DDL intent lost")

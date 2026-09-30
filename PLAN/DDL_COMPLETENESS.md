@@ -26,13 +26,13 @@ the foundation document for the measured settings and current implementation lim
 
 ## Coverage checklist prerequisite
 
-Before extending table lifecycle support, implement the
-[DDL coverage catalog](DDL_COVERAGE_CATALOG.md). Its definition specifies the
-pinned upstream inventory, scenario/profile contracts, mappings to named tests,
-evidence qualification and SwiftPM/Make validation. The current family matrix is
-the starting taxonomy; it is not an exhaustive mapping of MySQL's tests. Existing
-native/Swift fixture passes remain valid for their tested subsets. Catalog tools
-and a complete upstream-to-scenario mapping are still to be implemented.
+The first [DDL coverage catalog](DDL_COVERAGE_CATALOG.md) step is implemented:
+versioned scenario/profile/reference records, a shared case registry, and offline
+`ddl-catalog-check` / `ddl-catalog-report` Make targets. The family matrix is the
+starting taxonomy, not an exhaustive mapping of MySQL's tests. Existing fixture
+passes remain historical evidence for their tested subsets; catalog qualification
+is still unverified. Pinned upstream scanning/review and assertion/evidence
+integration remain the next prerequisites before extending table lifecycle support.
 
 ## Engine selection: preserve the statement's meaning
 

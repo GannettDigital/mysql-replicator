@@ -1,0 +1,521 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "inventory_revision": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "families": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "F"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "review_state": {
+            "type": "string",
+            "enum": [
+              "partial",
+              "reviewed_for_declared_scope"
+            ]
+          },
+          "scan_scope": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._/-]+$"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "outstanding_questions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "review_state",
+          "scan_scope",
+          "outstanding_questions"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 6
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "family": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "F"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grammar": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "family",
+          "name",
+          "grammar",
+          "scenario_ids"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scenario"
+      },
+      "minItems": 1
+    },
+    "case_classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "suite": {
+            "type": "string",
+            "enum": [
+              "ddl-suite",
+              "native-ddl-suite"
+            ]
+          },
+          "case_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "suite",
+          "case_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "inventory_revision",
+    "families",
+    "features",
+    "scenarios",
+    "case_classifications"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mysql-replicator:ddl-coverage:catalog:1",
+  "title": "DDL coverage catalog",
+  "$defs": {
+    "outcome": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "success",
+            "rejection",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "changed",
+            "no_op"
+          ]
+        },
+        "logging": {
+          "type": "string",
+          "enum": [
+            "event",
+            "no_event",
+            "unknown"
+          ]
+        },
+        "error_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sqlstate": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Z0-9]{5}$"
+        },
+        "diagnostic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "warnings": {
+          "type": "string",
+          "minLength": 1
+        },
+        "partial_effects": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "outcome",
+        "warnings",
+        "partial_effects"
+      ],
+      "additionalProperties": false
+    },
+    "expectation": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "source": {
+          "$ref": "#/$defs/outcome"
+        },
+        "native84": {
+          "$ref": "#/$defs/outcome"
+        },
+        "target57_sql": {
+          "$ref": "#/$defs/outcome"
+        },
+        "swift57": {
+          "$ref": "#/$defs/outcome"
+        }
+      },
+      "required": [
+        "profile",
+        "source",
+        "native84",
+        "target57_sql",
+        "swift57"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "suite": {
+          "type": "string",
+          "enum": [
+            "ddl-suite",
+            "native-ddl-suite"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "swift_apply_with_native_reference",
+            "native_observation_and_direct_sql"
+          ]
+        },
+        "case_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "assertion_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "completion_case_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "suite",
+        "role",
+        "case_ids",
+        "profiles",
+        "assertion_ids",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "scenario": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F"
+          ]
+        },
+        "feature": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "in_scope",
+            "excluded"
+          ]
+        },
+        "scope_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "implementation": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "partial",
+            "implemented"
+          ]
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "apply",
+            "reject",
+            "observe"
+          ]
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "operation": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "following_workload": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "upstream_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "relationship": {
+                "type": "string",
+                "enum": [
+                  "adapted_from",
+                  "related_reference",
+                  "semantic_reference"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "relationship",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "required_profiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "expectations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expectation"
+          },
+          "minItems": 1
+        },
+        "required_assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "description"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/binding"
+          },
+          "minItems": 0
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "family",
+        "feature",
+        "scope",
+        "scope_reason",
+        "implementation",
+        "intent",
+        "prerequisites",
+        "operation",
+        "following_workload",
+        "upstream_refs",
+        "required_profiles",
+        "expectations",
+        "required_assertions",
+        "bindings",
+        "gaps"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

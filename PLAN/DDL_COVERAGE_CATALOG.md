@@ -1,10 +1,13 @@
 # DDL coverage catalog implementation
 
-Definition, 2026-09-30, after `acfc422`. This document specifies the next harness
-increment. The catalog, commands and report formats below are **planned**, not
-implemented. Existing named suites and their passing results remain available.
-This increment makes the checklist reviewable before adding more DDL support; it
-changes neither production replication behavior nor recovery policy.
+Definition, 2026-09-30, committed as `5270352`. **Step 1 is now implemented:**
+versioned JSON records/schemas, shared executable case registry, offline check and
+Markdown/JSON report commands. See [catalog usage and limits](../tests/DDLCoverage/README.md).
+The seed contains 55 scenarios and maps all 40 existing DDL/native cases, including
+one explicit DML-only classification. All qualifications remain unverified and all
+family inventories partial. Steps 2–4 below remain planned; existing integration
+passes have not been promoted into assertion-level catalog evidence.
+This increment changes neither production replication behavior nor recovery policy.
 
 ## What defines the checklist
 
@@ -40,7 +43,7 @@ Do not label a filename match as a reviewed table scenario.
 
 ## Repository layout and ownership
 
-Proposed committed files:
+Catalog layout (evidence schema and evidence matching remain for step 3):
 
 | Path | Purpose |
 | --- | --- |
@@ -131,8 +134,8 @@ missing settings in historical artifacts remain unknown.
 
 ## Example mapping and the initial inventory
 
-This abbreviated scenario illustrates the fields; the executable JSON Schemas and
-fully populated records are deliverables of the first implementation step:
+This abbreviated scenario illustrates the design. The complete implemented record
+is in `tests/DDLCoverage/catalog.json`; it includes all required fields:
 
 ```json
 {
@@ -251,7 +254,8 @@ selected subset must not be presented as completeness of MySQL DDL.
 
 ## SwiftPM / Make interface
 
-Proposed commands (not available yet):
+`check` and `report [--format markdown|json]` are available. The remaining commands
+and `report --evidence` below are the planned interface and currently fail explicitly:
 
 | Make | SwiftPM command | Behavior |
 | --- | --- | --- |

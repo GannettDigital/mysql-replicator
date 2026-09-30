@@ -32,16 +32,8 @@ public enum NativeDDLQualification {
             _ = try h.sql("source","CREATE USER 'ddl_reference'@'%' IDENTIFIED BY 'fixture-reference-only'; GRANT REPLICATION SLAVE ON *.* TO 'ddl_reference'@'%'")
             let start=try h.boundary("source")
             _ = try h.sql("native","SET @@GLOBAL.gtid_purged='+\(start.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_HOST='source',SOURCE_USER='ddl_reference',SOURCE_PASSWORD='fixture-reference-only',GET_SOURCE_PUBLIC_KEY=1,SOURCE_AUTO_POSITION=1; START REPLICA")
-            let scenarios:[(QualificationCase,String)] = [
-                (QualificationCase("omitted", "CREATE without ENGINE uses local engine and database charset defaults"),"CREATE TABLE poc.omitted(id INT PRIMARY KEY,v VARCHAR(12))"),
-                (QualificationCase("bare_default", "Reject bare ENGINE=DEFAULT with syntax error 1064"),"CREATE TABLE poc.bare_default(id INT PRIMARY KEY) ENGINE=DEFAULT"),
-                (QualificationCase("quoted_default", "Quoted DEFAULT resolves the engine according to the qualified server defaults"),"CREATE TABLE poc.quoted_default(id INT PRIMARY KEY) ENGINE='DEFAULT'"),
-                (QualificationCase("collate_only", "COLLATE-only column resolves its associated character set"),"CREATE TABLE poc.collate_only(id INT PRIMARY KEY,v VARCHAR(12) COLLATE utf8mb4_bin)"),
-                (QualificationCase("owning_database", "Qualified CREATE inherits the owning database defaults rather than the USE database"),"USE poc; CREATE TABLE otherdb.owning_database(id INT PRIMARY KEY,v VARCHAR(12))"),
-                (QualificationCase("explicit", "Explicit InnoDB succeeds when allowed or stops native replication when disabled"),"CREATE TABLE poc.explicit(id INT PRIMARY KEY) ENGINE=InnoDB")
-            ]
             var observations:[[String:Any]]=[]
-            for (test,sql) in scenarios {
+            for (test,sql) in DDLCoverageCases.native {
                 let name = test.id
                 try cases.run(test) {
                     let source=try attempt("source",sql),direct=try attempt("target57",sql)

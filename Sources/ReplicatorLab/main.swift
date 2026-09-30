@@ -15,6 +15,8 @@ func main() throws -> Int32 {
           dml-suite [--skip-build]
           ddl-suite [--skip-build]
           native-ddl-suite
+          ddl-catalog check
+          ddl-catalog report [--format markdown|json]
           upstream-tests
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
@@ -25,6 +27,9 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command == "ddl-catalog" {
+        try DDLCoverage.run(root: root, arguments: args); return 0
+    }
     if command == "native-ddl-suite" {
         try require(args.isEmpty,"native-ddl-suite accepts no arguments")
         try NativeDDLQualification.run(root:root); return 0
