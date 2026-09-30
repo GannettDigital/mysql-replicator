@@ -16,7 +16,7 @@ func main() throws -> Int32 {
           ddl-suite [--skip-build]
           native-ddl-suite
           ddl-catalog check
-          ddl-catalog report [--format markdown|json]
+          ddl-catalog report [--format markdown|json] [--evidence PATH ...]
           ddl-catalog upstream-check [--mysql-source PATH]
           ddl-catalog scan [--mysql-source PATH]
           upstream-tests

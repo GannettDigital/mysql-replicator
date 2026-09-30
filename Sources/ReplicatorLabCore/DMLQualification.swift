@@ -4,18 +4,21 @@ public enum DMLQualification {
     public static func run(root: URL, build: Bool = true, ddl: Bool = false) throws {
         let runner = ProcessRunner(root:root)
         let image = "mysql-replicator-packaging:dml"
+        let coverageInputs = ddl ? try DDLCoverageEvidence.inputs(root: root) : nil
+        let coverageContracts = ddl ? try DDLCoverageEvidence.hashes(root: root, paths: DDLCoverageEvidence.contractPaths) : nil
+        let labels = try coverageInputs.map { ["--label", DDLCoverageEvidence.imageLabel + "=" + (try DDLCoverageEvidence.digest($0))] } ?? []
         if build {
             FileHandle.standardError.write(Data("\(ddl ? "DDL" : "DML") suite: building static Ubuntu image (live build output follows).\n".utf8))
-            let result = try runner.run(["docker","build","--progress=plain","--platform","linux/amd64","--target","runtime","-f","docker/packaging/Dockerfile","-t",image,"."],timeout:3600,checked:false,onOutput:{ FileHandle.standardError.write($0) })
+            let result = try runner.run(["docker","build","--progress=plain","--platform","linux/amd64","--target","runtime","-f","docker/packaging/Dockerfile","-t",image] + labels + ["."],timeout:3600,checked:false,onOutput:{ FileHandle.standardError.write($0) })
             let log = root.appendingPathComponent("artifacts/dml-suite/build-" + runID() + ".log")
             try FileManager.default.createDirectory(at:log.deletingLastPathComponent(),withIntermediateDirectories:true)
             try (result.stdout + result.stderr).write(to:log)
             try require(result.status == 0,"DML image build failed; see \(log.path)")
         }
         let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
-        for mode in ["file-position","gtid"] { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl) }
+        for mode in ["file-position","gtid"] { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts) }
     }
-    private static func runCase(root: URL,image: String,mode: String,ddl: Bool) throws {
+    private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?) throws {
         var native = NativeCase(); native.transaction = false; native.autoPosition = mode == "gtid"
         let h = NativeHarness(root:root,config:native,artifactCategory:ddl ? "ddl-suite" : "dml-suite")
         let runner = h.runner, output = h.output, tls = output.appendingPathComponent("tls")
@@ -29,6 +32,8 @@ public enum DMLQualification {
         var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":ddl ? "qualified_subset" : "not_exercised"]
         func stage(_ text: String) { FileHandle.standardError.write(Data(("\(ddl ? "DDL" : "DML") \(mode): " + text + "\n").utf8)) }
         let cases = QualificationReporter(output: output, log: stage)
+        let coverageProfile = mode == "gtid" ? "swift.gtid.metadata-full" : "swift.position.metadata-minimal"
+        var coverageRuntime: [String: Any] = [:]
         stage("evidence: \(output.path)")
         func docker(_ args: [String]) throws -> CommandResult { try runner.run(["docker"] + args) }
         func record(_ name: String,_ args: [String]) throws -> CommandResult {
@@ -107,6 +112,10 @@ public enum DMLQualification {
             }
             _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
             if mode == "gtid" { _ = try h.sql("source","SET GLOBAL binlog_row_metadata=FULL") }
+            if let coverageInputs {
+                coverageRuntime = try DDLCoverageEvidence.runtime(h, image: image, profileID: coverageProfile,
+                    inventory: DDLCoverage.load(directory: root.appendingPathComponent("tests/DDLCoverage")), inputDigest: DDLCoverageEvidence.digest(coverageInputs))
+            }
             let uuid = try h.sql("source","SELECT @@server_uuid"), targetUUID = try h.sql("target57","SELECT @@server_uuid")
             let sourceStart = try h.boundary("source"), nativeStart = try h.boundary("native"), targetStart = try h.boundary("target57")
             let clause: String
@@ -151,7 +160,8 @@ public enum DMLQualification {
                 for (index,change) in changes.enumerated() {
                     try cases.run(change.test) {
                         let prefix=change.table=="defaults" ? "SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; " : ""
-                        _ = try h.sql("source",prefix+change.sql)
+                        let assertionID = DDLCoverageCases.assertion(for: change.test.id)
+                        let warnings = try h.sql("source",prefix+change.sql + (assertionID == nil ? "" : "; SHOW WARNINGS"))
                         let deadline=Date().addingTimeInterval(20)
                         var applied=0
                         repeat {
@@ -169,30 +179,48 @@ public enum DMLQualification {
                         let boundary=try h.boundary("source")
                         let reached=try h.sql("native","SELECT SOURCE_POS_WAIT('\(boundary.file)',\(boundary.position),20)")
                         try require(reached != "NULL" && reached != "-1","native DDL did not reach barrier")
-                        for service in h.services {
-                            let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
-                            try require(schema == (change.schema.isEmpty ? "NULL" : change.schema),"\(service) schema differs")
-                            if !change.schema.isEmpty {
-                                let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
-                                try require(engine == (service == "source" ? "InnoDB" : "MyISAM"),"DDL local engine selection differs")
-                                if change.schema.contains("note:") {
-                                    let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)' AND COLUMN_NAME='note'")
-                                    try require(collation == change.collation,"DDL collation differs")
+                        func checkSchemaAndRows() throws -> Any {
+                            var observations: [String: Any] = ["sql": change.sql, "source_warnings": warnings, "source_boundary": boundary.json]
+                            if assertionID != nil { try require(warnings.isEmpty, "unexpected source warnings for selected lifecycle assertion") }
+                            for service in h.services {
+                                let schema=try h.sql(service,"SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME,':',DATA_TYPE,':',IS_NULLABLE) ORDER BY ORDINAL_POSITION) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                                try require(schema == (change.schema.isEmpty ? "NULL" : change.schema),"\(service) schema differs")
+                                if !change.schema.isEmpty {
+                                    let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                                    try require(engine == (service == "source" ? "InnoDB" : "MyISAM"),"DDL local engine selection differs")
+                                    if change.schema.contains("note:") {
+                                        let collation=try h.sql(service,"SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)' AND COLUMN_NAME='note'")
+                                        try require(collation == change.collation,"DDL collation differs")
+                                    }
+                                    let fields=change.schema.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.schema.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.schema.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
+                                    let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.table) ORDER BY id")
+                                    try require(rows == change.rows,"\(service) rows differ")
+                                    try rows.write(to:output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"),atomically:true,encoding:.utf8)
                                 }
-                                let fields=change.schema.contains("b:varbinary") ? "id,IFNULL(HEX(b),'NULL')" : change.schema.contains("note:") ? "id,IFNULL(HEX(note),'NULL')"+(change.schema.contains("payload:") ? ",IFNULL(HEX(payload),'NULL')" : "") : "id,IFNULL(HEX(payload),'NULL')"
-                                let rows=try h.sql(service,"SELECT \(fields) FROM poc.\(change.table) ORDER BY id")
-                                try require(rows == change.rows,"\(service) rows differ")
-                                try rows.write(to:output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"),atomically:true,encoding:.utf8)
+                                if assertionID != nil {
+                                    let columns = try h.sql(service,"SELECT CONCAT(COLUMN_NAME,':',IF(DATA_TYPE IN ('int','bigint'),CONCAT(DATA_TYPE,IF(COLUMN_TYPE LIKE '%unsigned%',' unsigned','')),COLUMN_TYPE),':',IS_NULLABLE,':',IFNULL(COLUMN_DEFAULT,'<NULL>'),':',COLUMN_KEY,':',EXTRA,':',IFNULL(CHARACTER_SET_NAME,''),':',IFNULL(COLLATION_NAME,'')) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)' ORDER BY ORDINAL_POSITION")
+                                    let expected = change.schema.contains("note:") ? "note:varchar(20):YES:<NULL>:::utf8mb4:utf8mb4_unicode_ci\nid:int:NO:<NULL>:PRI:::" : "id:bigint unsigned:NO:<NULL>:PRI:::\nb:varbinary(10):YES:<NULL>::::"
+                                    try require(columns == expected, "\(service) exact column/default/key metadata differs: \(columns)")
+                                    let defaults = try h.sql(service,"SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")
+                                    try require(defaults == "utf8mb4_unicode_ci", "\(service) table default collation differs")
+                                    observations[service] = ["columns": columns, "table_collation": defaults, "schema": schema, "expected_rows": change.rows,
+                                        "observed_rows": try String(contentsOf: output.appendingPathComponent("\(service)-ddl-\(change.test.id).tsv"), encoding: .utf8),
+                                        "engine": try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='\(change.table)'")]
+                                }
+                                if change.test.id=="rename-table" {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='changes'") == "0","renamed table remains")}
                             }
-                            if change.test.id=="rename-table" {try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='changes'") == "0","renamed table remains")}
+                            return observations
                         }
+                        if let assertionID {
+                            try cases.assertion(assertionID, evidence: "assertions/" + change.test.id + "/" + assertionID + ".json", checkSchemaAndRows)
+                        } else { _ = try checkSchemaAndRows() }
                     }
                 }
                 let ddlEnd=try h.boundary("source")
                 let ddlResult=try finish(applying,"ddl",success:true)
                 try require(ddlResult["appliedGTIDSet"] as? String == ddlEnd.gtids,"DDL applied GTID coverage differs")
-                try require(ddlResult["ddlApplied"] as? Int == 12 && ddlResult["rowsApplied"] as? Int == 14,"DDL counters differ")
-                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "12","DDL intent history missing")
+                try require(ddlResult["ddlApplied"] as? Int == 13 && ddlResult["rowsApplied"] as? Int == 19,"DDL counters differ")
+                try require(state("ddl","SELECT COUNT(*) FROM ddl_intents WHERE status='DONE'") == "13","DDL intent history missing")
                 let expectedCreates=changes.filter{$0.sql.hasPrefix("CREATE TABLE")}.map{$0.sql}.joined(separator:"\n")
                 try require(state("ddl","SELECT target_sql FROM ddl_intents WHERE target_sql LIKE 'CREATE TABLE%' ORDER BY rowid")==expectedCreates,"CREATE SQL was rewritten")
                 try require(state("ddl","SELECT COUNT(*) FROM schemas WHERE current=1") == "0","dropped schema remains current")
@@ -424,6 +452,10 @@ public enum DMLQualification {
         if !cleanup.isEmpty && failure == nil { failure = LabError("DML cleanup failed") }
         report["result"] = failure == nil ? "passed" : "failed"
         try writeJSON(report,to:output.appendingPathComponent("result.json"))
+        if let coverageInputs, let coverageContracts, !coverageRuntime.isEmpty {
+            try DDLCoverageEvidence.save(root: root, output: output, profile: coverageProfile, inputs: coverageInputs,
+                contracts: coverageContracts, runtime: coverageRuntime, results: cases.results)
+        }
         if let failure { throw LabError("\(failure); evidence: \(output.path)") }
         stage(ddl ? "PASS: ordered DDL/DML, schemas, data, binlogs and checkpoints" : "PASS: DML data, binlogs and applied checkpoints")
     }

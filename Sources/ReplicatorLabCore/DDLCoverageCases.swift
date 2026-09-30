@@ -28,8 +28,14 @@ enum DDLCoverageCases {
         .init("update-primary-key", "UPDATE changes the primary key after dropping a column", "UPDATE poc.changes SET note='next',id=2 WHERE id=1","changes","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
         .init("rename-table", "RENAME preserves data and removes the old table name", "RENAME TABLE poc.changes TO poc.renamed","renamed","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
         .init("insert-after-rename", "INSERT NULL uses the renamed table schema", "INSERT INTO poc.renamed VALUES(NULL,3)","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n3\tNULL","utf8mb4_unicode_ci"),
+        .init("update-after-rename", "UPDATE moves the primary key and writes text through the renamed table", "UPDATE poc.renamed SET id=4,note='after' WHERE id=3","renamed","note:varchar:YES,id:int:NO","2\t6E657874\n4\t6166746572","utf8mb4_unicode_ci"),
+        .init("delete-after-rename", "DELETE finds the changed primary key through the renamed table", "DELETE FROM poc.renamed WHERE id=4","renamed","note:varchar:YES,id:int:NO","2\t6E657874","utf8mb4_unicode_ci"),
         .init("drop-renamed-table", "DROP removes the renamed table", "DROP TABLE poc.renamed","renamed","","",""),
         .init("recreate-default-engine", "Recreate a dropped table with quoted DEFAULT engine and unsigned BIGINT key", "CREATE TABLE poc.renamed(id BIGINT UNSIGNED PRIMARY KEY,b VARBINARY(10) NULL) ENGINE='DEFAULT'","renamed","id:bigint:NO,b:varbinary:YES","",""),
+        .init("truncate-empty-table", "TRUNCATE an already-empty table preserves schema and logs a source event", "TRUNCATE TABLE poc.renamed","renamed","id:bigint:NO,b:varbinary:YES","",""),
+        .init("insert-after-empty-truncate", "INSERT preserves binary bytes after an empty-table TRUNCATE", "INSERT INTO poc.renamed VALUES(7,0x00FF)","renamed","id:bigint:NO,b:varbinary:YES","7\t00FF",""),
+        .init("update-after-empty-truncate", "UPDATE changes the key and writes NULL after an empty-table TRUNCATE", "UPDATE poc.renamed SET id=8,b=NULL WHERE id=7","renamed","id:bigint:NO,b:varbinary:YES","8\tNULL",""),
+        .init("delete-after-empty-truncate", "DELETE removes the changed key after an empty-table TRUNCATE", "DELETE FROM poc.renamed WHERE id=8","renamed","id:bigint:NO,b:varbinary:YES","",""),
         .init("insert-unsigned-maximum", "INSERT preserves the maximum unsigned BIGINT key and binary payload", "INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
         .init("truncate-nonempty-table", "TRUNCATE empties a populated table while retaining its schema", "TRUNCATE TABLE poc.renamed","renamed","id:bigint:NO,b:varbinary:YES","",""),
         .init("insert-after-truncate", "INSERT reuses the same primary key after TRUNCATE", "INSERT INTO poc.renamed VALUES(18446744073709551615,0xCAFE)","renamed","id:bigint:NO,b:varbinary:YES","18446744073709551615\tCAFE",""),
@@ -62,6 +68,17 @@ enum DDLCoverageCases {
         (QualificationCase("owning_database", "Qualified CREATE inherits the owning database defaults rather than the USE database"),"USE poc; CREATE TABLE otherdb.owning_database(id INT PRIMARY KEY,v VARCHAR(12))"),
         (QualificationCase("explicit", "Explicit InnoDB succeeds when allowed or stops native replication when disabled"),"CREATE TABLE poc.explicit(id INT PRIMARY KEY) ENGINE=InnoDB")
     ]
+
+    // Only these assertion-to-case contracts are currently instrumented. A group
+    // pass supplies no implicit child assertions; remaining catalog checks stay gaps.
+    static let evidenceContracts: [String: [String: [String]]] = [
+        "ddl.table.rename.same-schema": ["schema-effects": ["rename-table"], "following-dml": ["insert-after-rename", "update-after-rename", "delete-after-rename"]],
+        "ddl.table.truncate.populated": ["schema-effects": ["truncate-nonempty-table"], "following-dml": ["insert-after-truncate", "update-binary-null", "delete-unsigned-maximum"]],
+        "ddl.table.truncate.empty": ["schema-effects": ["truncate-empty-table"], "following-dml": ["insert-after-empty-truncate", "update-after-empty-truncate", "delete-after-empty-truncate"]]
+    ]
+    static func assertion(for caseID: String) -> String? {
+        evidenceContracts.values.flatMap { $0 }.first { $0.value.contains(caseID) }?.key
+    }
 
     static let swiftProfiles = ["swift.position.metadata-minimal", "swift.gtid.metadata-full"]
     static let nativeProfiles = ["native.unrestricted", "native.restricted"]

@@ -1,10 +1,10 @@
 # DDL coverage catalog
 
-This implements steps 1–2 of the
+This implements steps 1–2 and the first partial-evidence slice of step 3 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
 reviewable checklist. It contains 55 scoped scenarios, 29 features across families
 A–F, four fixture profiles and 26 pinned research references. The shared registry
-contains 40 executable case declarations: 34 from `ddl-suite` and six from
+contains 46 executable case declarations: 40 from `ddl-suite` and six from
 `native-ddl-suite`. The DML baseline case has an explicit non-DDL classification.
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
@@ -24,7 +24,7 @@ swift test --filter DDLCoverageTests
 
 Equivalent commands are `swift run replicator-lab ddl-catalog check` and
 `swift run replicator-lab ddl-catalog report [--format markdown|json]`.
-Check/report do not invoke Docker, Git, MySQL, an upstream checkout, or previous
+Check/report without `--evidence` do not invoke Docker, Git, MySQL, an upstream checkout, or previous
 artifacts. Once the existing Swift package has been built/resolved, the commands
 need no network. Reports go to stdout; redirect to a chosen file if desired.
 The compiled CLI can perform the check in a checkout containing only the catalog
@@ -40,9 +40,10 @@ registry. They separate implementation, intent and qualification, and distinguis
 expected source/native/direct-5.7/Swift outcomes. JSON also includes required
 assertions, current case-definition file/line locations and gaps.
 
-Evidence import/export, assertion provenance and completeness `verify` are
-subsequent steps. These commands/options currently fail explicitly;
-no old suite pass is silently imported as coverage. `make upstream-tests` remains
+Named schema/data assertion import is available through explicit `--evidence`
+bundles. Full assertion qualification, a portable export command and completeness
+`verify` remain pending; `verify` fails explicitly. No old suite pass is silently
+imported as coverage. `make upstream-tests` remains
 the Rust binlog codec test suite and has no DDL-completeness meaning.
 
 ## Files and status rules
@@ -70,12 +71,11 @@ An implemented `observe` scenario is a native observation test, not Swift apply
 support. Intent is `apply`, `reject` or `observe`. Native expected failure, 5.7
 capability and Swift policy rejection are separate outcomes, not one supported flag.
 
-Every in-scope scenario currently reports **unverified**, including those with
+Without selected evidence, every in-scope scenario reports **unverified**, including those with
 previously passing integration cases. This preserves the historical test results
-while acknowledging that per-assertion/build/profile evidence is not wired into
-this catalog yet. `bindings[].assertion_ids` must remain empty in this step; the
-required assertion contracts are explicit, but an aggregate case pass does not
-satisfy them automatically. Unknown outcomes and unresolved settings remain gaps.
+while requiring fresh per-assertion/build/profile evidence. Three lifecycle
+scenarios now bind `schema-effects` and `following-dml`; all other assertion
+bindings remain empty. An aggregate case pass never supplies them automatically. Unknown outcomes and unresolved settings remain gaps.
 
 ## Editing workflow
 
@@ -183,8 +183,8 @@ independently authored, not ported MTR cases.
 Large files stay `pending_review` even where `scenario_ids` list reviewed sections.
 Leaf include/result review does not imply whole-test or replication qualification.
 All six family inventories remain partial and all 108 scenario/profile obligations
-remain unverified. Next is assertion/evidence integration, followed by native
-observations and implementation of the explicitly missing lifecycle variants.
+remain unverified without evidence. The first evidence slice below permits partial
+qualification; native observations and missing lifecycle variants follow.
 
 Step 2 validation on 2026-09-30: all 34 harness tests passed, including synthetic Git
 fixtures for pin/hash drift, locator ambiguity, include lookup/cycles, missing and
@@ -198,3 +198,60 @@ No production workload or Docker fixture was changed by this increment.
 The final test log and offline coverage report are retained in
 `artifacts/ddl-catalog-step2/`; the generated source inventory is in
 `artifacts/ddl-catalog-scan/20260930T203504Z-06d1c40b/`.
+
+## Named assertion evidence and before/after comparison
+
+Run `make ddl-suite` to build the labelled Ubuntu runtime and execute both Swift
+profiles. The six new named steps test empty-table TRUNCATE followed by binary
+INSERT, primary-key/NULL UPDATE and DELETE, plus UPDATE/DELETE after rename.
+The suite retains existing checks and now writes observed schema/data values for
+named assertions. Each completed profile produces `coverage-evidence.json` beside
+`result.json`, `cases.json` and `coverage-runtime.json`.
+
+Use the explicit paths printed by that run (one bundle per profile):
+
+```sh
+make ddl-catalog-report ARGS='--format json' > before.json
+make ddl-suite
+make ddl-catalog-report ARGS='--format json --evidence artifacts/ddl-suite/POSITION_RUN/coverage-evidence.json --evidence artifacts/ddl-suite/GTID_RUN/coverage-evidence.json' > after.json
+```
+
+`POSITION_RUN` and `GTID_RUN` are placeholders for the actual run directories.
+Compare `assertion_summary` and each scenario's `profile_evidence`: these show
+passed/required assertions, missing assertion IDs and partial profile counts.
+The catalog has 470 required assertion/profile obligations across 108 scenario /
+profile combinations. Three scenarios currently have two instrumented assertions
+each in two profiles: at most 12 passing obligations and six partial combinations.
+Full scenario verification remains zero until the other obligations are bound.
+This measures DML following those DDL operations, not all standalone DML coverage.
+
+The two bound assertions are `schema-effects` and `following-dml`. Recorded checks
+include exact column types/signedness, defaults, nullability, primary keys, table /
+column collations, local engine selection, source warnings and exact rows. All
+bound cases, their `ddl` parent and run cleanup must pass. Binlog ordering, SQLite
+history and end-of-group checkpoints still execute, but their aggregate passes
+cannot fill the unbound `normalized-binlog`, `source-boundary` or `schema-history`
+assertions. Those remain listed as missing.
+
+Evidence is accepted only with checksummed artifacts, matching code/fixture and
+catalog/profile fingerprints, labelled runtime build identity and captured server
+versions/settings. The input fingerprint includes relevant dirty and untracked
+source/test files, vendor inputs, locks and Docker/build configuration; generated
+caches and Markdown documentation are excluded. A changed contract/source/harness
+binary marks evidence stale. `--skip-build` requires a matching labelled image.
+Duplicate bundles for a profile are rejected to prevent selecting individual
+passes across runs. Historical cases.json files without this provenance are not
+accepted. Per-event applier-session context and full completeness verification
+are explicitly unfinished.
+
+For subsequent DDL/DML work, follow the prioritized list in the
+[catalog implementation plan](../../PLAN/DDL_COVERAGE_CATALOG.md#first-evidence-driven-test-increment).
+
+The first evidence increment was run on 2026-09-30: all 38 harness tests and both
+expanded DDL-suite profiles passed, including cleanup. Re-running the catalog with
+the two completed bundles increased recorded passing assertion/profile obligations
+from 0 to 12 (of 470), with six partial scenario/profile combinations and zero full
+verifications. Registered case declarations increased from 40 to 46. The saved
+[before/after comparison](../../artifacts/ddl-coverage-increment-20260930/README.md)
+contains exact reproduction commands and distinguishes new cases from newly recorded
+evidence for existing checks. Those artifacts are local and ignored by Git.

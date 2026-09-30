@@ -56,6 +56,28 @@ final class QualificationReporter {
         log("passed " + current.test.description)
     }
 
+    /// Persist assertion failures before the enclosing case fails. The artifact
+    /// stores observed values, not just a boolean; consumers also require the case
+    /// and its completion group to pass.
+    func assertion(_ id: String, evidence: String, _ body: () throws -> Any) throws {
+        guard let current = active.last else { throw LabError("assertion outside a qualification case") }
+        try DDLCoverage.safePath(evidence)
+        var assertions = results[current.index]["assertions"] as? [[String: Any]] ?? []
+        try require(!assertions.contains { $0["id"] as? String == id }, "duplicate assertion: \(id)")
+        do {
+            let observation = try body()
+            try writeJSON(observation, to: output.appendingPathComponent(evidence))
+            assertions.append(["id": id, "status": "passed", "evidence": evidence])
+            results[current.index]["assertions"] = assertions
+            try save()
+        } catch {
+            assertions.append(["id": id, "status": "failed", "error": String(describing: error)])
+            results[current.index]["assertions"] = assertions
+            try save()
+            throw error
+        }
+    }
+
     func run(_ test: QualificationCase, _ body: () throws -> Void) throws {
         try begin(test)
         try body()

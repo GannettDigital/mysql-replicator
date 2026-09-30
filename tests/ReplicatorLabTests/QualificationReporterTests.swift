@@ -51,4 +51,17 @@ final class QualificationReporterTests: XCTestCase {
         XCTAssertFalse(messages.contains { $0.hasPrefix("passed") })
         XCTAssertTrue(messages.contains("failed " + child.description + ": old table remains"))
     }
+    func testNamedAssertionRetainsFailureAndNeverPublishesAPass() throws {
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let reporter = QualificationReporter(output: output) { _ in }
+        try reporter.begin(QualificationCase("case", "Named assertion failure"))
+        XCTAssertThrowsError(try reporter.assertion("schema-effects", evidence: "assertions/schema.json") {
+            try require(false, "deliberately wrong expected schema")
+            return ["unused": true]
+        })
+        let assertions = reporter.results[0]["assertions"] as! [[String: Any]]
+        XCTAssertEqual(assertions[0]["status"] as? String, "failed")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.appendingPathComponent("assertions/schema.json").path))
+    }
 }

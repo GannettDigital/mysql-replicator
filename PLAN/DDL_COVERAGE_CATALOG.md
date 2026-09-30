@@ -3,12 +3,16 @@
 Definition, 2026-09-30, committed as `5270352`. **Steps 1–2 are implemented:**
 versioned JSON records/schemas, shared executable case registry, offline check and
 Markdown/JSON report commands, pinned local upstream checking and candidate scanning. See [catalog usage and limits](../tests/DDLCoverage/README.md).
-The seed contains 55 scenarios and maps all 40 existing DDL/native cases, including
-one explicit DML-only classification. All qualifications remain unverified and all
-family inventories partial. Selected lifecycle sections/results and prerequisites have
-been reviewed; contrast-only references and whole-file/transitive review gaps remain
-explicit. Steps 3–4 below remain planned; existing integration
-passes have not been promoted into assertion-level catalog evidence.
+The catalog contains 55 scenarios and now maps 46 DDL/native case declarations,
+including one explicit DML-only classification. All family inventories remain
+partial. Without selected evidence, qualifications remain unverified. The first
+Step 3 slice imports checksummed, fingerprinted schema/data assertions for rename
+and populated/empty TRUNCATE. Selected lifecycle sections/results and prerequisites
+have been reviewed; contrast-only references and whole-file/transitive review gaps
+remain explicit. Step 3 is partially implemented: boundary/binlog/history and
+query-context qualification, export and completeness verification remain pending.
+Step 4 remains pending; historical integration passes have not been promoted into
+assertion-level catalog evidence.
 This increment changes neither production replication behavior nor recovery policy.
 
 ## What defines the checklist
@@ -305,3 +309,51 @@ explicit non-catalog classification, lifecycle gaps are enumerable, and a review
 can reproduce why any selected scenario is verified or still a gap. It does not
 mean all DDL families are complete. The catalog's own validation must not accept
 missing tests or stale evidence as coverage.
+
+## First evidence-driven test increment
+
+The pinned scan returned 2,102 research candidates, not 2,102 verified behaviors.
+The first selected gaps were already-empty TRUNCATE and completing the following
+DML after a same-schema rename. Six named steps extend the ordered suite from 26
+to 32 operations: TRUNCATE/INSERT/key-changing UPDATE/DELETE on an empty table,
+and key-changing UPDATE/DELETE after rename. They run in both existing Swift
+profiles against source InnoDB, native 8.4 MyISAM and Swift-applied 5.7 MyISAM.
+No production DDL grammar or applier behavior changed in this increment.
+
+`DDLCoverageCases.evidenceContracts` binds two required assertions, schema-effects
+and following-dml, to exact case IDs for three scenarios (rename, populated
+TRUNCATE, empty TRUNCATE). The harness checks column types/signedness, nullability,
+defaults, keys, charset/collation, local engine selection and exact row values;
+source warnings and the observed source boundary are retained. Statement-order
+binlog checks, SQLite history and group checkpoint checks continue to run, but do
+not automatically satisfy scenario-specific catalog assertions.
+
+This intentionally yields **partial** qualification. The schema/data denominator
+is not substituted for the full catalog denominator. No current bundle can yield
+full verification, even if its two instrumented assertions pass. Explicit bundle
+selection rejects duplicate profiles and checks artifact hashes, source/fixture
+and contract fingerprints, build/image identity, runtime versions/settings, named
+case results and successful completion/cleanup. Dirty builds are identified by
+content, and changed sources/contracts produce stale evidence. Failed runs retain
+assertion diagnostics. Per-event applier session context remains an explicit gap.
+
+The next changes, in priority order, are:
+
+1. Bind boundary-specific normalized row/binlog effects, SQLite applied position /
+   GTIDs and schema-history/cache invalidation for these same three scenarios.
+   Establish warning/context contracts before promoting them to verified. Test
+   the evidence gate with a deliberately wrong expected row or checkpoint.
+2. Add native/direct-5.7 observations for conditional CREATE (absent, matching,
+   different), conditional DROP (present, absent), and CREATE LIKE (empty copy,
+   defaults/engine/index inheritance, existing destination, missing template/schema).
+   Record whether each source statement logs an event before adding Swift support.
+3. Add ALTER RENAME, cross-schema rename and multi-object error/partial-effect
+   tests, then column/default/index variants. Use the reviewed MTR sections and
+   additional exact references; do not infer engine equivalence from filenames.
+4. Give standalone DML its own obligations/evidence mapping: multi-row operations,
+   primary-key updates, exact binary/UTF-8/NULL and integer boundaries, mismatch /
+   missing-row/duplicate-key failures and MyISAM partial effects. The DDL catalog
+   currently counts only DML following a specific DDL; the separate dml-suite
+   baseline and negative cases are not silently included in these coverage totals.
+
+Recovery, skip controls and dump/load management stay outside this increment.

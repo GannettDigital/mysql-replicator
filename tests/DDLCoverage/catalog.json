@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "inventory_revision": "ddl-catalog-upstream-review-v2",
+  "inventory_revision": "ddl-catalog-lifecycle-evidence-v3",
   "families": [
     {
       "id": "A",
@@ -782,7 +782,7 @@
     },
     {
       "id": "ddl.table.rename.same-schema",
-      "name": "Rename table within its schema and insert through the new name",
+      "name": "Rename table within its schema, then INSERT/UPDATE/DELETE through the new name",
       "family": "B",
       "feature": "table.rename",
       "scope": "in_scope",
@@ -795,7 +795,9 @@
       ],
       "operation": [
         "RENAME TABLE poc.changes TO poc.renamed",
-        "INSERT INTO poc.renamed VALUES(NULL,3)"
+        "INSERT INTO poc.renamed VALUES(NULL,3)",
+        "UPDATE poc.renamed SET id=4,note='after' WHERE id=3",
+        "DELETE FROM poc.renamed WHERE id=4"
       ],
       "following_workload": [
         "The bound cases are part of one ordered DDL/DML stream; require the ddl completion group and boundary-specific assertions."
@@ -902,21 +904,26 @@
           "role": "swift_apply_with_native_reference",
           "case_ids": [
             "rename-table",
-            "insert-after-rename"
+            "insert-after-rename",
+            "update-after-rename",
+            "delete-after-rename"
           ],
           "profiles": [
             "swift.position.metadata-minimal",
             "swift.gtid.metadata-full"
           ],
-          "assertion_ids": [],
-          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound.",
           "completion_case_id": "ddl"
         }
       ],
       "gaps": [
         "Existing fixture does not by itself establish every unbound warning/history/negative variant.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification.",
-        "Upstream section review: Reviewed populated source to absent destination; session-count setup and CREATE SELECT preparation differ from the handwritten fixture."
+        "Upstream section review: Reviewed populated source to absent destination; session-count setup and CREATE SELECT preparation differ from the handwritten fixture.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history evidence remains unbound; successful schema/data assertions cannot fully qualify this scenario."
       ]
     },
     {
@@ -1180,15 +1187,18 @@
             "swift.position.metadata-minimal",
             "swift.gtid.metadata-full"
           ],
-          "assertion_ids": [],
-          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound.",
           "completion_case_id": "ddl"
         }
       ],
       "gaps": [
         "Existing fixture does not by itself establish every unbound warning/history/negative variant.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification.",
-        "Upstream section review: Reviewed populated table -> count=0 -> INSERT -> count=1; following row events and target binlogs remain separate obligations."
+        "Upstream section review: Reviewed populated table -> count=0 -> INSERT -> count=1; following row events and target binlogs remain separate obligations.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history evidence remains unbound; successful schema/data assertions cannot fully qualify this scenario."
       ]
     },
     {
@@ -5123,14 +5133,18 @@
       "feature": "table.truncate",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
-      "implementation": "missing",
+      "implementation": "implemented",
       "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary.",
-        "Record initial rows and AUTO_INCREMENT before the statement; use a permanent table unless this scenario explicitly says temporary."
+        "Record initial rows and AUTO_INCREMENT before the statement; use a permanent table unless this scenario explicitly says temporary.",
+        "Create an empty permanent table with BIGINT UNSIGNED primary key and nullable VARBINARY(10); expect an emitted TRUNCATE event even though it has no rows. This is a derived variant of the populated upstream case."
       ],
       "operation": [
-        "TRUNCATE an empty table"
+        "TRUNCATE TABLE poc.renamed",
+        "INSERT INTO poc.renamed VALUES(7,0x00FF)",
+        "UPDATE poc.renamed SET id=8,b=NULL WHERE id=7",
+        "DELETE FROM poc.renamed WHERE id=8"
       ],
       "following_workload": [
         "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
@@ -5150,17 +5164,17 @@
         {
           "profile": "swift.position.metadata-minimal",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect no warnings for the selected statements.",
+            "partial_effects": "The empty table remains empty; subsequent DML must match exact values.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect no warnings for the selected statements.",
+            "partial_effects": "The empty table remains empty; subsequent DML must match exact values."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -5169,26 +5183,26 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect no warnings for the selected statements.",
+            "partial_effects": "The empty table remains empty; subsequent DML must match exact values."
           }
         },
         {
           "profile": "swift.gtid.metadata-full",
           "source": {
-            "outcome": "unknown",
-            "reason": "Source acceptance and logging must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified.",
-            "logging": "unknown"
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect no warnings for the selected statements.",
+            "partial_effects": "The empty table remains empty; subsequent DML must match exact values.",
+            "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect no warnings for the selected statements.",
+            "partial_effects": "The empty table remains empty; subsequent DML must match exact values."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -5197,10 +5211,10 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "unknown",
-            "reason": "Swift expectations require a scoped implementation and native comparison.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "no_op",
+            "warnings": "Expect no warnings for the selected statements.",
+            "partial_effects": "The empty table remains empty; subsequent DML must match exact values."
           }
         }
       ],
@@ -5226,10 +5240,31 @@
           "description": "Verify affected schema history and invalidated caches at this boundary."
         }
       ],
-      "bindings": [],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "truncate-empty-table",
+            "insert-after-empty-truncate",
+            "update-after-empty-truncate",
+            "delete-after-empty-truncate"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "completion_case_id": "ddl",
+          "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound."
+        }
+      ],
       "gaps": [
-        "Implementation and named tests are pending.",
-        "Upstream section review: Related contrast only: selected section truncates a populated table, not an already-empty table."
+        "Upstream section review: Related contrast only: selected section truncates a populated table, not an already-empty table.",
+        "Boundary-specific normalized-binlog, source-boundary and schema-history evidence remains unbound; successful schema/data assertions cannot fully qualify this scenario."
       ]
     },
     {

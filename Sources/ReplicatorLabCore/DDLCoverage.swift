@@ -137,7 +137,10 @@ public enum DDLCoverage {
             for binding in scenario.bindings {
                 try require(Set(binding.profiles).isSubset(of: Set(scenario.requiredProfiles)), "\(context): binding has an inapplicable profile")
                 try require(Set(binding.assertionIds).isSubset(of: Set(assertions.keys)), "\(context): binding claims undeclared assertions")
-                try require(binding.assertionIds.isEmpty, "\(context): named assertion bindings await evidence integration")
+                for assertion in binding.assertionIds {
+                    guard let supplied = DDLCoverageCases.evidenceContracts[scenario.id]?[assertion] else { throw LabError("\(context): assertion lacks executable evidence contract: \(assertion)") }
+                    try require(Set(supplied).isSubset(of: Set(binding.caseIds)), "\(context): evidence contract requires unbound cases")
+                }
                 try require(binding.role == (binding.suite == "ddl-suite" ? "swift_apply_with_native_reference" : "native_observation_and_direct_sql"), "\(context): binding role/suite mismatch")
                 for profile in binding.profiles { try require(profiles[profile]?.suite == binding.suite, "\(context): binding suite/profile mismatch") }
                 for id in binding.caseIds + [binding.completionCaseId].compactMap({ $0 }) {
@@ -241,10 +244,21 @@ public enum DDLCoverage {
         }
         let options = Array(arguments.dropFirst())
         var format = "markdown"
+        var evidencePaths: [String] = []
         if command == "check" { try require(options.isEmpty, "ddl-catalog check accepts no arguments") }
-        else if !options.isEmpty {
-            try require(options.count == 2 && options[0] == "--format" && ["markdown", "json"].contains(options[1]), "ddl-catalog report accepts only --format markdown|json; evidence import is not implemented")
-            format = options[1]
+        else {
+            var index = 0
+            var seenFormat = false
+            while index < options.count {
+                try require(index + 1 < options.count, "ddl-catalog report option requires a value")
+                let option = options[index], value = options[index + 1]
+                if option == "--format" {
+                    try require(!seenFormat && ["markdown", "json"].contains(value), "invalid/duplicate report format")
+                    format = value; seenFormat = true
+                } else if option == "--evidence" { evidencePaths.append(value) }
+                else { throw LabError("ddl-catalog report accepts --format markdown|json and repeated --evidence PATH") }
+                index += 2
+            }
         }
         let inventory = try load(directory: root.appendingPathComponent("tests/DDLCoverage"))
         if command == "check" {
@@ -252,9 +266,31 @@ public enum DDLCoverage {
             _ = markdown(inventory)
             _ = try JSONSerialization.data(withJSONObject: report(inventory), options: [.prettyPrinted, .sortedKeys])
             print("PASS DDL catalog structure: \(inventory.catalog.scenarios.count) scenarios, \(DDLCoverageCases.registry.count) registered cases. No replication coverage qualified.")
-        } else if format == "json" {
-            let data = try JSONSerialization.data(withJSONObject: report(inventory), options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-            FileHandle.standardOutput.write(data + Data("\n".utf8))
-        } else { print(markdown(inventory), terminator: "") }
+        } else {
+            var bundles: [DDLCoverageEvidence.Bundle] = []
+            if !evidencePaths.isEmpty {
+                let inputs = try DDLCoverageEvidence.inputs(root: root)
+                let contracts = try DDLCoverageEvidence.hashes(root: root, paths: DDLCoverageEvidence.contractPaths)
+                for path in evidencePaths {
+                    bundles.append(try DDLCoverageEvidence.load(URL(fileURLWithPath: path, relativeTo: root), currentInputs: inputs, contracts: contracts, inventory: inventory, harnessDigest: DDLCoverageEvidence.harnessDigest(root: root)))
+                }
+            }
+            let report = try DDLCoverageEvidence.report(inventory, bundles: bundles)
+            if format == "json" {
+                let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                FileHandle.standardOutput.write(data + Data("\n".utf8))
+            } else if evidencePaths.isEmpty { print(markdown(inventory), terminator: "") }
+            else {
+                let summary = report["assertion_summary"] as! [String: Int]
+                print("# DDL assertion evidence\n\nPassed assertions: \(summary["passed"]!)/\(summary["required"]!); partial scenario/profiles: \(summary["partial_scenario_profiles"]!); fully verified: 0.\n")
+                print("| Scenario | Profile | Status | Passed | Missing |\n| --- | --- | --- | --- | --- |")
+                for row in report["scenarios"] as! [[String: Any]] {
+                    for profile in row["profile_evidence"] as! [[String: Any]] {
+                        print("| \(row["id"]!) | \(profile["profile"]!) | \(profile["qualification"]!) | \((profile["passed_assertions"] as! [String]).joined(separator: ", ")) | \((profile["missing_assertions"] as! [String]).joined(separator: ", ")) |")
+                    }
+                }
+                print("\nNamed schema/data assertions only. See JSON output for full inventory, contracts and gaps.")
+            }
+        }
     }
 }

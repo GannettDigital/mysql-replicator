@@ -32,7 +32,7 @@ final class DDLCoverageTests: XCTestCase {
             let inventory = try DDLCoverage.load(directory: directory)
             XCTAssertEqual(inventory.catalog.scenarios.count, 55)
             XCTAssertEqual(inventory.catalog.families.map(\.reviewState), Array(repeating: "partial", count: 6))
-            XCTAssertEqual(DDLCoverageCases.registry.count, 40)
+            XCTAssertEqual(DDLCoverageCases.registry.count, 46)
             let report = DDLCoverage.report(inventory)
             let rows = report["scenarios"] as! [[String: Any]]
             XCTAssertTrue(rows.allSatisfy { $0["qualification"] as? String == "unverified" })
@@ -135,7 +135,7 @@ final class DDLCoverageTests: XCTestCase {
                 XCTAssertTrue(String(describing: error).contains("escapes its directory"))
             }
         }
-        try rejects("await evidence integration") { object in
+        try rejects("lacks executable evidence contract") { object in
             self.firstScenario(&object) { row in
                 var bindings = row["bindings"] as! [[String: Any]]
                 bindings[0]["assertion_ids"] = ["schema-effects"]; row["bindings"] = bindings
