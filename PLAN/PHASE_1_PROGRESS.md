@@ -48,3 +48,7 @@ ABI 2 now exposes bounded offline event/row decoding and typed values to Swift, 
 ## Subsequent transaction-boundary increment
 
 ABI 3 and event JSON schema 2 now expose typed GTID/query/XID/rotation controls, query status bytes and raw row flags. A bounded Swift assembler emits only complete groups, checks physical coordinates and rejects incomplete EOF. The fixture's source GTIDs and exact transaction boundaries are checked against independently captured mysqlbinlog text. See [transaction assembly](TRANSACTION_ASSEMBLY.md). This is offline capture preparation; live streaming, file relay and SQLite state, durable resume and target apply remain pending. The local MySQL 8.4.8 checkout is in ignored `.upstream/mysql-server` at the plan's pinned commit.
+
+## Subsequent live inspection increment
+
+The native Swift/NIO reader now feeds live MySQL 8.4 dump frames into the existing Rust decoder and Swift assembler. It supports verified TLS, positional/GTID starts, rotation, heartbeats, bounded queues and event/transaction JSON. Live schema metadata must correspond to the supplied bootstrap boundary; DDL stops the stream. Read [live inspection](LIVE_INSPECTION.md) and [current status](IMPLEMENTATION_STATUS.md) for the validation and limits. File relay/SQLite persistence, REST status, automatic recovery and target apply remain pending.

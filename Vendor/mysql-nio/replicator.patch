@@ -1,0 +1,55 @@
+--- a/Sources/MySQLNIO/MySQLConnection.swift
++++ b/Sources/MySQLNIO/MySQLConnection.swift
+@@ -11,10 +11,13 @@
+         password: String? = nil,
+         tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+         serverHostname: String? = nil,
++        requireTLS: Bool = false,
++        handshakeTimeout: TimeAmount? = nil,
+         logger: Logger = .init(label: "codes.vapor.mysql"),
+         on eventLoop: any EventLoop
+     ) -> EventLoopFuture<MySQLConnection> {
+         let bootstrap = ClientBootstrap(group: eventLoop)
++            .connectTimeout(.seconds(10))
+             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+         
+         logger.debug("Opening new connection to \(socketAddress)")
+@@ -22,6 +25,10 @@
+         return bootstrap.connect(to: socketAddress).flatMap { channel in
+             let sequence = MySQLPacketSequence()
+             let done = channel.eventLoop.makePromise(of: Void.self)
++            if let handshakeTimeout {
++                let timeout = channel.eventLoop.scheduleTask(in: handshakeTimeout) { done.fail(MySQLError.closed) }
++                done.futureResult.whenComplete { _ in timeout.cancel() }
++            }
+             done.futureResult.whenFailure { _ in
+                 channel.close(mode: .all, promise: nil)
+             }
+@@ -36,6 +43,7 @@
+                         logger: logger
+                     )),
+                     MySQLConnectionHandler(logger: logger, state: .handshake(.init(
++                        requireTLS: requireTLS,
+                         username: username,
+                         database: database,
+                         password: password,
+--- a/Sources/MySQLNIO/MySQLConnectionHandler.swift
++++ b/Sources/MySQLNIO/MySQLConnectionHandler.swift
+@@ -21,6 +21,7 @@
+     }
+     
+     struct HandshakeState {
++        var requireTLS: Bool = false
+         let username: String
+         let database: String
+         let password: String?
+@@ -112,6 +113,9 @@
+         self.logger.trace("Handling MySQL handshake \(handshakeRequest)")
+         guard handshakeRequest.capabilities.contains(.CLIENT_PROTOCOL_41) else {
+             throw MySQLError.unsupportedServer(message: "Client protocol 4.1 required")
++        }
++        guard !state.requireTLS || (state.tlsConfiguration != nil && handshakeRequest.capabilities.contains(.CLIENT_SSL)) else {
++            throw MySQLError.unsupportedServer(message: "TLS is required; refusing authentication without TLS")
+         }
+         self.serverCapabilities = handshakeRequest.capabilities
+         if let tlsConfiguration = state.tlsConfiguration, handshakeRequest.capabilities.contains(.CLIENT_SSL) {

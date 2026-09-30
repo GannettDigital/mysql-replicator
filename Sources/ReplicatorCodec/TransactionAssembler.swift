@@ -54,6 +54,7 @@ public final class TransactionAssembler {
     private var statementOpen = false
     private var hasRows = false
     private let limits: Limits
+    private var acceptsExcludedRanges = false
     /// Last validated complete boundary, never a durable/applied checkpoint.
     public private(set) var lastCompleteBoundary: BinlogCoordinate?
     public var pendingTransactionStart: BinlogCoordinate? { start }
@@ -66,6 +67,32 @@ public final class TransactionAssembler {
                 lastCompleteBoundary: nil, reason: "invalid file identity or transaction limits")
         }
         expected = coordinate; self.limits = limits
+    }
+
+    /// Live transport has already validated the dump FDE and supplied a source
+    /// start boundary. Transport announcements are not physical file events.
+    public convenience init(validatedStreamStart: BinlogCoordinate, allowPreviousGTIDs: Bool,
+                            acceptsExcludedRanges: Bool, limits: Limits = Limits()) throws {
+        try self.init(file: validatedStreamStart.file, limits: limits)
+        guard validatedStreamStart.position >= 4 else { throw error(.sequence, validatedStreamStart, "invalid stream start") }
+        expected = validatedStreamStart; needsFormat = false; allowsPrevious = allowPreviousGTIDs
+        self.acceptsExcludedRanges = acceptsExcludedRanges
+        lastCompleteBoundary = validatedStreamStart
+    }
+
+    /// A checksum-verified GTID dump heartbeat can describe skipped ranges from
+    /// the caller's excluded set. Never permitted in an open group or positional
+    /// mode; it is an observation, not a newly captured/applied GTID.
+    public func advanceExcludedRange(to coordinate: BinlogCoordinate) throws {
+        if failed { throw error(.poisoned, coordinate, "assembler failed") }
+        do {
+            try require(acceptsExcludedRanges && !finished && !stopped && !needsFormat && state == .idle,
+                        coordinate, "excluded-range advance outside an idle GTID stream")
+            try require(coordinate.file == expected.file && coordinate.position >= expected.position,
+                        coordinate, "excluded-range coordinate moves backward or changes file")
+            expected = coordinate; allowsPrevious = false
+            // lastCompleteBoundary stays at an actually validated group/preamble.
+        } catch { failed = true; events.removeAll(keepingCapacity: false); throw error }
     }
 
     private func error(_ code: TransactionError.Code, _ at: BinlogCoordinate, _ reason: String) -> TransactionError {

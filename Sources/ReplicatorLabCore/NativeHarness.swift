@@ -31,11 +31,14 @@ public final class NativeHarness {
     var report: [String: Any]
     let services = ["source", "native", "target57"]
 
-    public init(root: URL, config: NativeCase) {
+    var composeOverlays: [String] = []
+    var composeEnvironment: [String: String] = [:]
+
+    public init(root: URL, config: NativeCase, artifactCategory: String = "native-suite") {
         self.root = root; self.runner = ProcessRunner(root: root); self.config = config
         self.decoder = ProcessInfo.processInfo.environment["MYSQLBINLOG"] ?? "mysqlbinlog"
         let id = runID()
-        output = root.appendingPathComponent("artifacts/native-suite/\(id)-\(config.name)")
+        output = root.appendingPathComponent("artifacts/\(artifactCategory)/\(id)-\(config.name)")
         project = "replicator-lab-" + id.lowercased()
         report = ["schema_version": 1, "case": config.name, "project": project,
                   "assertions": "failed", "expected_native_outcome": config.rejects ? "rejected_1837" : "applied",
@@ -43,10 +46,10 @@ public final class NativeHarness {
                   "native_engine": config.nativeEngine, "native_init_automatic": config.initAutomatic]
     }
     func compose(_ args: [String], timeout: TimeInterval = 120, checked: Bool = true) throws -> CommandResult {
-        try runner.run(["docker", "compose", "-f", root.appendingPathComponent("compose.yaml").path, "-p", project] + args,
+        try runner.run(["docker", "compose", "-f", root.appendingPathComponent("compose.yaml").path, "-p", project] + composeOverlays.flatMap { ["-f", $0] } + args,
                        environment: ["FIXTURE_SOURCE_GTID_MODE": "ON", "FIXTURE_SOURCE_GTID_CONSISTENCY": "ON",
                                      "FIXTURE_NATIVE_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_NATIVE_GTID_CONSISTENCY": "WARN",
-                                     "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN"],
+                                     "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN"].merging(composeEnvironment) { _, new in new },
                        timeout: timeout, checked: checked)
     }
     func sql(_ service: String, _ statement: String, headers: Bool = false) throws -> String {

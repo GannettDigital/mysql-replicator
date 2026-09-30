@@ -91,6 +91,16 @@ public struct DecodedEvent: Equatable, Encodable {
     public let detailText: String?
     public let rows: [DecodedRow]
     public let rawBase64: String?
+
+    /// Live transport validates source coordinates separately from the codec's
+    /// contiguous input-stream offsets (GTID filtering may omit source ranges).
+    /// Changes only the observation coordinate, never event bytes or headers.
+    public func atSourcePosition(_ position: UInt64) -> DecodedEvent {
+        DecodedEvent(offset: String(position), eventSize: eventSize, control: control, rowFlags: rowFlags,
+            eventType: eventType, eventName: eventName, timestamp: timestamp, serverID: serverID,
+            nextPosition: nextPosition, flags: flags, sha256: sha256, tableID: tableID, database: database,
+            table: table, number: number, detailBase64: detailBase64, detailText: detailText, rows: rows, rawBase64: rawBase64)
+    }
 }
 
 /// Serialized caller interface. All C views are copied before the Rust result

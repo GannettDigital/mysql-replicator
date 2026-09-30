@@ -1,0 +1,242 @@
+{
+  "repository": "https://github.com/vapor/mysql-nio",
+  "revision": "7fa853040169b604a16b963f23b481772f4ac181",
+  "version": "1.9.1",
+  "files": [
+    {
+      "path": "LICENSE",
+      "upstream_sha256": "ad6fc9c3139bfbe3d08220849974817197cdb7453dc9ce1c679fcc5acb7fc216",
+      "vendored_sha256": "ad6fc9c3139bfbe3d08220849974817197cdb7453dc9ce1c679fcc5acb7fc216"
+    },
+    {
+      "path": "Package.swift",
+      "upstream_sha256": "28938bf61382c1bbce7b61b0f0f753fa927f7af40978610d3aa62ecd3ce7444a",
+      "vendored_sha256": "28938bf61382c1bbce7b61b0f0f753fa927f7af40978610d3aa62ecd3ce7444a"
+    },
+    {
+      "path": "Sources/MySQLNIO/Docs.docc/images/vapor-mysqlnio-logo.svg",
+      "upstream_sha256": "f27b2f5f768b1a6d9c3a346d3d1c1ac90ce186014eb9ceee68fcb47cc5a8101c",
+      "vendored_sha256": "f27b2f5f768b1a6d9c3a346d3d1c1ac90ce186014eb9ceee68fcb47cc5a8101c"
+    },
+    {
+      "path": "Sources/MySQLNIO/Docs.docc/index.md",
+      "upstream_sha256": "06aa3424332dd8b646629ef040f761255e1b3710675e08fde4797e5856eb5b63",
+      "vendored_sha256": "06aa3424332dd8b646629ef040f761255e1b3710675e08fde4797e5856eb5b63"
+    },
+    {
+      "path": "Sources/MySQLNIO/Docs.docc/theme-settings.json",
+      "upstream_sha256": "1170e142705372c7a0684e85141daccaad3738ff434b86897aa34e85ee9d5375",
+      "vendored_sha256": "1170e142705372c7a0684e85141daccaad3738ff434b86897aa34e85ee9d5375"
+    },
+    {
+      "path": "Sources/MySQLNIO/Exports.swift",
+      "upstream_sha256": "e0f61d6328e19a4912fbe8024422c1348cc53eab46ceaa2b9d99cc2e5dcccfd0",
+      "vendored_sha256": "e0f61d6328e19a4912fbe8024422c1348cc53eab46ceaa2b9d99cc2e5dcccfd0"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLConnection.swift",
+      "upstream_sha256": "9944323e20f68634d166669eaf4ca5ba38af5edc4aa5540a8ef55a1e57c9579a",
+      "vendored_sha256": "e3dd62029af5d7617fa0ba1f656ac15d073d960e726b6264d72824d45e447de2"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLConnectionHandler.swift",
+      "upstream_sha256": "22a62c733699c8d464dfe8507a1bc483da780c106d4d13bf6b22991f2b4af9f4",
+      "vendored_sha256": "2524b9dee4fcd1fc651eb31e7467d97a41fe9dda8849216cf86a355edceb1f9a"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLData.swift",
+      "upstream_sha256": "b04f33066a360e247f5aa94a3c0265f56024931f20013ee3431bb42a2231dbc7",
+      "vendored_sha256": "b04f33066a360e247f5aa94a3c0265f56024931f20013ee3431bb42a2231dbc7"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLDataConvertible.swift",
+      "upstream_sha256": "308e404408e649868d5d7b9a155aabd2413d7ba82e6700a1ef621f3e931834cf",
+      "vendored_sha256": "308e404408e649868d5d7b9a155aabd2413d7ba82e6700a1ef621f3e931834cf"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLDatabase.swift",
+      "upstream_sha256": "7240ea6ea23dbbd73e4a7d41b9110af0cc736ac78523fb5a5c736b52a41367e6",
+      "vendored_sha256": "7240ea6ea23dbbd73e4a7d41b9110af0cc736ac78523fb5a5c736b52a41367e6"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLError.swift",
+      "upstream_sha256": "cd8935f49ded8a8334746d89f915bc732a70da8053c3b38b29e3a2807b67a0eb",
+      "vendored_sha256": "cd8935f49ded8a8334746d89f915bc732a70da8053c3b38b29e3a2807b67a0eb"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLQueryCommand.swift",
+      "upstream_sha256": "3472ff936789fe9d3f070ed019947bec3337a429c054d17f28c948af10c862c1",
+      "vendored_sha256": "3472ff936789fe9d3f070ed019947bec3337a429c054d17f28c948af10c862c1"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLRow.swift",
+      "upstream_sha256": "b70bfcc7f92be4c9382a1ffbb3fe09914c9700870bad9f3cc6500cc278a80177",
+      "vendored_sha256": "b70bfcc7f92be4c9382a1ffbb3fe09914c9700870bad9f3cc6500cc278a80177"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLSimpleQueryCommand.swift",
+      "upstream_sha256": "196c3c722e2ee41a6f67209129bcbd0265c64354860ca93b3ee9216827758a63",
+      "vendored_sha256": "196c3c722e2ee41a6f67209129bcbd0265c64354860ca93b3ee9216827758a63"
+    },
+    {
+      "path": "Sources/MySQLNIO/MySQLTime.swift",
+      "upstream_sha256": "295f00e75385272c2d274cbf56621df39807b6fd0b7174c37fb144ee4f9127ac",
+      "vendored_sha256": "295f00e75385272c2d274cbf56621df39807b6fd0b7174c37fb144ee4f9127ac"
+    },
+    {
+      "path": "Sources/MySQLNIO/Packet/MySQLPacket.swift",
+      "upstream_sha256": "9e7e679eefe5c6a66b8c2c6de9cd4c6c27b5864126669e5aaf9f00db18083b7e",
+      "vendored_sha256": "9e7e679eefe5c6a66b8c2c6de9cd4c6c27b5864126669e5aaf9f00db18083b7e"
+    },
+    {
+      "path": "Sources/MySQLNIO/Packet/MySQLPacketDecoder.swift",
+      "upstream_sha256": "826a9a5cc19d1dc6ad3244cba1237e66c002991d13fafc33165eda1be5d93f77",
+      "vendored_sha256": "826a9a5cc19d1dc6ad3244cba1237e66c002991d13fafc33165eda1be5d93f77"
+    },
+    {
+      "path": "Sources/MySQLNIO/Packet/MySQLPacketEncoder.swift",
+      "upstream_sha256": "b88ff98f5c9dbccf26586bd47fdc6471fd15ac79b5e21b073e32d9a028f3c658",
+      "vendored_sha256": "b88ff98f5c9dbccf26586bd47fdc6471fd15ac79b5e21b073e32d9a028f3c658"
+    },
+    {
+      "path": "Sources/MySQLNIO/Packet/MySQLPacketSequence.swift",
+      "upstream_sha256": "e12ada62951e2958dd14532e705ed5a0bf54bd4a33bac7a8417812041c596aee",
+      "vendored_sha256": "e12ada62951e2958dd14532e705ed5a0bf54bd4a33bac7a8417812041c596aee"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+BinaryResultSetRow.swift",
+      "upstream_sha256": "40ab7ca288830d97473e4f74d0c2c0938cf9f315fb6be27c9b6dec03f284ed24",
+      "vendored_sha256": "40ab7ca288830d97473e4f74d0c2c0938cf9f315fb6be27c9b6dec03f284ed24"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_QUERY.swift",
+      "upstream_sha256": "a35dd7b117ef1e556f5b0c1cad99a336274c49740aa86c04b8b9b02c621a642e",
+      "vendored_sha256": "a35dd7b117ef1e556f5b0c1cad99a336274c49740aa86c04b8b9b02c621a642e"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_QUERY_Response.swift",
+      "upstream_sha256": "10b1d89d10f1034a1c9d87d21708d4d9c8d97d62ba03fcbaea7232d84b7081cf",
+      "vendored_sha256": "10b1d89d10f1034a1c9d87d21708d4d9c8d97d62ba03fcbaea7232d84b7081cf"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_QUIT.swift",
+      "upstream_sha256": "ba57ee79998410e5cec7f30ed70abec4f4506fc18b4ade9c9807e5361e7595d9",
+      "vendored_sha256": "ba57ee79998410e5cec7f30ed70abec4f4506fc18b4ade9c9807e5361e7595d9"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_CLOSE.swift",
+      "upstream_sha256": "72e53d9367ece2c6e6098d171efac98ab648fa1625683f84706c5d5dc2cca09a",
+      "vendored_sha256": "72e53d9367ece2c6e6098d171efac98ab648fa1625683f84706c5d5dc2cca09a"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_EXECUTE.swift",
+      "upstream_sha256": "b8432c5893f7e467a7d73645b26495c071df2062ee1b853bc5211f8a3f047638",
+      "vendored_sha256": "b8432c5893f7e467a7d73645b26495c071df2062ee1b853bc5211f8a3f047638"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_PREPARE.swift",
+      "upstream_sha256": "b4a05aa8d5a81f73e382d832b6351164dee9a5ff7f17ce315d3c9fa3a4b6ccb6",
+      "vendored_sha256": "b4a05aa8d5a81f73e382d832b6351164dee9a5ff7f17ce315d3c9fa3a4b6ccb6"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_PREPARE_OK.swift",
+      "upstream_sha256": "b290e2152b58d70363adc1daf69f48b4141ded9a66e77e20f8500dc87b0ec311",
+      "vendored_sha256": "b290e2152b58d70363adc1daf69f48b4141ded9a66e77e20f8500dc87b0ec311"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+CapabilityFlags.swift",
+      "upstream_sha256": "1120925ec5ee95e78138e94f1cd773b6bf3ebe2323d51bb9516ac13b2c97db46",
+      "vendored_sha256": "1120925ec5ee95e78138e94f1cd773b6bf3ebe2323d51bb9516ac13b2c97db46"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+CharacterSet.swift",
+      "upstream_sha256": "839b33b30dec6468abc50e290380d1b28a7704ead03a765b61b4997645cbbdda",
+      "vendored_sha256": "839b33b30dec6468abc50e290380d1b28a7704ead03a765b61b4997645cbbdda"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+ColumnDefinition41.swift",
+      "upstream_sha256": "be7b7803624d8fcf2d49c48de8dab92fc216838ce6a45919751efb4773337377",
+      "vendored_sha256": "be7b7803624d8fcf2d49c48de8dab92fc216838ce6a45919751efb4773337377"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+ColumnFlags.swift",
+      "upstream_sha256": "8d3660023002cacb4c56d51184ed31fa22919980d2b168a89348566419189d3e",
+      "vendored_sha256": "8d3660023002cacb4c56d51184ed31fa22919980d2b168a89348566419189d3e"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+DataType.swift",
+      "upstream_sha256": "5f1282b3b1c4a4b190fc59e42970cdcc55fc9b1dc826df2e5f0f4eb23912145d",
+      "vendored_sha256": "5f1282b3b1c4a4b190fc59e42970cdcc55fc9b1dc826df2e5f0f4eb23912145d"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+ERR_Packet.swift",
+      "upstream_sha256": "9d23f1a51228d1dece6a0002abd2ed96df7b634e64d0c8f2ab572da360731eff",
+      "vendored_sha256": "9d23f1a51228d1dece6a0002abd2ed96df7b634e64d0c8f2ab572da360731eff"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+ErrorCode.swift",
+      "upstream_sha256": "3c5e16c841f09cc479f40ee8528590875b3d1cdb1223874400e45e349f475e70",
+      "vendored_sha256": "3c5e16c841f09cc479f40ee8528590875b3d1cdb1223874400e45e349f475e70"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+HandshakeResponse41.swift",
+      "upstream_sha256": "f8076bf5635cddcd704277942be05f856051e8698891cd097bedd95df737f632",
+      "vendored_sha256": "f8076bf5635cddcd704277942be05f856051e8698891cd097bedd95df737f632"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+HandshakeV10.swift",
+      "upstream_sha256": "b5bcaf283fb196bfcabe8e44083fa143dbbf63a20bf6c217d974f63e8430c2e6",
+      "vendored_sha256": "b5bcaf283fb196bfcabe8e44083fa143dbbf63a20bf6c217d974f63e8430c2e6"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+NullBitmap.swift",
+      "upstream_sha256": "c16bfc16da2edd500434344385da9a8f0e2d592471522e832b0a802a1ce86b79",
+      "vendored_sha256": "c16bfc16da2edd500434344385da9a8f0e2d592471522e832b0a802a1ce86b79"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+OK_Packet.swift",
+      "upstream_sha256": "9b68895397c9b6487c4e70acc3a1b1041dfd8bbb00778bc613397916e6e6ab94",
+      "vendored_sha256": "9b68895397c9b6487c4e70acc3a1b1041dfd8bbb00778bc613397916e6e6ab94"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+SSLRequest.swift",
+      "upstream_sha256": "8cefe205ef8fd7edadd78d8b542e20d78432554fc23eb3cc9ab230f3734fc2c0",
+      "vendored_sha256": "8cefe205ef8fd7edadd78d8b542e20d78432554fc23eb3cc9ab230f3734fc2c0"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+StatusFlags.swift",
+      "upstream_sha256": "5c83d42182aab7db891c1e938f4896d3e83764a4945784a2349c8ca34ff6fe13",
+      "vendored_sha256": "5c83d42182aab7db891c1e938f4896d3e83764a4945784a2349c8ca34ff6fe13"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+TextResultSetRow.swift",
+      "upstream_sha256": "4c7f38a08ee8c0f9e6f97cef8bed1db3f18d5b9023636bf5170c9de789e50e28",
+      "vendored_sha256": "4c7f38a08ee8c0f9e6f97cef8bed1db3f18d5b9023636bf5170c9de789e50e28"
+    },
+    {
+      "path": "Sources/MySQLNIO/Protocol/MySQLProtocol.swift",
+      "upstream_sha256": "386b1999cbc0488a8dc5dfda43f5d0c5f6abf7a4ca9b9cfdce73d786d01535d1",
+      "vendored_sha256": "386b1999cbc0488a8dc5dfda43f5d0c5f6abf7a4ca9b9cfdce73d786d01535d1"
+    },
+    {
+      "path": "Sources/MySQLNIO/Utilities/CryptoUtils.swift",
+      "upstream_sha256": "e0206978ea0b5f15ed9609721ff5f0f46915179150ef0aff61fae0e390434af6",
+      "vendored_sha256": "e0206978ea0b5f15ed9609721ff5f0f46915179150ef0aff61fae0e390434af6"
+    },
+    {
+      "path": "Sources/MySQLNIO/Utilities/NIOUtils.swift",
+      "upstream_sha256": "1b3099b81bb816362ef1fe2e7415379724cdb03aa34c4a034f51dc8e0400fbb0",
+      "vendored_sha256": "1b3099b81bb816362ef1fe2e7415379724cdb03aa34c4a034f51dc8e0400fbb0"
+    },
+    {
+      "path": "Tests/MySQLNIOTests/MySQLNIOTests.swift",
+      "upstream_sha256": "40b30dc8f3eeffce74ce43580a75c16dbf4ec321547f36717e95a36aaa386b0f",
+      "vendored_sha256": "40b30dc8f3eeffce74ce43580a75c16dbf4ec321547f36717e95a36aaa386b0f"
+    },
+    {
+      "path": "Tests/MySQLNIOTests/Utilities.swift",
+      "upstream_sha256": "7e66f58a9be4621a5716a6b0e1de45d3098c90eb6e0eea86a7388031ad2e5d29",
+      "vendored_sha256": "7e66f58a9be4621a5716a6b0e1de45d3098c90eb6e0eea86a7388031ad2e5d29"
+    }
+  ]
+}

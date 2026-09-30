@@ -18,7 +18,7 @@ build:
 	swift build --package-path packaging/Probe --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native -Xlinker -L/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release
 	cp packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe /out/packaging-probe
 	cargo build --manifest-path rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) --target-dir packaging/rust/target -j 2
-	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2
+	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions
 	cp .build/x86_64-swift-linux-musl/release/mysql-replicator /out/mysql-replicator
 	file /out/packaging-probe /out/mysql-replicator > /out/evidence/elf.txt
 	readelf -h -l -d /out/packaging-probe >> /out/evidence/elf.txt
@@ -30,5 +30,6 @@ build:
 	swift --version > /out/evidence/toolchains.txt
 	rustc --version >> /out/evidence/toolchains.txt
 	cp packaging/Probe/Package.resolved packaging/rust/Cargo.lock /out/evidence/
+	cp Package.resolved /out/evidence/production-Package.resolved
 	cp rust/Cargo.lock /out/evidence/production-Cargo.lock
 	cp /root/.swiftpm/swift-sdks/swift-6.2.1-RELEASE_static-linux-0.0.1.artifactbundle/sbom.spdx.json /out/evidence/sdk-sbom.spdx.json

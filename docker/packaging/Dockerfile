@@ -19,7 +19,8 @@ COPY packaging/rust packaging/rust
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
 COPY packaging/Makefile packaging/Makefile
-COPY Package.swift Package.swift
+COPY Vendor Vendor
+COPY Package.swift Package.resolved ./
 COPY Sources Sources
 COPY rust rust
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target make -f packaging/Makefile build

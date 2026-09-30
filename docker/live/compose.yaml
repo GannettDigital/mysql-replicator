@@ -1,0 +1,5 @@
+services:
+  source:
+    command: ["--server-id=8401", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=ON", "--enforce-gtid-consistency=ON", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--ssl-ca=/tls/ca.pem", "--ssl-cert=/tls/server.pem", "--ssl-key=/tls/server-key.pem", "--require-secure-transport=ON"]
+    volumes:
+      - "${REPLICATOR_LIVE_TLS_DIR:?generated TLS directory required}:/tls:ro"

@@ -23,3 +23,7 @@ ubuntu-smoke:
 .PHONY: test-asan
 test-asan: codec
 	REPLICATOR_TEST_BINARY_DIR="$(CURDIR)/.build-asan/debug" swift test --scratch-path .build-asan --sanitize=address
+
+.PHONY: live-suite
+live-suite:
+	swift run replicator-lab live-suite $(ARGS)

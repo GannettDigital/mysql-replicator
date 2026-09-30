@@ -2,7 +2,7 @@
 
 Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
-Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, an offline JSON inspector with bounded transaction assembly, and a tested native-reference harness. Swift capture, the file relay/SQLite state store, REST status API and target apply are not implemented yet. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
+Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The file relay/SQLite state store, REST status API and target apply are not implemented yet. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
 ## Offline binlog inspection
 
@@ -20,6 +20,15 @@ For complete source groups and validated file/position boundaries:
 ```
 
 This mode rejects incomplete transactions at EOF and emits no partial group. Its coordinates are in-memory boundary candidates, not durable or applied checkpoints. See [transaction assembly and review points](PLAN/TRANSACTION_ASSEMBLY.md). The pinned MySQL 8.4.8 source checkout is available locally in ignored `.upstream/mysql-server` for protocol research.
+
+## Live source inspection
+
+```sh
+.build/debug/mysql-replicator inspect --source-config source.json --transactions
+make live-suite
+```
+
+The live reader uses verified TLS and either file/position or GTID starts, follows rotation and stops with diagnostics on errors. It emits complete source groups but does not persist progress or apply them. See [configuration, limits and review points](PLAN/LIVE_INSPECTION.md). `make live-suite` compares the Ubuntu CLI against MySQL source/native binlogs, and tests replay, disconnects, certificate failures and purged history.
 
 ## Repository automation
 
@@ -61,7 +70,7 @@ The raw transaction/MyISAM smoke intentionally returns exit 1 for the verified n
 
 Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git, OpenSSL, and a MySQL 8.4 `mysqlbinlog` in PATH. Set `MYSQLBINLOG=/absolute/path/to/mysqlbinlog` when needed. The tested reference client is 8.4.6; the servers are 8.4.8 and 5.7.42. That patch difference is recorded in evidence. This is not Ubuntu 16.04 release qualification.
 
-`mysqlbinlog` always receives `--no-defaults` to prevent host option files from filtering events, and `--verify-binlog-checksum`. The independent Swift normalizer covers only the known fixture schema: signed INT key, unescaped printable ASCII VARCHAR, and BIGINT UNSIGNED. It preserves UINT64_MAX as an exact string and verifies the signed/unsigned dual rendering. It is not the production decoder or a general lossless mysqlbinlog text converter. Windows containing rotation, arbitrary types/strings, DDL and other tables require further qualification.
+`mysqlbinlog` always receives `--no-defaults` to prevent host option files from filtering events, and `--verify-binlog-checksum`. The independent Swift normalizer covers only the known fixture schema: signed INT key, unescaped printable ASCII VARCHAR, and BIGINT UNSIGNED. It preserves UINT64_MAX as an exact string and verifies the signed/unsigned dual rendering. It is not the production decoder or a general lossless mysqlbinlog text converter. The live suite splits its rotation comparison into two recorded file windows. Arbitrary types/strings, DDL and other tables require further qualification.
 
 `make test` builds and tests the Rust adapter, then runs SwiftPM tests without Docker. `make test-asan` instruments the Swift/C callers and CLI with AddressSanitizer; Rust instrumentation remains separate. Make clears Swift build products after building Rust to prevent stale static-library links. After `make codec`, direct `swift test` also works. `swift run replicator-lab` does not need the Rust archive. `make upstream-tests` fetches the pinned codec, explicitly enables its binlog test feature, uses a committed test lockfile, and writes a fixture catalog. Its test-only C++ dependencies are described in [upstream qualification](tests/Upstream/README.md). Production Rust dependencies exclude that test feature.
 

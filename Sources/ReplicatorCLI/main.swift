@@ -1,5 +1,13 @@
 import Foundation
 import ReplicatorCodec
+import ReplicatorCapture
+#if canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
+import Glibc
+#else
+import Darwin
+#endif
 
 func main() throws {
     var args = Array(CommandLine.arguments.dropFirst())
@@ -12,16 +20,45 @@ func main() throws {
         mysql-replicator — development offline decoder
         Usage: mysql-replicator inspect FILE [--schema HISTORY.json] [--include-raw]
                    [--transactions --binlog-file SOURCE_FILENAME]
+               mysql-replicator inspect --source-config SOURCE.json [--transactions] [--include-raw]
                mysql-replicator --version | --help
         Output: one JSON event per line; diagnostics on stderr, failure exits nonzero.
         --transactions emits complete source groups and rejects incomplete EOF.
         Rows require historical signedness/encoding tied to table-map positions.
-        Live capture, file relay and SQLite state and target apply are not implemented.
+        Live inspection is read-only and has no durable checkpoint or automatic reconnect.
+        File relay, SQLite replication state and target apply are not implemented.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
         return
     }
     guard args.removeFirst() == "inspect", !args.isEmpty else { throw DecoderError(code: 1, offset: 0, reason: "unsupported command; use --help") }
+    if args.first == "--source-config" {
+        args.removeFirst()
+        guard !args.isEmpty else { throw CaptureError("--source-config requires a JSON file") }
+        let source = URL(fileURLWithPath: args.removeFirst())
+        let data = try readBounded(source)
+        let config = try JSONDecoder().decode(CaptureConfiguration.self, from: data)
+        guard Set(args).count == args.count, args.allSatisfy({ ["--transactions", "--include-raw"].contains($0) }) else {
+            throw CaptureError("invalid or duplicate live inspect option")
+        }
+        guard let password = ProcessInfo.processInfo.environment[config.passwordEnvironment] else {
+            throw CaptureError("source password environment variable is unset")
+        }
+        let cancellation = CaptureCancellation()
+        signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
+        let signals = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
+            let signal = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            signal.setEventHandler { cancellation.cancel() }; signal.resume(); return signal
+        }
+        defer { signals.forEach { $0.cancel() } }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let transactions = args.contains("--transactions")
+        let summary = try LiveInspection.run(configuration: config, password: password, includeRaw: args.contains("--include-raw"), cancellation: cancellation,
+            emitEvent: { if !transactions { try FileHandle.standardOutput.write(contentsOf: encoder.encode($0) + Data([10])) } },
+            emitTransaction: { if transactions { try FileHandle.standardOutput.write(contentsOf: encoder.encode($0) + Data([10])) } })
+        try FileHandle.standardError.write(contentsOf: encoder.encode(summary) + Data([10]))
+        return
+    }
     let file = URL(fileURLWithPath: args.removeFirst())
     var schemaURL: URL?, includeRaw = false, transactions = false, sourceFile: String?
     while !args.isEmpty {
@@ -62,6 +99,13 @@ func main() throws {
         }
     }
 }
+func readBounded(_ url: URL) throws -> Data {
+    let file = try FileHandle(forReadingFrom: url)
+    defer { try? file.close() }
+    let data = try file.read(upToCount: 1024*1024+1) ?? Data()
+    guard data.count <= 1024*1024 else { throw CaptureError("configuration exceeds 1 MiB") }
+    return data
+}
 do { try main() }
 catch {
     let diagnostic: [String: Any]
@@ -75,6 +119,9 @@ catch {
         diagnostic = ["error": "binlog_transaction_failed", "code": failure.code.rawValue,
             "coordinate": coordinate(failure.coordinate), "transactionStart": coordinate(failure.transactionStart),
             "lastCompleteBoundary": coordinate(failure.lastCompleteBoundary), "reason": failure.reason]
+    } else if let failure = error as? LiveInspectionError {
+        let summary = (try? JSONEncoder().encode(failure.summary)).flatMap { try? JSONSerialization.jsonObject(with: $0) }
+        diagnostic = ["error": "live_capture_failed", "reason": failure.reason, "progress": summary ?? NSNull()]
     } else { diagnostic = ["error": "inspect_failed", "reason": String(describing: error)] }
     if let bytes = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]) {
         try? FileHandle.standardError.write(contentsOf: bytes + Data([10]))
