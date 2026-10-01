@@ -27,6 +27,30 @@ final class ApplyTests: XCTestCase {
         try Inspection.inspectTransactions(file:root.appendingPathComponent("tests/ReplicatorLabTests/Fixtures/source-positive.binlog"),sourceFile:"binlog.000003",history:history,includeRaw:true) { if $0.start.position >= 1589 { groups.append($0) } }
         return groups
     }
+    func testCleanStopRequiresTypedCancellationAndNoPendingCaptureOrApply() throws {
+        func error(_ cause: Error, pending: BinlogCoordinate? = nil) -> LiveInspectionError {
+            LiveInspectionError(error:cause,summary:LiveSummary(transactions:0,events:0,eventBytesReceived:"0",heartbeats:0,rotationAnnouncements:0,lastCompleteBoundary:nil,pendingTransactionStart:pending,completeGTIDSet:sid+":1-10"))
+        }
+        XCTAssertTrue(ApplyRun.canStopCleanly(error(CaptureCancelled()),pendingGTID:nil))
+        XCTAssertFalse(ApplyRun.canStopCleanly(error(CaptureCancelled(),pending:.init(file:"binlog.000003",position:1589)),pendingGTID:nil))
+        XCTAssertFalse(ApplyRun.canStopCleanly(error(CaptureCancelled()),pendingGTID:sid+":11"))
+        XCTAssertFalse(ApplyRun.canStopCleanly(error(CaptureError("live inspection cancelled")),pendingGTID:nil))
+        XCTAssertFalse(ApplyRun.canStopCleanly(error(ApplyError("target write failed")),pendingGTID:nil))
+    }
+    func testIdleStopPersistsBaselineAndPendingApplyCannotBeStopped() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:parent) }
+        let store = try StateStore(configuration:config(parent.appendingPathComponent("state").path))
+        try store.running(); try store.stopped()
+        let db = store.directory.appendingPathComponent("state.sqlite")
+        XCTAssertEqual(try sqlite(db,"SELECT lifecycle,transactions_applied,active_gtid,diagnostic,applied_position FROM state"),[["STOPPED","0","NULL","NULL","NULL"]])
+        XCTAssertEqual(try store.durableAppliedGTIDs(),sid+":1-10")
+        try store.running(); try store.begin(groups()[0])
+        XCTAssertThrowsError(try store.stopped())
+        try store.block("apply cancelled")
+        XCTAssertEqual(try sqlite(db,"SELECT lifecycle,active_gtid,diagnostic FROM state"),[["BLOCKED",sid+":11","apply cancelled"]])
+    }
     func testRecordedDMLPlanPreservesValuesOrderAndSourceIdentity() throws {
         let c = try config(); try c.validate()
         let plans = try groups().flatMap { try DMLPlan.make($0,tables:tables()) }

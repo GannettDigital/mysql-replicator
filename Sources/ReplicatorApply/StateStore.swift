@@ -268,6 +268,7 @@ final class StateStore {
         if sequence-snapshotSequence >= policy.snapshotEveryTransactions {try snapshot()}
     }
     func stopped() throws {
+        try require(pendingGTID == nil,"cannot stop cleanly with a pending apply group")
         try relay!.synchronize()
         if sequence != snapshotSequence {try snapshot()}
         try execute("UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])

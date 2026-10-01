@@ -193,7 +193,14 @@ final class CaptureTests: XCTestCase {
         q.finish(.failure(CaptureError("cut")))
         XCTAssertThrowsError(try q.next(timeout:1,cancellation:cancellation,requestRead:{}))
         let cancelled = PacketQueue(byteLimit:3); cancellation.cancel()
-        XCTAssertThrowsError(try cancelled.next(timeout:1,cancellation:cancellation,requestRead:{}))
+        XCTAssertThrowsError(try cancelled.next(timeout:1,cancellation:cancellation,requestRead:{})) {
+            XCTAssertTrue($0 is CaptureCancelled)
+        }
+        // A concurrent stop must not turn a known transport failure into success.
+        XCTAssertThrowsError(try q.next(timeout:1,cancellation:cancellation,requestRead:{})) {
+            XCTAssertFalse($0 is CaptureCancelled)
+            XCTAssertEqual(String(describing:$0),"cut")
+        }
         let done = PacketQueue(byteLimit:3); try done.push(Data([1])); done.finish(.success(()))
         XCTAssertEqual(try done.next(timeout:1,cancellation:.init(),requestRead:{}),Data([1]))
         XCTAssertNil(try done.next(timeout:1,cancellation:.init(),requestRead:{}))

@@ -37,7 +37,9 @@ final class PacketQueue: @unchecked Sendable {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         condition.lock(); defer { condition.unlock() }
         while true {
-            if cancellation.isCancelled { throw CaptureError("live inspection cancelled") }
+            // A known transport failure must not be hidden by a concurrent stop.
+            if case .failure(let error) = completion { throw error }
+            if cancellation.isCancelled { throw CaptureCancelled() }
             if index < packets.count {
                 let packet = packets[index]; index += 1; bytes -= packet.count
                 if index == packets.count { packets = []; index = 0 }
@@ -64,9 +66,19 @@ public struct LiveSummary: Encodable {
     public let durableProgress = false
 }
 
+struct CaptureCancelled: Error, CustomStringConvertible {
+    var description: String { "live inspection cancelled" }
+}
+
 public struct LiveInspectionError: Error, CustomStringConvertible {
     public let reason: String
     public let summary: LiveSummary
+    public let isCancellation: Bool
+    init(error: Error, summary: LiveSummary) {
+        self.reason = String(describing: error)
+        self.summary = summary
+        self.isCancellation = error is CaptureCancelled
+    }
     public var description: String { reason }
 }
 
@@ -118,7 +130,7 @@ public enum LiveInspection {
             let covered = try query("SELECT GTID_SUBSET('\(set.canonical)',@@GLOBAL.gtid_executed) AS covered")
             guard covered.first?.column("covered")?.string == "1" else { throw CaptureError("bootstrap GTID set is not covered by this source") }
             _ = try query("SET @source_binlog_checksum='CRC32',@source_heartbeat_period=1000000000")
-            if cancellation.isCancelled { throw CaptureError("live inspection cancelled") }
+            if cancellation.isCancelled { throw CaptureCancelled() }
 
             let maximum = Int(config.maximumEventBytes ?? 4*1024*1024)
             let queue = PacketQueue(byteLimit: maximum + 256*1024)
@@ -148,6 +160,6 @@ public enum LiveInspection {
                 throw CaptureError("source EOF before requested transaction count")
             }
             return summary()
-        } catch { throw LiveInspectionError(reason: String(describing: error), summary: summary()) }
+        } catch { throw LiveInspectionError(error: error, summary: summary()) }
     }
 }

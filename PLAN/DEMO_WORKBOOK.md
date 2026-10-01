@@ -46,7 +46,10 @@ docker exec "${DEMO_STACK}-applier" tail -f /evidence/applier.ndjson /evidence/a
 ```
 
 Ctrl-C in this log viewer stops viewing only. Ctrl-C in the foreground replicator
-stops replication; recovery/reopening state is not implemented, so use a fresh
+stops replication. While idle or between complete transactions, it prints a
+`STOPPED` summary, exits successfully, and persists `STOPPED` with no error
+diagnostic. Interrupting a partial transaction or apply still leaves `BLOCKED`.
+Recovery/reopening state is not implemented, so use a fresh
 stack for the next run. `docker logs` shows the idle container's output, not output
 from a command launched with `docker exec`.
 

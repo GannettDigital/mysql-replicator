@@ -191,7 +191,15 @@ retains host artifacts, including `captured/state/state.sqlite`, for review.
 It does not prune unrelated Docker resources or alter qualification-suite stacks.
 Fixture credentials and TLS keys in these artifacts are for this isolated lab only.
 
-Stopping with Ctrl-C, Docker stop, or an error does not enable resume. Start the
+Ctrl-C/SIGTERM received by the binary while idle or between complete transactions
+produces a successful `STOPPED` summary and persists `STOPPED` without an error
+diagnostic. Partial capture/apply interruptions and actual errors remain `BLOCKED`;
+known transport failures take precedence over a concurrent stop request. A forced
+kill cannot guarantee this graceful shutdown. The binary currently prints progress
+only after applying a transaction, so silence while waiting for source changes is
+normal; `make demo-status` shows the live process and SQLite lifecycle.
+
+Stopping does not enable resume. Start the
 next rehearsal with a fresh stack/baseline; never delete only SQLite and replay the
 old baseline against an already changed target. Setup failures retain a session
 record so `demo-down` can clean up before retrying. Avoid running lifecycle
@@ -205,13 +213,15 @@ make demo-suite
 make demo-suite ARGS=--skip-build
 ```
 
-The suite uses isolated sessions under `artifacts/demo-suite/` and
-`artifacts/demo-suite-detached/`, independent of the interactive stack. Named cases
+The suite uses isolated sessions under `artifacts/demo-suite/`,
+`artifacts/demo-suite-idle-stop/`, and `artifacts/demo-suite-detached/`,
+independent of the interactive stack. Named cases
 verify a running shell-ready container with no replication process/state, manual
 CLI launch inside that container, refusal of repeated setup/start, 35 seconds of
 idle heartbeat operation, successful SQL/schema/data/counters, and the failure
-boundary with the shell still available. A separate case exercises detached
-startup and cleanup while the writer is active. Each session archives evidence
+boundary with the shell still available. Separate cases check idle SIGINT with
+exit code zero and SIGTERM after the successful workload, asserting STOPPED, no
+diagnostic, and unchanged checkpoints/counters. Each session archives evidence
 and removes its own disposable stack. It does not import
 new broad DDL-catalog coverage from these demonstration assertions.
 
@@ -230,6 +240,15 @@ SQL/schema comparison, and fail-stop with the container still running are record
 in the [manual-session results](../artifacts/demo-suite/20261001T025252Z-ebf0dd8c-auto-autocommit-myisam/result.json).
 Detached startup and cleanup of an active writer passed in the
 [detached-session results](../artifacts/demo-suite-detached/20261001T025459Z-4c8b7fbd-auto-autocommit-myisam/result.json).
-The archived state records BLOCKED with `live inspection cancelled`, confirming
-that SIGTERM reached the writer before copying its closed SQLite database.
+Those historical results predate the graceful-stop fix: their archived state
+records BLOCKED with `live inspection cancelled`. Current qualification requires
+STOPPED for idle SIGINT and SIGTERM after applying the successful workload.
 Process detection was exercised under Docker Desktop's amd64 emulation as well.
+
+Graceful-stop validation, 2026-09-30: 39 focused Swift tests and all six Docker
+rehearsal cases passed. The [idle SIGINT result](../artifacts/demo-suite-idle-stop/20261001T033219Z-6d3d89bd-auto-autocommit-myisam/result.json)
+records STOPPED, exit code zero, zero applied work, and an unchanged baseline.
+The [post-workload SIGTERM result](../artifacts/demo-suite-detached/20261001T033312Z-c1406c19-auto-autocommit-myisam/result.json)
+retains eight transactions, three DDL statements, six rows, and the applied
+checkpoint with no error diagnostic. The [failure regression](../artifacts/demo-suite/20261001T032934Z-2c516a3f-auto-autocommit-myisam/result.json)
+still blocks explicit-engine DDL without advancing past the failure.

@@ -322,6 +322,15 @@ public enum DemoSession {
             try writeJSON(["result": "passed", "swift_diagnostic": diagnostic, "native": native, "checkpoint": try checkpoint(), "observations": results], to: h.output.appendingPathComponent("failure.json"))
             print("PASS: native stopped with 3161; Swift is BLOCKED with an unchanged applied checkpoint. The failed table and following marker exist only on source.")
         }
+        func stopWriter(signal: String = "TERM") throws {
+            let pids = try replicatorPIDs()
+            if !pids.isEmpty {
+                _ = try docker(["exec", applier, "/bin/sh", "-c", "kill -" + signal + #" "$@""#, "demo-stop"] + pids)
+                let deadline = Date().addingTimeInterval(15)
+                while try replicatorRunning() && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+                try require(!replicatorRunning(), "writer did not exit; retaining the demo and its evidence")
+            }
+        }
         func down() throws {
             try load(ready: false)
             log("stopping only \(h.project); preserving evidence before deleting its disposable volumes")
@@ -329,13 +338,7 @@ public enum DemoSession {
             if exists {
                 // Docker exec children are not PID 1; signal the actual writer
                 // before stopping the idle container and copying its SQLite files.
-                let pids = try replicatorPIDs()
-                if !pids.isEmpty {
-                    _ = try docker(["exec", applier, "/bin/sh", "-c", #"kill -TERM "$@""#, "demo-stop"] + pids)
-                    let deadline = Date().addingTimeInterval(15)
-                    while try replicatorRunning() && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
-                    try require(!replicatorRunning(), "writer did not exit; retaining the demo and its evidence")
-                }
+                try stopWriter()
                 _ = try docker(["stop", "--time", "10", applier])
                 let logs = try docker(["logs", applier])
                 try logs.stdout.write(to: h.output.appendingPathComponent("applier.ndjson"))
@@ -396,29 +399,52 @@ public enum DemoSession {
         }
         if let output { try writeJSON(["result": failure == nil ? "passed" : "failed", "diagnostic": failure.map(String.init(describing:)) ?? "", "cleanup": FileManager.default.fileExists(atPath: session.manifestURL.path) ? "incomplete" : "passed"], to: output.appendingPathComponent("result.json")) }
         if let failure { throw failure }
-        let detached = Session(root: root, category: "demo-suite-detached")
-        var detachedFailure: Error?
-        do {
-            try detached.up(build: false)
-            let reporter = QualificationReporter(output: detached.h.output, log: detached.log)
-            let test = QualificationCase("demo-detached-cleanup", "Convenience start launches a process in the idle container; cleanup stops an active writer before archiving SQLite")
+        for idle in [true, false] {
+            let detached = Session(root: root, category: idle ? "demo-suite-idle-stop" : "demo-suite-detached")
+            var detachedFailure: Error?
             do {
-                try reporter.run(test) {
-                    try detached.start()
-                    try require(detached.replicatorRunning(), "detached start did not launch the writer")
-                    try detached.down()
-                    let archived = detached.h.output.appendingPathComponent("captured/state/state.sqlite")
-                    try require(FileManager.default.fileExists(atPath: archived.path), "cleanup did not archive SQLite")
-                }
-            } catch { throw reporter.fail(error) }
-        } catch { detachedFailure = error }
-        if FileManager.default.fileExists(atPath: detached.manifestURL.path), detached.manifest != nil {
-            do { try detached.down() } catch { if detachedFailure == nil { detachedFailure = error } }
+                try detached.up(build: false)
+                let reporter = QualificationReporter(output: detached.h.output, log: detached.log)
+                let test = QualificationCase(idle ? "demo-idle-sigint" : "demo-applied-sigterm", idle
+                    ? "Ctrl-C while idle exits zero and persists STOPPED without advancing the checkpoint"
+                    : "SIGTERM after DDL/DML persists STOPPED with the applied checkpoint and counters intact")
+                do {
+                    try reporter.run(test) {
+                        if idle {
+                            _ = try detached.docker(["exec", "-d", detached.applier, "/bin/bash", "-c", "mysql-replicator run --config /evidence/apply.json --initialize > /evidence/applier.ndjson 2> /evidence/applier.stderr; echo $? > /evidence/applier.exit"])
+                            try detached.waitForCapture()
+                        } else {
+                            try detached.start()
+                            try detached.executeSQL(file: root.appendingPathComponent("examples/demo/01-success.sql"))
+                            try detached.compare()
+                        }
+                        let checkpoint = try detached.state("SELECT baseline_gtids||'|'||IFNULL(applied_file,'NULL')||'|'||IFNULL(applied_position,'NULL')||'|'||applied_sequence FROM state")
+                        try detached.stopWriter(signal: idle ? "INT" : "TERM")
+                        try require(detached.applierStatus() == "running", "clean stop killed the interactive container")
+                        try require(detached.state("SELECT lifecycle||'|'||transactions_applied||'|'||ddl_applied||'|'||rows_applied||'|'||IFNULL(active_gtid,'NULL')||'|'||IFNULL(diagnostic,'NULL') FROM state") == (idle ? "STOPPED|0|0|0|NULL|NULL" : "STOPPED|8|3|6|NULL|NULL"), "clean stop lost progress or left a diagnostic")
+                        try require(detached.state("SELECT baseline_gtids||'|'||IFNULL(applied_file,'NULL')||'|'||IFNULL(applied_position,'NULL')||'|'||applied_sequence FROM state") == checkpoint, "stop changed the checkpoint")
+                        let final = try detached.docker(["exec", detached.helper, "cat", "/evidence/applier.stderr"]).stdout
+                        let summary = try JSONSerialization.jsonObject(with: final) as? [String: Any]
+                        try require(summary?["lifecycle"] as? String == "STOPPED" && summary?["error"] == nil, "CLI did not report successful stop")
+                        if idle {
+                            let deadline = Date().addingTimeInterval(5)
+                            while try detached.docker(["exec", detached.helper, "test", "-f", "/evidence/applier.exit"], checked: false).status != 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+                            try require(detached.docker(["exec", detached.helper, "cat", "/evidence/applier.exit"]).text == "0", "idle SIGINT exited unsuccessfully")
+                        }
+                        try detached.down()
+                        let archived = detached.h.output.appendingPathComponent("captured/state/state.sqlite")
+                        try require(FileManager.default.fileExists(atPath: archived.path), "cleanup did not archive SQLite")
+                    }
+                } catch { throw reporter.fail(error) }
+            } catch { detachedFailure = error }
+            if FileManager.default.fileExists(atPath: detached.manifestURL.path), detached.manifest != nil {
+                do { try detached.down() } catch { if detachedFailure == nil { detachedFailure = error } }
+            }
+            if let h = detached.harness {
+                try writeJSON(["result": detachedFailure == nil ? "passed" : "failed", "diagnostic": detachedFailure.map(String.init(describing:)) ?? ""], to: h.output.appendingPathComponent("result.json"))
+            }
+            if let detachedFailure { throw detachedFailure }
         }
-        if let h = detached.harness {
-            try writeJSON(["result": detachedFailure == nil ? "passed" : "failed", "diagnostic": detachedFailure.map(String.init(describing:)) ?? ""], to: h.output.appendingPathComponent("result.json"))
-        }
-        if let detachedFailure { throw detachedFailure }
-        print("Demo suite PASS: setup/start separation, idle heartbeats, positive SQL, fail-stop and cleanup.")
+        print("Demo suite PASS: setup/start separation, idle heartbeats, positive SQL, fail-stop, graceful SIGINT/SIGTERM and cleanup.")
     }
 }

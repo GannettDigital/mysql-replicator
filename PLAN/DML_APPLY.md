@@ -51,9 +51,11 @@ checks do not certify the external snapshot/load.
 `stopAfterTransactions` / `nonBlocking` on `source` provide bounded qualification
 runs. Otherwise the command follows the source until stopped or an error occurs.
 Stdout contains one progress JSON record per fully applied source group; stderr
-contains the final summary or a structured error. SIGINT/SIGTERM stop the attempt;
-they do not enable reopening or retry. Passwords and row values are not printed
-in ordinary apply progress. Relay files do contain source row bytes.
+contains the final summary or a structured error. SIGINT/SIGTERM at a complete
+capture/apply boundary persist STOPPED and exit zero; a partial capture/apply
+interruption remains BLOCKED. A known transport or apply failure is not converted
+to success by a concurrent stop. Signals do not enable reopening or retry.
+Passwords and row values are not printed in ordinary apply progress. Relay files do contain source row bytes.
 
 ## Declared subset and checks
 
