@@ -27,23 +27,28 @@ public enum ApplyRun {
         return live.isCancellation && live.summary.pendingTransactionStart == nil && pendingGTID == nil
     }
 
-    /// Serial DML/qualified DDL: exactly one attempt and a new state directory.
-    /// Existing state, interrupted runs and uncertain outcomes are never retried.
+    /// One connection attempt, either new state or an explicitly resumed clean stop.
+    /// Interrupted runs and uncertain target outcomes are never retried.
     public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
-                           cancellation: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
+                           initialize: Bool = false, cancellation: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
         try configuration.validate()
-        let state = try StateStore(configuration:configuration)
+        let state = try StateStore(configuration:configuration,initialize:initialize)
         func summary(_ lifecycle: String) -> ApplySummary {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
                 appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path)
         }
+        let capture = try state.captureConfiguration(configuration.source)
+        var started = false
         do {
             let target = try TargetSession(configuration:configuration,password:targetPassword)
             try target.preflight()
             try state.bindTargetIdentity(target.targetUUID!)
-            try state.running()
+            for table in state.currentSchemas {
+                try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
+            }
+            try state.running(); started = true
             do {
-                _ = try LiveInspection.run(configuration:configuration.source,password:sourcePassword,includeRaw:true,cancellation:cancellation,
+                _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:cancellation,
                     emitEvent:state.append,emitTransaction: { group in
                         try state.begin(group)
                         if group.outcome == .statement {
@@ -87,6 +92,8 @@ public enum ApplyRun {
             let reason: String
             if let live = error as? LiveInspectionError { reason = live.reason }
             else { reason = String(describing:error) }
+            // A rejected resume/preflight must not rewrite the saved checkpoint.
+            if !initialize && !started { throw ApplyRunError(reason:reason,progress:summary("STOPPED")) }
             do { try state.block(reason) }
             catch { throw ApplyRunError(reason:reason + "; additionally failed to persist BLOCKED diagnostic",progress:summary("BLOCKED")) }
             throw ApplyRunError(reason:reason,progress:summary("BLOCKED"))

@@ -54,6 +54,14 @@ public struct GTIDSet: Equatable {
         guard let uuid = UUID(uuidString: sid), let n = UInt64(sequence) else { return false }
         return sids.first { $0.uuid == uuid }?.intervals.contains { $0.contains(n) } ?? false
     }
+    public func covers(_ other: GTIDSet) -> Bool {
+        other.sids.allSatisfy { required in
+            guard let stored = sids.first(where: { $0.uuid == required.uuid }) else { return false }
+            return required.intervals.allSatisfy { range in
+                stored.intervals.contains { $0.lowerBound <= range.lowerBound && $0.upperBound >= range.upperBound }
+            }
+        }
+    }
     public mutating func include(sid: String, sequence: String) throws {
         guard let uuid = UUID(uuidString: sid) else { throw CaptureError("invalid observed SID") }
         let components = canonical.split(separator: ",").map(String.init)

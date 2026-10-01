@@ -19,7 +19,7 @@ The planned production configuration supplies:
 
 The operator owns snapshot/load correctness. Startup validates syntax, identities, schema compatibility and available history, and refuses active/connecting native channels or uncertain ownership before target writes. These checks cannot prove that every loaded row matches the asserted boundary. A filtered stream's seed GTID set stays bound to that scope; adding previously omitted data requires another externally established baseline.
 
-For a new local state directory, durably record the supplied baseline without counting it as transactions applied by this process. Capture-only mode must not claim target/applied progress. The planned restart path resumes existing state from its own durable capture/applied checkpoints; initialization must refuse to overwrite it. Source GTIDs live in local state; the replicator does not set target `gtid_purged`. Target apply connections continue using `SET @@SESSION.GTID_NEXT = 'AUTOMATIC'` with OFF_PERMISSIVE/WARN.
+For a new local state directory, durably record the supplied baseline without counting it as transactions applied by this process. Capture-only mode must not claim target/applied progress. Clean-stop restart uses its own durable applied checkpoint, falling back to the saved baseline; recovery of unfinished capture/apply work remains planned; initialization must refuse to overwrite it. Source GTIDs live in local state; the replicator does not set target `gtid_purged`. Target apply connections continue using `SET @@SESSION.GTID_NEXT = 'AUTOMATIC'` with OFF_PERMISSIVE/WARN.
 
 A prepared-target handoff may come from a dump/load, an existing stopped replica or another externally verified provisioning method. All use this same input contract. Required history must remain available from the supplied boundary until safely captured; expired history produces a diagnostic requiring external action, never an automatic jump to the current source position or an internal reload.
 
@@ -33,12 +33,18 @@ The exact export/import versions and 8.4-to-5.7 MyISAM load compatibility need s
 
 ## Next implementation increment
 
-Automatic schema discovery and bounded SQLite history are committed at `e8c0e77`.
-The current DDL prototype adds target UUID discovery and ordered schema/DDL intents,
-but rewrites explicit InnoDB to MyISAM. The immediate priority is
-[removing that rewrite and qualifying broader native-compatible DDL](DDL_COMPLETENESS.md),
-including DML after each schema change. The sections below define future work;
-restart, channel adoption and operator skip commands are not implemented yet.
+DDL native-default behavior and broader coverage are implemented under
+[DDL completeness](DDL_COMPLETENESS.md). Explicit clean-stop resume is now
+implemented: `run --config APPLY.json` reopens STOPPED SQLite state, starts from
+its applied GTID/position or its saved baseline when no work was applied, and
+restores counters/schema history. `--initialize` remains exclusive new-state
+creation. Local writer locking, target identity/schema checks and native exclusion
+are repeated on resume. Changed JSON start coordinates cannot override SQLite.
+
+BLOCKED state, incomplete work and crash recovery remain future work, as do native
+channel adoption and operator skip commands. The broader contracts below describe
+those remaining increments; clean-stop resume does not certify target durability
+after mysqld/host loss.
 
 ## Future first start: stopped native replica
 
@@ -83,7 +89,7 @@ writing. A supplied baseline is an operator assertion about prepared data; the
 replicator cannot infer load completeness from coordinates. Unavailable upstream
 history blocks and requires external repair/reseed. Never silently jump forward.
 
-## Future subsequent starts: SQLite is authoritative
+## Subsequent starts: SQLite is authoritative
 
 Ordinary startup with existing state reads its persisted baseline, source/target
 identities, scope, schema versions, completed applied checkpoint, cumulative GTID

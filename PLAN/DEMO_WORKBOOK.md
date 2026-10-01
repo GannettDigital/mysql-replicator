@@ -49,9 +49,17 @@ Ctrl-C in this log viewer stops viewing only. Ctrl-C in the foreground replicato
 stops replication. While idle or between complete transactions, it prints a
 `STOPPED` summary, exits successfully, and persists `STOPPED` with no error
 diagnostic. Interrupting a partial transaction or apply still leaves `BLOCKED`.
-Recovery/reopening state is not implemented, so use a fresh
-stack for the next run. `docker logs` shows the idle container's output, not output
-from a command launched with `docker exec`.
+After STOPPED, resume in the same shell without the initialization flag:
+
+```sh
+mysql-replicator run --config /evidence/apply.json
+```
+
+This uses saved applied GTID/position, falling back to the saved baseline when no
+work was applied. `make demo-start` on the host also resumes a clean stop. Keep the
+same state directory; do not rerun the successful SQL script after resuming.
+BLOCKED or interrupted work still requires future recovery support.
+`docker logs` shows the idle container's output, not output from `docker exec`.
 
 To inspect live state, open another shell in the applier, then run:
 
@@ -154,5 +162,6 @@ make demo-down
 ```
 
 For a fresh rehearsal, run `make demo-up ARGS=--skip-build` and repeat the setup
-block in each terminal. Existing replication state cannot yet be resumed.
+block in each terminal. Use this reset for a new rehearsal after the deliberate failure; clean STOPPED
+state can instead be resumed without resetting the stack.
 See [the full runbook](DEMO.md) for artifacts and qualification details.

@@ -32,6 +32,16 @@ public struct CaptureConfiguration: Decodable {
     public let idleTimeoutSeconds: Int?
     public let maximumEventBytes: UInt32?
 
+    /// Keep connection/protocol options, replacing only the authoritative boundary.
+    public func resuming(file: String?, position: UInt32?, executedGTIDs: String) -> CaptureConfiguration {
+        CaptureConfiguration(version:version,host:host,port:port,username:username,
+            passwordEnvironment:passwordEnvironment,serverHostname:serverHostname,caFile:caFile,
+            serverID:serverID,sourceUUID:sourceUUID,mode:mode,
+            start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
+            nonBlocking:nonBlocking,stopAfterTransactions:stopAfterTransactions,
+            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes)
+    }
+
     public func validate() throws -> DumpStart {
         guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty, !passwordEnvironment.isEmpty,
               !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,

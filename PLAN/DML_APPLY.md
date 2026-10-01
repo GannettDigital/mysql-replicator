@@ -4,7 +4,8 @@ This increment connects the existing live reader/decoder/transaction assembler t
 MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
 The [native engine/charset DDL foundation](DDL_NATIVE_DEFAULTS.md) replaces the
 initial prototype rewrites. Broader coverage follows the [DDL completeness plan](DDL_COMPLETENESS.md).
-Automatic reconnect and recovery/reopening of existing state remain unimplemented.
+Cleanly stopped state can be resumed explicitly. Automatic reconnect and recovery
+of interrupted or uncertain writes remain unimplemented.
 Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 
@@ -35,10 +36,28 @@ make build
 .build/debug/mysql-replicator run --config apply.json --initialize
 ```
 
-The state directory's parent must already exist; the state directory itself must
-not exist. Initialization creates it exclusively with private permissions. An
-existing directory is rejected, including a cleanly stopped previous run. There
-is no resume or checkpoint-reset command in this increment. Never delete state
+For `--initialize`, the state directory's parent must already exist and the state
+directory itself must not exist. Initialization creates it exclusively with private
+permissions and records the configured external baseline. To restart after a clean
+stop, omit the flag:
+
+```sh
+.build/debug/mysql-replicator run --config apply.json
+```
+
+SQLite is authoritative on restart: use the saved fully applied position and GTID
+snapshot; when no group has been applied, use the recorded baseline instead.
+Configuration `source.start` cannot replace saved progress. `source.mode` selects
+GTID or file-position transport; positional mode requires a saved coordinate.
+Counters and current schema history are restored, and relay bytes are appended.
+A process-lifetime local writer lock, target UUID/schema checks and native/writer
+exclusion prevent concurrent or mismatched startup. Existing version-4 clean-stop
+state is supported without migration.
+
+Missing state is an error without `--initialize`. BLOCKED/RUNNING/STARTING state,
+unresolved intents, invalid snapshots or mismatched relay lengths are refused;
+this slice does not reconcile crashes or partially applied MyISAM writes. Target
+server/host crash durability is still outside this guarantee. Never delete state
 and reuse an old baseline against a partially changed target.
 
 Source `mode: "gtid"` now accepts a start containing only `executedGTIDs`.
@@ -54,7 +73,8 @@ Stdout contains one progress JSON record per fully applied source group; stderr
 contains the final summary or a structured error. SIGINT/SIGTERM at a complete
 capture/apply boundary persist STOPPED and exit zero; a partial capture/apply
 interruption remains BLOCKED. A known transport or apply failure is not converted
-to success by a concurrent stop. Signals do not enable reopening or retry.
+to success by a concurrent stop. A clean STOPPED state can then be resumed
+explicitly; uncertain writes are never retried.
 Passwords and row values are not printed in ordinary apply progress. Relay files do contain source row bytes.
 
 ## Declared subset and checks

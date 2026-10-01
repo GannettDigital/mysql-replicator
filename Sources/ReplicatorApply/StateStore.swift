@@ -10,12 +10,16 @@ import Glibc
 import Darwin
 #endif
 
-/// New-state-only journal. Each completed group is a durable GTID delta. Old
+/// Journal with explicit initialization and validated clean-stop reopening. Each completed group is a durable GTID delta. Old
 /// completed history is eligible for deletion only under storage pressure and
-/// only after a covering snapshot has committed. No target retry/reopen path.
+/// only after a covering snapshot has committed. No uncertain target write is retried.
 final class StateStore {
     private var db: OpaquePointer?
     private var relay: FileHandle?
+    private var writerLock: FileHandle?
+    private var targetUUID: String?
+    private var baseline: BinlogCoordinate?
+    var currentSchemas: [ApplyTable] { schemas.values.map { $0.1 } }
     private(set) var relayLength: UInt64 = 0
     private var groupStart: UInt64 = 0
     private var completedGTIDs: GTIDSet
@@ -39,15 +43,30 @@ final class StateStore {
     // Reserve enough of the total SQLite budget for a transaction touching every
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
-    init(configuration c: ApplyConfiguration, now: @escaping () -> Date = Date.init,
+    init(configuration c: ApplyConfiguration, initialize: Bool = true, now: @escaping () -> Date = Date.init,
          freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace) throws {
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
         self.now = now; self.freeDisk = freeDisk
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
-        guard mkdir(directory.path,0o700) == 0 else { throw ApplyError("state directory must be new; reopen/resume is not implemented") }
+        if initialize {
+            guard mkdir(directory.path,0o700) == 0 else { throw ApplyError("state directory must be new for --initialize; omit --initialize to resume saved STOPPED state") }
+        } else {
+            var isDirectory: ObjCBool = false
+            try require(FileManager.default.fileExists(atPath:directory.path,isDirectory:&isDirectory) && isDirectory.boolValue,
+                "saved state directory is missing; use --initialize only for an externally prepared baseline")
+        }
         do {
+            let lockFD = open(directory.appendingPathComponent("writer.lock").path,O_RDWR|O_CREAT,0o600)
+            guard lockFD >= 0 else { throw ApplyError("cannot open state writer lock") }
+            writerLock = FileHandle(fileDescriptor:lockFD,closeOnDealloc:true)
+            try require(flock(lockFD,LOCK_EX|LOCK_NB) == 0,"state directory already has an active writer")
+            if !initialize {
+                try reopen(configuration:c)
+                return
+            }
+            baseline = try coordinate(c.source.start.file,c.source.start.position.map(String.init))
             try Self.syncDirectory(directory.deletingLastPathComponent())
             try checkDisk(extra:policy.maximumSQLiteBytes)
             let fd = open(directory.appendingPathComponent("relay.frames").path,O_WRONLY|O_CREAT|O_EXCL,0o600)
@@ -80,7 +99,81 @@ final class StateStore {
             try Self.syncDirectory(directory)
         } catch {sqlite3_close(db); db=nil; try? relay?.close(); relay=nil; throw error}
     }
-    deinit {try? relay?.close(); sqlite3_close(db)}
+    deinit {try? relay?.close(); sqlite3_close(db); try? writerLock?.close()}
+
+    private func coordinate(_ file: String?, _ position: String?) throws -> BinlogCoordinate? {
+        if file == nil && position == nil { return nil }
+        guard let file, !file.isEmpty, !file.utf8.contains(0), file.utf8.count <= 255,
+              let position, let n = UInt32(position), n >= 4 else { throw ApplyError("invalid saved binlog coordinate") }
+        return BinlogCoordinate(file:file,position:UInt64(n))
+    }
+    private func reopen(configuration c: ApplyConfiguration) throws {
+        try require(sqliteBytes <= policy.maximumSQLiteBytes,"saved SQLite exceeds configured storage limit")
+        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil) == SQLITE_OK else {
+            throw ApplyError("cannot open existing SQLite state; no new state was initialized")
+        }
+        sqlite3_busy_timeout(db,1000)
+        try require(try number("PRAGMA user_version") == 4,"unsupported saved state version")
+        try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")
+        let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
+        try require(states.count == 1,"missing saved replication state")
+        let r = states[0]
+        try require(r[0] == "STOPPED" && r[13] == nil && r[14] == nil,
+            "saved state must be cleanly STOPPED; BLOCKED, unfinished and crash recovery require explicit resolution")
+        try require(r[1]?.lowercased() == c.source.sourceUUID.lowercased(),"saved source UUID differs from configuration")
+        guard let uuid = r[2], UUID(uuidString:uuid) != nil else { throw ApplyError("saved target UUID is missing or invalid") }
+        targetUUID = uuid.lowercased()
+        baseline = try coordinate(r[3],r[4]); applied = try coordinate(r[6],r[7])
+        guard let baseText = r[5], let seq = Int64(r[8] ?? ""), seq >= 0,
+              let tx = Int(r[9] ?? ""), tx >= 0, Int64(tx) == seq,
+              let count = Int(r[10] ?? ""), count >= 0,
+              let ddl = Int(r[11] ?? ""), ddl >= 0, ddl <= tx,
+              let length = UInt64(r[12] ?? ""), length <= maximumBytes else { throw ApplyError("invalid saved progress or relay limit") }
+        try require(seq == 0 ? (applied == nil && count == 0 && ddl == 0) : applied != nil,"saved checkpoint does not match applied work")
+        try require(try number("SELECT COUNT(*) FROM groups WHERE status!='APPLIED' OR sequence>\(seq)") == 0,"saved state contains unresolved groups")
+        try require(try number("SELECT COUNT(*) FROM row_intents WHERE status!='DONE'") == 0 && number("SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == 0,"saved state contains unresolved intents")
+        let snapshots = try query("SELECT covered_sequence,gtids,source_file,source_position FROM snapshots ORDER BY id DESC LIMIT 1")
+        guard let snap = snapshots.first, Int64(snap[0] ?? "") == seq, let gtids = snap[1] else { throw ApplyError("clean stop lacks a covering GTID snapshot") }
+        try require(try coordinate(snap[2],snap[3]) == applied,"snapshot and applied coordinates differ")
+        let base = try GTIDSet(baseText)
+        completedGTIDs = try GTIDSet(gtids)
+        try require(completedGTIDs.covers(base) && (seq != 0 || completedGTIDs == base),"saved GTID coverage differs from baseline")
+        for row in try query("SELECT gtid FROM groups WHERE status='APPLIED'") {
+            guard let id = row[0] else { throw ApplyError("missing saved group GTID") }
+            try require(try completedGTIDs.covers(GTIDSet(id)),"snapshot does not cover saved applied groups")
+        }
+        sequence=seq; snapshotSequence=seq; transactions=tx; rows=count; ddlApplied=ddl
+        for row in try query("SELECT id,identity,schema_json FROM schemas WHERE current=1") {
+            guard let id=Int64(row[0] ?? ""), let json=row[2] else { throw ApplyError("invalid saved schema") }
+            let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
+            let identity=String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self)
+            try require(row[1] == identity && schemas[table.identity] == nil && schemas.count < 64,"invalid saved schema identity/cache")
+            schemas[table.identity]=(id,table)
+        }
+        // Resume from the applied boundary, never from received-but-unapplied bytes.
+        let fd=open(directory.appendingPathComponent("relay.frames").path,O_WRONLY|O_APPEND)
+        guard fd >= 0 else { throw ApplyError("saved relay file is missing") }
+        relay=FileHandle(fileDescriptor:fd,closeOnDealloc:true)
+        try require(try relay!.seekToEnd() == length,"saved relay length differs from durable state")
+        relayLength=length; groupStart=length
+        _ = try captureConfiguration(c.source)
+        try checkDisk(extra:policy.maximumSQLiteBytes)
+        try require(try number("PRAGMA page_size") == 4096 && number("PRAGMA page_count") <= databaseLimit/4096,"saved SQLite exceeds configured page budget")
+        try execute("PRAGMA max_page_count=\(databaseLimit/4096)")
+        try require(try query("PRAGMA journal_mode=WAL").first?.first == "wal","saved SQLite must use WAL")
+        try execute("PRAGMA synchronous=FULL")
+        try execute("PRAGMA journal_size_limit=0")
+        try execute("PRAGMA cache_spill=OFF")
+        try execute("PRAGMA temp_store=MEMORY")
+        try execute("PRAGMA wal_autocheckpoint=64")
+        ready=true
+    }
+    func captureConfiguration(_ source: CaptureConfiguration) throws -> CaptureConfiguration {
+        let boundary = applied ?? baseline
+        let resumed = source.resuming(file:boundary?.file,position:boundary.map { UInt32($0.position) },executedGTIDs:gtids)
+        _ = try resumed.validate()
+        return resumed
+    }
     static func availableSpace(_ url: URL) throws -> Int64 {
         guard let n = try FileManager.default.attributesOfFileSystem(forPath:url.path)[.systemFreeSize] as? NSNumber else {throw ApplyError("cannot inspect free disk space")}
         return n.int64Value
@@ -215,7 +308,12 @@ final class StateStore {
     }
     func bindTargetIdentity(_ uuid: String) throws {
         try require(UUID(uuidString:uuid) != nil,"invalid discovered target identity")
-        try execute("UPDATE state SET target_uuid=?,updated_at=? WHERE id=1 AND target_uuid IS NULL",[uuid,timestamp()])
+        if let targetUUID {
+            try require(targetUUID == uuid.lowercased(),"saved target UUID differs from the connected target")
+            return
+        }
+        try execute("UPDATE state SET target_uuid=?,updated_at=? WHERE id=1 AND target_uuid IS NULL",[uuid.lowercased(),timestamp()])
+        targetUUID=uuid.lowercased()
     }
     func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
     func begin(_ group: CompleteTransaction) throws {

@@ -156,7 +156,7 @@ public enum DemoSession {
             Read SQLite in Docker: docker exec \(helper) sqlite3 -readonly -header -column /evidence/state/state.sqlite 'SELECT * FROM state;'
             Interactive source SQL: docker exec -it -e MYSQL_PWD=fixture-root-only \(h.project)-source-1 mysql --no-defaults -uroot --default-character-set=utf8mb4
             Cleanup this disposable stack: make demo-down
-            No automatic restart/resume. After stopping/failure, demo-down then demo-up creates a fresh demo.
+            After a clean stop: omit --initialize, or use make demo-start to resume SQLite state. BLOCKED recovery is not automatic.
             """
         }
         func applierStatus() throws -> String { try docker(["inspect", applier, "--format", "{{.State.Status}}"] ).text }
@@ -192,8 +192,10 @@ public enum DemoSession {
         func start() throws {
             try load()
             try require(applierStatus() == "running", "applier container is not running; inspect demo-status")
-            try require(!replicatorRunning() && !hasState(), "mysql-replicator already started; restarting existing state is unsupported; use demo-down then demo-up")
-            let command = "exec /usr/local/bin/mysql-replicator run --config /evidence/apply.json --initialize > /evidence/applier.ndjson 2> /evidence/applier.stderr"
+            try require(!replicatorRunning(), "mysql-replicator already started")
+            let initialize = try !hasState()
+            if !initialize { try require(state("SELECT lifecycle FROM state") == "STOPPED", "saved state is not STOPPED; unresolved failures require explicit recovery") }
+            let command = "exec /usr/local/bin/mysql-replicator run --config /evidence/apply.json" + (initialize ? " --initialize" : "") + " > /evidence/applier.ndjson 2> /evidence/applier.stderr"
             _ = try docker(["exec", "-d", applier, "/bin/sh", "-c", command])
             try waitForCapture()
             print("docker exec " + applier + " tail -f /evidence/applier.ndjson /evidence/applier.stderr")
@@ -207,7 +209,7 @@ public enum DemoSession {
                     return
                 }
                 if try replicatorRunning() { sawProcess = true }
-                else if try sawProcess || hasState() { throw LabError("mysql-replicator exited; run make demo-status for diagnostics") }
+                else if sawProcess { throw LabError("mysql-replicator exited; run make demo-status for diagnostics") }
                 Thread.sleep(forTimeInterval: 0.2)
             }
             throw LabError("capture did not become ready; run make demo-status")
@@ -359,6 +361,17 @@ public enum DemoSession {
         }
     }
 
+    private static func configureStart(_ session: Session, mode: String, boundary: Boundary) throws {
+        let file = session.h.output.appendingPathComponent("apply.json")
+        var config = try JSONSerialization.jsonObject(with:Data(contentsOf:file)) as! [String:Any]
+        var source = config["source"] as! [String:Any]
+        source["mode"] = mode
+        source["start"] = ["file":boundary.file,"position":boundary.position,"executedGTIDs":boundary.gtids]
+        config["source"] = source
+        try writeJSON(config,to:file)
+        _ = try session.docker(["cp",file.path,session.helper+":/evidence/apply.json"])
+    }
+
     private static func qualify(root: URL, build: Bool) throws {
         let session = Session(root: root, category: "demo-suite")
         var failure: Error?
@@ -392,6 +405,10 @@ public enum DemoSession {
             }
             try reporter!.run(QualificationCase("demo-fail-stop", "Prepared failure stops both appliers before the following marker; SQLite checkpoint stays fixed")) {
                 try session.fail(); try session.status()
+                let before = try session.state("SELECT diagnostic FROM state")
+                let refused = try session.docker(["exec", session.applier, "mysql-replicator", "run", "--config", "/evidence/apply.json"], checked: false)
+                try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("cleanly STOPPED"), "BLOCKED state was resumed")
+                try require(session.state("SELECT diagnostic FROM state") == before, "resume refusal overwrote original diagnostic")
             }
         } catch { failure = reporter?.fail(error) ?? error }
         if session.manifest != nil {
@@ -414,6 +431,9 @@ public enum DemoSession {
                             _ = try detached.docker(["exec", "-d", detached.applier, "/bin/bash", "-c", "mysql-replicator run --config /evidence/apply.json --initialize > /evidence/applier.ndjson 2> /evidence/applier.stderr; echo $? > /evidence/applier.exit"])
                             try detached.waitForCapture()
                         } else {
+                            // Qualify the positional protocol as well as the default GTID protocol.
+                            let boundary = try detached.h.boundary("source")
+                            try configureStart(detached, mode:"file-position", boundary:boundary)
                             try detached.start()
                             try detached.executeSQL(file: root.appendingPathComponent("examples/demo/01-success.sql"))
                             try detached.compare()
@@ -431,6 +451,31 @@ public enum DemoSession {
                             while try detached.docker(["exec", detached.helper, "test", "-f", "/evidence/applier.exit"], checked: false).status != 0 && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
                             try require(detached.docker(["exec", detached.helper, "cat", "/evidence/applier.exit"]).text == "0", "idle SIGINT exited unsuccessfully")
                         }
+                        try reporter.run(QualificationCase(idle ? "demo-resume-baseline-gtid" : "demo-resume-applied-position", idle
+                            ? "Resume from the saved GTID baseline despite changed JSON start coordinates; apply queued DDL/DML once"
+                            : "Resume from the applied file position; preserve schema/counters and apply queued DDL/DML once")) {
+                            let refused = try detached.docker(["exec", detached.applier, "mysql-replicator", "run", "--config", "/evidence/apply.json", "--initialize"], checked:false)
+                            try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("must be new"), "initialization overwrote saved state")
+                            if idle {
+                                try detached.executeSQL(file:root.appendingPathComponent("examples/demo/01-success.sql"))
+                            } else {
+                                _ = try detached.h.sql("source", "ALTER TABLE demo.items ADD COLUMN resumed INT NULL; UPDATE demo.items SET quantity=12,resumed=7 WHERE id=1; INSERT INTO demo.items VALUES(4,'after resume',40,'queued',9); DELETE FROM demo.items WHERE id=3")
+                            }
+                            // JSON now points past the queued workload. Only SQLite may choose the restart boundary.
+                            try configureStart(detached,mode:idle ? "gtid" : "file-position",boundary:detached.h.boundary("source"))
+                            try detached.start(); try detached.compare()
+                            let expected = idle ? "8|3|6" : "12|4|9"
+                            try require(detached.state("SELECT transactions_applied||'|'||ddl_applied||'|'||rows_applied FROM state") == expected,"resume skipped/replayed work or reset counters")
+                            if !idle {
+                                try require(detached.h.sql("target57","SELECT id,resumed FROM demo.items ORDER BY id") == "1\t7\n4\t9","DML after resumed DDL differs")
+                            }
+                            let duplicate = try detached.docker(["exec", detached.applier, "mysql-replicator", "run", "--config", "/evidence/apply.json"], checked:false)
+                            try require(duplicate.status != 0 && String(decoding:duplicate.stderr,as:UTF8.self).contains("active writer"), "concurrent CLI writer was not refused")
+                            try detached.stopWriter()
+                            // A second restart exercises the saved applied GTID set too, with no new events to replay.
+                            try detached.start(); try detached.compare(); try detached.stopWriter()
+                            try require(detached.state("SELECT lifecycle||'|'||transactions_applied||'|'||ddl_applied||'|'||rows_applied FROM state") == "STOPPED|" + expected,"repeated resume changed saved progress")
+                        }
                         try detached.down()
                         let archived = detached.h.output.appendingPathComponent("captured/state/state.sqlite")
                         try require(FileManager.default.fileExists(atPath: archived.path), "cleanup did not archive SQLite")
@@ -445,6 +490,6 @@ public enum DemoSession {
             }
             if let detachedFailure { throw detachedFailure }
         }
-        print("Demo suite PASS: setup/start separation, idle heartbeats, positive SQL, fail-stop, graceful SIGINT/SIGTERM and cleanup.")
+        print("Demo suite PASS: setup/start separation, idle heartbeats, positive SQL, fail-stop, graceful SIGINT/SIGTERM, saved-state resume and cleanup.")
     }
 }

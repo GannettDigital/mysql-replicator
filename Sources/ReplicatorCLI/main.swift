@@ -22,20 +22,21 @@ func main() throws {
         Usage: mysql-replicator inspect FILE [--schema HISTORY.json] [--include-raw]
                    [--transactions --binlog-file SOURCE_FILENAME]
                mysql-replicator inspect --source-config SOURCE.json [--transactions] [--include-raw]
-               mysql-replicator run --config APPLY.json --initialize
+               mysql-replicator run --config APPLY.json [--initialize]
                mysql-replicator --version | --help
         Output: one JSON event per line; diagnostics on stderr, failure exits nonzero.
         --transactions emits complete source groups and rejects incomplete EOF.
         Rows require historical signedness/encoding tied to table-map positions.
         Live inspection is read-only and has no durable checkpoint or automatic reconnect.
-        run applies the qualified DML subset using a new relay/SQLite state directory.
-        DDL, automatic reconnect and reopening existing apply state are not implemented.
+        run applies qualified DML/DDL; --initialize creates new state from the configured baseline.
+        Without --initialize, run resumes clean STOPPED state from SQLite.
+        Automatic reconnect and recovery of interrupted/uncertain writes are not implemented.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
         return
     }
     if args.first == "run" {
-        guard args.count == 4, args[1] == "--config", args[3] == "--initialize" else { throw ApplyError("use run --config APPLY.json --initialize; existing-state resume is not implemented") }
+        guard (args.count == 3 || (args.count == 4 && args[3] == "--initialize")), args[1] == "--config" else { throw ApplyError("use run --config APPLY.json [--initialize]") }
         let config = try JSONDecoder().decode(ApplyConfiguration.self,from:readBounded(URL(fileURLWithPath:args[2])))
         guard let sourcePassword = ProcessInfo.processInfo.environment[config.source.passwordEnvironment],
               let targetPassword = ProcessInfo.processInfo.environment[config.target.passwordEnvironment] else { throw ApplyError("source or target password environment variable is unset") }
@@ -47,7 +48,7 @@ func main() throws {
         }
         defer { signals.forEach { $0.cancel() } }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
-        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,cancellation:cancellation,
+        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,
             emitProgress: { try FileHandle.standardOutput.write(contentsOf:encoder.encode($0) + Data([10])) })
         try FileHandle.standardError.write(contentsOf:encoder.encode(summary) + Data([10]))
         return

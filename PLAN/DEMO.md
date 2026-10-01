@@ -73,6 +73,12 @@ make demo-start
 docker exec <applier-name> tail -f /evidence/applier.ndjson /evidence/applier.stderr
 ```
 
+After a clean STOPPED exit, run the same command **without `--initialize`** to
+resume from SQLite. If nothing was applied, it uses the recorded baseline; otherwise
+it uses the last fully applied GTID/position. `make demo-start` selects initialization
+for a new state directory and resume for existing STOPPED state. An active process
+or unresolved failure is refused. Detached log files contain the latest attempt.
+
 Choose manual or detached launch, not both. `docker logs` does not capture output
 from Docker exec sessions. Manual foreground output stays in that terminal;
 detached output goes to the two files above. `demo-status` reads SQLite diagnostics
@@ -199,9 +205,9 @@ kill cannot guarantee this graceful shutdown. The binary currently prints progre
 only after applying a transaction, so silence while waiting for source changes is
 normal; `make demo-status` shows the live process and SQLite lifecycle.
 
-Stopping does not enable resume. Start the
-next rehearsal with a fresh stack/baseline; never delete only SQLite and replay the
-old baseline against an already changed target. Setup failures retain a session
+A clean stop can be resumed using the existing SQLite checkpoint. After the deliberate
+failure, start a new rehearsal with a fresh stack/baseline; never delete only SQLite
+and replay the old baseline against an already changed target. Setup failures retain a session
 record so `demo-down` can clean up before retrying. Avoid running lifecycle
 commands concurrently or restarting individual MySQL containers during a rehearsal.
 
@@ -221,7 +227,11 @@ CLI launch inside that container, refusal of repeated setup/start, 35 seconds of
 idle heartbeat operation, successful SQL/schema/data/counters, and the failure
 boundary with the shell still available. Separate cases check idle SIGINT with
 exit code zero and SIGTERM after the successful workload, asserting STOPPED, no
-diagnostic, and unchanged checkpoints/counters. Each session archives evidence
+diagnostic, and unchanged checkpoints/counters. Resume cases queue source DDL/DML
+while stopped, deliberately change JSON start coordinates, then verify GTID-baseline
+fallback and applied file-position restart. A repeated restart must not replay work
+or reset counters. BLOCKED state, reinitialization, and concurrent CLI writers are
+refused. Each session archives evidence
 and removes its own disposable stack. It does not import
 new broad DDL-catalog coverage from these demonstration assertions.
 
@@ -252,3 +262,13 @@ The [post-workload SIGTERM result](../artifacts/demo-suite-detached/20261001T033
 retains eight transactions, three DDL statements, six rows, and the applied
 checkpoint with no error diagnostic. The [failure regression](../artifacts/demo-suite/20261001T032934Z-2c516a3f-auto-autocommit-myisam/result.json)
 still blocks explicit-engine DDL without advancing past the failure.
+
+Clean-stop resume validation, 2026-09-30: 46 focused Swift tests and all eight Docker
+rehearsal cases passed. The [GTID baseline/repeated-resume case](../artifacts/demo-suite-idle-stop/20261001T035414Z-4a26d80f-auto-autocommit-myisam/result.json)
+applied queued DDL/DML exactly once despite JSON pointing ahead of the saved
+baseline. The [applied file-position case](../artifacts/demo-suite-detached/20261001T035554Z-8888b00c-auto-autocommit-myisam/result.json)
+resumed after eight transactions, applied another DDL and three DML statements,
+and retained cumulative counters (12 transactions, 4 DDL, 9 rows). Both exercised
+another restart with no new events and concurrent-writer refusal. BLOCKED-state
+resume and reinitialization of existing state were refused without replacing
+saved diagnostics/checkpoints.

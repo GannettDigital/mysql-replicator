@@ -98,12 +98,14 @@ Docker build/startup progress is streamed to the terminal.
 
 For an externally prepared target, adapt [the configuration template](examples/apply.example.json),
 then run `.build/debug/mysql-replicator run --config apply.json --initialize`.
-The initial applier requires a **new state directory** and supports a deliberately
-limited schema and single-statement transaction subset. It never reopens state or
-retries uncertain writes. Review [supported behavior, setup, state ordering and
+Initialization requires a **new state directory**. After a clean stop, resume with
+`.build/debug/mysql-replicator run --config apply.json` (omit `--initialize`).
+SQLite supplies the last applied GTID/position, or the recorded baseline when no
+work was applied. The applier supports a deliberately limited schema and
+single-statement transaction subset; uncertain writes are never retried. Review [supported behavior, setup, state ordering and
 limits](PLAN/DML_APPLY.md) before using it. See [ordered DDL and its test suite](PLAN/DDL_APPLY.md) for the initial schema-change subset;
 the [native-default follow-up](PLAN/DDL_NATIVE_DEFAULTS.md) supersedes its engine/charset rewriting.
-First-start handoff, SQLite restart and audited skip/resolution follow DDL/DML correctness;
+Native-channel handoff, crash recovery and audited skip/resolution remain future work;
 see [the future recovery contract](PLAN/START_BOUNDARY.md). Version 2 configuration has no
 schema lists: discovery combines source table-map metadata with the prepared target.
 SQLite keeps timestamped deltas and periodic GTID snapshots. Under storage pressure,

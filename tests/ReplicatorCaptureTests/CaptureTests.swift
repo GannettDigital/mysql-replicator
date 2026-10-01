@@ -187,6 +187,13 @@ final class CaptureTests: XCTestCase {
         XCTAssertEqual(p.lastCompleteBoundary,BinlogCoordinate(file:"binlog.000004",position:127))
         XCTAssertThrowsError(try p.consume(announce("binlog.000005",4)))
     }
+    func testGTIDCoverageRequiresWholeIntervalsAndMatchingSIDs() throws {
+        let set=try GTIDSet(sid+":1-10:12-20")
+        XCTAssertTrue(try set.covers(GTIDSet("")))
+        XCTAssertTrue(try set.covers(GTIDSet(sid+":2-9:15-18")))
+        XCTAssertFalse(try set.covers(GTIDSet(sid+":1-12")))
+        XCTAssertFalse(try set.covers(GTIDSet("00000000-0000-0000-0000-000000000001:1")))
+    }
     func testQueueIsBoundedCancellationAndFailureDiscardQueuedData() throws {
         let q = PacketQueue(byteLimit:3), cancellation = CaptureCancellation()
         try q.push(Data([1,2])); XCTAssertThrowsError(try q.push(Data([3,4])))
