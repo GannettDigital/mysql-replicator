@@ -82,8 +82,13 @@ Run `make ddl-suite` for interleaved schema changes and DML; its evidence is und
 multirow INSERT/DELETE, primary-key changes, integer boundaries, and exact UTF-8,
 binary, NULL and empty values. Conditional CREATE/DROP and permanent-table CREATE
 LIKE preserve the source SQL. LIKE validates the replica's local template and
-copies its supported metadata without copying rows. Unsupported types, secondary
-indexes, triggers, generated columns and partitioning remain outside this slice.
+copies its supported metadata without copying rows. Unsupported types, triggers, generated columns and partitioning remain outside this slice.
+MODIFY COLUMN supports the existing integer/text/binary families, nullability and
+FIRST/AFTER placement. Named ordinary/unique BTREE secondary indexes support
+CREATE, DROP, RENAME and a single DROP+ADD replacement, including composite and
+prefix keys. Index metadata survives LIKE, rename, truncate and clean resume.
+The 22 new variants use operation-specific row probes and representative mixed
+flows; index rename/drop are metadata-only. Grant INDEX on the intended databases. See [the supported syntax and qualification](PLAN/DDL_MODIFY_AND_INDEXES.md).
 Database creation is also supported: `CREATE DATABASE` / `CREATE SCHEMA`, optional
 `IF NOT EXISTS`, and explicit or inherited charset/collation defaults. Source SQL
 is preserved; omitted encoding uses the logged source session server collation.
@@ -98,8 +103,14 @@ Docker build/startup progress is streamed to the terminal.
 
 For an externally prepared target, adapt [the configuration template](examples/apply.example.json),
 then run `.build/debug/mysql-replicator run --config apply.json --initialize`.
+Optional `ddlTimeoutSeconds` bounds each target DDL statement (default 300 seconds,
+range 1–86400); other target queries retain their 10-second deadline. A timeout
+after dispatch leaves an uncertain write intent and BLOCKED state, without retry.
 Initialization requires a **new state directory**. After a clean stop, resume with
 `.build/debug/mysql-replicator run --config apply.json` (omit `--initialize`).
+State format 5 retains index metadata. A validated clean STOPPED format-4 state
+upgrades atomically on resume; older binaries refuse format 5. BLOCKED format-4
+state requires resolution with its original runtime before upgrading.
 SQLite supplies the last applied GTID/position, or the recorded baseline when no
 work was applied. The applier supports a deliberately limited schema and
 single-statement transaction subset; uncertain writes are never retried. Review [supported behavior, setup, state ordering and

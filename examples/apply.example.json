@@ -31,5 +31,6 @@
     "pruneAtPercent": 80,
     "historyRetentionSeconds": 86400,
     "snapshotEveryTransactions": 1000
-  }
+  },
+  "ddlTimeoutSeconds": 300
 }

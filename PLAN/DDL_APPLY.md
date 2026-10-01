@@ -2,6 +2,8 @@
 
 **Implementation follow-up:** [native engine/charset defaults](DDL_NATIVE_DEFAULTS.md)
 now replace the rewrites in this historical checkpoint and add TRUNCATE.
+[MODIFY COLUMN and secondary indexes](DDL_MODIFY_AND_INDEXES.md) extends the
+current supported subset beyond the historical restrictions below.
 
 **Review update, 2026-09-30:** the engine/collation rewriting below is a description
 of the current prototype, not the accepted policy for the next increment.

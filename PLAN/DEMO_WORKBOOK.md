@@ -186,7 +186,7 @@ removes the pending group, stores the full completed-plus-skipped GTID coverage,
 advances to that group's end position, and clears the blocked diagnostic.
 It neither creates the rejected table nor starts replication. Counters remain
 8 transactions, 6 rows and 3 DDL statements; schemas and relay bytes are unchanged.
-The version-4 `appliedGTIDSet`/`appliedPosition` fields now include the skipped
+The `appliedGTIDSet`/`appliedPosition` fields now include the skipped
 event as restart coverage, even though its SQL was not applied.
 
 The command accepts GTID-set syntax, but this serial applier currently permits
@@ -215,6 +215,39 @@ Expected counters are now 10 transactions, 8 rows and 3 DDL statements.
 The native 8.4 replica remains blocked and has neither row, so the three-way
 `make demo-compare` is not expected to pass after this Swift-only skip.
 
+## MODIFY COLUMN and secondary indexes
+
+With Swift still running after the skip and new INSERT, run once **on the host**:
+
+```sh
+make demo-sql FILE=examples/demo/04-modify-index.sql
+make demo-status
+```
+
+The [prepared SQL](../examples/demo/04-modify-index.sql) widens `value` from 100 to
+120 characters, creates and renames a prefix index, replaces it with a composite
+index, then inserts, updates and deletes a 110-character value. SQL is forwarded
+unchanged; the server's table defaults supply omitted encoding attributes.
+
+In the **source and 5.7 SQL terminals**, compare:
+
+```sql
+SHOW COLUMNS FROM demo.items;
+SHOW INDEX FROM demo.items;
+SELECT * FROM demo.items ORDER BY id;
+```
+
+Both should show `value VARCHAR(120) NOT NULL` and the nonunique BTREE index
+`value_prefix(value(30),quantity)`. Ignore index cardinality estimates when
+comparing. Row 1001 has been deleted; rows 1, 3, 999 and 1000 remain. After catching
+up, Swift reports 17 transactions, 11 rows and 7 DDL statements. Native 8.4 remains
+blocked on the earlier intentional failure, so compare source with 5.7 here.
+
+New state uses SQLite format 5. Clean STOPPED format-4 state upgrades on resume;
+BLOCKED format-4 state must be resolved using its original binary first. For this
+workbook, use a fresh demo built from the current code. Do not change SQLite's
+version number manually. See [scope and state compatibility](DDL_MODIFY_AND_INDEXES.md).
+
 ## Longer DDL/DML validation on separate stacks
 
 On the **host**, from the repository root:
@@ -226,7 +259,11 @@ make ddl-suite
 This builds the current runtime and runs the existing DDL suite, including
 following INSERT/UPDATE/DELETE, in both file-position and GTID profiles.
 It covers database creation, conditional CREATE/DROP, CREATE LIKE, ALTER,
-RENAME, TRUNCATE and deliberate failures within the implemented subset.
+RENAME, TRUNCATE, MODIFY COLUMN and secondary-index creation/change. It also
+checks key-size and duplicate-key failures, DDL timeout and indexed-state resume.
+The MODIFY/index cases compare exact metadata, retained rows, schema history,
+normalized binlogs and checkpoints. Following DML is selected for changed row/key
+behavior; rename/drop cases do not repeat a full DML loop.
 Named cases show their source locations. The suite creates and cleans up its
 own stacks; the interactive demo remains available. Logs and results are saved
 under the printed `artifacts/ddl-suite/` directories.
@@ -243,7 +280,7 @@ Replace `POSITION_RUN` and `GTID_RUN` with the two actual directory names printe
 by `make ddl-suite`. The report also shows missing assertions; a passing suite
 does not imply complete MySQL coverage. See [the catalog guide](../tests/DDLCoverage/README.md).
 `make demo-suite` separately automates this workbook's success → failure → skip
-→ new INSERT flow, plus clean-stop/resume checks.
+→ new INSERT → MODIFY/index flow, plus clean-stop/resume checks.
 
 ## Clean up
 

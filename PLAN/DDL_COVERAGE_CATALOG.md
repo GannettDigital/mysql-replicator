@@ -360,7 +360,15 @@ exact run paths and reproduction commands. No full verification is
 inferred from these passes. Native matrix results are not yet imported as named
 assertion evidence.
 
-The next changes, in priority order, are:
+The [MODIFY COLUMN and secondary-index slice](DDL_MODIFY_AND_INDEXES.md) adds
+bounded `column.modify` and `index.keys` contracts while retaining broad backlog
+variants. Key-size failures are explicitly classified fixtures; the broad
+`index.byte-limits` feature remains incomplete. All 22 positive cases bind
+metadata, source boundary, schema history and normalized binlog checks. DML
+bindings cover only the selected row probes, excluding metadata-only rename/drop
+cases. Native observations remain separate from imported Swift assertions.
+
+The continuing coverage-infrastructure priorities are:
 
 1. Bind boundary-specific normalized row/binlog effects, SQLite applied position /
    GTIDs and schema-history/cache invalidation. Establish warning/context contracts

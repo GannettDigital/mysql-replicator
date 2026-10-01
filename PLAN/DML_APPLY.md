@@ -91,8 +91,10 @@ Passwords and row values are not printed in ordinary apply progress. Relay files
   this subset. Multi-statement groups are rejected before any target mutation,
   consistent with the accepted native MyISAM expected-negative reference.
 - ASCII SQL identifiers (quoted, never interpolated unescaped); a single full,
-  nonnullable integer primary key; no other indexes, triggers, generated/auto-
-  increment columns or partitioned targets. Discovery obtains ordered column names, types, nullability and text collation
+  nonnullable integer primary key. Named ordinary/unique BTREE secondary indexes
+  are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
+  row identity still uses the primary key. No triggers, generated/auto-increment
+  columns or partitioned targets. Discovery obtains ordered column names, types, nullability and text collation
   from the target, validates source wire metadata and rechecks under the apply lock.
 - Declared types: signed/unsigned INT and BIGINT, VARCHAR(n) with utf8mb4_bin,
   utf8mb4_unicode_ci or utf8mb4_general_ci, and VARBINARY(n); lengths 1–16383.

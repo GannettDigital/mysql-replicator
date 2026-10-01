@@ -113,7 +113,7 @@ public enum DemoSession {
                 }
             }
             _ = try h.sql("source", "CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'capture_fixture'@'%'; CREATE USER 'native_fixture'@'%' IDENTIFIED BY 'fixture-native-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'native_fixture'@'%'; SET GLOBAL binlog_row_metadata=FULL")
-            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON demo.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
             let boundary = try h.boundary("source"), uuid = try h.sql("source", "SELECT @@server_uuid")
             try writeJSON(boundary.json, to: h.output.appendingPathComponent("baseline.json"))
             let config: [String: Any] = ["version": 2, "stateDirectory": "/evidence/state", "source": ["version": 2, "host": "source", "port": 3306, "username": "capture_fixture", "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "caFile": "/evidence/tls/ca.pem", "serverID": 9100, "sourceUUID": uuid, "mode": "gtid", "start": ["executedGTIDs": boundary.gtids], "idleTimeoutSeconds": 30], "target": ["host": "127.0.0.1", "port": 3306, "username": "apply_fixture", "passwordEnvironment": "TARGET_PASSWORD", "serverHostname": "target57", "caFile": "/evidence/tls/ca.pem", "nativeAutoStartDisabled": true]]
@@ -442,6 +442,25 @@ public enum DemoSession {
                 try require(session.h.status()["Last_SQL_Errno"] == "3161" && session.h.sql("native","SELECT COUNT(*) FROM demo.items WHERE id IN (999,1000)") == "0","skip changed native reference")
                 try session.stopWriter(); try session.start(); try session.stopWriter()
                 try require(session.state("SELECT lifecycle||'|'||transactions_applied||'|'||ddl_applied||'|'||rows_applied FROM state") == "STOPPED|10|3|8","resume replayed skipped/applied work or lost counters")
+            }
+            try reporter!.run(QualificationCase("demo-modify-index", "Prepared MODIFY/index SQL preserves retained rows and applies long-value INSERT/UPDATE/DELETE after skip")) {
+                try session.start()
+                try session.executeSQL(file:root.appendingPathComponent("examples/demo/04-modify-index.sql"))
+                let boundary=try session.h.boundary("source"), deadline=Date().addingTimeInterval(30)
+                while try session.state("SELECT applied_file||'|'||applied_position FROM state") != boundary.file + "|" + String(boundary.position) {
+                    try require(Date()<deadline && session.replicatorRunning(),"prepared MODIFY/index SQL did not reach checkpoint")
+                    Thread.sleep(forTimeInterval:0.2)
+                }
+                let rows="SELECT id,HEX(value),quantity,IFNULL(HEX(note),'NULL') FROM demo.items ORDER BY id"
+                let indexes="SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='demo' AND TABLE_NAME='items' ORDER BY INDEX_NAME,SEQ_IN_INDEX"
+                try require(session.h.sql("target57",rows)==session.h.sql("source",rows),"prepared MODIFY/index rows differ")
+                for service in ["source","target57"] {
+                    try require(session.h.sql(service,"SELECT CHARACTER_MAXIMUM_LENGTH,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='demo' AND TABLE_NAME='items' AND COLUMN_NAME='value'")=="120\tNO","prepared MODIFY metadata differs")
+                    try require(session.h.sql(service,indexes)=="PRIMARY\t0\t1\tid\t0\tBTREE\nvalue_prefix\t1\t1\tvalue\t30\tBTREE\nvalue_prefix\t1\t2\tquantity\t0\tBTREE","prepared index metadata differs")
+                    try require(session.h.sql(service,"SELECT GROUP_CONCAT(id ORDER BY id) FROM demo.items")=="1,3,999,1000","prepared SQL lost retained rows or failed DELETE")
+                }
+                try session.stopWriter()
+                try require(session.state("SELECT lifecycle||'|'||transactions_applied||'|'||ddl_applied||'|'||rows_applied FROM state")=="STOPPED|17|7|11","prepared MODIFY/index counters differ")
             }
         } catch { failure = reporter?.fail(error) ?? error }
         if session.manifest != nil {

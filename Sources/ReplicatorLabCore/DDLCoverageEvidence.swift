@@ -228,7 +228,7 @@ enum DDLCoverageEvidence {
         }
         report["scenarios"] = rows
         report["evidence_status"] = bundles.isEmpty ? "not_loaded" : "partial_assertion_evidence_loaded"
-        report["qualification_note"] = "Named schema/data assertions only; no full scenario verification. Binlog/boundary/history and per-event context remain separate gaps."
+        report["qualification_note"] = "Named assertions only; no full scenario verification. MODIFY/index cases include binlog/boundary/history; other scenarios and per-event context retain gaps."
         report["assertion_summary"] = ["passed": passed, "required": required, "partial_scenario_profiles": partial, "verified_scenario_profiles": 0]
         report["selected_evidence"] = bundles.map { ["profile": $0.profile, "path": $0.origin] }
         return report

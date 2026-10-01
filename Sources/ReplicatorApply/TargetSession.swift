@@ -23,8 +23,8 @@ final class TargetSession {
     deinit { try? connection.close().wait(); try? group.syncShutdownGracefully() }
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
-    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false) throws -> ([MySQLRow],UInt64?) {
-        let timer = connection.eventLoop.scheduleTask(in:.seconds(10)) { _ = self.connection.close() }
+    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10) throws -> ([MySQLRow],UInt64?) {
+        let timer = connection.eventLoop.scheduleTask(in:.seconds(Int64(timeoutSeconds))) { _ = self.connection.close() }
         defer { timer.cancel() }
         var affected: UInt64?
         do {
@@ -105,24 +105,49 @@ final class TargetSession {
         },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
         let encoding=try tableEncoding(TableName(database:database,table:name))
         table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
+        table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKey)
         try table.validate(); try verifySchema(table)
         return table
     }
     private func normalizeType(_ type: String) -> String {
         type.replacingOccurrences(of:#"^(int|bigint)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
+    func readIndexes(database:String,name:String,primaryKey:String) throws -> [ApplyIndex] {
+        let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
+        var indexes:[ApplyIndex]=[], primary=0
+        for row in rows {
+            guard let name=row.column("INDEX_NAME")?.string, let column=row.column("COLUMN_NAME")?.string,
+                  let unique=row.column("NON_UNIQUE")?.int, [0,1].contains(unique), let ordinal=row.column("SEQ_IN_INDEX")?.int,
+                  let type=row.column("INDEX_TYPE")?.string,let direction=row.column("COLLATION")?.string else {throw ApplyError("incomplete index metadata")}
+            let prefix=row.column("SUB_PART")?.int
+            if name == "PRIMARY" {
+                primary += 1
+                try require(primary == 1 && column == primaryKey && ordinal == 1 && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
+            } else {
+                let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction)
+                if let previous=indexes.last, previous.name == name {
+                    try require(ordinal == previous.parts.count+1 && previous.unique == (unique == 0) && previous.type == type,"inconsistent index metadata")
+                    indexes[indexes.count-1]=ApplyIndex(name:name,unique:previous.unique,parts:previous.parts+[part],type:type)
+                } else {
+                    try require(ordinal == 1 && indexes.count < 63,"invalid index ordinal/count")
+                    indexes.append(ApplyIndex(name:name,unique:unique == 0,parts:[part],type:type))
+                }
+            }
+        }
+        try require(primary == 1,"missing primary-key index")
+        return indexes.sorted{$0.name.lowercased() < $1.name.lowercased()}
+    }
     func verifySchema(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         try require(try scalar("SELECT ENGINE AS v FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds) == "MyISAM","target table is absent or not MyISAM")
         let encoding=try tableEncoding(TableName(database:t.database,table:t.table))
         try require(encoding.characterSet==t.defaultCharacterSet && encoding.collation==t.defaultCollation,"target table defaults differ from historical schema")
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == "","target schema differs from historical manifest")
+            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == "" && r.column("COLUMN_DEFAULT")?.buffer == nil,"target schema differs from historical manifest")
         }
-        let keys = try query("SELECT INDEX_NAME,COLUMN_NAME,SUB_PART FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",binds).0
-        try require(keys.count == 1 && keys[0].column("INDEX_NAME")?.string == "PRIMARY" && keys[0].column("COLUMN_NAME")?.string == t.primaryKey && keys[0].column("SUB_PART")?.buffer == nil,"initial applier requires only the declared full primary-key index")
+        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKey) == t.secondaryIndexes,"target indexes differ from historical schema")
         // Without TRIGGER privilege an empty information_schema result can hide
         // triggers. Require visibility explicitly before asserting their absence.
         let grantee = "CONCAT(CHAR(39),REPLACE(CURRENT_USER(),'@',CONCAT(CHAR(39),'@',CHAR(39))),CHAR(39))"

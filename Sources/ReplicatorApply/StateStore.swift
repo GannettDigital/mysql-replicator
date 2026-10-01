@@ -85,7 +85,7 @@ final class StateStore {
             try execute("PRAGMA cache_spill=OFF")
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=64")
-            try execute("PRAGMA user_version=4")
+            try execute("PRAGMA user_version=5")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
@@ -115,7 +115,9 @@ final class StateStore {
             throw ApplyError("cannot open existing SQLite state; no new state was initialized")
         }
         sqlite3_busy_timeout(db,1000)
-        try require(try number("PRAGMA user_version") == 4,"unsupported saved state version")
+        let version=try number("PRAGMA user_version")
+        try require([4,5].contains(version),"unsupported saved state version")
+        try require(version != 4 || skipGTIDs == nil,"format-4 BLOCKED state requires resolution with its original runtime before upgrading")
         try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")
         let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
         try require(states.count == 1,"missing saved replication state")
@@ -213,6 +215,16 @@ final class StateStore {
         try execute("PRAGMA cache_spill=OFF")
         try execute("PRAGMA temp_store=MEMORY")
         try execute("PRAGMA wal_autocheckpoint=64")
+        if version == 4 {
+            // Old runtimes accepted only the primary index. Validate every
+            // retained schema before changing the version; never bless unknown data.
+            for row in try query("SELECT schema_json FROM schemas") {
+                guard let json=row[0] else {throw ApplyError("missing legacy schema")}
+                let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
+                try require(table.secondaryIndexes.isEmpty,"format-4 state contains unsupported index metadata")
+            }
+            try atomic { try execute("PRAGMA user_version=5") }
+        }
         ready=true
     }
     private func singleton(_ text: String) throws -> (sid:String,sequence:String) {

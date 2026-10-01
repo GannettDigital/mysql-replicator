@@ -53,6 +53,17 @@ public struct ApplyColumn: Codable, Equatable {
         }
     }
 }
+public struct ApplyIndexPart: Codable, Equatable {
+    public let column: String
+    public let prefix: Int?
+    public var direction: String = "A"
+}
+public struct ApplyIndex: Codable, Equatable {
+    public let name: String
+    public let unique: Bool
+    public let parts: [ApplyIndexPart]
+    public var type: String = "BTREE"
+}
 public struct ApplyTable: Codable, Equatable {
     public let database: String
     public let table: String
@@ -60,6 +71,7 @@ public struct ApplyTable: Codable, Equatable {
     public let primaryKey: String
     public var defaultCharacterSet: String? = nil
     public var defaultCollation: String? = nil
+    public var secondaryIndexes: [ApplyIndex] = []
     var identity: String { database + "\0" + table }
     var keyIndex: Int { columns.firstIndex { $0.name == primaryKey }! }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
@@ -67,8 +79,34 @@ public struct ApplyTable: Codable, Equatable {
         _ = try sqlName
         try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map(\.name)).count == columns.count,"invalid column manifest")
         for c in columns { try c.validate() }
+        try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map{$0.name.lowercased()}).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
+        for key in secondaryIndexes {
+            _ = try quoted(key.name)
+            try require(key.name.uppercased() != "PRIMARY" && key.type == "BTREE" && (1...16).contains(key.parts.count),"unsupported secondary index")
+            for part in key.parts {
+                guard let column=columns.first(where:{$0.name == part.column}) else { throw ApplyError("index column is absent") }
+                try require(part.direction == "A","unsupported descending index")
+                if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
+            }
+        }
         guard let key = columns.first(where:{$0.name == primaryKey}) else { throw ApplyError("missing primary key column") }
         try require(!key.nullable && [.signed,.unsigned].contains(key.interpretation),"initial applier requires one nonnullable integer primary key")
+    }
+}
+extension ApplyTable {
+    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,defaultCharacterSet,defaultCollation,secondaryIndexes }
+    public init(from decoder: Decoder) throws {
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
+        columns=try c.decode([ApplyColumn].self,forKey:.columns); primaryKey=try c.decode(String.self,forKey:.primaryKey)
+        defaultCharacterSet=try c.decodeIfPresent(String.self,forKey:.defaultCharacterSet)
+        defaultCollation=try c.decodeIfPresent(String.self,forKey:.defaultCollation)
+        secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
+    }
+    func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil) -> ApplyTable {
+        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKey:primaryKey,
+            defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
+            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()})
     }
 }
 public struct TargetConfiguration: Decodable {
@@ -97,6 +135,8 @@ public struct ApplyConfiguration: Decodable {
     public let tables: [ApplyTable]?
     public let stateDirectory: String
     public let maximumRelayBytes: UInt64?
+    public let ddlTimeoutSeconds: Int?
+    var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate() throws {
@@ -105,6 +145,7 @@ public struct ApplyConfiguration: Decodable {
         try require(!target.host.isEmpty && (1...65535).contains(target.port) && !target.username.isEmpty && !target.passwordEnvironment.isEmpty && !target.serverHostname.isEmpty,"invalid target connection")
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
+        try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
         try policy.validate()
     }
 }

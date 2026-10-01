@@ -124,6 +124,8 @@ enum DDLCoverageCases {
     // Only these assertion-to-case contracts are currently instrumented. A group
     // pass supplies no implicit child assertions; remaining catalog checks stay gaps.
     static let evidenceContracts: [String: [String: [String]]] = [
+        "ddl.column.modify.supported": Dictionary(uniqueKeysWithValues: ["schema-effects","following-dml","source-boundary","schema-history","normalized-binlog"].map{($0,ModifyIndexCases.cases.filter{$0.test.id.hasPrefix("ddl-modify-")}.map{$0.test.id})}),
+        "ddl.index.secondary.supported": Dictionary(uniqueKeysWithValues: ["schema-effects","following-dml","source-boundary","schema-history","normalized-binlog"].map { assertion in (assertion,ModifyIndexCases.cases.filter{$0.test.id.hasPrefix("ddl-index-") && (assertion != "following-dml" || !$0.workload.isEmpty)}.map{$0.test.id}) }),
         "ddl.database.create.supported": ["schema-effects": DatabaseCreationCases.cases.map{$0.test.id}, "following-dml": DatabaseCreationCases.cases.map{$0.test.id}],
         "ddl.table.rename.same-schema": ["schema-effects": ["rename-table"], "following-dml": ["insert-after-rename", "update-after-rename", "delete-after-rename"]],
         "ddl.table.truncate.populated": ["schema-effects": ["truncate-nonempty-table"], "following-dml": ["insert-after-truncate", "update-binary-null", "delete-unsigned-maximum"]],
@@ -156,11 +158,14 @@ enum DDLCoverageCases {
         var key: String { suite + "/" + test.id }
     }
     static var registry: [Entry] {
-        let top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test}
-        return top.map { Entry(suite: "ddl-suite", test: $0, profiles: swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
-            + changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
-            + NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }
-            + (DatabaseCreationCases.cases.map{$0.native} + [DatabaseCreationCases.nativeDuplicate]).map { Entry(suite:"native-ddl-suite",test:$0,profiles:nativeProfiles,parent:nil,isGroup:false) }
-            + native.map { Entry(suite: "native-ddl-suite", test: $0.0, profiles: nativeProfiles, parent: nil, isGroup: false) }
+        let top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test} + ModifyIndexCases.cases.map{$0.test} + ModifyIndexCases.failures.map{$0.test} + [ModifyIndexCases.timeout,ModifyIndexCases.resume]
+        var entries = top.map { Entry(suite: "ddl-suite", test: $0, profiles: swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
+        entries += changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
+        entries += NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }
+        entries += (DatabaseCreationCases.cases.map{$0.native} + [DatabaseCreationCases.nativeDuplicate]).map { Entry(suite:"native-ddl-suite",test:$0,profiles:nativeProfiles,parent:nil,isGroup:false) }
+        entries += [Entry(suite:"native-ddl-suite",test:ModifyIndexCases.sourceRejected,profiles:nativeProfiles,parent:nil,isGroup:false)]
+        entries += ModifyIndexCases.cases.map { Entry(suite:"native-ddl-suite",test:$0.native,profiles:nativeProfiles,parent:nil,isGroup:false) }
+        entries += native.map { Entry(suite: "native-ddl-suite", test: $0.0, profiles: nativeProfiles, parent: nil, isGroup: false) }
+        return entries
     }
 }

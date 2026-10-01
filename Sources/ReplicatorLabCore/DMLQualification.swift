@@ -111,11 +111,12 @@ public enum DMLQualification {
                 let engine = service == "source" ? "InnoDB" : "MyISAM"
                 _ = try h.sql(service,"CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(engine); INSERT INTO poc.items VALUES(1,'seed-one',1),(2,'seed-two',2)")
             }
-            _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
-            if ddl {_ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON otherdb.* TO 'apply_fixture'@'%'")}
+            _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            if ddl {_ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON otherdb.* TO 'apply_fixture'@'%'")}
             if ddl {
+                _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'%'")
                 for database in Set(DatabaseCreationCases.cases.map(\.database)) {
-                    _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON \(database).* TO 'apply_fixture'@'%'")
+                    _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON \(database).* TO 'apply_fixture'@'%'")
                 }
             }
             if mode == "gtid" { _ = try h.sql("source","SET GLOBAL binlog_row_metadata=FULL") }
@@ -159,6 +160,165 @@ public enum DMLQualification {
             try cases.pass("positive")
             report["positive"] = positive
             if ddl {
+                for test in ModifyIndexCases.failures {
+                    let label=test.test.id
+                    for service in h.services {
+                        let second=test.duplicate && service != "source" ? "seed" : "other"
+                        _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE DATABASE IF NOT EXISTS demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; DROP TABLE IF EXISTS demo.mi; CREATE TABLE demo.mi(id INT PRIMARY KEY,name VARCHAR(\(test.width)) COLLATE utf8mb4_bin,n INT UNSIGNED,b VARBINARY(8)); INSERT INTO demo.mi VALUES(1,'seed',7,0x00FF),(2,'\(second)',8,NULL)")
+                    }
+                    let before=try h.boundary("source")
+                    let applying=try start(test.test,configuration(label,at:before,count:2));try waitForReader(applying)
+                    _ = try h.sql("native","START REPLICA")
+                    _ = try h.sql("source",test.sql+"; INSERT INTO demo.mi VALUES(99,'blocked marker',9,NULL)")
+                    let diagnostic=try finish(applying,label,success:false,reason:test.error)
+                    try require((diagnostic["reason"] as? String)?.hasPrefix("target SQL error ")==true,"index failure was not a target SQL error")
+                    let deadline=Date().addingTimeInterval(20)
+                    while try h.status()["Last_SQL_Errno"] != test.error && Date()<deadline {Thread.sleep(forTimeInterval:0.1)}
+                    try require(h.status()["Last_SQL_Errno"]==test.error,"native error differs from Swift target")
+                    let saved=try state(label,"SELECT lifecycle||'|'||transactions_applied||'|'||IFNULL(applied_position,'NULL')||'|'||(active_gtid IS NOT NULL) FROM state")
+                    try require(saved=="BLOCKED|0|NULL|1" && state(label,"SELECT status FROM ddl_intents")=="PENDING","failed index lost pending intent or advanced checkpoint")
+                    for service in ["native","target57"] {try require(h.sql(service,"SELECT COUNT(*) FROM demo.mi WHERE id=99")=="0","following marker applied after failed index")}
+                    try writeJSON(["state":saved,"native":try h.status(),"source_before":before.json,"source_after":try h.boundary("source").json],to:output.appendingPathComponent(label+"-failure.json"))
+                    // Fixture reset only: bypass this deliberately rejected range
+                    // on the native reference before the next independent case.
+                    _ = try h.sql("native","STOP REPLICA")
+                    let end=try h.boundary("source")
+                    _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(end.file)',SOURCE_LOG_POS=\(end.position)")
+                    try cases.pass(label)
+                }
+                do {
+                    let label=ModifyIndexCases.timeout.id,test=ModifyIndexCases.cases.first{$0.test.id=="ddl-index-create"}!
+                    for service in h.services {_ = try h.sql(service,test.seed)}
+                    let before=try h.boundary("source")
+                    var config=configuration(label,at:before,count:2);config["ddlTimeoutSeconds"]=1
+                    let applying=try start(ModifyIndexCases.timeout,config);try waitForReader(applying)
+                    _ = try h.sql("native","START REPLICA")
+                    let target=try h.compose(["ps","-q","target57"]).text
+                    _ = try docker(["exec","-d","-e","MYSQL_PWD=fixture-root-only",target,"mysql","--no-defaults","-uroot","-e","LOCK TABLES demo.mi READ; DO SLEEP(8); UNLOCK TABLES"])
+                    let lockDeadline=Date().addingTimeInterval(5)
+                    while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(8)'") != "1" {
+                        try require(Date()<lockDeadline,"test table lock was not acquired");Thread.sleep(forTimeInterval:0.1)
+                    }
+                    _ = try h.sql("source",test.sql+"; INSERT INTO demo.mi VALUES(99,'blocked marker',9,NULL)")
+                    let result=try finish(applying,label,success:false,reason:"uncertain")
+                    try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0" && state(label,"SELECT status FROM ddl_intents")=="PENDING","DDL timeout lost uncertain intent")
+                    let id=try state(label,"SELECT active_gtid FROM state")
+                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".json"],checked:false)
+                    try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target write intents"),"uncertain DDL was eligible for skip")
+                    let deadline=Date().addingTimeInterval(20)
+                    while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' OR INFO='DO SLEEP(8)'") != "0" {
+                        try require(Date()<deadline,"timed-out server DDL did not finish after releasing fixture lock");Thread.sleep(forTimeInterval:0.1)
+                    }
+                    try require(h.sql("target57","SELECT COUNT(*) FROM demo.mi WHERE id=99")=="0","timeout applied following row")
+                    try ModifyIndexCases.waitNative(h,h.boundary("source"));_ = try h.sql("native","STOP REPLICA")
+                    try writeJSON(result,to:output.appendingPathComponent(label+"-failure.json"));try cases.pass(label)
+                }
+                for test in ModifyIndexCases.cases {
+                    let label=test.test.id
+                    for service in h.services {_ = try h.sql(service,test.seed)}
+                    var starts:[String:Boundary]=[:]
+                    for service in h.services {starts[service]=try h.boundary(service)}
+                    let applying=try start(test.test,configuration(label,at:starts["source"]!,count:1+test.workload.count));try waitForReader(applying)
+                    _ = try h.sql("native","START REPLICA")
+                    func barrier(_ count:Int) throws {
+                        let deadline=Date().addingTimeInterval(30)
+                        while Date()<deadline {
+                            let logs=try docker(["logs",applying])
+                            let last=String(decoding:logs.stdout,as:UTF8.self).split(separator:"\n").last
+                            if let last,let progress=try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any],progress["transactionsApplied"] as? Int == count {return}
+                            try require(docker(["inspect",applying,"--format","{{.State.Running}}"] ).text == "true","MODIFY/index applier stopped: " + String(decoding:logs.stderr,as:UTF8.self))
+                            Thread.sleep(forTimeInterval:0.1)
+                        }
+                        throw LabError("MODIFY/index did not reach transaction \(count)")
+                    }
+                    let warnings=try h.sql("source",test.sql+"; SHOW WARNINGS")
+                    try require(warnings.isEmpty,"unexpected source warning: \(warnings)")
+                    try barrier(1);try ModifyIndexCases.waitNative(h,h.boundary("source"))
+                    try cases.assertion("schema-effects",evidence:"assertions/"+label+"/schema-effects.json") {
+                        var observed:[String:Any]=["sql":test.sql,"warnings":warnings]
+                        for service in h.services {
+                            observed[service]=try ModifyIndexCases.metadata(h,service,test)
+                            try require(ModifyIndexCases.rows(h,service,test.table)==test.retained,"MODIFY/index changed retained rows")
+                        }
+                        return observed
+                    }
+                    if !test.workload.isEmpty {
+                    try cases.assertion("following-dml",evidence:"assertions/"+label+"/following-dml.json") {
+                        var observed:[[String:Any]]=[]
+                        for (index,step) in test.workload.enumerated() {
+                            _ = try h.sql("source",step.sql);try barrier(index+2);try ModifyIndexCases.waitNative(h,h.boundary("source"))
+                            var item:[String:Any]=["sql":step.sql,"expected":step.rows]
+                            for service in h.services {
+                                let rows=try ModifyIndexCases.rows(h,service,test.table)
+                                try require(rows==step.rows,"\(label) \(service) following rows differ: \(rows)")
+                                item[service]=rows
+                            }
+                            observed.append(item)
+                        }
+                        return observed
+                    }
+                    }
+                    let result=try finish(applying,label,success:true),end=try h.boundary("source")
+                    _ = try h.sql("native","STOP REPLICA")
+                    try cases.assertion("source-boundary",evidence:"assertions/"+label+"/source-boundary.json") {
+                        try require(result["transactionsApplied"] as? Int == 1+test.workload.count && result["rowsApplied"] as? Int == test.workload.reduce(0,{$0+$1.affectedRows}) && result["ddlApplied"] as? Int == 1 && result["appliedGTIDSet"] as? String == end.gtids,"MODIFY/index counters or GTIDs differ")
+                        let saved=try state(label,"SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
+                        try require(saved=="STOPPED|\(end.file)|\(end.position)","MODIFY/index checkpoint differs")
+                        return ["source":end.json,"saved":saved,"summary":result] as [String:Any]
+                    }
+                    try cases.assertion("schema-history",evidence:"assertions/"+label+"/schema-history.json") {
+                        let intent=try state(label,"SELECT status||'|'||target_sql FROM ddl_intents")
+                        try require(intent=="DONE|"+test.sql,"DDL SQL was rewritten or not completed")
+                        let references=try state(label,"SELECT COUNT(*) FROM row_intents r JOIN schemas s ON s.id=r.schema_id WHERE s.current=1 AND r.status='DONE'")
+                        try require(references==String(test.workload.reduce(0,{$0+$1.affectedRows})),"following rows did not use the published schema")
+                        let history=try state(label,"SELECT schema_json FROM schemas WHERE current=1")
+                        let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
+                        try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
+                        try require(state(label,"PRAGMA user_version")=="5","extended state lacks version gate")
+                        return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
+                    }
+                    try cases.assertion("normalized-binlog",evidence:"assertions/"+label+"/normalized-binlog.json") {
+                        var observed:[String:[String]]=[:]
+                        for service in h.services {
+                            let from=starts[service]!,to=try h.boundary(service)
+                            try require(from.file==to.file,"unexpected rotation in MODIFY/index comparison")
+                            let path=output.appendingPathComponent(service+"-"+label+".binlog")
+                            try h.compose(["exec","-T",service,"cat","/var/lib/mysql/"+from.file]).stdout.write(to:path)
+                            let decoded=try runner.run([h.decoder,"--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(from.position)","--stop-position=\(to.position)",path.path])
+                            try decoded.stdout.write(to:path.appendingPathExtension("txt"))
+                            let lines=String(decoding:decoded.stdout,as:UTF8.self).components(separatedBy:"\n")
+                            let normalized=lines.filter{$0.hasPrefix("###") || $0.uppercased().hasPrefix("ALTER TABLE ") || $0.uppercased().hasPrefix("CREATE INDEX ") || $0.uppercased().hasPrefix("CREATE UNIQUE INDEX ") || $0.uppercased().hasPrefix("DROP INDEX ") || $0.uppercased().hasPrefix("CREATE TABLE ") || $0.uppercased().hasPrefix("RENAME TABLE ") || $0.uppercased().hasPrefix("TRUNCATE TABLE ")}.map {line in
+                                line.range(of:" /*",options:.backwards).map{String(line[..<$0.lowerBound])} ?? line
+                            }
+                            try require(normalized.filter{!$0.hasPrefix("###")}.count==1 && normalized.filter{$0.hasPrefix("### INSERT INTO") || $0.hasPrefix("### UPDATE ") || $0.hasPrefix("### DELETE FROM")}.count==test.workload.reduce(0,{$0+$1.affectedRows}),"missing DDL/DML in normalized binlog")
+                            if let source=observed["source"] {try require(normalized==source,"\(service) normalized MODIFY/index binlog differs")}
+                            observed[service]=normalized
+                        }
+                        return observed
+                    }
+                    try cases.pass(label)
+                    if label == "ddl-index-create" {
+                        try cases.run(ModifyIndexCases.resume) {
+                            let config=configuration(label,at:end,count:1)
+                            try writeJSON(config,to:output.appendingPathComponent(label+"-resume.json"))
+                            _ = try docker(["cp",output.appendingPathComponent(label+"-resume.json").path,evidenceHelper+":/evidence/"+label+"-resume.json"])
+                            let name=h.project+"-indexed-resume";clients.append(name)
+                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.json"])
+                            try waitForReader(name)
+                            _ = try h.sql("source","INSERT INTO demo.mi VALUES(4,'resumed',4,NULL)")
+                            let resumed=try finish(name,label+"-resume",success:true)
+                            try require(resumed["transactionsApplied"] as? Int==5 && resumed["rowsApplied"] as? Int==4 && resumed["ddlApplied"] as? Int==1,"indexed resume reset/replayed counters")
+                            try require(ModifyIndexCases.rows(h,"target57",test.table)==test.retained+"\n4\t726573756D6564\t4\tNULL","indexed resume row differs")
+                            _ = try h.sql("native","START REPLICA");try ModifyIndexCases.waitNative(h,h.boundary("source"));_ = try h.sql("native","STOP REPLICA")
+                            _ = try h.sql("target57","CREATE INDEX external_drift ON demo.mi(n)")
+                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.json"],checked:false)
+                            try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target schema differs from saved checkpoint"),"external index drift was accepted")
+                            // The original saved intent/schema evidence above remains
+                            // the first run's snapshot; retain the resumed diagnostics separately.
+                            try refusal.stderr.write(to:output.appendingPathComponent("indexed-resume-drift.json"))
+                        }
+                    }
+                }
                 // Database creation has a separate durable stream per named
                 // case; databases are deliberately absent from fixture setup.
                 for test in DatabaseCreationCases.cases {

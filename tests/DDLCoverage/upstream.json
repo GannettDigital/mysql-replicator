@@ -525,6 +525,24 @@
       "unresolved_dependencies": [
         "Selected-section review only: session server default inheritance and suppress_use/database event context. Whole-file dependencies, encryption and broader lifecycle semantics remain unqualified."
       ]
+    },
+    {
+      "id": "mysql84.modify-index.cases",
+      "repository": "mysql84",
+      "path": "mysql-test/t/alter_table.test",
+      "kind": "test",
+      "sha256": "949b05925fb7c32c6d5cfe3bbfe4164bf8cbf9c7461480e8897555604b878579",
+      "locator": {
+        "start_line": 1414,
+        "end_line": 1594,
+        "anchor": "ALTER TABLE ti1 MODIFY COLUMN h VARCHAR(30);"
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Selected paired InnoDB/MyISAM MODIFY and WL#6555 sections only. Full-file setup/result dependencies are not claimed; fresh three-server fixtures independently qualify the bounded subset."
+      ]
     }
   ],
   "candidates": [

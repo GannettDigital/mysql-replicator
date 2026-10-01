@@ -28,6 +28,8 @@ enum DDLStatement: Equatable {
     case createIfAbsent(ApplyTable,DDLEngine)
     case createLike(TableName,TableName,ifNotExists:Bool)
     case add(TableName,ApplyColumn,ColumnPlacement)
+    case modify(TableName,ApplyColumn,ColumnPlacement?)
+    case indexes(TableName,IndexChange)
     case dropColumn(TableName,String)
     case rename(TableName,TableName)
     case drop(TableName)
@@ -37,7 +39,7 @@ enum DDLStatement: Equatable {
         switch self {
         case .createDatabase: return nil
         case .create(let t,_),.createIfAbsent(let t,_): return TableName(database:t.database,table:t.table)
-        case .add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
+        case .modify(let t,_,_),.indexes(let t,_),.add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
     }
     static func parse(_ query: QueryControl) throws -> DDLStatement {
@@ -163,10 +165,45 @@ private struct DDLParser {
         if !type.hasPrefix("varchar(") {try require(charset==nil,"charset on non-text column");try column.validate()}
         return (column,primary)
     }
+    mutating func placement() throws -> ColumnPlacement? {
+        if take("FIRST") {return .first}
+        if take("AFTER") {return .after(try identifier())}
+        return nil
+    }
+    mutating func keyParts() throws -> [ApplyIndexPart] {
+        try expect("("); var parts:[ApplyIndexPart]=[]
+        repeat {
+            let column=try identifier(); var prefix:Int?
+            if take("(") {
+                let value=try identifier()
+                guard let n=Int(value),n>0 else {throw ApplyError("invalid index prefix")}
+                prefix=n;try expect(")")
+            }
+            _ = take("ASC")
+            parts.append(ApplyIndexPart(column:column,prefix:prefix))
+            try require(parts.count<=16,"index part limit exceeded")
+        } while take(",")
+        try expect(")");return parts
+    }
+    mutating func indexDefinition() throws -> ApplyIndex {
+        let unique=take("UNIQUE")
+        try require(take("INDEX") || take("KEY"),"expected INDEX or KEY")
+        let name=try identifier();let using=take("USING")
+        if using {try expect("BTREE")}
+        let parts=try keyParts()
+        if take("USING") {try require(!using,"duplicate index type");try expect("BTREE")}
+        return ApplyIndex(name:name,unique:unique,parts:parts)
+    }
     mutating func parse() throws -> DDLStatement {
         let result: DDLStatement
         if take("CREATE") {
-            if take("DATABASE") || take("SCHEMA") {
+            if isNext("INDEX") || isNext("UNIQUE") {
+                let unique=take("UNIQUE");try expect("INDEX");let key=try identifier()
+                let using=take("USING");if using {try expect("BTREE")}
+                try expect("ON");let table=try name();let parts=try keyParts()
+                if take("USING") {try require(!using,"duplicate index type");try expect("BTREE")}
+                result = .indexes(table,.add(ApplyIndex(name:key,unique:unique,parts:parts)))
+            } else if take("DATABASE") || take("SCHEMA") {
                 let conditional=take("IF")
                 if conditional {try expect("NOT");try expect("EXISTS")}
                 let name=try identifier()
@@ -233,23 +270,37 @@ private struct DDLParser {
         } else if take("ALTER") {
             try expect("TABLE");let table=try name()
             if take("ADD") {
+                if isNext("UNIQUE") || isNext("INDEX") || isNext("KEY") { result = .indexes(table,.add(try indexDefinition())) }
+                else {
+                    _ = take("COLUMN");let (column,primary)=try column()
+                    try require(column.nullable && !primary,"DDL ADD only supports nullable non-key columns")
+                    result = .add(table,column,try placement() ?? .last)
+                }
+            } else if take("MODIFY") {
                 _ = take("COLUMN");let (column,primary)=try column()
-                try require(column.nullable && !primary,"DDL ADD only supports nullable non-key columns")
-                let placement: ColumnPlacement
-                if take("FIRST") {placement = .first}
-                else if take("AFTER") {placement = .after(try identifier())}
-                else {placement = .last}
-                result = .add(table,column,placement)
-            } else if take("DROP") {_ = take("COLUMN");result = .dropColumn(table,try identifier())}
-            else {throw ApplyError("unsupported ALTER TABLE operation")}
+                try require(!primary,"MODIFY cannot change primary-key membership")
+                result = .modify(table,column,try placement())
+            } else if take("DROP") {
+                if take("INDEX") || take("KEY") {
+                    let old=try identifier()
+                    if take(",") { try expect("ADD");result = .indexes(table,.replace(old,try indexDefinition())) }
+                    else {result = .indexes(table,.drop(old))}
+                } else {_ = take("COLUMN");result = .dropColumn(table,try identifier())}
+            } else if take("RENAME") {
+                try require(take("INDEX") || take("KEY"),"unsupported ALTER RENAME operation")
+                let old=try identifier();try expect("TO");result = .indexes(table,.rename(old,try identifier()))
+            } else {throw ApplyError("unsupported ALTER TABLE operation")}
         } else if take("RENAME") {
             try expect("TABLE");let from=try name();try expect("TO");let to=try name()
             try require(from.database==to.database && from != to,"DDL rename requires distinct names in one database")
             result = .rename(from,to)
         } else if take("DROP") {
-            try expect("TABLE");let conditional=take("IF")
-            if conditional {try expect("EXISTS")}
-            let table=try name();result = conditional ? .dropIfPresent(table) : .drop(table)
+            if take("INDEX") {let key=try identifier();try expect("ON");result = .indexes(try name(),.drop(key))}
+            else {
+                try expect("TABLE");let conditional=take("IF")
+                if conditional {try expect("EXISTS")}
+                let table=try name();result = conditional ? .dropIfPresent(table) : .drop(table)
+            }
         }
         else if take("TRUNCATE") {_ = take("TABLE");result = .truncate(try name())}
         else {throw ApplyError("unsupported DDL statement")}
@@ -357,7 +408,7 @@ extension TargetSession {
             if let before {after=before}
             else {
                 let template=template!
-                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKey:template.primaryKey,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation)
+                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKey:template.primaryKey,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation,secondaryIndexes:template.secondaryIndexes)
             }
         case .add(_,let column,let placement):
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
@@ -371,13 +422,20 @@ extension TargetSession {
                 guard let index=columns.firstIndex(where:{$0.name==key}) else {throw ApplyError("DDL AFTER column absent")}
                 columns.insert(column,at:index+1)
             }
-            after=ApplyTable(database:name.database,table:name.table,columns:columns,primaryKey:before!.primaryKey,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation)
+            after=before!.replacing(columns:columns)
+        case .modify(_,let column,let placement):
+            let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
+            let resolved=try resolveColumn(column,parent:encoding,context:context)
+            after=try before!.modifying(resolved,placement:placement)
+        case .indexes(_,let change):
+            after=try change.applying(to:before!)
         case .dropColumn(_,let column):
             try require(column != before!.primaryKey && before!.columns.contains(where:{$0.name==column}),"DDL DROP requires an existing non-key column")
-            after=ApplyTable(database:name.database,table:name.table,columns:before!.columns.filter{$0.name != column},primaryKey:before!.primaryKey,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation)
+            try require(!before!.secondaryIndexes.contains{$0.parts.contains{$0.column == column}},"DROP of an indexed column is outside this slice")
+            after=before!.replacing(columns:before!.columns.filter{$0.name != column})
         case .rename(_,let destination):
             try require(!(try tableExists(destination)),"DDL RENAME destination exists")
-            after=ApplyTable(database:destination.database,table:destination.table,columns:before!.columns,primaryKey:before!.primaryKey,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation)
+            after=ApplyTable(database:destination.database,table:destination.table,columns:before!.columns,primaryKey:before!.primaryKey,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation,secondaryIndexes:before!.secondaryIndexes)
         case .drop,.dropIfPresent: after=nil
         case .truncate: after=before
         }
@@ -415,14 +473,14 @@ extension TargetSession {
         if let database=plan.database {
             guard let previous=try scalar("SELECT @@SESSION.collation_server AS v") else {throw ApplyError("missing target server collation")}
             if let collation=database.serverCollation {_ = try query("SET SESSION collation_server=?",[.init(string:collation)])}
-            _ = try query(plan.sql,textProtocol:true)
+            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline)
             if database.serverCollation != nil {_ = try query("SET SESSION collation_server=?",[.init(string:previous)])}
             try resetDMLSession()
             try require(try databaseEncoding(database.name)==database.after,"DDL target database defaults mismatch")
             return
         }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
-        _ = try query(plan.sql,textProtocol:true)
+        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline)
         try resetDMLSession()
         if let after=plan.after {try require(try readSchema(database:after.database,name:after.table)==after,"DDL target after-schema mismatch")}
         if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}

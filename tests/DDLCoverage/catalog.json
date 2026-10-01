@@ -290,7 +290,8 @@
       "name": "Column Modify",
       "grammar": "MODIFY/CHANGE/RENAME column with widening, narrowing and retained values",
       "scenario_ids": [
-        "ddl.backlog.column.modify"
+        "ddl.backlog.column.modify",
+        "ddl.column.modify.supported"
       ]
     },
     {
@@ -317,7 +318,8 @@
       "name": "Index Keys",
       "grammar": "Primary, unique, secondary, composite and prefix key changes",
       "scenario_ids": [
-        "ddl.backlog.index.keys"
+        "ddl.backlog.index.keys",
+        "ddl.index.secondary.supported"
       ]
     },
     {
@@ -8785,6 +8787,481 @@
       "gaps": [
         "Source rejection emits no event; this is not an applier rejection qualification. Native observation is not imported as assertion evidence."
       ]
+    },
+    {
+      "id": "ddl.column.modify.supported",
+      "name": "Supported modify operations with retained rows and following DML",
+      "family": "C",
+      "feature": "column.modify",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "apply",
+      "prerequisites": [
+        "Prepared tables in demo with one full integer primary key, supported types/encoding and named BTREE secondary indexes only; INDEX privilege is granted."
+      ],
+      "operation": [
+        "Named cases in ModifyIndexCases.swift; exact SQL and complete metadata/row oracles are part of the contract."
+      ],
+      "following_workload": [
+        "Case-specific row probes: one INSERT for column encoding/width or lifecycle effects; INSERT/UPDATE for key changes; full INSERT/UPDATE/DELETE only in representative mixed-stream cases. Index rename/drop are metadata-only. See ModifyIndexCases.swift for each explicit workload."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.modify-index.cases",
+          "relationship": "related_reference",
+          "note": "Independently authored bounded cases; MODIFY replacement, ordering and WL#6555 rename semantics."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "schema-effects",
+          "description": "Compare actual affected schemas, engines, defaults and retained values."
+        },
+        {
+          "id": "following-dml",
+          "description": "Verify the explicitly selected row probes for changed representation or key behavior; metadata-only cases do not contribute."
+        },
+        {
+          "id": "normalized-binlog",
+          "description": "Compare logical binlog effects and source order; do not compare raw bytes/GTIDs."
+        },
+        {
+          "id": "source-boundary",
+          "description": "Verify checkpoint behavior against whether the source actually logged an event."
+        },
+        {
+          "id": "schema-history",
+          "description": "Verify affected schema history and invalidated caches at this boundary."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "ddl-modify-demo-varchar-120",
+            "ddl-modify-narrow-text",
+            "ddl-modify-binary-width",
+            "ddl-modify-binary-narrow",
+            "ddl-modify-integer-signed",
+            "ddl-modify-primary-widen",
+            "ddl-modify-integer-narrow",
+            "ddl-modify-not-null",
+            "ddl-modify-first",
+            "ddl-modify-after",
+            "ddl-modify-indexed"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml",
+            "normalized-binlog",
+            "source-boundary",
+            "schema-history"
+          ],
+          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-modify-demo-varchar-120",
+            "native-modify-narrow-text",
+            "native-modify-binary-width",
+            "native-modify-binary-narrow",
+            "native-modify-integer-signed",
+            "native-modify-primary-widen",
+            "native-modify-integer-narrow",
+            "native-modify-not-null",
+            "native-modify-first",
+            "native-modify-after",
+            "native-modify-indexed"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only."
+        }
+      ],
+      "gaps": [
+        "Native/direct observations are not imported as named native-profile assertion evidence.",
+        "Per-event session context and warnings from replica applier sessions remain unqualified.",
+        "Primary-key shape changes, unsupported index types/options, general conversions/defaults and arbitrary multi-clause ALTER remain outside this subset."
+      ]
+    },
+    {
+      "id": "ddl.index.secondary.supported",
+      "name": "Supported index operations with retained rows and targeted key checks",
+      "family": "D",
+      "feature": "index.keys",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "apply",
+      "prerequisites": [
+        "Prepared tables in demo with one full integer primary key, supported types/encoding and named BTREE secondary indexes only; INDEX privilege is granted."
+      ],
+      "operation": [
+        "Named cases in ModifyIndexCases.swift; exact SQL and complete metadata/row oracles are part of the contract."
+      ],
+      "following_workload": [
+        "Case-specific row probes: one INSERT for column encoding/width or lifecycle effects; INSERT/UPDATE for key changes; full INSERT/UPDATE/DELETE only in representative mixed-stream cases. Index rename/drop are metadata-only. See ModifyIndexCases.swift for each explicit workload."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.modify-index.cases",
+          "relationship": "related_reference",
+          "note": "Independently authored bounded cases; MODIFY replacement, ordering and WL#6555 rename semantics."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No source/direct SQL warnings in the positive fixtures; replica-session warnings remain unqualified.",
+            "partial_effects": "Expected column/index metadata and retained/following rows are checked after each statement."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "schema-effects",
+          "description": "Compare actual affected schemas, engines, defaults and retained values."
+        },
+        {
+          "id": "following-dml",
+          "description": "Verify the explicitly selected row probes for changed representation or key behavior; metadata-only cases do not contribute."
+        },
+        {
+          "id": "normalized-binlog",
+          "description": "Compare logical binlog effects and source order; do not compare raw bytes/GTIDs."
+        },
+        {
+          "id": "source-boundary",
+          "description": "Verify checkpoint behavior against whether the source actually logged an event."
+        },
+        {
+          "id": "schema-history",
+          "description": "Verify affected schema history and invalidated caches at this boundary."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "ddl-index-create",
+            "ddl-index-unique",
+            "ddl-index-prefix",
+            "ddl-index-rename",
+            "ddl-index-drop",
+            "ddl-index-drop-alter",
+            "ddl-index-replace",
+            "ddl-index-like",
+            "ddl-index-table-rename",
+            "ddl-index-truncate",
+            "ddl-index-unique-null"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "normalized-binlog",
+            "source-boundary",
+            "schema-history"
+          ],
+          "note": "All named cases must pass structural/binlog/checkpoint/history checks; rename/drop make no following-DML claim."
+        },
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "ddl-index-create",
+            "ddl-index-unique",
+            "ddl-index-prefix",
+            "ddl-index-replace",
+            "ddl-index-like",
+            "ddl-index-table-rename",
+            "ddl-index-truncate",
+            "ddl-index-unique-null"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "following-dml"
+          ],
+          "note": "Only explicitly declared row probes are counted; full three-operation sequences are representative, not repeated per DDL."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-index-create",
+            "native-index-unique",
+            "native-index-prefix",
+            "native-index-rename",
+            "native-index-drop",
+            "native-index-drop-alter",
+            "native-index-replace",
+            "native-index-like",
+            "native-index-table-rename",
+            "native-index-truncate",
+            "native-index-unique-null"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only."
+        }
+      ],
+      "gaps": [
+        "Native/direct observations are not imported as named native-profile assertion evidence.",
+        "Per-event session context and warnings from replica applier sessions remain unqualified.",
+        "Primary-key shape changes, unsupported index types/options, general conversions/defaults and arbitrary multi-clause ALTER remain outside this subset."
+      ]
     }
   ],
   "case_classifications": [
@@ -8817,6 +9294,31 @@
       "suite": "native-ddl-suite",
       "case_id": "native-like-conditional-missing",
       "reason": "Additional native template-resolution precedence regression; confirms error 1146 and no event even with IF NOT EXISTS and an existing destination."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-index-byte-limit",
+      "reason": "MODIFY/index failure or source-only research fixture; no positive assertion qualification inferred."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-index-duplicate-target",
+      "reason": "MODIFY/index failure or source-only research fixture; no positive assertion qualification inferred."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-index-timeout",
+      "reason": "MODIFY/index failure or source-only research fixture; no positive assertion qualification inferred."
+    },
+    {
+      "suite": "native-ddl-suite",
+      "case_id": "native-modify-index-source-rejections",
+      "reason": "MODIFY/index failure or source-only research fixture; no positive assertion qualification inferred."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-index-resume",
+      "reason": "Indexed-state restart and drift regression; kept distinct from the fresh-stream DDL feature evidence."
     }
   ]
 }

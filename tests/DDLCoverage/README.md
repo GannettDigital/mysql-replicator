@@ -314,3 +314,24 @@ combinations and zero fully verified combinations (previously 44/638, 22 and zer
 The [comparison and reproduction commands](../../artifacts/database-creation-20260930/README.md)
 retain the exact evidence paths and distinguish passing assertions from unbound
 native/rejection obligations. Artifacts are local and ignored by Git.
+
+## MODIFY and secondary-index slice
+
+`ModifyIndexCases.swift` defines 22 positive variants. Every variant checks exact
+column/index metadata and retained rows. DML probes follow the behavior under
+test: a single INSERT for most type/lifecycle changes, INSERT/UPDATE for key
+changes, and full INSERT/UPDATE/DELETE in five representative mixed-stream cases.
+Index rename/drop cases have no DML workload or following-DML evidence claim.
+
+Two bounded scenarios bind schema effects, normalized binlogs, source boundaries,
+schema history and selected following-DML probes. Named MyISAM key-size/duplicate
+failures, timeout, and indexed-state resume/drift checks remain separately
+classified; these do not imply complete index/error coverage. Native observations
+are not imported as native-profile assertions. See the
+[implementation scope and qualification](../../PLAN/DDL_MODIFY_AND_INDEXES.md).
+
+Validation on 2026-10-01: 135 Swift tests, 114 cases per Swift DDL profile, 48
+cases per native profile and 10 demo cases passed. Both existing DML profiles
+passed. Fresh evidence records 68/730 passing obligations, 28 partial combinations
+and zero fully verified combinations (previously 48/690, 24 and zero). See the
+[comparison and exact reproduction commands](../../artifacts/modify-index-20261001/README.md).

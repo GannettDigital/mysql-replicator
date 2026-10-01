@@ -20,11 +20,11 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         let bundles = DDLCoverageCases.swiftProfiles.map { DDLCoverageEvidence.Bundle(profile: $0, stale: false, passed: true, cases: matchingCases(), origin: "fixture") }
         let after = try DDLCoverageEvidence.report(inventory, bundles: bundles)
         XCTAssertEqual((before["assertion_summary"] as! [String: Int])["passed"], 0)
-        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["passed"], 48)
-        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["partial_scenario_profiles"], 24)
+        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["passed"], 68)
+        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["partial_scenario_profiles"], 28)
         XCTAssertEqual((after["assertion_summary"] as! [String: Int])["verified_scenario_profiles"], 0)
         let rows = after["scenarios"] as! [[String: Any]]
-        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count, 12)
+        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count, 14)
         XCTAssertThrowsError(try DDLCoverageEvidence.report(inventory, bundles: [bundles[0], bundles[0]]))
     }
     func testMissingAssertionAndParentOrCleanupFailureCannotBecomeCoverage() throws {
@@ -44,6 +44,16 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         let stale = DDLCoverageEvidence.evaluate(scenario, profile: profile, bundle: .init(profile: profile, stale: true, passed: true, cases: matchingCases(), origin: "fixture"))
         XCTAssertEqual(stale["qualification"] as? String, "stale")
         XCTAssertEqual(stale["passed_assertions"] as? [String], [])
+    }
+    func testMetadataOnlyIndexCasesDoNotClaimFollowingDML() throws {
+        for id in ["ddl-index-rename","ddl-index-drop","ddl-index-drop-alter"] {
+            let test=try XCTUnwrap(ModifyIndexCases.cases.first{$0.test.id==id})
+            XCTAssertTrue(test.workload.isEmpty)
+            XCTAssertFalse(DDLCoverageCases.assertions(for:id).contains("following-dml"))
+            XCTAssertTrue(DDLCoverageCases.assertions(for:id).contains("schema-effects"))
+        }
+        XCTAssertEqual(ModifyIndexCases.cases.first{$0.test.id=="ddl-modify-binary-width"}?.workload.count,1)
+        XCTAssertEqual(ModifyIndexCases.cases.first{$0.test.id=="ddl-modify-demo-varchar-120"}?.workload.count,3)
     }
     func testChecksummedBundleRejectsTamperingMissingFilesAndPathEscapes() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ddl-evidence-test-" + UUID().uuidString).resolvingSymlinksInPath()

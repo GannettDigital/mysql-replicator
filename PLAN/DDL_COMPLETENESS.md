@@ -125,6 +125,21 @@ scenario/profile combinations and no fully verified combinations. The larger
 denominator includes newly documented gaps. See the local
 [results and reproduction commands](../artifacts/database-creation-20260930/README.md).
 
+## MODIFY COLUMN and secondary indexes
+
+The [MODIFY/index implementation slice](DDL_MODIFY_AND_INDEXES.md) extends the
+supported subset after `6dd6598`. Qualification passed on both Swift profiles
+and both native engine profiles; see the linked results and remaining gaps. Its first regression is the reported
+`ALTER TABLE demo.explicit_default_engine MODIFY COLUMN name VARCHAR(120)` failure.
+It includes column width/type/nullability/placement changes within supported
+types and named ordinary/unique secondary-index creation, drop, rename and a
+bounded single-statement DROP+ADD replacement. Index discovery, schema history,
+state compatibility and following DML are part of acceptance, alongside native
+MyISAM failures and measured catalog growth. Primary-key shape changes and
+general ALTER options remain separate. Test workloads are operation-specific:
+metadata checks for rename/drop, targeted row probes for representation/key changes,
+and representative full DDL/DML flows.
+
 ## Engine selection: preserve the statement's meaning
 
 Configure and verify the source's default as InnoDB and both targets' default as
