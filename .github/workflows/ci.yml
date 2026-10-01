@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit Tests & Catalog Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Swift
+        uses: swiftlang/setup-swift@v1
+        with:
+          swift-version: "6.2.1"
+
+      - name: Run unit test suites
+        run: make test
+
+      - name: Verify DDL coverage catalog
+        run: make ddl-catalog-check
+
+  packaging-and-smoke:
+    name: Debian Packaging & Integration Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Swift
+        uses: swiftlang/setup-swift@v1
+        with:
+          swift-version: "6.2.1"
+
+      - name: Build and verify Debian package (.deb)
+        run: make deb ARGS="--version 0.1.0"
+
+      - name: Upload Debian package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-replicator-deb
+          path: |
+            artifacts/deb/*.deb
+            artifacts/deb/*.sha256
+          if-no-files-found: error

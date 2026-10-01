@@ -1,6 +1,9 @@
 # mysql-replicator
 
-Direct MySQL replication POC: Swift capture/application, Rust mysql_common decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Organization](https://img.shields.io/badge/Maintained%20by-Gannett%20Digital-red.svg)](https://github.com/GannettDigital)
+
+Direct MySQL replication engine developed by Gannett Digital: Swift capture/application, Rust `mysql_common` decoding through a C ABI, and local binlog relay files with SQLite replication state. The intended source is Cloud SQL MySQL 8.4 InnoDB and the target is on-premises MySQL 5.7 MyISAM.
 
 Phase 1 is in progress. The repository contains a bounded Rust decoder behind a Swift/C interface, offline and live JSON inspection with bounded transaction assembly, and a tested native-reference harness. The first serial INSERT/UPDATE/DELETE applier now connects that pipeline to MySQL 5.7 MyISAM, with a local framed relay and SQLite state/row intents. The first [native engine/charset DDL slice](PLAN/DDL_NATIVE_DEFAULTS.md) removes compatibility rewrites and adds TRUNCATE, discovered defaults and native-reference fixtures. Broader [DDL completeness](PLAN/DDL_COMPLETENESS.md) remains in progress. Resume/recovery remains future work; statistics will be read from SQLite without an embedded REST server. Decoder coverage is deliberately limited; see [offline inspect](PLAN/OFFLINE_INSPECT.md).
 
@@ -203,3 +206,11 @@ Validated host toolchain: Swift 6.2.1, Rust/Cargo 1.93.1, Docker Compose v2, Git
 - [Reader/decoder decision](PLAN/REPLICATOR_CODEC_DECISION.md)
 - [GTID qualification](PLAN/GTID_QUALIFICATION.md) and [positional experiments](PLAN/POSITIONAL_GTID_RESEARCH.md)
 - [Imported planning provenance](PLAN/IMPORT_NOTES.md)
+
+## License & Attribution
+
+`mysql-replicator` is open-source software licensed under the [Apache License, Version 2.0](LICENSE).
+
+Copyright 2026 Gannett Co., Inc.
+
+Attributions and third-party notices are maintained in the [NOTICE](NOTICE) file.
