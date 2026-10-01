@@ -179,7 +179,7 @@ public final class TransactionAssembler {
                 if event.eventType == 19 {
                     statementOpen = true
                 } else if let flags = event.rowFlags, [23,24,25,30,31,32].contains(event.eventType) {
-                    try require(statementOpen && !event.rows.isEmpty, at, "rows without an open mapped statement")
+                    try require(statementOpen && (!event.rows.isEmpty || event.replicationFiltered), at, "rows without an open mapped statement")
                     try require(flags & ~1 == 0, at, "row flags other than STMT_END are not qualified", code: .unsupported)
                     // STMT_END clears table maps, but does NOT complete a transaction.
                     statementOpen = flags & 1 == 0; hasRows = true

@@ -335,3 +335,15 @@ cases per native profile and 10 demo cases passed. Both existing DML profiles
 passed. Fresh evidence records 68/730 passing obligations, 28 partial combinations
 and zero fully verified combinations (previously 48/690, 24 and zero). See the
 [comparison and exact reproduction commands](../../artifacts/modify-index-20261001/README.md).
+
+## Selected execution
+
+Use `make ddl-suite ARGS='--list'`, `--slice modify-index`, or a named
+`--case ddl-modify-demo-varchar-120` to execute a subset; add
+`--positioning gtid` to use one profile. See
+[commands, prerequisites and build reuse](../../PLAN/INCREMENTAL_CHECKS.md).
+Selected runs keep the same checksummed evidence format. Their `result.json`
+records `selection.full_suite=false`; omitted cases never supply assertions.
+The three wildcard-filter/checkpoint cases are explicitly classified as
+non-DDL-grammar regressions, so their passes do not inflate DDL coverage.
+The registry now contains 165 cases; the 63 DDL scenarios remain unchanged.

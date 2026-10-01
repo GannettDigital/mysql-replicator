@@ -32,6 +32,7 @@ public enum ApplyRun {
     public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
                            initialize: Bool = false, cancellation: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
         try configuration.validate()
+        let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
         let state = try StateStore(configuration:configuration,initialize:initialize)
         func summary(_ lifecycle: String) -> ApplySummary {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
@@ -42,8 +43,11 @@ public enum ApplyRun {
         do {
             let target = try TargetSession(configuration:configuration,password:targetPassword)
             try target.preflight()
+            if !filter.patterns.isEmpty {
+                try require(try target.query("SELECT @@lower_case_table_names AS n").0.first?.column("n")?.string == "0", "wildcard filtering requires lower_case_table_names=0")
+            }
             try state.bindTargetIdentity(target.targetUUID!)
-            for table in state.currentSchemas {
+            for table in state.currentSchemas where !filter.ignores(database: table.database, table: table.table) {
                 try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
             }
             try state.running(); started = true
@@ -52,8 +56,13 @@ public enum ApplyRun {
                     emitEvent:state.append,emitTransaction: { group in
                         try state.begin(group)
                         if group.outcome == .statement {
-                            let statement=try DDLStatement.from(group)
+                            try require(group.events.count == 2, "invalid standalone DDL group")
                             guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
+                            if try filter.ignores(query) {
+                                try state.complete(group,rowCount:0,filtered:true)
+                                try emitProgress(summary("RUNNING")); return
+                            }
+                            let statement=try DDLStatement.from(group)
                             let plan=try target.prepareDDL(statement,query:query)
                             try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                             try require(!cancellation.isCancelled,"apply cancelled")
@@ -63,6 +72,10 @@ public enum ApplyRun {
                             return
                         }
                         let mutations = try DMLPlan.make(group,tables:Array(target.discovered.values))
+                        if mutations.isEmpty {
+                            try state.complete(group,rowCount:0,filtered:true)
+                            try emitProgress(summary("RUNNING")); return
+                        }
                         try target.lock(mutations[0].table)
                         var locked = true
                         defer { if locked { try? target.unlock() } }
@@ -82,7 +95,7 @@ public enum ApplyRun {
                             guard let kind = column.interpretation else {throw ApplyError("missing wire interpretation")}
                             return kind
                         }
-                    },allowDDL:true)
+                    },allowDDL:true,ignoreTable: filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
             } catch {
                 guard canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
             }

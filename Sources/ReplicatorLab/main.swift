@@ -12,8 +12,9 @@ func main() throws -> Int32 {
                        [--native-engine MyISAM|InnoDB] [--native-init-automatic]
           ubuntu-smoke [--skip-build]
           live-suite [--skip-build]
-          dml-suite [--skip-build]
-          ddl-suite [--skip-build]
+          dml-suite [--skip-build] [--slice all|basic] [--positioning both|gtid|file-position] [--list]
+          ddl-suite [--skip-build] [--slice all|basic|modify-index|database|ordered|filters]
+                    [--case ID ...] [--positioning both|gtid|file-position] [--list]
           native-ddl-suite
           ddl-catalog check
           ddl-catalog report [--format markdown|json] [--evidence PATH ...]
@@ -48,8 +49,10 @@ func main() throws -> Int32 {
         try NativeDDLQualification.run(root:root); return 0
     }
     if command == "dml-suite" || command == "ddl-suite" {
-        try require(args.isEmpty || args == ["--skip-build"], "DML/DDL suite accepts only --skip-build")
-        try DMLQualification.run(root: root, build: args.isEmpty, ddl: command == "ddl-suite")
+        let ddl = command == "ddl-suite"
+        let selection = try SuiteSelection(arguments: args, ddl: ddl)
+        if selection.list { selection.describe(ddl: ddl); return 0 }
+        try DMLQualification.run(root: root, build: selection.build, ddl: ddl, selection: selection)
         return 0
     }
     if command == "live-suite" {

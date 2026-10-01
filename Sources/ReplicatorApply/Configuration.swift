@@ -135,6 +135,7 @@ public struct ApplyConfiguration: Decodable {
     public let tables: [ApplyTable]?
     public let stateDirectory: String
     public let maximumRelayBytes: UInt64?
+    public let replicateWildIgnoreTable: [String]?
     public let ddlTimeoutSeconds: Int?
     var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
@@ -146,6 +147,7 @@ public struct ApplyConfiguration: Decodable {
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
+        _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()
     }
 }
@@ -161,8 +163,10 @@ enum DMLPlan {
     /// may span several row events/rows, but multi-statement groups are rejected.
     static func make(_ group: CompleteTransaction, tables: [ApplyTable]) throws -> [Mutation] {
         try require(group.outcome == .committed && group.gtid != nil && !group.anonymous,"unsupported transaction identity/outcome")
-        let rowEvents = group.events.filter { !$0.rows.isEmpty }
-        try require(rowEvents.filter { ($0.rowFlags ?? 0) & 1 != 0 }.count == 1,"only single-statement source groups are supported")
+        let allRows = group.events.filter { $0.rowFlags != nil }
+        let rowEvents = allRows.filter { !$0.replicationFiltered }
+        if !allRows.isEmpty && rowEvents.isEmpty { return [] }
+        try require(allRows.filter { ($0.rowFlags ?? 0) & 1 != 0 }.count == 1,"only single-statement source groups are supported")
         var result: [Mutation] = []
         for event in rowEvents {
             guard let table = tables.first(where:{$0.database == event.database && $0.table == event.table}) else { throw ApplyError("row event outside configured scope") }

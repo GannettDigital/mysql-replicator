@@ -3,7 +3,7 @@
 Implementation following the first DML checkpoint (`d188f58`). Version 2 apply
 configuration removes manual schema lists. Discovered schema remains internal
 state. SQLite history is timestamped and pruned by minimum age only under storage
-pressure. Filters remain a separate feature; discovery never implies filtering.
+pressure. Explicit wildcard exclusions are now implemented separately; see [filtering](WILDCARD_FILTERS.md). Discovery never implies filtering.
 
 ## What the reviewed checkpoint required
 
@@ -66,8 +66,8 @@ must be handled explicitly; do not assume every event carries all optional field
 Introduce a versioned configuration migration. Reject legacy manual schema fields
 with a clear message instead of silently ignoring an old allowlist and applying
 unexpected tables. Connections, identities, starting boundary, state location and
-runtime limits remain configuration. Explicit binlog include/exclude rules can be
-added later; discovery metadata itself never decides filtering.
+runtime limits remain configuration. Explicit wildcard exclusions now use `replicateWildIgnoreTable`; see
+[filtering](WILDCARD_FILTERS.md). Discovery metadata itself never decides filtering.
 
 Acceptance: run the DML harness without either schema list; use multiple tables,
 different names/column orders, MINIMAL/FULL metadata, signed/unsigned extremes,

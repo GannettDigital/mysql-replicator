@@ -5,6 +5,28 @@ import ReplicatorLabCore
 import CReplicatorCodec
 
 final class DecoderTests: XCTestCase, BinlogFixtures {
+    func testFilteredUnsupportedColumnMapIsOpaqueButStillChecksRowsAndClearsMaps() throws {
+        let fde = frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
+        let at = UInt64(fde.count+4)
+        // One NEWDECIMAL(10,2), nullable; independent wire fixture.
+        let body = Data([123,0,0,0,0,0,0,0,3])+Data("tmp".utf8)+Data([0,1,120,0,1,246,2,10,2,1])
+        let map = event(19,body,at:at)
+        let strict = try BinlogDecoder(); _ = try strict.decode(fde,at:4)
+        failure(4) { _ = try strict.decode(map,at:at) }
+        let decoder = try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+        let identity = try decoder.decode(map,at:at,filterTable:true)
+        XCTAssertEqual(identity.database,"tmp"); XCTAssertTrue(identity.replicationFiltered)
+        let rowOffset=at+UInt64(map.count)
+        // v2 write rows: table 123, STMT_END, extra length 2, one present
+        // column, NULL row. No value interpretation is needed.
+        let row = event(30,Data([123,0,0,0,0,0,1,0,2,0,1,1,1]),at:rowOffset)
+        let ignored = try decoder.decode(row,at:rowOffset)
+        XCTAssertTrue(ignored.replicationFiltered); XCTAssertTrue(ignored.rows.isEmpty)
+        XCTAssertEqual(ignored.rowFlags,1)
+        failure(7) { _ = try decoder.decode(event(30,Data(row[19..<row.count-4]),at:rowOffset+UInt64(row.count)),at:rowOffset+UInt64(row.count)) }
+        try decoder.reset(); _ = try decoder.decode(fde,at:4)
+        failure(1) { _ = try decoder.decode(event(3,Data(),at:at),at:at,filterTable:true) }
+    }
     func testAutomaticWireMetadataSurvivesResetAndRejectsConflictingTLVs() throws {
         let fde = frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
         let offset=UInt64(4+fde.count)

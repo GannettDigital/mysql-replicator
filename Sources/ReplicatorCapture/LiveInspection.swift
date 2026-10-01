@@ -90,9 +90,9 @@ public enum LiveInspection {
                            emitEvent: @escaping (LiveRecord) throws -> Void,
                            emitTransaction: @escaping (CompleteTransaction) throws -> Void,
                            resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
-                           allowDDL: Bool = false) throws -> LiveSummary {
+                           allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws -> LiveSummary {
         let start = try config.validate()
-        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, allowDDL: allowDDL)
+        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, allowDDL: allowDDL, ignoreTable: ignoreTable)
         func summary() -> LiveSummary {
             LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,
                 eventBytesReceived: String(processor.receivedBytes), heartbeats: processor.heartbeatCount,
@@ -123,6 +123,10 @@ public enum LiveInspection {
                   row.column("row_image")?.string == "FULL", row.column("checksum")?.string == "CRC32",
                   row.column("version")?.string?.hasPrefix("8.4.") == true else {
                 throw CaptureError("source identity/settings differ from the qualified MySQL 8.4 GTID-ON contract")
+            }
+            if ignoreTable != nil {
+                let casing = try query("SELECT @@lower_case_table_names AS n")
+                guard casing.first?.column("n")?.string == "0" else { throw CaptureError("wildcard filtering requires source lower_case_table_names=0") }
             }
             let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
             guard !(ssl.first?.column("Value")?.string ?? "").isEmpty else { throw CaptureError("source connection has no TLS cipher") }

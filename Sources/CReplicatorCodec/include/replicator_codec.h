@@ -53,6 +53,12 @@ int32_t rc_decoder_reset(rc_decoder *decoder);
 void rc_decoder_free(rc_decoder *decoder);
 int32_t rc_decoder_feed(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
     uint64_t offset, const uint32_t *column_kinds, uint32_t column_count, rc_result **out);
+/* Additive ABI 4 filter API: filter_table=1 only on TABLE_MAP with no history.
+ * Such maps and their row events carry a filtered marker. CRC/framing/map IDs
+ * remain checked; excluded row values are intentionally not interpreted. */
+int32_t rc_decoder_feed_filtered(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
+    uint64_t offset, const uint32_t *column_kinds, uint32_t column_count, uint32_t filter_table, rc_result **out);
+uint32_t rc_result_is_filtered(const rc_result *result);
 int32_t rc_result_event(const rc_result *result, rc_event *out);
 /* image: 0 before, 1 after. A missing image has only absent values.
  * Query row_count / column_count first. Bounds errors return status 1. */

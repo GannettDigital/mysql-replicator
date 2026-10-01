@@ -19,6 +19,7 @@ final class StreamProcessor {
     var completeGTIDs: GTIDSet
     let includeRaw: Bool
     let allowDDL: Bool
+    let ignoreTable: ((String, String) -> Bool)?
     var decoder: BinlogDecoder?
     var format: Data?
     var decoderOffset: UInt64 = 4
@@ -40,7 +41,8 @@ final class StreamProcessor {
          emitEvent: @escaping (LiveRecord) throws -> Void,
          emitTransaction: @escaping (CompleteTransaction) throws -> Void,
          resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
-         allowDDL: Bool = false) throws {
+         allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws {
+        self.ignoreTable = ignoreTable
         self.allowDDL=allowDDL
         self.resolveSchema = resolveSchema
         self.config = config; self.includeRaw = includeRaw
@@ -143,14 +145,22 @@ final class StreamProcessor {
         let offset = UInt64(next) - UInt64(frame.count)
         try check(offset == current.position, "source event gap without a GTID exclusion heartbeat")
         var schema: TableSchema?
+        var filterTable = false
         if type == 19 {
             // Probe with the same codec, then bind discovered wire/target metadata
             // (or explicit legacy debug history). Never query the source's
             // current information_schema to interpret historical events.
             let probe = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024)
             _ = try probe.decode(format!, at: 4)
-            let identity = try probe.decode(frame, at: UInt64(format!.count)+4)
+            // Identity probe accepts column types outside the applier subset.
+            // Included maps are decoded again with the normal strict checks.
+            var identity = try probe.decode(frame, at: UInt64(format!.count)+4, filterTable: true)
             guard let db = identity.database, let name = identity.table, let id = identity.tableID else {throw CaptureError("missing table identity")}
+            filterTable = ignoreTable?(db, name) ?? false
+            if !filterTable {
+            try probe.reset()
+            _ = try probe.decode(format!, at: 4)
+            identity = try probe.decode(frame, at: UInt64(format!.count)+4)
             let columns: [ColumnInterpretation]
             if config.version == 2 {
                 if let resolveSchema { columns = try resolveSchema(identity.atSourcePosition(offset),current) }
@@ -166,8 +176,9 @@ final class StreamProcessor {
                 columns = table.columns
             }
             schema = TableSchema(offset:decoderOffset,eventSHA256:identity.sha256,database:db,table:name,tableID:id,columns:columns)
+            }
         }
-        let event = try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw).atSourcePosition(offset)
+        let event = try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset)
         if case .query(let query) = event.control {
             try check(allowDDL || [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql),
                       "live schema window stops at DDL or non-control SQL")

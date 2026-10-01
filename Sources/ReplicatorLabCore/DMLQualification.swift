@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DMLQualification {
-    public static func run(root: URL, build: Bool = true, ddl: Bool = false) throws {
+    public static func run(root: URL, build: Bool = true, ddl: Bool = false, selection: SuiteSelection = .init()) throws {
         let runner = ProcessRunner(root:root)
         let image = "mysql-replicator-packaging:dml"
         let coverageInputs = ddl ? try DDLCoverageEvidence.inputs(root: root) : nil
@@ -16,9 +16,9 @@ public enum DMLQualification {
             try require(result.status == 0,"DML image build failed; see \(log.path)")
         }
         let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
-        for mode in ["file-position","gtid"] { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts) }
+        for mode in selection.modes { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts,selection:selection) }
     }
-    private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?) throws {
+    private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?,selection: SuiteSelection) throws {
         var native = NativeCase(); native.transaction = false; native.autoPosition = mode == "gtid"
         let h = NativeHarness(root:root,config:native,artifactCategory:ddl ? "ddl-suite" : "dml-suite")
         let runner = h.runner, output = h.output, tls = output.appendingPathComponent("tls")
@@ -30,6 +30,7 @@ public enum DMLQualification {
         var copiedStates: Set<String> = []
         var clients: [String] = [], started = false, failure: Error?
         var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":ddl ? "qualified_subset" : "not_exercised"]
+        report["selection"] = selection.fields
         func stage(_ text: String) { FileHandle.standardError.write(Data(("\(ddl ? "DDL" : "DML") \(mode): " + text + "\n").utf8)) }
         let cases = QualificationReporter(output: output, log: stage)
         let coverageProfile = mode == "gtid" ? "swift.gtid.metadata-full" : "swift.position.metadata-minimal"
@@ -42,7 +43,7 @@ public enum DMLQualification {
             try require(r.status == 0,"\(name) failed; see evidence")
             return r
         }
-        func start(_ test: QualificationCase,_ config: [String:Any]) throws -> String {
+        func start(_ test: QualificationCase,_ config: [String:Any], initialize: Bool = true) throws -> String {
             try cases.begin(test)
             let label = test.id
             try writeJSON(config,to:output.appendingPathComponent(label + ".json"))
@@ -50,7 +51,7 @@ public enum DMLQualification {
             let name = h.project + "-" + label; clients.append(name)
             _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project + "_fixture",
                 "--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only",
-                "--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).json","--initialize"])
+                "--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).json"] + (initialize ? ["--initialize"] : []))
             return name
         }
         func finish(_ name: String,_ label: String,success: Bool,reason: String? = nil) throws -> [String:Any] {
@@ -160,7 +161,84 @@ public enum DMLQualification {
             try cases.pass("positive")
             report["positive"] = positive
             if ddl {
-                for test in ModifyIndexCases.failures {
+                if selection.includes("filters") {
+                    let test = DDLCoverageCases.wildcardFilter
+                    let patterns = ["temp.%", "poc.ignore\\_%", "scratch_.%"]
+                    let nativePatterns = patterns.map { "'" + $0.replacingOccurrences(of:"\\",with:"\\\\") + "'" }.joined(separator:",")
+                    _ = try h.sql("native","CHANGE REPLICATION FILTER REPLICATE_WILD_IGNORE_TABLE=(\(nativePatterns)); START REPLICA")
+                    let begin = try h.boundary("source"), nativeBegin = try h.boundary("native"), targetBegin = try h.boundary("target57")
+                    let workload = [
+                        "CREATE DATABASE temp",
+                        "CREATE TABLE temp.opaque(id INT PRIMARY KEY,d DECIMAL(20,4),j JSON,ts DATETIME) ENGINE=InnoDB",
+                        "INSERT INTO temp.opaque VALUES(1,123.45,JSON_OBJECT('a',1),NOW())",
+                        "UPDATE temp.opaque SET d=456.78 WHERE id=1",
+                        "BEGIN; INSERT INTO temp.opaque VALUES(2,1,NULL,NULL); UPDATE temp.opaque SET d=2 WHERE id=2; COMMIT",
+                        "ALTER TABLE temp.opaque MODIFY d DECIMAL(25,6)",
+                        "CREATE INDEX ignored_index ON temp.opaque(d)",
+                        "RENAME TABLE temp.opaque TO temp.renamed",
+                        "DELETE FROM temp.renamed WHERE id=1",
+                        "CREATE TABLE poc.ignore_table(id INT PRIMARY KEY,d DECIMAL(20,4)) ENGINE=InnoDB",
+                        "INSERT INTO poc.ignore_table VALUES(1,12.34)",
+                        "CREATE TABLE poc.ignoreXtable(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL)",
+                        "DROP TABLE poc.ignoreXtable",
+                        "CREATE DATABASE scratch1",
+                        "CREATE TABLE scratch1.t(id INT PRIMARY KEY) ENGINE=InnoDB",
+                        "INSERT INTO scratch1.t VALUES(1)",
+                        "CREATE TABLE temp.mixed(id INT PRIMARY KEY,n INT)",
+                        "INSERT INTO temp.mixed VALUES(91,1)",
+                        "INSERT INTO poc.items VALUES(91,'included',1)",
+                        "UPDATE poc.items p JOIN temp.mixed t ON p.id=t.id SET p.quantity=2,t.n=2 WHERE p.id=91",
+                        "DELETE FROM poc.items WHERE id=91",
+                        "DROP TABLE temp.mixed,temp.renamed",
+                        "DROP TABLE poc.ignore_table",
+                        "DROP DATABASE scratch1",
+                        "DROP DATABASE temp"
+                    ]
+                    var config = configuration(test.id,at:begin,count:workload.count); config["replicateWildIgnoreTable"] = patterns
+                    let applying = try start(test,config); try waitForReader(applying)
+                    for sql in workload { _ = try h.sql("source",sql) }
+                    let result = try finish(applying,test.id,success:true), end = try h.boundary("source")
+                    try ModifyIndexCases.waitNative(h,end); _ = try h.sql("native","STOP REPLICA")
+                    try require(result["transactionsApplied"] as? Int == workload.count && result["rowsApplied"] as? Int == 3 && result["ddlApplied"] as? Int == 2 && result["appliedGTIDSet"] as? String == end.gtids,"wildcard filtering checkpoint/counters differ")
+                    for service in ["native","target57"] {
+                        try require(h.rows(service) == Fixture.final,"filtered workload changed retained rows")
+                        try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN ('temp','scratch1')") == "0","excluded schema reached replica")
+                        try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='ignore_table'") == "0","escaped wildcard did not exclude table")
+                    }
+                    let expected = [RowOperation("insert",after:["91","included","1"]),RowOperation("update",before:["91","included","1"],after:["91","included","2"]),RowOperation("delete",before:["91","included","2"])]
+                    for (service,from) in [("native",nativeBegin),("target57",targetBegin)] {
+                        try Comparison.operations(h.capture(service,start:from,end:h.boundary(service)),expected:expected)
+                    }
+                    try writeJSON(["patterns":patterns,"workload":workload,"summary":result,"native_status":try h.status()],to:output.appendingPathComponent("wild-ignore.json"))
+                    try cases.pass(test.id)
+                    // Resume uses persisted progress, not the stale baseline in config.
+                    let resumedTest = DDLCoverageCases.wildcardResume
+                    var resumeConfig = config
+                    var source = resumeConfig["source"] as! [String:Any]; source["stopAfterTransactions"] = 1; resumeConfig["source"] = source
+                    let resumed = try start(resumedTest,resumeConfig,initialize:false); try waitForReader(resumed)
+                    _ = try h.sql("source","UPDATE poc.items SET value='after-filter-resume' WHERE id=1")
+                    let resumedResult = try finish(resumed,resumedTest.id,success:true)
+                    try require(resumedResult["transactionsApplied"] as? Int == workload.count+1 && resumedResult["rowsApplied"] as? Int == 4,"filtered resume replayed/reset progress")
+                    let saved = try state(test.id,"SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||ddl_applied FROM state")
+                    try require(saved == "STOPPED|\(workload.count+1)|4|2","filtered durable state differs")
+                    try require(state(test.id,"SELECT COUNT(*) FROM row_intents") == "4" && state(test.id,"SELECT COUNT(*) FROM ddl_intents") == "2" && state(test.id,"SELECT COUNT(*) FROM schemas") == "2","excluded work created intents or schemas")
+                    try cases.pass(resumedTest.id)
+                    _ = try h.sql("native","START REPLICA"); try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA; CHANGE REPLICATION FILTER REPLICATE_WILD_IGNORE_TABLE=()")
+                    let rejectedTest = DDLCoverageCases.wildcardRejection
+                    var rejectionConfig = configuration(rejectedTest.id,at:try h.boundary("source"),count:2); rejectionConfig["replicateWildIgnoreTable"] = patterns
+                    let rejected = try start(rejectedTest,rejectionConfig); try waitForReader(rejected)
+                    _ = try h.sql("source","CREATE TABLE poc.filter_included(id INT PRIMARY KEY,d DECIMAL(10,2)); INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
+                    _ = try finish(rejected,rejectedTest.id,success:false,reason:"unsupported DDL column type")
+                    try require(state(rejectedTest.id,"SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0" && state(rejectedTest.id,"SELECT COUNT(*) FROM ddl_intents") == "0","included DDL bypassed fail-stop policy")
+                    try require(h.sql("target57","SELECT COUNT(*) FROM poc.items WHERE id=92") == "0","included DDL failure did not stop following row")
+                    try cases.pass(rejectedTest.id)
+                    _ = try h.sql("native","START REPLICA"); try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                    for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; DROP TABLE IF EXISTS poc.filter_included; DELETE FROM poc.items WHERE id=92") }
+                    // Restore the shared basic fixture without adding source events.
+                    for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; UPDATE poc.items SET value='" + Fixture.final[0][1] + "' WHERE id=1") }
+                }
+                if selection.includes("modify-index") {
+                for test in ModifyIndexCases.failures where selection.selects(test.test.id) {
                     let label=test.test.id
                     for service in h.services {
                         let second=test.duplicate && service != "source" ? "seed" : "other"
@@ -186,7 +264,7 @@ public enum DMLQualification {
                     _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(end.file)',SOURCE_LOG_POS=\(end.position)")
                     try cases.pass(label)
                 }
-                do {
+                if selection.selects(ModifyIndexCases.timeout.id) {
                     let label=ModifyIndexCases.timeout.id,test=ModifyIndexCases.cases.first{$0.test.id=="ddl-index-create"}!
                     for service in h.services {_ = try h.sql(service,test.seed)}
                     let before=try h.boundary("source")
@@ -213,7 +291,7 @@ public enum DMLQualification {
                     try ModifyIndexCases.waitNative(h,h.boundary("source"));_ = try h.sql("native","STOP REPLICA")
                     try writeJSON(result,to:output.appendingPathComponent(label+"-failure.json"));try cases.pass(label)
                 }
-                for test in ModifyIndexCases.cases {
+                for test in ModifyIndexCases.cases where selection.selects(test.test.id) {
                     let label=test.test.id
                     for service in h.services {_ = try h.sql(service,test.seed)}
                     var starts:[String:Boundary]=[:]
@@ -297,7 +375,7 @@ public enum DMLQualification {
                         return observed
                     }
                     try cases.pass(label)
-                    if label == "ddl-index-create" {
+                    if label == "ddl-index-create" && selection.selects(ModifyIndexCases.resume.id) {
                         try cases.run(ModifyIndexCases.resume) {
                             let config=configuration(label,at:end,count:1)
                             try writeJSON(config,to:output.appendingPathComponent(label+"-resume.json"))
@@ -319,6 +397,8 @@ public enum DMLQualification {
                         }
                     }
                 }
+                }
+                if selection.includes("database") {
                 // Database creation has a separate durable stream per named
                 // case; databases are deliberately absent from fixture setup.
                 for test in DatabaseCreationCases.cases {
@@ -385,6 +465,8 @@ public enum DMLQualification {
                     try cases.pass(label)
                 }
                 // Named scenarios retain their definition locations in progress and evidence.
+                }
+                if selection.includes("ordered") {
                 let changes = DDLCoverageCases.changes
                 let ddlStart=try h.boundary("source"),ddlNativeStart=try h.boundary("native"),ddlTargetStart=try h.boundary("target57")
                 let applying=try start(DDLCoverageCases.group,configuration("ddl",at:ddlStart,count:changes.count));try waitForReader(applying)
@@ -539,7 +621,8 @@ public enum DMLQualification {
                 try cases.pass("ddl-denied")
                 report["ddl_policy"]="unchanged DDL; source InnoDB and both replicas MyISAM via local defaults"
                 report["ddl_steps"]=changes.map{$0.sql};report["ddl_result"]=ddlResult
-            } else if mode == "gtid" {
+                }
+            } else if mode == "gtid" && selection.includes("all") {
                 // Additional accepted shapes: multi-row statement and key change.
                 let edgeStart = try h.boundary("source"), edgeNativeStart = try h.boundary("native"), edgeTargetStart = try h.boundary("target57")
                 let edge = try start(QualificationCase("multirow", "Replicate multirow INSERT and DELETE with a primary-key update"),configuration("multirow",at:edgeStart,count:3)); try waitForReader(edge)
@@ -720,6 +803,6 @@ public enum DMLQualification {
                 contracts: coverageContracts, runtime: coverageRuntime, results: cases.results)
         }
         if let failure { throw LabError("\(failure); evidence: \(output.path)") }
-        stage(ddl ? "PASS: ordered DDL/DML, schemas, data, binlogs and checkpoints" : "PASS: DML data, binlogs and applied checkpoints")
+        stage("PASS: selected \(selection.slice) slice; \(cases.results.count) cases (see selection in result.json)")
     }
 }

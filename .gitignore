@@ -12,3 +12,6 @@ packaging/Probe/.swiftpm/
 packaging/rust/target/
 
 .build-asan/
+
+# temp. plan files
+PLAN/demo/

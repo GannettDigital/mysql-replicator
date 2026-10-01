@@ -58,6 +58,26 @@ final class CaptureTests: XCTestCase {
     func packet(_ data: Data, sequence: UInt8) -> ByteBuffer {
         ByteBuffer(bytes: le(UInt32(data.count) | UInt32(sequence)<<24) + data)
     }
+    func testFilteredRowsKeepGTIDBoundariesWithoutSchemaDiscoveryAndCRCStillFails() throws {
+        var groups: [CompleteTransaction] = []
+        let p = try StreamProcessor(config: config(), includeRaw: true, emitEvent: { _ in }, emitTransaction: { groups.append($0) }, resolveSchema: { _, _ in XCTFail("excluded schema was discovered"); return [] }, ignoreTable: { $0 == "poc" && $1 == "items" })
+        try begin(p)
+        for (offset, frame) in try recorded() where offset >= 1589 { try p.consume(frame) }
+        try p.finish()
+        XCTAssertEqual(groups.count, 4)
+        let rows = groups.flatMap(\.events).filter { $0.rowFlags != nil }
+        XCTAssertEqual(rows.count, 4); XCTAssertTrue(rows.allSatisfy { $0.replicationFiltered && $0.rows.isEmpty && $0.rawBase64 != nil })
+        XCTAssertTrue(p.completeGTIDs.canonical.hasSuffix(":1-14"))
+        let bad = try StreamProcessor(config: config(), includeRaw: false, emitEvent: { _ in }, emitTransaction: { _ in XCTFail("bad CRC completed") }, ignoreTable: { _, _ in true })
+        try begin(bad)
+        for (offset, frame) in try recorded() where offset >= 1589 {
+            if [23,24,25,30,31,32].contains(frame[4]) {
+                var damaged = frame; damaged[damaged.count-1] ^= 1
+                XCTAssertThrowsError(try bad.consume(damaged)); break
+            }
+            try bad.consume(frame)
+        }
+    }
     func testPositionalDumpEncodingIsIndependentWireGolden() throws {
         let request = try DumpStart.position(file:"binlog.000003",position:1589).packet(serverID:9001,nonBlocking:true)
         let expected = Data([0x12,0x35,0x06,0,0,1,0,0x29,0x23,0,0]) + Data("binlog.000003".utf8)

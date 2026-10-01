@@ -86,6 +86,7 @@ public struct DecodedEvent: Equatable, Encodable {
     public let control: BinlogControl?
     public let rowFlags: UInt32?
     public var wireColumns: [WireColumn]? = nil
+    public var replicationFiltered = false
     public let eventType: UInt32
     public let eventName: String
     public let timestamp: UInt32
@@ -111,6 +112,7 @@ public struct DecodedEvent: Equatable, Encodable {
             nextPosition: nextPosition, flags: flags, sha256: sha256, tableID: tableID, database: database,
             table: table, number: number, detailBase64: detailBase64, detailText: detailText, rows: rows, rawBase64: rawBase64)
         result.wireColumns = wireColumns
+        result.replicationFiltered = replicationFiltered
         return result
     }
 }
@@ -140,7 +142,7 @@ public final class BinlogDecoder {
         guard view.length != 0, let data = view.data else { return Data() }
         return Data(bytes: data, count: Int(view.length))
     }
-    public func decode(_ frame: Data, at offset: UInt64, schema: TableSchema? = nil, includeRaw: Bool = false) throws -> DecodedEvent {
+    public func decode(_ frame: Data, at offset: UInt64, schema: TableSchema? = nil, includeRaw: Bool = false, filterTable: Bool = false) throws -> DecodedEvent {
         lock.lock(); defer { lock.unlock() }
         let type = frame.count > 4 ? frame[frame.startIndex + 4] : nil
         if failed { throw DecoderError(code: 6, offset: offset, eventType: type, reason: "decoder is poisoned; reset and replay from FDE") }
@@ -150,7 +152,7 @@ public final class BinlogDecoder {
             var result: OpaquePointer?
             let status = frame.withUnsafeBytes { raw in
                 kinds.withUnsafeBufferPointer { columns in
-                    rc_decoder_feed(context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset, columns.baseAddress, UInt32(columns.count), &result)
+                    rc_decoder_feed_filtered(context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset, columns.baseAddress, UInt32(columns.count), filterTable ? 1 : 0, &result)
                 }
             }
             defer { rc_result_free(result) }
@@ -220,7 +222,8 @@ public final class BinlogDecoder {
                 number: [4,16,33].contains(info.event_type) ? String(info.number) : nil,
                 detailBase64: detail.isEmpty ? nil : detail.base64EncodedString(), detailText: [2,4,15].contains(info.event_type) ? String(data: detail, encoding: .utf8) : nil,
                 rows: rows, rawBase64: includeRaw ? bytes(info.raw).base64EncodedString() : nil)
-            if info.event_type == 19 {
+            decoded.replicationFiltered = rc_result_is_filtered(result) == 1
+            if info.event_type == 19 && !decoded.replicationFiltered {
                 decoded.wireColumns = try (0..<info.column_count).map { index in
                     var c = rc_column()
                     guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}

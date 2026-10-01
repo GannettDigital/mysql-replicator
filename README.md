@@ -101,6 +101,20 @@ stored in SQLite; remove `targetUUID` from old configuration files.
 Runtime files use a Docker-managed volume and are copied back for inspection.
 Docker build/startup progress is streamed to the terminal.
 
+For incremental checks, list cases with `make ddl-suite ARGS='--list'`, then run
+`make ddl-suite ARGS='--slice modify-index --positioning gtid'` or select a single
+independent fixture with `--case ddl-modify-demo-varchar-120`. Full suites remain
+the default. See [incremental commands and evidence](PLAN/INCREMENTAL_CHECKS.md).
+
+Optional `replicateWildIgnoreTable` in the apply JSON excludes table patterns,
+for example `"replicateWildIgnoreTable": ["temp.%", "scratch.%"]`. `%` matches
+zero or more characters and `_` matches one; backslash escapes literal wildcards
+(double it in JSON). Exclusions run before target discovery and row decoding,
+so excluded tables need not exist on the target. `temp.%` also filters database
+DDL for `temp`. Complete filtered groups still advance SQLite GTID/position;
+`transactionsApplied` counts processed groups, including filtered groups, while
+row/DDL counters count target effects. See [scope, resume and native reference](PLAN/WILDCARD_FILTERS.md).
+
 For an externally prepared target, adapt [the configuration template](examples/apply.example.json),
 then run `.build/debug/mysql-replicator run --config apply.json --initialize`.
 Optional `ddlTimeoutSeconds` bounds each target DDL statement (default 300 seconds,

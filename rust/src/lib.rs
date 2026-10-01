@@ -151,6 +151,7 @@ struct Table {
     event: TableMapEvent<'static>,
     kinds: Vec<u32>,
     size: usize,
+    filtered: bool,
 }
 pub struct Decoder {
     fde: Option<FormatDescriptionEvent<'static>>,
@@ -183,6 +184,7 @@ pub struct Batch {
     payload_flags: u32,
     query_error_code: u32,
     query_status: Vec<u8>,
+    filtered: bool,
 }
 impl Batch {
     fn new(offset: u64, event_type: u32) -> Self {
@@ -208,6 +210,7 @@ impl Batch {
             payload_flags: 0,
             query_error_code: 0,
             query_status: vec![],
+            filtered: false,
         }
     }
     fn view(&self) -> EventView {
@@ -388,7 +391,13 @@ impl Decoder {
             panic_next: false,
         }
     }
-    fn decode(&mut self, bytes: &[u8], offset: u64, kinds: &[u32]) -> Checked<Batch> {
+    fn decode_filtered(
+        &mut self,
+        bytes: &[u8],
+        offset: u64,
+        kinds: &[u32],
+        filter_table: bool,
+    ) -> Checked<Batch> {
         #[cfg(test)]
         if std::mem::take(&mut self.panic_next) {
             panic!("test-only parser panic");
@@ -416,6 +425,11 @@ impl Decoder {
             "event length differs from frame length",
         )?;
         let code = bytes[4];
+        ensure(
+            !filter_table || (code == 19 && kinds.is_empty()),
+            ARG,
+            "filter flag requires a table map without column history",
+        )?;
         ensure(
             matches!(
                 code,
@@ -591,108 +605,111 @@ impl Decoder {
                     SCHEMA,
                     "historical column count differs",
                 )?;
-                // The upstream extractor otherwise accepts duplicate/conflicting
-                // TLVs with last/first-wins semantics. Fail before decoding rows.
-                let mut seen = std::collections::HashSet::new();
-                let mut charset = false;
-                let mut primary = false;
-                for field in table.iter_optional_meta() {
-                    let field = parsed(field)?;
-                    ensure(
-                        seen.insert(std::mem::discriminant(&field)),
-                        MALFORMED,
-                        "duplicate table metadata",
-                    )?;
-                    match field {
-                        OptionalMetadataField::DefaultCharset(_)
-                        | OptionalMetadataField::ColumnCharset(_) => {
-                            ensure(!charset, MALFORMED, "conflicting charset metadata")?;
-                            charset = true;
-                        }
-                        OptionalMetadataField::SimplePrimaryKey(_)
-                        | OptionalMetadataField::PrimaryKeyWithPrefix(_) => {
-                            ensure(!primary, MALFORMED, "conflicting primary key metadata")?;
-                            primary = true;
-                        }
-                        _ => (),
-                    }
-                }
-                let optional = parsed(OptionalMetaExtractor::new(table.iter_optional_meta()))?;
-                let mut signedness = optional.iter_signedness();
-                let mut charsets = optional.iter_charset();
-                let names = optional
-                    .iter_column_name()
-                    .take(n + 1)
-                    .map(|x| parsed(x).map(|x| x.name_raw().to_vec()))
-                    .collect::<Checked<Vec<_>>>()?;
-                ensure(
-                    names.is_empty() || names.len() == n,
-                    MALFORMED,
-                    "column name count differs",
-                )?;
-                let keys = optional
-                    .iter_primary_key()
-                    .take(n + 1)
-                    .map(parsed)
-                    .collect::<Checked<Vec<_>>>()?;
-                ensure(
-                    keys.len() <= n && keys.iter().all(|x| *x < n as u64),
-                    MALFORMED,
-                    "invalid source primary key metadata",
-                )?;
-                for i in 0..n {
-                    let ty = table
-                        .get_column_type(i)
-                        .map_err(|_| (UNSUPPORTED, "unknown column type"))?
-                        .ok_or((MALFORMED, "missing column type"))?;
-                    let numeric = matches!(ty as u8, 1 | 2 | 3 | 8 | 9);
-                    // This default only validates wire metadata; it is NOT stored
-                    // as history or used to interpret row values.
-                    check_column(
-                        &table,
-                        i,
-                        kinds.get(i).copied().unwrap_or(if numeric { 2 } else { 5 }),
-                    )?;
-                    let mut kind = 0;
-                    let mut collation = 0;
-                    if numeric {
-                        if let Some(unsigned) = signedness.next() {
-                            kind = if unsigned { 3 } else { 2 };
-                            if let Some(kind) = kinds.get(i) {
-                                ensure(
-                                    unsigned == (*kind == 3),
-                                    SCHEMA,
-                                    "history conflicts with wire signedness",
-                                )?;
+                if !filter_table {
+                    // The upstream extractor otherwise accepts duplicate/conflicting
+                    // TLVs with last/first-wins semantics. Fail before decoding rows.
+                    let mut seen = std::collections::HashSet::new();
+                    let mut charset = false;
+                    let mut primary = false;
+                    for field in table.iter_optional_meta() {
+                        let field = parsed(field)?;
+                        ensure(
+                            seen.insert(std::mem::discriminant(&field)),
+                            MALFORMED,
+                            "duplicate table metadata",
+                        )?;
+                        match field {
+                            OptionalMetadataField::DefaultCharset(_)
+                            | OptionalMetadataField::ColumnCharset(_) => {
+                                ensure(!charset, MALFORMED, "conflicting charset metadata")?;
+                                charset = true;
                             }
+                            OptionalMetadataField::SimplePrimaryKey(_)
+                            | OptionalMetadataField::PrimaryKeyWithPrefix(_) => {
+                                ensure(!primary, MALFORMED, "conflicting primary key metadata")?;
+                                primary = true;
+                            }
+                            _ => (),
                         }
-                    } else if let Some(charset) = charsets.next() {
-                        collation = parsed(charset)? as u32;
-                        kind = match collation {
-                            63 => 5,
-                            45 | 46 | 224 | 255 => 4,
-                            _ => 0,
-                        };
                     }
-                    let meta = table.get_column_metadata(i).unwrap_or(&[]);
-                    let maximum_bytes = if ty as u8 == 15 && meta.len() == 2 {
-                        u16::from_le_bytes([meta[0], meta[1]]) as u32
-                    } else {
-                        0
-                    };
-                    out.map_columns.push(MapColumn {
-                        kind,
-                        column_type: ty as u32,
-                        maximum_bytes,
-                        nullable: table.null_bitmask()[i] as u32,
-                        collation,
-                        primary_key: keys.contains(&(i as u64)) as u32,
-                        name: names.get(i).cloned().unwrap_or_default(),
-                    });
+                    let optional = parsed(OptionalMetaExtractor::new(table.iter_optional_meta()))?;
+                    let mut signedness = optional.iter_signedness();
+                    let mut charsets = optional.iter_charset();
+                    let names = optional
+                        .iter_column_name()
+                        .take(n + 1)
+                        .map(|x| parsed(x).map(|x| x.name_raw().to_vec()))
+                        .collect::<Checked<Vec<_>>>()?;
+                    ensure(
+                        names.is_empty() || names.len() == n,
+                        MALFORMED,
+                        "column name count differs",
+                    )?;
+                    let keys = optional
+                        .iter_primary_key()
+                        .take(n + 1)
+                        .map(parsed)
+                        .collect::<Checked<Vec<_>>>()?;
+                    ensure(
+                        keys.len() <= n && keys.iter().all(|x| *x < n as u64),
+                        MALFORMED,
+                        "invalid source primary key metadata",
+                    )?;
+                    for i in 0..n {
+                        let ty = table
+                            .get_column_type(i)
+                            .map_err(|_| (UNSUPPORTED, "unknown column type"))?
+                            .ok_or((MALFORMED, "missing column type"))?;
+                        let numeric = matches!(ty as u8, 1 | 2 | 3 | 8 | 9);
+                        // This default only validates wire metadata; it is NOT stored
+                        // as history or used to interpret row values.
+                        check_column(
+                            &table,
+                            i,
+                            kinds.get(i).copied().unwrap_or(if numeric { 2 } else { 5 }),
+                        )?;
+                        let mut kind = 0;
+                        let mut collation = 0;
+                        if numeric {
+                            if let Some(unsigned) = signedness.next() {
+                                kind = if unsigned { 3 } else { 2 };
+                                if let Some(kind) = kinds.get(i) {
+                                    ensure(
+                                        unsigned == (*kind == 3),
+                                        SCHEMA,
+                                        "history conflicts with wire signedness",
+                                    )?;
+                                }
+                            }
+                        } else if let Some(charset) = charsets.next() {
+                            collation = parsed(charset)? as u32;
+                            kind = match collation {
+                                63 => 5,
+                                45 | 46 | 224 | 255 => 4,
+                                _ => 0,
+                            };
+                        }
+                        let meta = table.get_column_metadata(i).unwrap_or(&[]);
+                        let maximum_bytes = if ty as u8 == 15 && meta.len() == 2 {
+                            u16::from_le_bytes([meta[0], meta[1]]) as u32
+                        } else {
+                            0
+                        };
+                        out.map_columns.push(MapColumn {
+                            kind,
+                            column_type: ty as u32,
+                            maximum_bytes,
+                            nullable: table.null_bitmask()[i] as u32,
+                            collation,
+                            primary_key: keys.contains(&(i as u64)) as u32,
+                            name: names.get(i).cloned().unwrap_or_default(),
+                        });
+                    }
+                    drop(signedness);
+                    drop(charsets);
+                    drop(optional);
                 }
-                drop(signedness);
-                drop(charsets);
-                drop(optional);
+                out.filtered = filter_table;
                 let total: usize = self
                     .tables
                     .iter()
@@ -719,6 +736,7 @@ impl Decoder {
                         event: table.into_owned(),
                         kinds: kinds.to_vec(),
                         size: bytes.len(),
+                        filtered: filter_table,
                     },
                 );
             }
@@ -744,42 +762,50 @@ impl Decoder {
                     MALFORMED,
                     "row/table-map column count differs",
                 )?;
-                ensure(
-                    !table.kinds.is_empty(),
-                    SCHEMA,
-                    "historical signedness/encoding required for this table map",
-                )?;
-                let before = rows
-                    .columns_before_image()
-                    .map(|bits| bits.iter().map(|b| *b).collect::<Vec<_>>());
-                let after = rows
-                    .columns_after_image()
-                    .map(|bits| bits.iter().map(|b| *b).collect::<Vec<_>>());
-                let mut buf = ParseBuf(rows.rows_data());
-                let mut budget = bytes.len();
                 out.table_id = rows.table_id();
-                out.columns = table.kinds.len();
+                out.columns = table.event.columns_count() as usize;
                 out.database = table.event.database_name_raw().to_vec();
                 out.table = table.event.table_name_raw().to_vec();
-                while !buf.is_empty() {
+                out.filtered = table.filtered;
+                ensure(!rows.rows_data().is_empty(), MALFORMED, "empty rows event")?;
+                if !table.filtered {
                     ensure(
-                        out.rows.len() < MAX_ROWS,
-                        LIMIT,
-                        "rows per event limit exceeded",
+                        !table.kinds.is_empty(),
+                        SCHEMA,
+                        "historical signedness/encoding required for this table map",
                     )?;
-                    let old = buf.len();
-                    let b = match &before {
-                        Some(bits) => image(&mut buf, table, bits, &mut budget)?,
-                        None => vec![],
-                    };
-                    let a = match &after {
-                        Some(bits) => image(&mut buf, table, bits, &mut budget)?,
-                        None => vec![],
-                    };
-                    ensure(buf.len() < old, MALFORMED, "row decoder made no progress")?;
-                    out.rows.push([b, a]);
+                    let before = rows
+                        .columns_before_image()
+                        .map(|bits| bits.iter().map(|b| *b).collect::<Vec<_>>());
+                    let after = rows
+                        .columns_after_image()
+                        .map(|bits| bits.iter().map(|b| *b).collect::<Vec<_>>());
+                    let mut buf = ParseBuf(rows.rows_data());
+                    let mut budget = bytes.len();
+                    out.table_id = rows.table_id();
+                    out.columns = table.kinds.len();
+                    out.database = table.event.database_name_raw().to_vec();
+                    out.table = table.event.table_name_raw().to_vec();
+                    while !buf.is_empty() {
+                        ensure(
+                            out.rows.len() < MAX_ROWS,
+                            LIMIT,
+                            "rows per event limit exceeded",
+                        )?;
+                        let old = buf.len();
+                        let b = match &before {
+                            Some(bits) => image(&mut buf, table, bits, &mut budget)?,
+                            None => vec![],
+                        };
+                        let a = match &after {
+                            Some(bits) => image(&mut buf, table, bits, &mut budget)?,
+                            None => vec![],
+                        };
+                        ensure(buf.len() < old, MALFORMED, "row decoder made no progress")?;
+                        out.rows.push([b, a]);
+                    }
+                    ensure(!out.rows.is_empty(), MALFORMED, "empty rows event")?;
                 }
-                ensure(!out.rows.is_empty(), MALFORMED, "empty rows event")?;
                 // Statement-end means table IDs can be reused. Clear both maps
                 // and their schema interpretations together, never retain stale history.
                 if rows.flags().bits() & 1 != 0 {
@@ -857,6 +883,21 @@ pub unsafe extern "C" fn rc_decoder_feed(
     count: u32,
     out: *mut *mut Batch,
 ) -> i32 {
+    unsafe { rc_decoder_feed_filtered(context, bytes, length, offset, kinds, count, 0, out) }
+}
+/// filter_table=1 is permitted only on TABLE_MAP. Rows for that map retain
+/// checked framing/CRC/identity/flags, but their value payload is opaque.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_decoder_feed_filtered(
+    context: *mut Decoder,
+    bytes: *const u8,
+    length: u64,
+    offset: u64,
+    kinds: *const u32,
+    count: u32,
+    filter_table: u32,
+    out: *mut *mut Batch,
+) -> i32 {
     if context.is_null() {
         return ARG;
     }
@@ -895,7 +936,8 @@ pub unsafe extern "C" fn rc_decoder_feed(
         } else {
             unsafe { slice::from_raw_parts(kinds, count as usize) }
         };
-        context.decode(bytes, offset, kinds)
+        ensure(filter_table <= 1, ARG, "invalid filter mode")?;
+        context.decode_filtered(bytes, offset, kinds, filter_table == 1)
     }));
     let (status, value) = match decoded {
         Ok(Ok(value)) => (0, value),
@@ -916,6 +958,13 @@ pub unsafe extern "C" fn rc_decoder_feed(
         *out = Box::into_raw(Box::new(value));
     }
     status
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_result_is_filtered(result: *const Batch) -> u32 {
+    if result.is_null() {
+        return 0;
+    }
+    unsafe { (&*result).filtered as u32 }
 }
 // Getters perform only checked indexing and copy fixed-width fields; no parser,
 // allocation, destructors, formatting or panicking operations cross these calls.

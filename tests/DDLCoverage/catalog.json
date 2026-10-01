@@ -9319,6 +9319,21 @@
       "suite": "ddl-suite",
       "case_id": "ddl-index-resume",
       "reason": "Indexed-state restart and drift regression; kept distinct from the fresh-stream DDL feature evidence."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "wild-ignore",
+      "reason": "Replication filtering/checkpoint regression; does not independently qualify an included DDL grammar feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "wild-ignore-resume",
+      "reason": "Replication filtering/checkpoint regression; does not independently qualify an included DDL grammar feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "wild-ignore-included-rejection",
+      "reason": "Replication filtering/checkpoint regression; does not independently qualify an included DDL grammar feature."
     }
   ]
 }

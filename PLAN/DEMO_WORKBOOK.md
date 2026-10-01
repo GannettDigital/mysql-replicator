@@ -269,6 +269,26 @@ own stacks; the interactive demo remains available. Logs and results are saved
 under the printed `artifacts/ddl-suite/` directories.
 For the focused DML-only qualification, use `make dml-suite` instead.
 
+For shorter development runs on separate stacks:
+
+```sh
+make ddl-suite ARGS='--list'
+make ddl-suite ARGS='--slice modify-index --positioning gtid'
+make ddl-suite ARGS='--case ddl-modify-demo-varchar-120 --positioning gtid'
+make ddl-suite ARGS='--slice filters --positioning gtid'
+make dml-suite ARGS='--slice basic --positioning gtid'
+```
+
+These run the selected checks plus the shared four-transaction basic comparison.
+They do not certify the omitted cases. Add `--skip-build` only when source/test
+inputs have not changed since the last image build. See [incremental checks](INCREMENTAL_CHECKS.md).
+
+To exclude a scratch schema in your own apply config, add
+`"replicateWildIgnoreTable": ["temp.%"]` before starting the replicator.
+Stop cleanly before changing the config; exclusions affect subsequent events and
+advance the checkpoint. Removing the rule later does not backfill earlier data.
+See [filter semantics and limits](WILDCARD_FILTERS.md).
+
 To see the coverage checklist and import this run's measured assertions:
 
 ```sh

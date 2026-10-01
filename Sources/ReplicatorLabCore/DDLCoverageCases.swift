@@ -146,6 +146,9 @@ enum DDLCoverageCases {
     static func assertions(for caseID:String) -> [String] {
         Array(Set(evidenceContracts.values.flatMap{$0}.filter{$0.value.contains(caseID)}.map(\.key))).sorted()
     }
+    static let wildcardFilter = QualificationCase("wild-ignore", "Wildcard exclusions skip absent schemas and unsupported types; included and mixed row events match native MySQL")
+    static let wildcardResume = QualificationCase("wild-ignore-resume", "Resume after ignored groups, preserve excluded GTIDs and apply the next included row once")
+    static let wildcardRejection = QualificationCase("wild-ignore-included-rejection", "Exclusions do not suppress an unsupported included DDL or allow its following row")
     static let swiftProfiles = ["swift.position.metadata-minimal", "swift.gtid.metadata-full"]
     static let nativeProfiles = ["native.unrestricted", "native.restricted"]
 
@@ -158,7 +161,7 @@ enum DDLCoverageCases {
         var key: String { suite + "/" + test.id }
     }
     static var registry: [Entry] {
-        let top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test} + ModifyIndexCases.cases.map{$0.test} + ModifyIndexCases.failures.map{$0.test} + [ModifyIndexCases.timeout,ModifyIndexCases.resume]
+        let top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test} + ModifyIndexCases.cases.map{$0.test} + ModifyIndexCases.failures.map{$0.test} + [ModifyIndexCases.timeout,ModifyIndexCases.resume,wildcardFilter,wildcardResume,wildcardRejection]
         var entries = top.map { Entry(suite: "ddl-suite", test: $0, profiles: swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
         entries += changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
         entries += NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }

@@ -252,3 +252,11 @@ Fresh catalog evidence records **68/730** passing assertion/profile obligations,
 previous measured 48/690, 24 and zero. The [comparison and reproduction commands](../artifacts/modify-index-20261001/README.md)
 record exact evidence paths and distinguish targeted DML from structural checks.
 Artifacts are local and ignored by Git.
+
+## Incremental reruns
+
+`make ddl-suite ARGS='--slice modify-index --positioning gtid'` runs this slice
+without the ordered/database/filter workloads. For the exact original regression,
+use `make ddl-suite ARGS='--case ddl-modify-demo-varchar-120 --positioning gtid'`.
+Each includes the shared basic DML prerequisite. `--list` shows all independent
+case IDs and source locations; see [incremental checks](INCREMENTAL_CHECKS.md).
