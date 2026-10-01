@@ -124,6 +124,7 @@ enum DDLCoverageCases {
     // Only these assertion-to-case contracts are currently instrumented. A group
     // pass supplies no implicit child assertions; remaining catalog checks stay gaps.
     static let evidenceContracts: [String: [String: [String]]] = [
+        "ddl.database.create.supported": ["schema-effects": DatabaseCreationCases.cases.map{$0.test.id}, "following-dml": DatabaseCreationCases.cases.map{$0.test.id}],
         "ddl.table.rename.same-schema": ["schema-effects": ["rename-table"], "following-dml": ["insert-after-rename", "update-after-rename", "delete-after-rename"]],
         "ddl.table.truncate.populated": ["schema-effects": ["truncate-nonempty-table"], "following-dml": ["insert-after-truncate", "update-binary-null", "delete-unsigned-maximum"]],
         "ddl.table.truncate.empty": ["schema-effects": ["truncate-empty-table"], "following-dml": ["insert-after-empty-truncate", "update-after-empty-truncate", "delete-after-empty-truncate"]],
@@ -137,9 +138,12 @@ enum DDLCoverageCases {
         "ddl.table.drop-if-exists.absent": ["schema-effects": ["drop-if-absent"], "following-dml": ["recreate-after-drop-if-absent", "insert-after-drop-if-absent", "update-after-drop-if-absent", "delete-after-drop-if-absent"]]
     ]
     static func assertion(for caseID: String) -> String? {
-        evidenceContracts.values.flatMap { $0 }.first { $0.value.contains(caseID) }?.key
+        assertions(for:caseID).first
     }
 
+    static func assertions(for caseID:String) -> [String] {
+        Array(Set(evidenceContracts.values.flatMap{$0}.filter{$0.value.contains(caseID)}.map(\.key))).sorted()
+    }
     static let swiftProfiles = ["swift.position.metadata-minimal", "swift.gtid.metadata-full"]
     static let nativeProfiles = ["native.unrestricted", "native.restricted"]
 
@@ -152,10 +156,11 @@ enum DDLCoverageCases {
         var key: String { suite + "/" + test.id }
     }
     static var registry: [Entry] {
-        let top = [positive, group, unsupported, denied, missingTemplate] + rejections.map { $0.0 }
+        let top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test}
         return top.map { Entry(suite: "ddl-suite", test: $0, profiles: swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
             + changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
             + NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }
+            + (DatabaseCreationCases.cases.map{$0.native} + [DatabaseCreationCases.nativeDuplicate]).map { Entry(suite:"native-ddl-suite",test:$0,profiles:nativeProfiles,parent:nil,isGroup:false) }
             + native.map { Entry(suite: "native-ddl-suite", test: $0.0, profiles: nativeProfiles, parent: nil, isGroup: false) }
     }
 }

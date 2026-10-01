@@ -32,6 +32,7 @@ public enum NativeDDLQualification {
             _ = try h.sql("source","CREATE USER 'ddl_reference'@'%' IDENTIFIED BY 'fixture-reference-only'; GRANT REPLICATION SLAVE ON *.* TO 'ddl_reference'@'%'")
             let start=try h.boundary("source")
             _ = try h.sql("native","SET @@GLOBAL.gtid_purged='+\(start.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_HOST='source',SOURCE_USER='ddl_reference',SOURCE_PASSWORD='fixture-reference-only',GET_SOURCE_PUBLIC_KEY=1,SOURCE_AUTO_POSITION=1; START REPLICA")
+            try DatabaseCreationCases.observeNative(h,reporter:cases)
             try NativeLifecycleQualification.run(h, reporter: cases)
             var observations:[[String:Any]]=[]
             for (test,sql) in DDLCoverageCases.native {

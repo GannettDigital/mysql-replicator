@@ -35,6 +35,41 @@ final class DDLTests: XCTestCase {
         XCTAssertEqual(table.table,"t");XCTAssertEqual(engine,.defaultEngine)
         XCTAssertThrowsError(try parse("CREATE TABLE t LIKE template",database:nil))
     }
+    func testCreateDatabaseAliasesOptionsAndNoDefaultDatabaseDependency() throws {
+        XCTAssertEqual(try parse("CREATE DATABASE `new-db`",database:nil),.createDatabase(CreateDatabase(name:"new-db",ifNotExists:false,characterSet:nil,collation:nil)))
+        XCTAssertEqual(try parse("CREATE SCHEMA IF NOT EXISTS d DEFAULT CHARACTER SET=utf8mb4 DEFAULT COLLATE utf8mb4_bin;",database:"not_created_yet"),.createDatabase(CreateDatabase(name:"d",ifNotExists:true,characterSet:"utf8mb4",collation:"utf8mb4_bin")))
+        for sql in ["CREATE DATABASE d ENCRYPTION='Y'","CREATE DATABASE d READ ONLY=1","CREATE DATABASE IF EXISTS d","CREATE DATABASE d CHARSET=utf8mb4 CHARSET=latin1","CREATE DATABASE d; DROP DATABASE d","CREATE DATABASE d.x","CREATE DATABASE d DEFAULT"] {
+            XCTAssertThrowsError(try parse(sql),sql)
+        }
+    }
+    func testDatabaseIntentAdvancesProgressWithoutInventingOrRetiringTableSchemas() throws {
+        #if os(Linux)
+        let helpers=ApplyTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let helpers=ApplyTests()
+        #endif
+        let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:parent)}
+        let store=try StateStore(configuration:helpers.config(parent.appendingPathComponent("state").path))
+        let groups=try helpers.groups(),table=helpers.tables()[0],db=store.directory.appendingPathComponent("state.sqlite")
+        try store.schema(table,event:groups[0].events[0],coordinate:groups[0].start)
+        let encoding=DDLEncoding(characterSet:"utf8mb4",collation:"utf8mb4_bin")
+        for (index,conditional) in [(0,false),(1,true)] {
+            let sql=conditional ? "CREATE SCHEMA IF NOT EXISTS d" : "CREATE DATABASE d"
+            let group=ddlGroup(groups[index],sql:sql)
+            let plan=PreparedDDL(statement:try parse(sql),before:nil,after:nil,sql:sql,database:PreparedDatabaseDDL(name:"d",before:conditional ? encoding : nil,after:encoding,serverCollation:conditional ? nil : "utf8mb4_bin"))
+            try store.begin(group);try store.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+            XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'"),[["1"]])
+            try store.complete(group,rowCount:0,ddl:plan)
+        }
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*),SUM(current) FROM schemas"),[["1","1"]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM ddl_intents WHERE before_schema_id IS NULL AND after_schema_id IS NULL AND database_json IS NOT NULL AND status='DONE'"),[["2"]])
+        let json=try helpers.sqlite(db,"SELECT database_json FROM ddl_intents ORDER BY rowid DESC LIMIT 1")[0][0]
+        let metadata=try JSONDecoder().decode(PreparedDatabaseDDL.self,from:Data(json.utf8))
+        XCTAssertEqual(metadata.name,"d");XCTAssertEqual(metadata.before,encoding);XCTAssertEqual(metadata.after,encoding)
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT transactions_applied,ddl_applied FROM state"),[["2","2"]])
+    }
     func testUnsupportedDDLNeverFallsThroughToRawSQL() throws {
         for sql in [
             "CREATE TEMPORARY TABLE t(k INT PRIMARY KEY) ENGINE=InnoDB",
@@ -49,7 +84,7 @@ final class DDLTests: XCTestCase {
             "ALTER TABLE t ADD n INT, ADD m INT", "ALTER TABLE t MODIFY k BIGINT",
             "ALTER TABLE t ADD n INT PRIMARY KEY", "ALTER TABLE t ADD n INT /*!80000 INVISIBLE */",
             "DROP TABLE IF NOT EXISTS t", "CREATE TABLE IF EXISTS t(id INT PRIMARY KEY)", "CREATE TABLE t LIKE x; DROP TABLE x", "CREATE TABLE t LIKE x ENGINE=MyISAM", "DROP TABLE t,other", "DROP TABLE t; DROP DATABASE poc",
-            "RENAME TABLE t TO otherdb.t", "CREATE DATABASE d",
+            "RENAME TABLE t TO otherdb.t", "ALTER DATABASE d CHARACTER SET utf8mb4", "DROP SCHEMA d",
             "ALTER TABLE t ADD n INT DEFAULT (1+1)", "DROP TABLE \"t\"", "DROP TABLE t -- comment"
         ] {XCTAssertThrowsError(try parse(sql),sql)}
         XCTAssertThrowsError(try parse("DROP TABLE t",database:nil))
@@ -69,7 +104,8 @@ final class DDLTests: XCTestCase {
         let query=QueryControl(database:"poc",sql:Data(),errorCode:0,statusVariables:status)
         let context=try QuerySessionContext(query:query)
         XCTAssertEqual(context.clientCharset,45);XCTAssertEqual(context.defaultUTF8MB4Collation,45)
-        for bytes in [Data(),Data(status.dropLast()),status+Data([255])] {
+        XCTAssertNoThrow(try QuerySessionContext(query:QueryControl(database:"new_db",sql:Data(),errorCode:0,statusVariables:status+Data([20,0]))))
+        for bytes in [Data(),Data(status.dropLast()),status+Data([255]),status+Data([20,1])] {
             XCTAssertThrowsError(try QuerySessionContext(query:QueryControl(database:"poc",sql:Data(),errorCode:0,statusVariables:bytes)))
         }
     }

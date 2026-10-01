@@ -167,7 +167,7 @@ enum DDLCoverageEvidence {
                   let status = test["status"] as? String, ["running", "passed", "failed"].contains(status) else { throw LabError("unknown, duplicate or invalid evidence case") }
             var assertionIDs = Set<String>()
             for assertion in test["assertions"] as? [[String: Any]] ?? [] {
-                guard let name = assertion["id"] as? String, DDLCoverageCases.assertion(for: id) == name, assertionIDs.insert(name).inserted,
+                guard let name = assertion["id"] as? String, DDLCoverageCases.assertions(for: id).contains(name), assertionIDs.insert(name).inserted,
                       let status = assertion["status"] as? String, ["passed", "failed"].contains(status) else { throw LabError("invalid named assertion") }
                 if status == "passed" { try require((assertion["evidence"] as? String).flatMap { files[$0] } != nil, "passing assertion lacks checksummed evidence") }
             }

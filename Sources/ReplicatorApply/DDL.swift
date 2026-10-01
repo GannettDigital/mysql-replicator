@@ -10,7 +10,20 @@ struct TableName: Equatable {
 }
 enum ColumnPlacement: Equatable {case last, first, after(String)}
 enum DDLEngine: Equatable {case omitted,defaultEngine,myISAM}
+struct CreateDatabase: Equatable {
+    let name:String
+    let ifNotExists:Bool
+    let characterSet:String?
+    let collation:String?
+}
+struct PreparedDatabaseDDL: Codable {
+    let name:String
+    let before:DDLEncoding?
+    let after:DDLEncoding
+    let serverCollation:String?
+}
 enum DDLStatement: Equatable {
+    case createDatabase(CreateDatabase)
     case create(ApplyTable,DDLEngine = .omitted)
     case createIfAbsent(ApplyTable,DDLEngine)
     case createLike(TableName,TableName,ifNotExists:Bool)
@@ -20,8 +33,9 @@ enum DDLStatement: Equatable {
     case drop(TableName)
     case dropIfPresent(TableName)
     case truncate(TableName)
-    var name: TableName {
+    var name: TableName? {
         switch self {
+        case .createDatabase: return nil
         case .create(let t,_),.createIfAbsent(let t,_): return TableName(database:t.database,table:t.table)
         case .add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
@@ -42,6 +56,7 @@ struct PreparedDDL {
     let before: ApplyTable?
     let after: ApplyTable?
     let sql: String
+    var database:PreparedDatabaseDDL? = nil
     var preservesSchema: Bool {
         switch statement {
         case .createIfAbsent, .createLike(_,_,true): return before != nil && before == after
@@ -151,52 +166,69 @@ private struct DDLParser {
     mutating func parse() throws -> DDLStatement {
         let result: DDLStatement
         if take("CREATE") {
-            try expect("TABLE")
-            let conditional=take("IF")
-            if conditional {try expect("NOT");try expect("EXISTS")}
-            let table=try name()
-            if take("LIKE") {
-                result = .createLike(table,try name(),ifNotExists:conditional)
-            } else {
-                try expect("(")
-                var columns=[ApplyColumn](),key: String?
-                repeat {
-                    if take("PRIMARY") {
-                        try expect("KEY");try expect("(");let name=try identifier();try expect(")")
-                        try require(key==nil,"multiple DDL primary keys");key=name
-                    } else {
-                        let (column,primary)=try column();columns.append(column)
-                        try require(columns.count<=256,"DDL column limit exceeded")
-                        if primary {try require(key==nil,"multiple DDL primary keys");key=column.name}
-                    }
-                } while take(",")
-                try expect(")")
-                var tableCharset:String?,tableCollation:String?,options=Set<String>()
-                var engine=DDLEngine.omitted
+            if take("DATABASE") || take("SCHEMA") {
+                let conditional=take("IF")
+                if conditional {try expect("NOT");try expect("EXISTS")}
+                let name=try identifier()
+                var charset:String?,collation:String?,seen=Set<String>()
                 while index<tokens.count && !isNext(";") {
+                    _ = take("DEFAULT")
                     let option:String
-                    if take("ENGINE") {
-                        _ = take("=");option="engine"
-                        if take("MYISAM") || take("'MYISAM'") {engine = .myISAM}
-                        else if take("'DEFAULT'") {engine = .defaultEngine}
-                        else {throw ApplyError("explicit engine is outside the MyISAM DDL contract (no engine rewriting)")}
-                    } else {
-                        _ = take("DEFAULT")
-                        if take("CHARACTER") {try expect("SET");_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
-                        else if take("CHARSET") {_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
-                        else if take("COLLATE") {_ = take("=");tableCollation=try identifier().lowercased();option="collation"}
-                        else {throw ApplyError("unsupported CREATE TABLE option")}
+                    if take("CHARACTER") {try expect("SET");_ = take("=");charset=try identifier().lowercased();option="charset"}
+                    else if take("CHARSET") {_ = take("=");charset=try identifier().lowercased();option="charset"}
+                    else if take("COLLATE") {_ = take("=");collation=try identifier().lowercased();option="collation"}
+                    else {throw ApplyError("unsupported CREATE DATABASE option")}
+                    try require(seen.insert(option).inserted,"duplicate CREATE DATABASE option")
+                }
+                result = .createDatabase(CreateDatabase(name:name,ifNotExists:conditional,characterSet:charset,collation:collation))
+            } else {
+                try expect("TABLE")
+                let conditional=take("IF")
+                if conditional {try expect("NOT");try expect("EXISTS")}
+                let table=try name()
+                if take("LIKE") {
+                    result = .createLike(table,try name(),ifNotExists:conditional)
+                } else {
+                    try expect("(")
+                    var columns=[ApplyColumn](),key: String?
+                    repeat {
+                        if take("PRIMARY") {
+                            try expect("KEY");try expect("(");let name=try identifier();try expect(")")
+                            try require(key==nil,"multiple DDL primary keys");key=name
+                        } else {
+                            let (column,primary)=try column();columns.append(column)
+                            try require(columns.count<=256,"DDL column limit exceeded")
+                            if primary {try require(key==nil,"multiple DDL primary keys");key=column.name}
+                        }
+                    } while take(",")
+                    try expect(")")
+                    var tableCharset:String?,tableCollation:String?,options=Set<String>()
+                    var engine=DDLEngine.omitted
+                    while index<tokens.count && !isNext(";") {
+                        let option:String
+                        if take("ENGINE") {
+                            _ = take("=");option="engine"
+                            if take("MYISAM") || take("'MYISAM'") {engine = .myISAM}
+                            else if take("'DEFAULT'") {engine = .defaultEngine}
+                            else {throw ApplyError("explicit engine is outside the MyISAM DDL contract (no engine rewriting)")}
+                        } else {
+                            _ = take("DEFAULT")
+                            if take("CHARACTER") {try expect("SET");_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
+                            else if take("CHARSET") {_ = take("=");tableCharset=try identifier().lowercased();option="charset"}
+                            else if take("COLLATE") {_ = take("=");tableCollation=try identifier().lowercased();option="collation"}
+                            else {throw ApplyError("unsupported CREATE TABLE option")}
+                        }
+                        try require(options.insert(option).inserted,"duplicate CREATE TABLE option")
                     }
-                    try require(options.insert(option).inserted,"duplicate CREATE TABLE option")
+                    guard let key else {throw ApplyError("DDL CREATE requires a primary key")}
+                    columns=columns.map { c in
+                        if c.name != key {return c}
+                        var keyColumn=ApplyColumn(name:c.name,type:c.type,nullable:false,collation:c.collation);keyColumn.characterSet=c.characterSet;return keyColumn
+                    }
+                    var schema=ApplyTable(database:table.database,table:table.table,columns:columns,primaryKey:key)
+                    schema.defaultCharacterSet=tableCharset;schema.defaultCollation=tableCollation
+                    result = conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
                 }
-                guard let key else {throw ApplyError("DDL CREATE requires a primary key")}
-                columns=columns.map { c in
-                    if c.name != key {return c}
-                    var keyColumn=ApplyColumn(name:c.name,type:c.type,nullable:false,collation:c.collation);keyColumn.characterSet=c.characterSet;return keyColumn
-                }
-                var schema=ApplyTable(database:table.database,table:table.table,columns:columns,primaryKey:key)
-                schema.defaultCharacterSet=tableCharset;schema.defaultCollation=tableCollation
-                result = conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
             }
         } else if take("ALTER") {
             try expect("TABLE");let table=try name()
@@ -227,7 +259,7 @@ private struct DDLParser {
     }
 }
 
-struct DDLEncoding: Equatable {let characterSet:String;let collation:String}
+struct DDLEncoding: Equatable, Codable {let characterSet:String;let collation:String}
 
 extension TargetSession {
     func tableExists(_ name: TableName) throws -> Bool {
@@ -243,8 +275,11 @@ extension TargetSession {
               let charset=row.column("DEFAULT_CHARACTER_SET_NAME")?.string,let collation=row.column("DEFAULT_COLLATION_NAME")?.string else {throw ApplyError("missing target database defaults")}
         return DDLEncoding(characterSet:charset,collation:collation)
     }
-    func resolveEncoding(charset:String?,collation:String?,parent:DDLEncoding,context:QuerySessionContext) throws -> DDLEncoding {
-        if charset==nil && collation==nil {return parent}
+    func resolveEncoding(charset:String?,collation:String?,parent:DDLEncoding?,context:QuerySessionContext) throws -> DDLEncoding {
+        if charset==nil && collation==nil {
+            guard let parent else {throw ApplyError("missing inherited DDL encoding")}
+            return parent
+        }
         let rows:[MySQLRow]
         if let collation {
             rows=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE COLLATION_NAME=?",[.init(string:collation)]).0
@@ -274,11 +309,14 @@ extension TargetSession {
         try writerExclusion()
         let context=try QuerySessionContext(query:source)
         // The accepted grammar has only ASCII tokens/identifiers, no text literals,
-        // expressions, stored programs, timestamp defaults or CREATE DATABASE.
-        // Require a known ASCII-compatible client encoding. Connection/server/
-        // legacy database collations cannot affect these qualified statements.
+        // expressions, stored programs or timestamp defaults. Database creation
+        // additionally restores the logged server collation when it is inherited.
+        // Require a known ASCII-compatible client encoding.
         try require([8,33,45,46,83,192,224,255].contains(context.clientCharset),"unsupported DDL client charset")
-        let name=statement.name
+        if case .createDatabase(let definition)=statement {
+            return try prepareDatabaseDDL(statement,definition:definition,source:source,context:context)
+        }
+        guard let name=statement.name else {throw ApplyError("missing DDL table name")}
         // Read the local LIKE template even when IF NOT EXISTS keeps the
         // destination. MySQL opens the template before testing the destination.
         var template:ApplyTable?
@@ -303,6 +341,7 @@ extension TargetSession {
         }
         var after:ApplyTable?
         switch statement {
+        case .createDatabase: throw ApplyError("database DDL reached table prediction")
         case .create(let table,let engine),.createIfAbsent(let table,let engine):
             if let before {after=before;break}
             if engine != .myISAM {
@@ -350,15 +389,46 @@ extension TargetSession {
         if let db=source.database,!db.isEmpty {_ = try self.query("USE \(quoted(db))",textProtocol:true)}
         return PreparedDDL(statement:statement,before:before,after:after,sql:sql)
     }
+    func prepareDatabaseDDL(_ statement:DDLStatement,definition:CreateDatabase,source:QueryControl,context:QuerySessionContext) throws -> PreparedDDL {
+        let exists=try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:definition.name)]) != "0"
+        try require(!exists || definition.ifNotExists,"DDL CREATE DATABASE target already exists")
+        let before=exists ? try databaseEncoding(definition.name) : nil
+        let after:DDLEncoding
+        var serverCollation:String?
+        if let before {after=before}
+        else if definition.characterSet==nil && definition.collation==nil {
+            guard let row=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(context.serverCollation))]).0.first,
+                  let charset=row.column("CHARACTER_SET_NAME")?.string,let collation=row.column("COLLATION_NAME")?.string else {
+                throw ApplyError("unsupported source server collation; no substitution")
+            }
+            after=DDLEncoding(characterSet:charset,collation:collation);serverCollation=collation
+        } else {
+            after=try resolveEncoding(charset:definition.characterSet,collation:definition.collation,parent:nil,context:context)
+        }
+        _ = try query("SET SESSION sql_mode=\(context.sqlMode)")
+        // MySQL write_db_cmd_to_binlog sets Query.db to the created database
+        // with suppress_use=true. It is not an instruction to USE a missing DB.
+        return PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),database:PreparedDatabaseDDL(name:definition.name,before:before,after:after,serverCollation:serverCollation))
+    }
     func applyDDL(_ plan: PreparedDDL) throws {
         try writerExclusion()
+        if let database=plan.database {
+            guard let previous=try scalar("SELECT @@SESSION.collation_server AS v") else {throw ApplyError("missing target server collation")}
+            if let collation=database.serverCollation {_ = try query("SET SESSION collation_server=?",[.init(string:collation)])}
+            _ = try query(plan.sql,textProtocol:true)
+            if database.serverCollation != nil {_ = try query("SET SESSION collation_server=?",[.init(string:previous)])}
+            try resetDMLSession()
+            try require(try databaseEncoding(database.name)==database.after,"DDL target database defaults mismatch")
+            return
+        }
+        guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
         _ = try query(plan.sql,textProtocol:true)
         try resetDMLSession()
         if let after=plan.after {try require(try readSchema(database:after.database,name:after.table)==after,"DDL target after-schema mismatch")}
-        if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(plan.statement.name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}
-        if case .truncate=plan.statement {try require(try scalar("SELECT COUNT(*) AS v FROM \(plan.statement.name.sql)")=="0","TRUNCATE did not empty the table")}
-        if plan.after?.identity != plan.statement.name.identity {try require(!(try tableExists(plan.statement.name)),"DDL source table remains after rename/drop")}
-        discovered.removeValue(forKey:plan.statement.name.identity)
+        if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}
+        if case .truncate=plan.statement {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","TRUNCATE did not empty the table")}
+        if plan.after?.identity != name.identity {try require(!(try tableExists(name)),"DDL source table remains after rename/drop")}
+        discovered.removeValue(forKey:name.identity)
         if let after=plan.after {discovered[after.identity]=after}
     }
 }

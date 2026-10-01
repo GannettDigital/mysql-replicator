@@ -64,11 +64,11 @@ final class StateStore {
             try execute("PRAGMA cache_spill=OFF")
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=64")
-            try execute("PRAGMA user_version=3")
+            try execute("PRAGMA user_version=4")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
-            try execute("CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
+            try execute("CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,database_json TEXT,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try execute("CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try execute("CREATE INDEX groups_retention ON groups(status,completed_at)")
             try execute("CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))")
@@ -199,8 +199,9 @@ final class StateStore {
     func ddlIntent(_ plan: PreparedDDL,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
         try require(pendingGTID != nil,"DDL intent without pending group")
         if let before=plan.before {try schema(before,event:event,coordinate:coordinate)}
-        let beforeID=schemas[plan.statement.name.identity]?.0
-        try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,status,created_at) VALUES(?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,timestamp()])
+        let beforeID=plan.statement.name.flatMap{schemas[$0.identity]?.0}
+        let databaseJSON=try plan.database.map{String(decoding:try JSONEncoder().encode($0),as:UTF8.self)}
+        try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,databaseJSON,timestamp()])
     }
     func append(_ record: LiveRecord) throws {
         guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
@@ -245,9 +246,9 @@ final class StateStore {
         let time=timestamp()
         try atomic {
             if let ddl {
-                if ddl.preservesSchema {newSchemaID=schemas[ddl.statement.name.identity]?.0}
+                if ddl.preservesSchema {newSchemaID=ddl.statement.name.flatMap{schemas[$0.identity]?.0}}
                 else {
-                    if let old=schemas[ddl.statement.name.identity] {
+                    if let name=ddl.statement.name,let old=schemas[name.identity] {
                         try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
                     }
                     if let after=ddl.after {newSchemaID=try insertSchema(after,event:group.events[1],coordinate:group.end)}
@@ -258,7 +259,7 @@ final class StateStore {
             try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,ddl_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),String(rows+rowCount),String(ddlApplied+(ddl == nil ? 0 : 1)),time,time])
         }
         if let ddl {
-            schemas.removeValue(forKey:ddl.statement.name.identity)
+            if let name=ddl.statement.name {schemas.removeValue(forKey:name.identity)}
             if let after=ddl.after,let newSchemaID {schemas[after.identity]=(newSchemaID,after)}
             ddlApplied+=1
         }

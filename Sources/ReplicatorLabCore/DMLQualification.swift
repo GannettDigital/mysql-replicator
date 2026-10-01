@@ -113,6 +113,11 @@ public enum DMLQualification {
             }
             _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
             if ddl {_ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON otherdb.* TO 'apply_fixture'@'%'")}
+            if ddl {
+                for database in Set(DatabaseCreationCases.cases.map(\.database)) {
+                    _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP ON \(database).* TO 'apply_fixture'@'%'")
+                }
+            }
             if mode == "gtid" { _ = try h.sql("source","SET GLOBAL binlog_row_metadata=FULL") }
             if let coverageInputs {
                 coverageRuntime = try DDLCoverageEvidence.runtime(h, image: image, profileID: coverageProfile,
@@ -154,6 +159,71 @@ public enum DMLQualification {
             try cases.pass("positive")
             report["positive"] = positive
             if ddl {
+                // Database creation has a separate durable stream per named
+                // case; databases are deliberately absent from fixture setup.
+                for test in DatabaseCreationCases.cases {
+                    let label=test.test.id,boundary=try h.boundary("source")
+                    let applying=try start(test.test,configuration(label,at:boundary,count:test.existing ? 4 : 5));try waitForReader(applying)
+                    _ = try h.sql("native","START REPLICA")
+                    let warnings=try h.sql("source",test.prefix+test.sql+"; SHOW WARNINGS")
+                    try require(test.existing ? warnings.hasPrefix("Note\t1007\t") : warnings.isEmpty,"database CREATE warning differs: \(warnings)")
+                    let table=test.database+".probe"
+                    let prepare=test.existing ? "" : "CREATE TABLE \(table)(id INT PRIMARY KEY,note VARCHAR(20)); "
+                    let insert=test.existing ? "INSERT INTO \(table) VALUES(2,NULL)" : "INSERT INTO \(table) VALUES(1,'seed'),(2,NULL)"
+                    _ = try h.sql("source",prepare+insert+"; UPDATE \(table) SET id=3,note=CONVERT(0xF09F9880 USING utf8mb4) WHERE id=2; DELETE FROM \(table) WHERE id=3")
+                    let end=try h.boundary("source")
+                    let result=try finish(applying,label,success:true)
+                    let wait=try h.sql("native","SELECT SOURCE_POS_WAIT('\(end.file)',\(end.position),20)")
+                    try require(wait != "NULL" && wait != "-1" && h.status()["Last_SQL_Errno"]=="0","native database workload did not converge")
+                    try require(result["appliedGTIDSet"] as? String==end.gtids && result["ddlApplied"] as? Int==(test.existing ? 1 : 2),"database checkpoint/DDL counters differ")
+                    try require(state(label,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE'")=="1","database intent invented a table schema or did not finish")
+                    try require(state(label,"SELECT target_sql FROM ddl_intents WHERE database_json IS NOT NULL")==test.sql,"database CREATE SQL was rewritten")
+                    try cases.assertion("schema-effects",evidence:"assertions/"+label+"/schema-effects.json") {
+                        var observations:[String:Any]=["sql":test.sql,"source_warnings":warnings,"source_boundary":end.json]
+                        for service in h.services {
+                            let metadata=try h.sql(service,test.metadataSQL)
+                            let columns=try h.sql(service,"SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE,COLUMN_KEY,IFNULL(COLLATION_NAME,'') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe' ORDER BY ORDINAL_POSITION")
+                            let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe'")
+                            try require(metadata==test.expected && columns=="id\tint\tNO\tPRI\t\nnote\tvarchar\tYES\t\t"+test.collation,"database/table default inheritance differs: \(metadata), \(columns)")
+                            try require(engine==(service=="source" ? "InnoDB" : "MyISAM"),"database workload changed local engine selection")
+                            observations[service]=["database":metadata,"columns":columns,"engine":engine]
+                        }
+                        return observations
+                    }
+                    try cases.assertion("following-dml",evidence:"assertions/"+label+"/following-dml.json") {
+                        try require(result["rowsApplied"] as? Int==(test.existing ? 3 : 4),"database following-DML row count differs")
+                        var rows:[String:String]=[:]
+                        for service in h.services {
+                            rows[service]=try h.sql(service,"SELECT id,HEX(note) FROM \(table) ORDER BY id")
+                            try require(rows[service]=="1\t73656564","database creation lost existing or following data")
+                        }
+                        return rows
+                    }
+                    _ = try h.sql("native","STOP REPLICA")
+                    try cases.pass(label)
+                }
+                for (test,sql,prefix,reason) in [
+                    (DatabaseCreationCases.unsupported,"CREATE DATABASE created_bad COLLATE utf8mb4_0900_ai_ci","","no substitution"),
+                    (DatabaseCreationCases.unsupportedDefault,"CREATE DATABASE created_bad_default","SET SESSION collation_server=utf8mb4_0900_ai_ci; ","unsupported source server collation"),
+                    (DatabaseCreationCases.denied,"CREATE DATABASE created_denied COLLATE utf8mb4_bin","","target SQL error")
+                ] {
+                    let label=test.id,boundary=try h.boundary("source")
+                    let rejected=try start(test,configuration(label,at:boundary,count:2));try waitForReader(rejected)
+                    _ = try h.sql("native","START REPLICA")
+                    _ = try h.sql("source",prefix+sql+"; CREATE TABLE poc.after_"+label.replacingOccurrences(of:"-",with:"_")+"(id INT PRIMARY KEY)")
+                    _ = try finish(rejected,label,success:false,reason:reason)
+                    let end=try h.boundary("source")
+                    let wait=try h.sql("native","SELECT SOURCE_POS_WAIT('\(end.file)',\(end.position),20)")
+                    try require(wait != "NULL" && wait != "-1" && h.status()["Last_SQL_Errno"]=="0","native 8.4 failed a supported database definition")
+                    try require(state(label,"SELECT lifecycle||'|'||transactions_applied||'|'||COALESCE(applied_position,'NULL') FROM state")=="BLOCKED|0|NULL","failed database CREATE advanced checkpoint")
+                    let pending=test.id==DatabaseCreationCases.denied.id ? "1" : "0"
+                    try require(state(label,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND status='PENDING'")==pending,"database failure lost or invented a pending intent")
+                    let database=sql.split(separator:" ")[2]
+                    try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'")=="0","rejected database was created")
+                    try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='after_"+label.replacingOccurrences(of:"-",with:"_")+"'")=="0","database failure did not block following DDL")
+                    _ = try h.sql("native","STOP REPLICA")
+                    try cases.pass(label)
+                }
                 // Named scenarios retain their definition locations in progress and evidence.
                 let changes = DDLCoverageCases.changes
                 let ddlStart=try h.boundary("source"),ddlNativeStart=try h.boundary("native"),ddlTargetStart=try h.boundary("target57")

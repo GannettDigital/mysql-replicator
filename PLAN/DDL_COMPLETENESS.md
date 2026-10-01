@@ -72,6 +72,59 @@ permanent destination plus permanent template logs the original LIKE statement;
 temporary template/destination branches need separate work. Native observations
 and catalog assertions remain distinct evidence, with no full completeness claim.
 
+## Database and schema creation slice
+
+Implemented syntax: `CREATE {DATABASE|SCHEMA} [IF NOT EXISTS] name`, with optional
+`[DEFAULT] CHARACTER SET` / `CHARSET` and `[DEFAULT] COLLATE`, including optional
+`=`. Identifiers remain ASCII; encryption, READ ONLY, version comments, ALTER and
+DROP DATABASE/SCHEMA remain unsupported. This does not add dump/load management.
+
+Execute the original SQL. Explicit charset/collation is resolved against target
+capabilities; charset-only utf8mb4 must agree with the logged compatible default.
+When both are omitted, use the Query event's **server collation**, not the local
+target global default or the source's selected database. Restore the target session
+collation around execution and check the resulting schema defaults. Unknown 5.7
+collations (including inherited 0900) stop before mutation rather than substitute.
+The existing query-context decoder also rejects default encryption enabled in the
+source context; explicit ENCRYPTION syntax is outside this grammar.
+
+MySQL `write_db_cmd_to_binlog` records the created schema as Query.db and sets
+`suppress_use`. Do not issue `USE` before CREATE: the recorded database may not yet
+exist. The table-DDL path retains its existing default-database handling.
+Conditional creation retains actual existing defaults and contents, even when
+compatible requested options differ. Following table creation discovers the new
+database defaults normally. No table schema cache entry is invented for a database.
+
+SQLite format 4 adds nullable `ddl_intents.database_json`: database name and
+predicted before/after defaults (and any applied server-collation context). Database
+intents have no before/after table-schema IDs. A successful CREATE or logged no-op
+advances the normal GTID/offset checkpoint; a target SQL failure leaves a pending
+intent and BLOCKED diagnostic. Existing format-3 directories are not migrated or
+resumed by this slice; automatic recovery remains future work.
+
+Native fixtures cover omission with a different USE database, explicit encoding,
+charset-only/collation-only options, both aliases, matching/different conditional
+no-ops and source duplicate error 1007 with no binlog event. The Swift suite adds
+following table creation and INSERT/UPDATE/DELETE in both position/MINIMAL and
+GTID/FULL metadata profiles. It checks explicit and inherited unsupported collations
+and denied CREATE permissions, including unchanged checkpoints and blocked following
+DDL. These are named cases in `DatabaseCreationCases.swift`; fixture databases used
+by this slice are not pre-created on replicas.
+
+Pinned references: `sql/sql_db.cc` (`write_db_cmd_to_binlog`,
+`set_db_default_charset`, `mysql_create_db`) and `mysql-test/t/ctype_create.test`
+with its result file, at `0896fcd61dec11a0904166911a0126f59daaa1bf`. Adapted UTF-8
+scenarios are independently authored; they do not claim whole-file MTR coverage.
+
+Validation on 2026-09-30: all 59 applier/harness unit tests passed; both native
+engine-policy profiles passed 25 named cases each; file-position/MINIMAL and
+GTID/FULL-metadata Swift profiles passed 88 named cases each, including cleanup.
+The pinned upstream reference check passed. Fresh catalog evidence increased
+passing assertion/profile obligations from 44/638 to 48/690, with 24 partial
+scenario/profile combinations and no fully verified combinations. The larger
+denominator includes newly documented gaps. See the local
+[results and reproduction commands](../artifacts/database-creation-20260930/README.md).
+
 ## Engine selection: preserve the statement's meaning
 
 Configure and verify the source's default as InnoDB and both targets' default as

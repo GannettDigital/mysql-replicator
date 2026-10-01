@@ -3,11 +3,11 @@
 Definition, 2026-09-30, committed as `5270352`. **Steps 1–2 are implemented:**
 versioned JSON records/schemas, shared executable case registry, offline check and
 Markdown/JSON report commands, pinned local upstream checking and candidate scanning. See [catalog usage and limits](../tests/DDLCoverage/README.md).
-The catalog contains 56 scenarios and now maps 97 DDL/native case declarations,
+The catalog contains 61 scenarios and now maps 113 DDL/native case declarations,
 including explicitly classified baseline/setup/cleanup cases. All family inventories remain
 partial. Without selected evidence, qualifications remain unverified. The first
 Step 3 slice imports checksummed, fingerprinted schema/data assertions for rename
-and populated/empty TRUNCATE, conditional CREATE/DROP and CREATE LIKE. Selected lifecycle sections/results and prerequisites
+and populated/empty TRUNCATE, conditional CREATE/DROP, CREATE LIKE and database creation. Selected lifecycle sections/results and prerequisites
 have been reviewed; contrast-only references and whole-file/transitive review gaps
 remain explicit. Step 3 is partially implemented: boundary/binlog/history and
 query-context qualification, export and completeness verification remain pending.
@@ -374,3 +374,20 @@ The next changes, in priority order, are:
    are not silently included.
 
 Recovery, skip controls and dump/load management stay outside this increment.
+
+## Database creation increment
+
+`ddl.database.create.supported` adds a bounded six-case CREATE DATABASE/SCHEMA
+contract. Both schema-effects and following-dml assertions require every case in
+a profile: omitted server defaults, explicit options, charset-only, collation-only,
+and matching/different existing-database no-ops. Native observations/direct SQL
+remain separate from Swift qualification. A source duplicate with error 1007/no
+event is a separate scenario; three Swift rejection scenarios cover explicit and
+inherited unsupported collations and denied CREATE permissions.
+
+The catalog now has 61 scenarios, 113 registered declarations (88 Swift-suite and
+25 native-suite), 29 pinned references and 690 required assertion/profile obligations.
+The six accepted cases can add four passing assertion/profile obligations, taking
+the prior 44 to 48 and the partial combinations from 22 to 24. This grouping requires
+all six cases; it does not count individual SQL statements as covered scenarios.
+Full verification and the remaining database lifecycle backlog stay unqualified.

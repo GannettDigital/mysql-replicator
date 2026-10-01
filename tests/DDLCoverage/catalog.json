@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "inventory_revision": "2026-09-30-conditional-like-dml",
+  "inventory_revision": "2026-09-30-database-creation",
   "families": [
     {
       "id": "A",
@@ -335,7 +335,12 @@
       "name": "Database Lifecycle",
       "grammar": "CREATE/ALTER/DROP DATABASE and historical default inheritance",
       "scenario_ids": [
-        "ddl.backlog.database.lifecycle"
+        "ddl.backlog.database.lifecycle",
+        "ddl.database.create.supported",
+        "ddl.database.create.unsupported-collation",
+        "ddl.database.create.unsupported-default",
+        "ddl.database.create.denied",
+        "ddl.database.create.duplicate"
       ]
     },
     {
@@ -7288,7 +7293,7 @@
     },
     {
       "id": "ddl.backlog.database.lifecycle",
-      "name": "CREATE/ALTER/DROP DATABASE and historical default inheritance",
+      "name": "ALTER/DROP DATABASE and remaining database creation options",
       "family": "E",
       "feature": "database.lifecycle",
       "scope": "in_scope",
@@ -7299,7 +7304,7 @@
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "CREATE/ALTER/DROP DATABASE and historical default inheritance"
+        "ALTER/DROP DATABASE and remaining database creation options"
       ],
       "following_workload": [],
       "upstream_refs": [],
@@ -7387,7 +7392,8 @@
       "gaps": [
         "Feature-family placeholder: split into explicit scenarios after upstream and fleet review; this row is not an exhaustive denominator.",
         "Implementation and named tests are pending.",
-        "Pinned upstream scenario/implementation reference review is pending."
+        "Pinned upstream scenario/implementation reference review is pending.",
+        "The separate ddl.database.create.* scenarios cover the bounded CREATE slice; this backlog retains ALTER/DROP, encryption and other options."
       ]
     },
     {
@@ -8032,6 +8038,752 @@
       ],
       "gaps": [
         "Named rejection assertion import remains unbound; aggregate pass alone does not qualify this scenario."
+      ]
+    },
+    {
+      "id": "ddl.database.create.supported",
+      "name": "CREATE DATABASE/SCHEMA with omitted, explicit, charset-only, collation-only and conditional defaults",
+      "family": "E",
+      "feature": "database.lifecycle",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "apply",
+      "prerequisites": [
+        "Database absent except the two conditional-existing variants; grant CREATE and following DML privileges on the selected schema names before starting.",
+        "Use compatible utf8mb4 collations; the omitted-options case logs utf8mb4_bin while the selected USE database has latin1 defaults."
+      ],
+      "operation": [
+        "CREATE DATABASE",
+        "CREATE SCHEMA IF NOT EXISTS",
+        "CREATE DATABASE CHARACTER SET utf8mb4",
+        "CREATE SCHEMA COLLATE utf8mb4_bin",
+        "CREATE DATABASE IF NOT EXISTS with different options",
+        "CREATE SCHEMA IF NOT EXISTS with matching options"
+      ],
+      "following_workload": [
+        "Create an inheriting table; multirow INSERT, primary-key UPDATE with UTF-8 and DELETE. Conditional existing cases must retain the original seed row."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.database.defaults",
+          "relationship": "related_reference",
+          "note": "Derived UTF-8 variants of the server-default versus USE-database test; charset-only and conditional variants are independently authored."
+        },
+        {
+          "id": "mysql84.database.execute",
+          "relationship": "related_reference",
+          "note": "CREATE logs the created database name with suppress_use; omission uses session server collation; IF NOT EXISTS retains existing defaults."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full",
+        "native.unrestricted",
+        "native.restricted"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          }
+        },
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          },
+          "target57_sql": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Source/direct SQL: note 1007 for existing databases, otherwise no warning; replica warnings not independently collected.",
+            "partial_effects": "New databases inherit the defined defaults; conditional existing cases retain defaults and rows."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "schema-effects",
+          "description": "Compare actual affected schemas, engines, defaults and retained values."
+        },
+        {
+          "id": "following-dml",
+          "description": "Verify subsequent DML with exact values and updated schema interpretation."
+        },
+        {
+          "id": "normalized-binlog",
+          "description": "Compare logical binlog effects and source order; do not compare raw bytes/GTIDs."
+        },
+        {
+          "id": "source-boundary",
+          "description": "Verify checkpoint behavior against whether the source actually logged an event."
+        },
+        {
+          "id": "schema-history",
+          "description": "Verify affected schema history and invalidated caches at this boundary."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "database-server-default",
+            "database-explicit",
+            "database-charset-only",
+            "database-collation-only",
+            "database-existing-different",
+            "database-existing-matching"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [
+            "schema-effects",
+            "following-dml"
+          ],
+          "note": "Both named assertions require every one of the six cases; source warnings and database/table metadata are observed."
+        },
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-database-server-default",
+            "native-database-explicit",
+            "native-database-charset-only",
+            "native-database-collation-only",
+            "native-database-existing-different",
+            "native-database-existing-matching"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Native/defaults matrix is separate research evidence, not a named-assertion import."
+        }
+      ],
+      "gaps": [
+        "Partial metadata/data assertion evidence only; per-statement normalized binlogs, checkpoint/history and warning-context qualification remain unbound.",
+        "ASCII identifiers and supported 5.7 encoding semantics only. ALTER/DROP DATABASE, encryption, READ ONLY and non-ASCII names remain outside this slice."
+      ]
+    },
+    {
+      "id": "ddl.database.create.unsupported-collation",
+      "name": "Explicit 0900 database collation unavailable on 5.7",
+      "family": "E",
+      "feature": "database.lifecycle",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "reject",
+      "prerequisites": [
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+      ],
+      "operation": [
+        "Explicit 0900 database collation unavailable on 5.7"
+      ],
+      "following_workload": [
+        "A later event must remain unapplied."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.database.defaults",
+          "relationship": "related_reference",
+          "note": "Derived UTF-8 variants of the server-default versus USE-database test; charset-only and conditional variants are independently authored."
+        },
+        {
+          "id": "mysql84.database.execute",
+          "relationship": "related_reference",
+          "note": "CREATE logs the created database name with suppress_use; omission uses session server collation; IF NOT EXISTS retains existing defaults."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No replica error expected.",
+            "partial_effects": "Native 8.4 can execute this database CREATE; 5.7 capability/privilege differs."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "no substitution",
+            "reason": "no substitution",
+            "warnings": "Capture diagnostics and warnings.",
+            "partial_effects": "Assert target effects and stopped boundary explicitly."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No replica error expected.",
+            "partial_effects": "Native 8.4 can execute this database CREATE; 5.7 capability/privilege differs."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "no substitution",
+            "reason": "no substitution",
+            "warnings": "Capture diagnostics and warnings.",
+            "partial_effects": "Assert target effects and stopped boundary explicitly."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "diagnostic",
+          "description": "Assert the expected diagnostic/error category."
+        },
+        {
+          "id": "partial-effects",
+          "description": "Compare target data/schema and pending intents after rejection."
+        },
+        {
+          "id": "stopped-boundary",
+          "description": "Ensure rejected work did not become a completed checkpoint."
+        },
+        {
+          "id": "following-event-blocked",
+          "description": "Verify a later source event remains unapplied."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "database-unsupported-collation"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [],
+          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract."
+        }
+      ],
+      "gaps": [
+        "Aggregate rejection test only; named diagnostic/checkpoint/history assertion imports remain unbound."
+      ]
+    },
+    {
+      "id": "ddl.database.create.unsupported-default",
+      "name": "Inherited 0900 server collation unavailable on 5.7",
+      "family": "E",
+      "feature": "database.lifecycle",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "reject",
+      "prerequisites": [
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+      ],
+      "operation": [
+        "Inherited 0900 server collation unavailable on 5.7"
+      ],
+      "following_workload": [
+        "A later event must remain unapplied."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.database.defaults",
+          "relationship": "related_reference",
+          "note": "Derived UTF-8 variants of the server-default versus USE-database test; charset-only and conditional variants are independently authored."
+        },
+        {
+          "id": "mysql84.database.execute",
+          "relationship": "related_reference",
+          "note": "CREATE logs the created database name with suppress_use; omission uses session server collation; IF NOT EXISTS retains existing defaults."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No replica error expected.",
+            "partial_effects": "Native 8.4 can execute this database CREATE; 5.7 capability/privilege differs."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "unsupported source server collation",
+            "reason": "unsupported source server collation",
+            "warnings": "Capture diagnostics and warnings.",
+            "partial_effects": "Assert target effects and stopped boundary explicitly."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No replica error expected.",
+            "partial_effects": "Native 8.4 can execute this database CREATE; 5.7 capability/privilege differs."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "unsupported source server collation",
+            "reason": "unsupported source server collation",
+            "warnings": "Capture diagnostics and warnings.",
+            "partial_effects": "Assert target effects and stopped boundary explicitly."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "diagnostic",
+          "description": "Assert the expected diagnostic/error category."
+        },
+        {
+          "id": "partial-effects",
+          "description": "Compare target data/schema and pending intents after rejection."
+        },
+        {
+          "id": "stopped-boundary",
+          "description": "Ensure rejected work did not become a completed checkpoint."
+        },
+        {
+          "id": "following-event-blocked",
+          "description": "Verify a later source event remains unapplied."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "database-unsupported-default"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [],
+          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract."
+        }
+      ],
+      "gaps": [
+        "Aggregate rejection test only; named diagnostic/checkpoint/history assertion imports remain unbound."
+      ]
+    },
+    {
+      "id": "ddl.database.create.denied",
+      "name": "CREATE DATABASE permission denied",
+      "family": "E",
+      "feature": "database.lifecycle",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "implemented",
+      "intent": "reject",
+      "prerequisites": [
+        "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
+      ],
+      "operation": [
+        "CREATE DATABASE permission denied"
+      ],
+      "following_workload": [
+        "A later event must remain unapplied."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.database.defaults",
+          "relationship": "related_reference",
+          "note": "Derived UTF-8 variants of the server-default versus USE-database test; charset-only and conditional variants are independently authored."
+        },
+        {
+          "id": "mysql84.database.execute",
+          "relationship": "related_reference",
+          "note": "CREATE logs the created database name with suppress_use; omission uses session server collation; IF NOT EXISTS retains existing defaults."
+        }
+      ],
+      "required_profiles": [
+        "swift.position.metadata-minimal",
+        "swift.gtid.metadata-full"
+      ],
+      "expectations": [
+        {
+          "profile": "swift.position.metadata-minimal",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No replica error expected.",
+            "partial_effects": "Native 8.4 can execute this database CREATE; 5.7 capability/privilege differs."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "target SQL error",
+            "reason": "target SQL error",
+            "warnings": "Capture diagnostics and warnings.",
+            "partial_effects": "Assert target effects and stopped boundary explicitly."
+          }
+        },
+        {
+          "profile": "swift.gtid.metadata-full",
+          "source": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture warnings in assertion evidence.",
+            "partial_effects": "Compare actual schema/data and normalized binlog effects.",
+            "logging": "event"
+          },
+          "native84": {
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "No replica error expected.",
+            "partial_effects": "Native 8.4 can execute this database CREATE; 5.7 capability/privilege differs."
+          },
+          "target57_sql": {
+            "outcome": "not_applicable",
+            "reason": "This profile exercises Swift application, not ordinary-SQL 5.7 capability.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "swift57": {
+            "outcome": "rejection",
+            "diagnostic": "target SQL error",
+            "reason": "target SQL error",
+            "warnings": "Capture diagnostics and warnings.",
+            "partial_effects": "Assert target effects and stopped boundary explicitly."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "diagnostic",
+          "description": "Assert the expected diagnostic/error category."
+        },
+        {
+          "id": "partial-effects",
+          "description": "Compare target data/schema and pending intents after rejection."
+        },
+        {
+          "id": "stopped-boundary",
+          "description": "Ensure rejected work did not become a completed checkpoint."
+        },
+        {
+          "id": "following-event-blocked",
+          "description": "Verify a later source event remains unapplied."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "ddl-suite",
+          "role": "swift_apply_with_native_reference",
+          "case_ids": [
+            "database-denied"
+          ],
+          "profiles": [
+            "swift.position.metadata-minimal",
+            "swift.gtid.metadata-full"
+          ],
+          "assertion_ids": [],
+          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract."
+        }
+      ],
+      "gaps": [
+        "Aggregate rejection test only; named diagnostic/checkpoint/history assertion imports remain unbound."
+      ]
+    },
+    {
+      "id": "ddl.database.create.duplicate",
+      "name": "Unconditional duplicate CREATE DATABASE reports 1007 without an event",
+      "family": "E",
+      "feature": "database.lifecycle",
+      "scope": "in_scope",
+      "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
+      "implementation": "missing",
+      "intent": "observe",
+      "prerequisites": [
+        "Create created_explicit before the duplicate statement."
+      ],
+      "operation": [
+        "CREATE DATABASE created_explicit"
+      ],
+      "following_workload": [
+        "Establish source logging/no-op behavior, then verify subsequent DML or an unaffected-table guard as appropriate."
+      ],
+      "upstream_refs": [
+        {
+          "id": "mysql84.database.defaults",
+          "relationship": "related_reference",
+          "note": "Derived UTF-8 variants of the server-default versus USE-database test; charset-only and conditional variants are independently authored."
+        },
+        {
+          "id": "mysql84.database.execute",
+          "relationship": "related_reference",
+          "note": "CREATE logs the created database name with suppress_use; omission uses session server collation; IF NOT EXISTS retains existing defaults."
+        }
+      ],
+      "required_profiles": [
+        "native.unrestricted",
+        "native.restricted"
+      ],
+      "expectations": [
+        {
+          "profile": "native.unrestricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1007,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1007,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
+          }
+        },
+        {
+          "profile": "native.restricted",
+          "swift57": {
+            "outcome": "not_applicable",
+            "reason": "Native reference suite does not run Swift.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "source": {
+            "outcome": "rejection",
+            "error_number": 1007,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change.",
+            "logging": "no_event"
+          },
+          "native84": {
+            "outcome": "not_applicable",
+            "reason": "Source rejection emits no event.",
+            "warnings": "Not applicable.",
+            "partial_effects": "Not applicable."
+          },
+          "target57_sql": {
+            "outcome": "rejection",
+            "error_number": 1007,
+            "warnings": "Capture client diagnostics.",
+            "partial_effects": "No schema or row change."
+          }
+        }
+      ],
+      "required_assertions": [
+        {
+          "id": "source-outcome",
+          "description": "Measure source acceptance, warnings and logged representation."
+        },
+        {
+          "id": "native-outcome",
+          "description": "Measure native replication outcome and errors."
+        },
+        {
+          "id": "target57-capability",
+          "description": "Measure ordinary SQL on the pinned 5.7 server separately from Swift."
+        },
+        {
+          "id": "metadata-effects",
+          "description": "Compare actual schema/default/engine effects."
+        }
+      ],
+      "bindings": [
+        {
+          "suite": "native-ddl-suite",
+          "role": "native_observation_and_direct_sql",
+          "case_ids": [
+            "native-database-duplicate"
+          ],
+          "profiles": [
+            "native.unrestricted",
+            "native.restricted"
+          ],
+          "assertion_ids": [],
+          "note": "Observe source/direct-SQL error 1007 and unchanged source position/GTIDs."
+        }
+      ],
+      "gaps": [
+        "Source rejection emits no event; this is not an applier rejection qualification. Native observation is not imported as assertion evidence."
       ]
     }
   ],

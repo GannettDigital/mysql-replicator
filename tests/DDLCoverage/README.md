@@ -2,9 +2,9 @@
 
 This implements steps 1–2 and the first partial-evidence slice of step 3 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
-reviewable checklist. It contains 56 scoped scenarios, 29 features across families
-A–F, four fixture profiles and 26 pinned research references. The shared registry
-contains 97 executable case declarations: 79 from `ddl-suite` and 18 from
+reviewable checklist. It contains 61 scoped scenarios, 29 features across families
+A–F, four fixture profiles and 29 pinned research references. The shared registry
+contains 113 executable case declarations: 88 from `ddl-suite` and 25 from
 `native-ddl-suite`. Baseline, setup/cleanup and extra research regressions have explicit non-catalog classifications.
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
@@ -219,9 +219,9 @@ make ddl-catalog-report ARGS='--format json --evidence artifacts/ddl-suite/POSIT
 `POSITION_RUN` and `GTID_RUN` are placeholders for the actual run directories.
 Compare `assertion_summary` and each scenario's `profile_evidence`: these show
 passed/required assertions, missing assertion IDs and partial profile counts.
-The catalog has 638 required assertion/profile obligations across 132 scenario /
-profile combinations. Eleven scenarios currently have two instrumented assertions
-each in two Swift profiles: at most 44 passing obligations and 22 partial combinations.
+The catalog has 690 required assertion/profile obligations across 144 scenario /
+profile combinations. Twelve scenarios currently have two instrumented assertions
+each in two Swift profiles: at most 48 passing obligations and 24 partial combinations.
 The denominator increased because earlier research obligations remain, native
 profiles were added, and replica-only missing-template failure has its own contract.
 Full scenario verification remains zero until the other obligations are bound.
@@ -287,4 +287,30 @@ saved predecessor's 12 / 470 and six partial combinations. Full verification
 remains zero. The [comparison and reproduction commands](../../artifacts/ddl-conditional-like-20260930/README.md)
 include exact evidence paths and explain the increased denominator. These artifacts
 are local and ignored by Git. The reviewed predecessor is commit `6f07e0b`;
-the conditional/LIKE implementation is the next review slice.
+the conditional/LIKE implementation was committed as `90d6ae4`.
+
+## Database creation slice
+
+`DatabaseCreationCases.swift` declares six accepted CREATE DATABASE/SCHEMA cases
+plus explicit/inherited unsupported-collation and permission-denied failures.
+Each accepted case checks database defaults, following table metadata/local engine,
+DML and retained seed data. Cases run before the existing ordered table-DDL stream
+in `make ddl-suite`; grant setup names the new schemas without creating them.
+Database-only intents store metadata in `ddl_intents.database_json` (SQLite format
+4), with no table-schema IDs. The existing retention policy covers these intents.
+
+The native suite adds seven cases per profile, including duplicate error 1007 with
+an unchanged source binlog boundary. `database-creation-matrix.json` records defaults,
+warnings and source boundaries; decoded source binlogs retain the Query context.
+The supported catalog scenario requires **all six** accepted cases for each of its
+two bound assertions. The earlier database lifecycle backlog still covers ALTER,
+DROP and remaining options. No source rejection is counted as Swift apply coverage.
+
+Validation on 2026-09-30: 59 unit tests passed; both native engine-policy profiles
+passed 25 cases each; file-position/MINIMAL and GTID/FULL-metadata Swift profiles
+passed 88 cases each, including cleanup. The upstream reference check passed.
+Fresh evidence records 48/690 passing assertion/profile obligations, 24 partial
+combinations and zero fully verified combinations (previously 44/638, 22 and zero).
+The [comparison and reproduction commands](../../artifacts/database-creation-20260930/README.md)
+retain the exact evidence paths and distinguish passing assertions from unbound
+native/rejection obligations. Artifacts are local and ignored by Git.

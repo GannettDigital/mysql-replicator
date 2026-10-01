@@ -199,7 +199,10 @@ cannot record a failure, stderr remains the diagnostic fallback. Other processes
 can still consume disk unexpectedly; I/O/full errors are fatal, never success.
 
 The reviewed checkpoint uses SQLite schema version 2; the [DDL follow-up](DDL_APPLY.md)
-uses version 3 with retired schema versions and DDL intents. Inspect `schemas`, `groups`, `row_intents`, `snapshots`
+uses version 4 with retired table-schema versions, DDL intents and separate
+`ddl_intents.database_json` metadata for database creation. Database intents do
+not create table-schema rows. Existing state directories are not migrated or
+resumed by this slice. Inspect `schemas`, `groups`, `row_intents`, `snapshots`
 and the singleton `state`. Old state is never migrated or reopened by this POC.
 The raw `relay.frames` file still has its independent stop-at-limit budget (default
 256 MiB); segment rotation and re-download are later work. No target recovery or

@@ -10,7 +10,7 @@ The [DDL coverage catalog](tests/DDLCoverage/README.md) now provides an offline
 checklist: `make ddl-catalog-check` validates it and `make ddl-catalog-report`
 prints its current implementation and coverage gaps. All qualifications remain
 unverified without explicit evidence. The named schema/data evidence slice
-reports partial coverage for rename, TRUNCATE, conditional CREATE/DROP and CREATE LIKE; see the catalog usage for
+reports partial coverage for rename, TRUNCATE, conditional CREATE/DROP, CREATE LIKE and database/schema creation; see the catalog usage for
 `--evidence` and its limitations. `make ddl-catalog-upstream-check`
 checks the pinned local MySQL source; `make ddl-catalog-scan` produces a candidate
 and dependency inventory for review. Completeness gates follow the
@@ -63,6 +63,13 @@ binary, NULL and empty values. Conditional CREATE/DROP and permanent-table CREAT
 LIKE preserve the source SQL. LIKE validates the replica's local template and
 copies its supported metadata without copying rows. Unsupported types, secondary
 indexes, triggers, generated columns and partitioning remain outside this slice.
+Database creation is also supported: `CREATE DATABASE` / `CREATE SCHEMA`, optional
+`IF NOT EXISTS`, and explicit or inherited charset/collation defaults. Source SQL
+is preserved; omitted encoding uses the logged source session server collation.
+A collation unavailable on 5.7 (including 0900 defaults) stops replication. Grant
+CREATE and following table/DML privileges on each intended database name, including
+names not yet created. ALTER/DROP DATABASE, encryption and READ ONLY remain outside
+this slice. See [database creation details](PLAN/DDL_COMPLETENESS.md#database-and-schema-creation-slice).
 Target UUID is discovered from the verified connection and
 stored in SQLite; remove `targetUUID` from old configuration files.
 Runtime files use a Docker-managed volume and are copied back for inspection.

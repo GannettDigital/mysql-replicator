@@ -11,7 +11,7 @@ final class DDLCoverageEvidenceTests: XCTestCase {
     private func matchingCases() -> [[String: Any]] {
         let selected = Set(DDLCoverageCases.evidenceContracts.values.flatMap { $0.values.flatMap { $0 } })
         return [["id": "ddl", "status": "passed"]] + selected.sorted().map { id in
-            ["id": id, "status": "passed", "assertions": [["id": DDLCoverageCases.assertion(for: id)!, "status": "passed", "evidence": "assertions/" + id + ".json"]]]
+            ["id": id, "status": "passed", "assertions": DDLCoverageCases.assertions(for:id).map { ["id": $0, "status": "passed", "evidence": "assertions/" + id + "-" + $0 + ".json"] }]
         }
     }
     func testNamedAssertionsIncreasePartialCoverageWithoutQualifyingOtherObligations() throws {
@@ -20,11 +20,11 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         let bundles = DDLCoverageCases.swiftProfiles.map { DDLCoverageEvidence.Bundle(profile: $0, stale: false, passed: true, cases: matchingCases(), origin: "fixture") }
         let after = try DDLCoverageEvidence.report(inventory, bundles: bundles)
         XCTAssertEqual((before["assertion_summary"] as! [String: Int])["passed"], 0)
-        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["passed"], 44)
-        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["partial_scenario_profiles"], 22)
+        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["passed"], 48)
+        XCTAssertEqual((after["assertion_summary"] as! [String: Int])["partial_scenario_profiles"], 24)
         XCTAssertEqual((after["assertion_summary"] as! [String: Int])["verified_scenario_profiles"], 0)
         let rows = after["scenarios"] as! [[String: Any]]
-        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count, 11)
+        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count, 12)
         XCTAssertThrowsError(try DDLCoverageEvidence.report(inventory, bundles: [bundles[0], bundles[0]]))
     }
     func testMissingAssertionAndParentOrCleanupFailureCannotBecomeCoverage() throws {

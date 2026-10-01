@@ -469,6 +469,62 @@
       "result_refs": [],
       "dependencies_reviewed": true,
       "unresolved_dependencies": []
+    },
+    {
+      "id": "mysql84.database.defaults",
+      "repository": "mysql84",
+      "path": "mysql-test/t/ctype_create.test",
+      "kind": "test",
+      "sha256": "db50442e10d84391a0b0267d1f1c6f86506c185b5cdeb1516891ed4bda81fce3",
+      "locator": {
+        "start_line": 9,
+        "end_line": 40,
+        "anchor": "SET @@character_set_server=latin5;"
+      },
+      "dependencies": [],
+      "result_refs": [
+        "mysql84.database.defaults.result"
+      ],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Selected-section review only: session server default inheritance and suppress_use/database event context. Whole-file dependencies, encryption and broader lifecycle semantics remain unqualified."
+      ]
+    },
+    {
+      "id": "mysql84.database.defaults.result",
+      "repository": "mysql84",
+      "path": "mysql-test/r/ctype_create.result",
+      "kind": "result",
+      "sha256": "d9d5eea2eadead1d0e729f7846871fa4f130f53787e7742a84fdcd339a4a9a46",
+      "locator": {
+        "start_line": 1,
+        "end_line": 18,
+        "anchor": "SET @@character_set_server=latin5;"
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Selected-section review only: session server default inheritance and suppress_use/database event context. Whole-file dependencies, encryption and broader lifecycle semantics remain unqualified."
+      ]
+    },
+    {
+      "id": "mysql84.database.execute",
+      "repository": "mysql84",
+      "path": "sql/sql_db.cc",
+      "kind": "implementation",
+      "sha256": "41f40576a604fbe1d4154031fd5aaa792379dd4400845b8745feff35b14f3f70",
+      "locator": {
+        "start_line": 267,
+        "end_line": 496,
+        "anchor": "bool mysql_create_db("
+      },
+      "dependencies": [],
+      "result_refs": [],
+      "dependencies_reviewed": false,
+      "unresolved_dependencies": [
+        "Selected-section review only: session server default inheritance and suppress_use/database event context. Whole-file dependencies, encryption and broader lifecycle semantics remain unqualified."
+      ]
     }
   ],
   "candidates": [
