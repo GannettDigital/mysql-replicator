@@ -17,6 +17,27 @@ and dependency inventory for review. Completeness gates follow the
 [implementation plan](PLAN/DDL_COVERAGE_CATALOG.md).
 `make upstream-tests` qualifies the Rust binlog codec only.
 
+## Interactive demo
+
+Use the same three-node Compose stack with setup separated from Swift startup:
+
+```sh
+make demo-up
+make demo-start
+make demo-sql FILE=examples/demo/01-success.sql
+make demo-compare
+make demo-fail
+make demo-status
+# When finished (archives evidence and deletes this disposable stack):
+make demo-down
+```
+
+`demo-up` starts an idle applier container and leaves the replication process
+unstarted. Log in and run `mysql-replicator` manually, or use `make demo-start`
+for a detached process. It prints the ready-to-run config and shell commands.
+See the [demo runbook](PLAN/DEMO.md) for SQL-by-SQL presentation, live SQLite inspection,
+expected failure, cleanup and the automated `make demo-suite` rehearsal.
+
 ## Offline binlog inspection
 
 ```sh

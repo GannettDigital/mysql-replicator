@@ -19,6 +19,14 @@ func main() throws -> Int32 {
           ddl-catalog report [--format markdown|json] [--evidence PATH ...]
           ddl-catalog upstream-check [--mysql-source PATH]
           ddl-catalog scan [--mysql-source PATH]
+          demo-up [--skip-build]    # prepare stack/config and an idle applier container
+          demo-start               # launch mysql-replicator inside the running container
+          demo-status              # containers, native status, live SQLite and diagnostics
+          demo-sql FILE            # execute a SQL file on the demo source
+          demo-compare [--expect-blocked]
+          demo-fail                # run prepared failure and verify both appliers stopped
+          demo-down                # archive evidence and delete only this disposable stack
+          demo-suite [--skip-build]
           upstream-tests
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
@@ -29,6 +37,9 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command.hasPrefix("demo-") {
+        try DemoSession.run(root: root, command: command, arguments: args); return 0
+    }
     if command == "ddl-catalog" {
         try DDLCoverage.run(root: root, arguments: args); return 0
     }

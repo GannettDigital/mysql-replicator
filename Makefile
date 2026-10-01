@@ -53,3 +53,10 @@ ddl-catalog-upstream-check:
 
 ddl-catalog-scan:
 	@swift run replicator-lab ddl-catalog scan $(ARGS)
+
+.PHONY: demo-up demo-start demo-status demo-compare demo-sql demo-fail demo-down demo-suite
+demo-up demo-start demo-status demo-compare demo-fail demo-down demo-suite:
+	swift run replicator-lab $@ $(ARGS)
+
+demo-sql:
+	swift run replicator-lab demo-sql "$(FILE)"

@@ -4,7 +4,7 @@ services:
     volumes:
       - "dml-evidence:/evidence:ro"
   target57:
-    command: ["--server-id=5701", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=OFF_PERMISSIVE", "--enforce-gtid-consistency=WARN", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start", "--ssl-ca=/evidence/tls/ca.pem", "--ssl-cert=/evidence/tls/server.pem", "--ssl-key=/evidence/tls/server-key.pem", "--require-secure-transport=ON"]
+    command: ["--server-id=5701", "--disabled-storage-engines=${FIXTURE_DISABLED_ENGINES:-}", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=OFF_PERMISSIVE", "--enforce-gtid-consistency=WARN", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start", "--ssl-ca=/evidence/tls/ca.pem", "--ssl-cert=/evidence/tls/server.pem", "--ssl-key=/evidence/tls/server-key.pem", "--require-secure-transport=ON"]
     volumes:
       - "dml-evidence:/evidence:ro"
 

@@ -34,10 +34,10 @@ public final class NativeHarness {
     var composeOverlays: [String] = []
     var composeEnvironment: [String: String] = [:]
 
-    public init(root: URL, config: NativeCase, artifactCategory: String = "native-suite") {
+    public init(root: URL, config: NativeCase, artifactCategory: String = "native-suite", identifier: String = runID()) {
         self.root = root; self.runner = ProcessRunner(root: root); self.config = config
         self.decoder = ProcessInfo.processInfo.environment["MYSQLBINLOG"] ?? "mysqlbinlog"
-        let id = runID()
+        let id = identifier
         output = root.appendingPathComponent("artifacts/\(artifactCategory)/\(id)-\(config.name)")
         project = "replicator-lab-" + id.lowercased()
         report = ["schema_version": 1, "case": config.name, "project": project,

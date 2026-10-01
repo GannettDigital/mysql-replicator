@@ -36,3 +36,10 @@ build:
 	cp Package.resolved /out/evidence/production-Package.resolved
 	cp rust/Cargo.lock /out/evidence/production-Cargo.lock
 	cp /root/.swiftpm/swift-sdks/swift-6.2.1-RELEASE_static-linux-0.0.1.artifactbundle/sbom.spdx.json /out/evidence/sdk-sbom.spdx.json
+
+# Optional demo tooling: inspect the live WAL in Docker's own filesystem.
+.PHONY: demo-tools
+demo-tools:
+	clang $(PACKAGING_CFLAGS) -resource-dir $(PACKAGING_SYSROOT)/usr/lib/swift/clang --rtlib=compiler-rt --unwindlib=none -static -fuse-ld=lld -DSQLITE_OMIT_LOAD_EXTENSION /opt/sqlite/shell.c /out/native/libsqlite3.a -lm -lpthread -o /out/sqlite3
+	! readelf -l /out/sqlite3 | grep -q INTERP
+	! readelf -d /out/sqlite3 | grep -q NEEDED

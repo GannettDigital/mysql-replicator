@@ -1,0 +1,20 @@
+# Demo-only overlay on compose.yaml + docker/dml/compose.yaml.
+# Keep a shell-accessible Ubuntu container up; replication starts only on request.
+services:
+  applier:
+    image: "${REPLICATOR_DEMO_IMAGE:?demo runtime image digest required}"
+    platform: linux/amd64
+    container_name: "${REPLICATOR_DEMO_APPLIER:?demo applier container name required}"
+    init: true
+    entrypoint: ["/bin/sleep"]
+    command: ["infinity"]
+    restart: "no"
+    network_mode: "service:target57"
+    depends_on:
+      target57:
+        condition: service_healthy
+    environment:
+      SOURCE_PASSWORD: fixture-capture-only
+      TARGET_PASSWORD: fixture-apply-only
+    volumes:
+      - "dml-evidence:/evidence"

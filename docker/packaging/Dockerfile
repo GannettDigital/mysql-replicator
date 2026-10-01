@@ -31,3 +31,9 @@ COPY --from=build /out/evidence /opt/packaging-evidence
 COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog /opt/inspect-fixtures/source-positive.binlog
 COPY tests/ReplicatorCodecTests/Schema/source-positive.json /opt/inspect-fixtures/source-positive.json
 ENTRYPOINT ["/usr/local/bin/packaging-probe"]
+
+# The production runtime remains unchanged; demo tools use the same pinned SQLite.
+FROM build AS demo-tools
+RUN make -f packaging/Makefile demo-tools
+FROM runtime AS demo
+COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
