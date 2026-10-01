@@ -152,6 +152,10 @@ public enum DemoSession {
             Successful SQL: make demo-sql FILE=examples/demo/01-success.sql
             Compare: make demo-compare
             Controlled failure: make demo-fail
+            In applier shell: mysql-replicator skip '<pendingGTID from failure>' --config /evidence/apply.json
+            Resume: mysql-replicator run --config /evidence/apply.json
+            Following insert: make demo-sql FILE=examples/demo/03-after-skip.sql
+            Separate longer validation: make ddl-suite
             Inspect: make demo-status
             Read SQLite in Docker: docker exec \(helper) sqlite3 -readonly -header -column /evidence/state/state.sqlite 'SELECT * FROM state;'
             Interactive source SQL: docker exec -it -e MYSQL_PWD=fixture-root-only \(h.project)-source-1 mysql --no-defaults -uroot --default-character-set=utf8mb4
@@ -205,7 +209,7 @@ public enum DemoSession {
             var sawProcess = false
             while Date() < deadline {
                 if try h.sql("source", "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND COMMAND LIKE 'Binlog Dump%'") == "1" {
-                    log("Swift replication is running; execute examples/demo/01-success.sql, then make demo-compare")
+                    log("Swift capture connection is running")
                     return
                 }
                 if try replicatorRunning() { sawProcess = true }
@@ -410,6 +414,35 @@ public enum DemoSession {
                 try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("cleanly STOPPED"), "BLOCKED state was resumed")
                 try require(session.state("SELECT diagnostic FROM state") == before, "resume refusal overwrote original diagnostic")
             }
+            try reporter!.run(QualificationCase("demo-skip-and-resume", "CLI skips rejected DDL atomically, resumes queued and fresh INSERTs, and preserves progress across another restart")) {
+                let id=try session.state("SELECT active_gtid FROM state")
+                let checkpoint=try session.state("SELECT applied_file||'|'||applied_position||'|'||transactions_applied FROM state")
+                let refused=try session.docker(["exec",session.applier,"mysql-replicator","skip",id + "-999999","--config","/evidence/apply.json"],checked:false)
+                try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("skip_failed"),"broader skip was accepted or lacked a diagnostic")
+                try require(session.state("SELECT applied_file||'|'||applied_position||'|'||transactions_applied FROM state") == checkpoint,"refused skip changed checkpoint")
+                let end=try session.state("SELECT source_file||'|'||end_position FROM groups WHERE status='PENDING'")
+                let skipped=try session.docker(["exec",session.applier,"mysql-replicator","skip",id,"--config","/evidence/apply.json"])
+                try skipped.stdout.write(to:session.h.output.appendingPathComponent("skip.json"))
+                let summary=try JSONSerialization.jsonObject(with:skipped.stdout) as? [String:Any]
+                try require(summary?["skippedGTIDSet"] as? String == id && summary?["lifecycle"] as? String == "STOPPED","skip summary differs")
+                try require(session.state("SELECT lifecycle||'|'||transactions_applied||'|'||ddl_applied||'|'||rows_applied||'|'||IFNULL(active_gtid,'NULL')||'|'||IFNULL(diagnostic,'NULL') FROM state") == "STOPPED|8|3|6|NULL|NULL","skip changed counters or left unresolved state")
+                try require(session.state("SELECT applied_file||'|'||applied_position FROM state") == end,"skip did not advance to captured end")
+                try session.start()
+                try session.executeSQL(file:root.appendingPathComponent("examples/demo/03-after-skip.sql"))
+                let boundary=try session.h.boundary("source")
+                let deadline=Date().addingTimeInterval(25)
+                while try session.state("SELECT applied_file||'|'||applied_position FROM state") != boundary.file + "|" + String(boundary.position) {
+                    try require(Date() < deadline && session.replicatorRunning(),"post-skip INSERT did not reach Swift checkpoint")
+                    Thread.sleep(forTimeInterval:0.2)
+                }
+                let sql="SELECT id,value,quantity,note FROM demo.items WHERE id IN (999,1000) ORDER BY id"
+                try require(session.h.sql("target57",sql) == session.h.sql("source",sql),"queued/fresh INSERT values differ after skip")
+                try require(session.h.sql("target57","SELECT COUNT(*) FROM demo.items WHERE id IN (999,1000)") == "2","post-skip rows missing")
+                try require(session.h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='demo' AND TABLE_NAME='explicit_innodb'") == "0","skip executed rejected CREATE")
+                try require(session.h.status()["Last_SQL_Errno"] == "3161" && session.h.sql("native","SELECT COUNT(*) FROM demo.items WHERE id IN (999,1000)") == "0","skip changed native reference")
+                try session.stopWriter(); try session.start(); try session.stopWriter()
+                try require(session.state("SELECT lifecycle||'|'||transactions_applied||'|'||ddl_applied||'|'||rows_applied FROM state") == "STOPPED|10|3|8","resume replayed skipped/applied work or lost counters")
+            }
         } catch { failure = reporter?.fail(error) ?? error }
         if session.manifest != nil {
             do { try session.down() } catch { if failure == nil { failure = error } }
@@ -490,6 +523,6 @@ public enum DemoSession {
             }
             if let detachedFailure { throw detachedFailure }
         }
-        print("Demo suite PASS: setup/start separation, idle heartbeats, positive SQL, fail-stop, graceful SIGINT/SIGTERM, saved-state resume and cleanup.")
+        print("Demo suite PASS: setup/start separation, idle heartbeats, positive SQL, fail-stop, explicit skip and following INSERTs, graceful SIGINT/SIGTERM, saved-state resume and cleanup.")
     }
 }

@@ -105,7 +105,13 @@ work was applied. The applier supports a deliberately limited schema and
 single-statement transaction subset; uncertain writes are never retried. Review [supported behavior, setup, state ordering and
 limits](PLAN/DML_APPLY.md) before using it. See [ordered DDL and its test suite](PLAN/DDL_APPLY.md) for the initial schema-change subset;
 the [native-default follow-up](PLAN/DDL_NATIVE_DEFAULTS.md) supersedes its engine/charset rewriting.
-Native-channel handoff, crash recovery and audited skip/resolution remain future work;
+To exclude the captured failed GTID before any target write was attempted, use
+`.build/debug/mysql-replicator skip '<GTID>' --config apply.json`, then resume
+without `--initialize`. The set must equal the single pending GTID; any row/DDL
+write intent makes it ineligible. The atomic local operation leaves STOPPED,
+preserves applied counters and includes the skipped GTID in restart coverage.
+See [the demo workbook](PLAN/DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
+Native-channel handoff, crash recovery and resolution of uncertain writes remain future work;
 see [the future recovery contract](PLAN/START_BOUNDARY.md). Version 2 configuration has no
 schema lists: discovery combines source table-map metadata with the prepared target.
 SQLite keeps timestamped deltas and periodic GTID snapshots. Under storage pressure,

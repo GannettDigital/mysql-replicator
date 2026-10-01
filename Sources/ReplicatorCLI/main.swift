@@ -23,6 +23,7 @@ func main() throws {
                    [--transactions --binlog-file SOURCE_FILENAME]
                mysql-replicator inspect --source-config SOURCE.json [--transactions] [--include-raw]
                mysql-replicator run --config APPLY.json [--initialize]
+               mysql-replicator skip GTID_SET --config APPLY.json
                mysql-replicator --version | --help
         Output: one JSON event per line; diagnostics on stderr, failure exits nonzero.
         --transactions emits complete source groups and rejects incomplete EOF.
@@ -30,9 +31,18 @@ func main() throws {
         Live inspection is read-only and has no durable checkpoint or automatic reconnect.
         run applies qualified DML/DDL; --initialize creates new state from the configured baseline.
         Without --initialize, run resumes clean STOPPED state from SQLite.
+        skip excludes the captured failed GTID only when no target write intents exist; leaves STOPPED.
         Automatic reconnect and recovery of interrupted/uncertain writes are not implemented.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
+        return
+    }
+    if args.first == "skip" {
+        guard args.count == 4, args[2] == "--config" else { throw ApplyError("use skip GTID_SET --config APPLY.json") }
+        let config = try JSONDecoder().decode(ApplyConfiguration.self,from:readBounded(URL(fileURLWithPath:args[3])))
+        let summary = try ApplySkip.run(configuration:config,gtidSet:args[1])
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
+        try FileHandle.standardOutput.write(contentsOf:encoder.encode(summary) + Data([10]))
         return
     }
     if args.first == "run" {
@@ -131,7 +141,9 @@ func readBounded(_ url: URL) throws -> Data {
 do { try main() }
 catch {
     let diagnostic: [String: Any]
-    if let failure = error as? DecoderError {
+    if CommandLine.arguments.dropFirst().first == "skip" {
+        diagnostic = ["error":"skip_failed","reason":String(describing:error)]
+    } else if let failure = error as? DecoderError {
         diagnostic = ["error": "binlog_decode_failed", "code": failure.code, "offset": String(failure.offset), "eventType": failure.eventType.map { Int($0) } as Any? ?? NSNull(), "reason": failure.reason]
     } else if let failure = error as? TransactionError {
         func coordinate(_ value: BinlogCoordinate?) -> Any {

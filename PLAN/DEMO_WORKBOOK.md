@@ -1,8 +1,12 @@
 # Demo workbook: four terminals
 
 `make demo-up` starts all four containers, including an idle applier.
-The `mysql-replicator` process remains unstarted. Run the setup
-block below in each host terminal. It reads the current session, so container names
+The `mysql-replicator` process remains unstarted. For this revised flow, use a
+demo image built from the current code. If an older rehearsal is still present,
+finish it with `make demo-down` (archives evidence and removes that disposable
+stack), then run `make demo-up` to build a fresh rehearsal with `skip` support.
+Rebuilding an image alone does not replace an already-running container.
+Run the setup block below in each host terminal. It reads the current session, so container names
 stay correct after rebuilding the demo.
 
 ```sh
@@ -59,7 +63,7 @@ This uses saved applied GTID/position, falling back to the saved baseline when n
 work was applied. `make demo-start` on the host also resumes a clean stop. Keep the
 same state directory; do not rerun the successful SQL script after resuming.
 General BLOCKED/partial-work recovery is not implemented. For the deliberately
-rejected demo DDL, see [the manual SQLite skip below](#optional--skip-the-rejected-demo-ddl-in-sqlite).
+rejected demo DDL, see [the skip command below](#skip-the-rejected-ddl-and-resume).
 `docker logs` shows the idle container's output, not output from `docker exec`.
 
 To inspect live state, open another shell in the applier, then run:
@@ -132,7 +136,7 @@ Both replicas should contain `(1, updated, 11, after DDL)` and `(3, third, 30, N
 Their tables should be MyISAM; the source table should be InnoDB. Make changes on
 the source only.
 
-## Finish with the failure demonstration
+## Failure demonstration
 
 **On the host**, after a successful comparison:
 
@@ -156,78 +160,90 @@ returns you to the applier shell; both that container and the 5.7 server stay up
 boundary with `make demo-compare`, paste 02-failure.sql into source, then run
 `make demo-compare ARGS=--expect-blocked` on the host. Do not also run demo-fail.
 
-## Optional — skip the rejected demo DDL in SQLite
+## Skip the rejected DDL and resume
 
-Use this for the demo's rejected CREATE TABLE, which failed before executing any
-SQL on the target and has no row/DDL intents. Keep the replicator stopped until
-all three statements below have completed. No audit table is needed.
-
-**Inside the applier container**, open SQLite:
+After the failure returns you to the **applier container shell**, copy the full
+`pendingGTID` (UUID and number) from the JSON failure output. Alternatively, read it:
 
 ```sh
-flock -n /evidence/state/writer.lock sqlite3 /evidence/state/state.sqlite
+sqlite3 -readonly /evidence/state/state.sqlite 'SELECT active_gtid FROM state WHERE id=1;'
 ```
 
-Find the values to copy before deleting the pending group:
-
-```sql
-.mode line
-SELECT lifecycle, active_gtid, applied_sequence FROM state WHERE id=1;
-SELECT gtid, source_file, end_position FROM groups WHERE status='PENDING';
-```
-
-Replace the placeholders in the three statements below:
-
-| Placeholder | Where to copy it from | Original demo example |
-| --- | --- | --- |
-| `<FAILED_GTID>` | `state.active_gtid`, also shown as `groups.gtid` and `pendingGTID` in the failure output. Copy the full UUID and number. | `2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18` |
-| `<APPLIED_SEQUENCE>` | `state.applied_sequence`; keep this value unchanged, not the pending group's sequence. | `8` |
-| `<BINLOG_FILE>` | The pending group's `source_file`. | `binlog.000003` |
-| `<END_POSITION>` | The pending group's `end_position`, not its start position or the old applied position. | `4004` |
-| `<COVERED_GTID_SET>` | Take `appliedGTIDSet` from the failure output and add the failed GTID. In this demo, change the same UUID's interval `:1-17` to `:1-18`. Preserve all other intervals if present. | `2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:1-18` |
-
-Do not use the latest snapshot's GTID set alone: in this example it still contains
-only the baseline `:1-9`, while the failure output includes the completed work.
-
-1. Delete the pending group for the copied failed GTID:
-
-```sql
-DELETE FROM groups
-WHERE gtid='<FAILED_GTID>' AND status='PENDING';
-```
-
-2. Insert a snapshot covering the completed work plus the skipped GTID:
-
-```sql
-INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at)
-VALUES(<APPLIED_SEQUENCE>, '<COVERED_GTID_SET>', '<BINLOG_FILE>', '<END_POSITION>',
-       strftime('%Y-%m-%dT%H:%M:%fZ','now'));
-```
-
-3. Advance the saved position and clear the blocked state:
-
-```sql
-UPDATE state
-SET applied_file='<BINLOG_FILE>', applied_position='<END_POSITION>',
-    lifecycle='STOPPED', active_gtid=NULL, diagnostic=NULL,
-    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE id=1 AND lifecycle='BLOCKED' AND active_gtid='<FAILED_GTID>';
-```
-
-Applied counters stay at 8 transactions, 6 rows, and 3 DDL statements in this
-example; `applied_sequence` stays 8. Leave schemas, completed groups/intents, and
-relay files unchanged. With this version-4 workaround, `appliedGTIDSet` and
-`appliedPosition` include the skipped event even though its SQL was not applied.
-
-Type `.exit`, then resume at the applier shell without initialization:
+Replace `<FAILED_GTID>` with that value, then run inside the applier container:
 
 ```sh
+mysql-replicator skip '<FAILED_GTID>' --config /evidence/apply.json
 mysql-replicator run --config /evidence/apply.json
 ```
 
-Swift can now apply the following marker row `999`; `demo.explicit_innodb` remains
-absent on its target. The native 8.4 replica is still blocked, so the three-way
+For example, if the failure reports `2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18`,
+the first command is `mysql-replicator skip '2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18' --config /evidence/apply.json`.
+Use your own run's GTID, not this example. Do not use `--initialize` when resuming.
+
+`skip` prints a `skip_summary` with `lifecycle: STOPPED`, `skippedGTIDSet`,
+`resumeGTIDSet` and `resumePosition`. It holds the writer lock and atomically
+removes the pending group, stores the full completed-plus-skipped GTID coverage,
+advances to that group's end position, and clears the blocked diagnostic.
+It neither creates the rejected table nor starts replication. Counters remain
+8 transactions, 6 rows and 3 DDL statements; schemas and relay bytes are unchanged.
+The version-4 `appliedGTIDSet`/`appliedPosition` fields now include the skipped
+event as restart coverage, even though its SQL was not applied.
+
+The command accepts GTID-set syntax, but this serial applier currently permits
+exactly the one captured pending GTID. Wider ranges, uncaptured GTIDs, an active
+writer, and groups with any row/DDL write intents are refused. Partial or
+uncertain target writes still require manual resolution. This demo's explicit
+InnoDB rejection happens before any write intent, so it qualifies.
+
+After resuming, Swift applies the previously queued marker `999`. On the **host**,
+send one more transaction while the resumed replicator is running:
+
+```sh
+make demo-sql FILE=examples/demo/03-after-skip.sql
+make demo-status
+```
+
+In the **source and 5.7 SQL terminals**, verify both rows match:
+
+```sql
+SELECT * FROM demo.items WHERE id IN (999,1000) ORDER BY id;
+SHOW TABLES FROM demo LIKE 'explicit_innodb';
+```
+
+Swift's target has rows `999` and `1000`, but no `explicit_innodb` table.
+Expected counters are now 10 transactions, 8 rows and 3 DDL statements.
+The native 8.4 replica remains blocked and has neither row, so the three-way
 `make demo-compare` is not expected to pass after this Swift-only skip.
+
+## Longer DDL/DML validation on separate stacks
+
+On the **host**, from the repository root:
+
+```sh
+make ddl-suite
+```
+
+This builds the current runtime and runs the existing DDL suite, including
+following INSERT/UPDATE/DELETE, in both file-position and GTID profiles.
+It covers database creation, conditional CREATE/DROP, CREATE LIKE, ALTER,
+RENAME, TRUNCATE and deliberate failures within the implemented subset.
+Named cases show their source locations. The suite creates and cleans up its
+own stacks; the interactive demo remains available. Logs and results are saved
+under the printed `artifacts/ddl-suite/` directories.
+For the focused DML-only qualification, use `make dml-suite` instead.
+
+To see the coverage checklist and import this run's measured assertions:
+
+```sh
+make ddl-catalog-check
+make ddl-catalog-report ARGS='--format json --evidence artifacts/ddl-suite/POSITION_RUN/coverage-evidence.json --evidence artifacts/ddl-suite/GTID_RUN/coverage-evidence.json'
+```
+
+Replace `POSITION_RUN` and `GTID_RUN` with the two actual directory names printed
+by `make ddl-suite`. The report also shows missing assertions; a passing suite
+does not imply complete MySQL coverage. See [the catalog guide](../tests/DDLCoverage/README.md).
+`make demo-suite` separately automates this workbook's success → failure → skip
+→ new INSERT flow, plus clean-stop/resume checks.
 
 ## Clean up
 

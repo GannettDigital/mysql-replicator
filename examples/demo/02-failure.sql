@@ -1,4 +1,4 @@
--- Run LAST, on SOURCE only, after 01-success.sql and a passing demo-compare.
+-- Run on SOURCE only, after 01-success.sql and a passing demo-compare.
 -- Source accepts this. The native replica disables InnoDB (error 3161).
 -- Swift rejects explicit InnoDB without rewriting it or advancing its checkpoint.
 SET NAMES utf8mb4;

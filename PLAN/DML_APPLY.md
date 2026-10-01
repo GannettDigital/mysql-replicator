@@ -4,8 +4,10 @@ This increment connects the existing live reader/decoder/transaction assembler t
 MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
 The [native engine/charset DDL foundation](DDL_NATIVE_DEFAULTS.md) replaces the
 initial prototype rewrites. Broader coverage follows the [DDL completeness plan](DDL_COMPLETENESS.md).
-Cleanly stopped state can be resumed explicitly. Automatic reconnect and recovery
-of interrupted or uncertain writes remain unimplemented.
+Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.json`
+can exclude the single captured failed group before any target write intent;
+see [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
+Automatic reconnect and recovery of interrupted or uncertain writes remain unimplemented.
 Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 

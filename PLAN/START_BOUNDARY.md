@@ -41,10 +41,20 @@ restores counters/schema history. `--initialize` remains exclusive new-state
 creation. Local writer locking, target identity/schema checks and native exclusion
 are repeated on resume. Changed JSON start coordinates cannot override SQLite.
 
-BLOCKED state, incomplete work and crash recovery remain future work, as do native
-channel adoption and operator skip commands. The broader contracts below describe
-those remaining increments; clean-stop resume does not certify target durability
-after mysqld/host loss.
+A narrow explicit skip is implemented: `skip '<GTID-set>' --config APPLY.json`
+requires BLOCKED state and a set equal to the single captured pending GTID, with
+no row/DDL write intents. Under the writer lock it atomically deletes that pending
+group, snapshots existing coverage plus the exclusion, advances to its captured
+end position, and leaves STOPPED. Applied counters, schema history and relay bytes
+are unchanged. Restart remains a separate `run` command. The demo workbook shows
+[skip followed by a new INSERT](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
+
+This version-4 implementation uses `appliedGTIDSet`/`appliedPosition` as restart
+coverage, including explicit exclusions; it does not create a separate skip audit
+table. The more detailed applied/skipped distinction below remains a future
+contract. Wider GTID ranges, uncaptured work, error-type policies, partial writes,
+crash recovery and native-channel adoption remain future work. Clean-stop resume
+and pre-write skip do not certify target durability after mysqld/host loss.
 
 ## Future first start: stopped native replica
 
@@ -175,6 +185,7 @@ failed resolution retains the block. Expose durable results through SQLite.
 `run --initialize` accepts externally established positional or GTID-only starts,
 refuses existing state and all retained native channels, and persists a bounded
 relay plus SQLite state/intents. [DML](DML_APPLY.md) and a [narrow DDL prototype](DDL_APPLY.md)
-are implemented. Target UUID discovery is implemented. Reopening state, reconnect
-recovery, stopped-channel adoption and all resolution/skip operations above remain
-future work. An embedded REST server is no longer planned.
+are implemented, along with target UUID discovery, clean-stop reopening and the
+captured pre-write skip described above. Reconnect/crash recovery, stopped-channel
+adoption and broader resolution/skip operations remain future work. An embedded
+REST server is no longer planned.

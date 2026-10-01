@@ -31,6 +31,7 @@ final class StateStore {
     private var pendingSequence: Int64 = 0
     private var sequence: Int64 = 0
     private var snapshotSequence: Int64 = 0
+    private var skipBoundary: BinlogCoordinate?
     private var schemas: [String:(Int64,ApplyTable)] = [:]
     private var inTransaction = false
     private var maintenance = false
@@ -43,13 +44,14 @@ final class StateStore {
     // Reserve enough of the total SQLite budget for a transaction touching every
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
-    init(configuration c: ApplyConfiguration, initialize: Bool = true, now: @escaping () -> Date = Date.init,
+    init(configuration c: ApplyConfiguration, initialize: Bool = true, skipGTIDs: GTIDSet? = nil, now: @escaping () -> Date = Date.init,
          freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace) throws {
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
         self.now = now; self.freeDisk = freeDisk
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
+        try require(skipGTIDs == nil || !initialize,"skip requires existing state")
         if initialize {
             guard mkdir(directory.path,0o700) == 0 else { throw ApplyError("state directory must be new for --initialize; omit --initialize to resume saved STOPPED state") }
         } else {
@@ -63,7 +65,7 @@ final class StateStore {
             writerLock = FileHandle(fileDescriptor:lockFD,closeOnDealloc:true)
             try require(flock(lockFD,LOCK_EX|LOCK_NB) == 0,"state directory already has an active writer")
             if !initialize {
-                try reopen(configuration:c)
+                try reopen(configuration:c,skipGTIDs:skipGTIDs)
                 return
             }
             baseline = try coordinate(c.source.start.file,c.source.start.position.map(String.init))
@@ -107,7 +109,7 @@ final class StateStore {
               let position, let n = UInt32(position), n >= 4 else { throw ApplyError("invalid saved binlog coordinate") }
         return BinlogCoordinate(file:file,position:UInt64(n))
     }
-    private func reopen(configuration c: ApplyConfiguration) throws {
+    private func reopen(configuration c: ApplyConfiguration, skipGTIDs: GTIDSet?) throws {
         try require(sqliteBytes <= policy.maximumSQLiteBytes,"saved SQLite exceeds configured storage limit")
         guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil) == SQLITE_OK else {
             throw ApplyError("cannot open existing SQLite state; no new state was initialized")
@@ -118,31 +120,76 @@ final class StateStore {
         let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
         try require(states.count == 1,"missing saved replication state")
         let r = states[0]
-        try require(r[0] == "STOPPED" && r[13] == nil && r[14] == nil,
-            "saved state must be cleanly STOPPED; BLOCKED, unfinished and crash recovery require explicit resolution")
+        if let skipGTIDs {
+            try require(r[0] == "BLOCKED" && r[13] != nil,"skip requires BLOCKED state with a captured pending GTID")
+            let id = r[13]!
+            _ = try singleton(id)
+            try require(try !skipGTIDs.isEmpty && skipGTIDs == GTIDSet(id),
+                "skip set must equal the captured pending GTID; uncaptured or additional GTIDs cannot be skipped")
+            pendingGTID=id
+        } else {
+            try require(r[0] == "STOPPED" && r[13] == nil && r[14] == nil,
+                "saved state must be cleanly STOPPED; BLOCKED, unfinished and crash recovery require explicit resolution")
+        }
         try require(r[1]?.lowercased() == c.source.sourceUUID.lowercased(),"saved source UUID differs from configuration")
         guard let uuid = r[2], UUID(uuidString:uuid) != nil else { throw ApplyError("saved target UUID is missing or invalid") }
         targetUUID = uuid.lowercased()
         baseline = try coordinate(r[3],r[4]); applied = try coordinate(r[6],r[7])
-        guard let baseText = r[5], let seq = Int64(r[8] ?? ""), seq >= 0,
+        guard let baseText = r[5], let seq = Int64(r[8] ?? ""), seq >= 0, seq < Int64.max,
               let tx = Int(r[9] ?? ""), tx >= 0, Int64(tx) == seq,
               let count = Int(r[10] ?? ""), count >= 0,
               let ddl = Int(r[11] ?? ""), ddl >= 0, ddl <= tx,
               let length = UInt64(r[12] ?? ""), length <= maximumBytes else { throw ApplyError("invalid saved progress or relay limit") }
-        try require(seq == 0 ? (applied == nil && count == 0 && ddl == 0) : applied != nil,"saved checkpoint does not match applied work")
-        try require(try number("SELECT COUNT(*) FROM groups WHERE status!='APPLIED' OR sequence>\(seq)") == 0,"saved state contains unresolved groups")
+        try require(seq == 0 ? (count == 0 && ddl == 0) : applied != nil,"saved checkpoint does not match applied work")
+        if let id = pendingGTID {
+            let pending = try query("SELECT sequence,source_file,start_position,end_position,relay_start,relay_end,status,completed_at FROM groups WHERE gtid=?",[id])
+            guard pending.count == 1 else { throw ApplyError("skip requires one captured pending group") }
+            let p=pending[0]
+            guard Int64(p[0] ?? "") == seq+1, p[6] == "PENDING", p[7] == nil,
+                  let start = try coordinate(p[1],p[2]), let end = try coordinate(p[1],p[3]), start.position < end.position,
+                  let relayStart=UInt64(p[4] ?? ""), let relayEnd=UInt64(p[5] ?? ""), relayStart < relayEnd, relayEnd == length else {
+                throw ApplyError("invalid pending group boundary; cannot skip")
+            }
+            if let applied, applied.file == start.file { try require(applied.position <= start.position,"pending group precedes applied boundary") }
+            try require(try query("SELECT 1 FROM row_intents WHERE gtid=? UNION ALL SELECT 1 FROM ddl_intents WHERE gtid=? LIMIT 1",[id,id]).isEmpty,
+                "cannot skip a group with target write intents; partial or uncertain writes require manual resolution")
+            try require(try query("SELECT 1 FROM groups WHERE gtid!=? AND (status!='APPLIED' OR sequence>?) LIMIT 1",[id,String(seq)]).isEmpty,"saved state contains other unresolved groups")
+            skipBoundary=end
+        } else {
+            try require(try number("SELECT COUNT(*) FROM groups WHERE status!='APPLIED' OR sequence>\(seq)") == 0,"saved state contains unresolved groups")
+        }
         try require(try number("SELECT COUNT(*) FROM row_intents WHERE status!='DONE'") == 0 && number("SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == 0,"saved state contains unresolved intents")
         let snapshots = try query("SELECT covered_sequence,gtids,source_file,source_position FROM snapshots ORDER BY id DESC LIMIT 1")
-        guard let snap = snapshots.first, Int64(snap[0] ?? "") == seq, let gtids = snap[1] else { throw ApplyError("clean stop lacks a covering GTID snapshot") }
-        try require(try coordinate(snap[2],snap[3]) == applied,"snapshot and applied coordinates differ")
-        let base = try GTIDSet(baseText)
+        guard let snap = snapshots.first, let covered = Int64(snap[0] ?? ""), covered >= 0, covered <= seq, let gtids = snap[1] else { throw ApplyError("missing or invalid covering GTID snapshot") }
         completedGTIDs = try GTIDSet(gtids)
-        try require(completedGTIDs.covers(base) && (seq != 0 || completedGTIDs == base),"saved GTID coverage differs from baseline")
+        if skipGTIDs != nil && covered < seq {
+            var expected=covered
+            var boundary=try coordinate(snap[2],snap[3])
+            for delta in try query("SELECT sequence,gtid,source_file,end_position FROM groups WHERE status='APPLIED' AND sequence>? ORDER BY sequence",[String(covered)]) {
+                expected += 1
+                try require(Int64(delta[0] ?? "") == expected,"saved applied GTID history has a gap")
+                let identity=try singleton(delta[1] ?? "")
+                try require(!completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"duplicate applied GTID delta")
+                try completedGTIDs.include(sid:identity.sid,sequence:identity.sequence)
+                boundary=try coordinate(delta[2],delta[3])
+            }
+            try require(expected == seq && boundary == applied,"saved applied history does not reach checkpoint")
+        } else {
+            try require(covered == seq,"clean stop lacks a covering GTID snapshot")
+            try require(try coordinate(snap[2],snap[3]) == applied,"snapshot and applied coordinates differ")
+        }
+        let base = try GTIDSet(baseText)
+        // A skip can advance coverage before the first successfully applied group.
+        try require(completedGTIDs.covers(base) && (seq != 0 || ((completedGTIDs == base) == (applied == nil))),"saved GTID coverage differs from baseline")
+        if let id=pendingGTID {
+            let identity=try singleton(id)
+            try require(!completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"pending GTID is already covered")
+        }
         for row in try query("SELECT gtid FROM groups WHERE status='APPLIED'") {
             guard let id = row[0] else { throw ApplyError("missing saved group GTID") }
             try require(try completedGTIDs.covers(GTIDSet(id)),"snapshot does not cover saved applied groups")
         }
-        sequence=seq; snapshotSequence=seq; transactions=tx; rows=count; ddlApplied=ddl
+        sequence=seq; snapshotSequence=covered; transactions=tx; rows=count; ddlApplied=ddl
         for row in try query("SELECT id,identity,schema_json FROM schemas WHERE current=1") {
             guard let id=Int64(row[0] ?? ""), let json=row[2] else { throw ApplyError("invalid saved schema") }
             let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
@@ -167,6 +214,31 @@ final class StateStore {
         try execute("PRAGMA temp_store=MEMORY")
         try execute("PRAGMA wal_autocheckpoint=64")
         ready=true
+    }
+    private func singleton(_ text: String) throws -> (sid:String,sequence:String) {
+        let parts=text.split(separator:":",omittingEmptySubsequences:false)
+        guard parts.count == 2, UUID(uuidString:String(parts[0])) != nil,
+              let n=UInt64(parts[1]), n > 0 else { throw ApplyError("invalid saved singleton GTID") }
+        return (String(parts[0]),String(n))
+    }
+    /// Explicitly exclude a captured group before any target write was attempted.
+    /// All validation happens during reopen, under the same exclusive writer lock.
+    func skip() throws -> SkipSummary {
+        guard let id=pendingGTID, let boundary=skipBoundary else { throw ApplyError("state was not opened for skip") }
+        let identity=try singleton(id)
+        var next=completedGTIDs
+        try next.include(sid:identity.sid,sequence:identity.sequence)
+        let time=timestamp()
+        // Do not prune history as a side effect of an operator resolution. Reopen
+        // has checked disk/page budgets; FULL WAL and SQLite caps still apply.
+        maintenance=true; defer {maintenance=false}
+        try atomic {
+            try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'",[id])
+            try execute("INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",[String(sequence),next.canonical,boundary.file,String(boundary.position),time])
+            try execute("UPDATE state SET applied_file=?,applied_position=?,lifecycle='STOPPED',active_gtid=NULL,diagnostic=NULL,updated_at=? WHERE id=1",[boundary.file,String(boundary.position),time])
+        }
+        completedGTIDs=next; applied=boundary; pendingGTID=nil; skipBoundary=nil; snapshotSequence=sequence
+        return SkipSummary(skippedGTIDSet:try GTIDSet(id).canonical,resumeGTIDSet:next.canonical,resumePosition:boundary,stateDirectory:directory.path)
     }
     func captureConfiguration(_ source: CaptureConfiguration) throws -> CaptureConfiguration {
         let boundary = applied ?? baseline

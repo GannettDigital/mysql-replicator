@@ -206,8 +206,16 @@ only after applying a transaction, so silence while waiting for source changes i
 normal; `make demo-status` shows the live process and SQLite lifecycle.
 
 A clean stop can be resumed using the existing SQLite checkpoint. After the deliberate
-failure, start a new rehearsal with a fresh stack/baseline; never delete only SQLite
-and replay the old baseline against an already changed target. Setup failures retain a session
+failure, use `mysql-replicator skip '<pendingGTID>' --config /evidence/apply.json`
+inside the applier container, then resume without `--initialize`. This excludes
+only the captured failed group with no write intents. It advances GTID/position
+coverage atomically and preserves applied counters; it does not execute the SQL
+or resolve uncertain writes. Run `examples/demo/03-after-skip.sql` on source to
+verify a fresh INSERT reaches 5.7. The native replica remains blocked.
+See [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume) for commands
+and the separate `make ddl-suite` validation. A fresh rehearsal still needs a
+fresh stack/baseline; never delete only SQLite and replay the old baseline
+against an already changed target. Setup failures retain a session
 record so `demo-down` can clean up before retrying. Avoid running lifecycle
 commands concurrently or restarting individual MySQL containers during a rehearsal.
 
@@ -225,7 +233,10 @@ independent of the interactive stack. Named cases
 verify a running shell-ready container with no replication process/state, manual
 CLI launch inside that container, refusal of repeated setup/start, 35 seconds of
 idle heartbeat operation, successful SQL/schema/data/counters, and the failure
-boundary with the shell still available. Separate cases check idle SIGINT with
+boundary with the shell still available. The explicit-skip case refuses a wider
+GTID set, skips the rejected CREATE through the CLI, resumes the queued marker
+and a fresh INSERT, verifies the native replica remains blocked, then restarts
+again without replay. Separate cases check idle SIGINT with
 exit code zero and SIGTERM after the successful workload, asserting STOPPED, no
 diagnostic, and unchanged checkpoints/counters. Resume cases queue source DDL/DML
 while stopped, deliberately change JSON start coordinates, then verify GTID-baseline
@@ -272,3 +283,17 @@ and retained cumulative counters (12 transactions, 4 DDL, 9 rows). Both exercise
 another restart with no new events and concurrent-writer refusal. BLOCKED-state
 resume and reinitialization of existing state were refused without replacing
 saved diagnostics/checkpoints.
+
+
+Explicit-skip validation, 2026-09-30: 53 focused Swift tests passed, including
+seven skip tests for atomic rollback, wrong/broader sets, write-intent refusal,
+writer ownership, inconsistent history, multi-SID coverage, first-group skip and
+both restart protocols. `make demo-suite` passed all nine named cases and cleaned
+up all three isolated stacks. The [skip rehearsal](../artifacts/demo-suite/20261001T051349Z-bd0a6cdb-auto-autocommit-myisam/cases.json)
+used the Ubuntu CLI, preserved counters at 8/6/3 while skipping GTID 18, then
+reached 10/8/3 after the queued and fresh INSERTs. A second restart did not replay
+work; the rejected table remained absent and the native reference stayed blocked.
+[The skip summary](../artifacts/demo-suite/20261001T051349Z-bd0a6cdb-auto-autocommit-myisam/skip.json)
+records the consumed GTID/position. `make ddl-catalog-check` passed; the broader
+DDL suite was documented for the next demo step, not rerun or counted as new
+catalog evidence in this increment. The interactive demo stack was unchanged.
