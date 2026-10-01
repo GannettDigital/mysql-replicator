@@ -58,7 +58,8 @@ mysql-replicator run --config /evidence/apply.json
 This uses saved applied GTID/position, falling back to the saved baseline when no
 work was applied. `make demo-start` on the host also resumes a clean stop. Keep the
 same state directory; do not rerun the successful SQL script after resuming.
-BLOCKED or interrupted work still requires future recovery support.
+General BLOCKED/partial-work recovery is not implemented. For the deliberately
+rejected demo DDL, see [the manual SQLite skip below](#optional--skip-the-rejected-demo-ddl-in-sqlite).
 `docker logs` shows the idle container's output, not output from `docker exec`.
 
 To inspect live state, open another shell in the applier, then run:
@@ -154,6 +155,81 @@ Only source should have the marker and new table. The replicator exits and
 returns you to the applier shell; both that container and the 5.7 server stay up. To paste the failure SQL manually instead, first save the good
 boundary with `make demo-compare`, paste 02-failure.sql into source, then run
 `make demo-compare ARGS=--expect-blocked` on the host. Do not also run demo-fail.
+
+## Optional — skip the rejected demo DDL in SQLite
+
+Use this for the demo's rejected CREATE TABLE, which failed before executing any
+SQL on the target and has no row/DDL intents. Keep the replicator stopped until
+all three statements below have completed. No audit table is needed.
+
+**Inside the applier container**, open SQLite:
+
+```sh
+flock -n /evidence/state/writer.lock sqlite3 /evidence/state/state.sqlite
+```
+
+Find the values to copy before deleting the pending group:
+
+```sql
+.mode line
+SELECT lifecycle, active_gtid, applied_sequence FROM state WHERE id=1;
+SELECT gtid, source_file, end_position FROM groups WHERE status='PENDING';
+```
+
+Replace the placeholders in the three statements below:
+
+| Placeholder | Where to copy it from | Original demo example |
+| --- | --- | --- |
+| `<FAILED_GTID>` | `state.active_gtid`, also shown as `groups.gtid` and `pendingGTID` in the failure output. Copy the full UUID and number. | `2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18` |
+| `<APPLIED_SEQUENCE>` | `state.applied_sequence`; keep this value unchanged, not the pending group's sequence. | `8` |
+| `<BINLOG_FILE>` | The pending group's `source_file`. | `binlog.000003` |
+| `<END_POSITION>` | The pending group's `end_position`, not its start position or the old applied position. | `4004` |
+| `<COVERED_GTID_SET>` | Take `appliedGTIDSet` from the failure output and add the failed GTID. In this demo, change the same UUID's interval `:1-17` to `:1-18`. Preserve all other intervals if present. | `2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:1-18` |
+
+Do not use the latest snapshot's GTID set alone: in this example it still contains
+only the baseline `:1-9`, while the failure output includes the completed work.
+
+1. Delete the pending group for the copied failed GTID:
+
+```sql
+DELETE FROM groups
+WHERE gtid='<FAILED_GTID>' AND status='PENDING';
+```
+
+2. Insert a snapshot covering the completed work plus the skipped GTID:
+
+```sql
+INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at)
+VALUES(<APPLIED_SEQUENCE>, '<COVERED_GTID_SET>', '<BINLOG_FILE>', '<END_POSITION>',
+       strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+```
+
+3. Advance the saved position and clear the blocked state:
+
+```sql
+UPDATE state
+SET applied_file='<BINLOG_FILE>', applied_position='<END_POSITION>',
+    lifecycle='STOPPED', active_gtid=NULL, diagnostic=NULL,
+    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE id=1 AND lifecycle='BLOCKED' AND active_gtid='<FAILED_GTID>';
+```
+
+Applied counters stay at 8 transactions, 6 rows, and 3 DDL statements in this
+example; `applied_sequence` stays 8. Leave schemas, completed groups/intents, and
+relay files unchanged. With this version-4 workaround, `appliedGTIDSet` and
+`appliedPosition` include the skipped event even though its SQL was not applied.
+
+Type `.exit`, then resume at the applier shell without initialization:
+
+```sh
+mysql-replicator run --config /evidence/apply.json
+```
+
+Swift can now apply the following marker row `999`; `demo.explicit_innodb` remains
+absent on its target. The native 8.4 replica is still blocked, so the three-way
+`make demo-compare` is not expected to pass after this Swift-only skip.
+
+## Clean up
 
 When finished, exit the SQL sessions and run on the host:
 
