@@ -1,0 +1,11 @@
+Package: mysql-replicator
+Version: @VERSION@
+Section: database
+Priority: optional
+Architecture: amd64
+Maintainer: DMS DBA <dms-dba@gannett.com>
+Homepage: https://github.com/GannettDigital/mysql-replicator
+Description: High-performance MySQL cross-version replication engine
+ Direct MySQL replication service that reads MySQL binary logs (MySQL 8.4)
+ and applies changes to a target database (MySQL 5.7) across incompatible
+ versions and dialects.

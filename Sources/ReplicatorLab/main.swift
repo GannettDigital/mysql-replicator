@@ -29,6 +29,7 @@ func main() throws -> Int32 {
           demo-down                # archive evidence and delete only this disposable stack
           demo-suite [--skip-build]
           upstream-tests
+          package-deb [--version VERSION] [--output DIR] [--skip-build] [--skip-verification]
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
@@ -68,6 +69,10 @@ func main() throws -> Int32 {
     if command == "verify-evidence" {
         try require(args.count == 1, "verify-evidence requires one case directory")
         try EvidenceVerification.verify(root: root, directory: URL(fileURLWithPath: args[0], relativeTo: root).standardizedFileURL)
+        return 0
+    }
+    if command == "package-deb" {
+        try DebianPackaging.run(root: root, arguments: args)
         return 0
     }
     var config = NativeCase()

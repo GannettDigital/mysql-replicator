@@ -55,6 +55,30 @@ An expected TLS rejection is a passing assertion, but any unexpected connection/
 
 The initial run passed; see [recorded Ubuntu packaging results](../PLAN/UBUNTU_PACKAGING_RESULTS.md).
 
+## Debian packaging (`.deb`)
+
+Build the standalone Debian package locally or in CI:
+
+```sh
+make deb
+# Custom version and output directory:
+make deb ARGS="--version 0.1.0 --output dist"
+# Equivalent:
+swift run replicator-lab package-deb [--version VERSION] [--output DIR] [--skip-build] [--skip-verification]
+```
+
+### Package structure
+- `/usr/bin/mysql-replicator` (statically linked x86_64 musl binary, mode `0755`)
+- `/lib/systemd/system/mysql-replicator.service` (systemd service unit, mode `0644`)
+- `/etc/mysql-replicator/apply.example.json` (configuration template, marked as Debian conffile)
+- `/var/lib/mysql-replicator/` (state directory, mode `0750`)
+
+The packaging pipeline:
+1. Compiles the static x86_64 musl binary inside the Docker builder using the pinned Swift Static Linux SDK and Rust toolchain.
+2. Stages the Debian directory structure and metadata (`DEBIAN/control`, `conffiles`, `postinst`, `prerm`), maintaining ownership `root:root` via `dpkg-deb --root-owner-group -Zxz`.
+3. Automatically verifies package installation (`dpkg -i`) and checks executable/service presence in a clean Ubuntu 16.04 container.
+4. Exports the resulting `.deb` and `.deb.sha256` to the host (`artifacts/deb/` by default).
+
 ## What this can establish
 
 A passing test establishes that this dependency stack can build as a static x86_64 executable and perform these operations in Ubuntu 16.04 **userland** under the recorded Docker kernel. Docker on Apple Silicon emulates the x86_64 runtime; these timings are not fleet performance measurements. Containers share Docker's kernel, so an Ubuntu 16.04 container does not boot Ubuntu's original kernel.

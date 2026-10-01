@@ -18,7 +18,9 @@ RUN --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked s
 COPY packaging/rust packaging/rust
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
+COPY packaging/debian packaging/debian
 COPY packaging/Makefile packaging/Makefile
+COPY examples examples
 COPY Vendor Vendor
 COPY Package.swift Package.resolved ./
 COPY Sources Sources
@@ -37,3 +39,22 @@ FROM build AS demo-tools
 RUN make -f packaging/Makefile demo-tools
 FROM runtime AS demo
 COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
+
+# Build and verify Debian package (.deb)
+FROM build AS deb
+ARG VERSION=0.1.0
+RUN make -f packaging/Makefile deb VERSION=${VERSION}
+
+# Verify .deb installation in clean Ubuntu 16.04
+FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS deb-test
+COPY --from=deb /out/deb/ /tmp/deb/
+RUN dpkg -i /tmp/deb/*.deb \
+    && /usr/bin/mysql-replicator --version \
+    && test -f /lib/systemd/system/mysql-replicator.service \
+    && test -f /etc/mysql-replicator/apply.example.json \
+    && test -d /var/lib/mysql-replicator
+
+# Scratch export target for Docker BuildKit --output
+FROM scratch AS deb-export
+COPY --from=deb /out/deb/ /
+
