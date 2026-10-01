@@ -26,7 +26,7 @@ enum DDLUpstreamInspection {
             try require(FileManager.default.fileExists(atPath: self.root.path), "missing MySQL checkout: \(root.path); clone the pinned source explicitly")
             runner = ProcessRunner(root: self.root)
             let top = try runner.run(["git", "rev-parse", "--show-toplevel"]).text
-            try require(URL(fileURLWithPath: top).resolvingSymlinksInPath() == self.root, "MySQL source must be the Git checkout root")
+            try require(URL(fileURLWithPath: top).resolvingSymlinksInPath().path == self.root.path, "MySQL source must be the Git checkout root")
             let head = try runner.run(["git", "rev-parse", "HEAD"]).text
             try require(head == revision, "MySQL revision mismatch: expected \(revision), found \(head)")
             try require(try runner.run(["git", "status", "--porcelain", "--untracked-files=normal"]).stdout.isEmpty, "MySQL checkout is dirty; use a clean pinned checkout (no automatic reset)")
