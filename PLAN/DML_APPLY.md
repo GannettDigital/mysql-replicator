@@ -99,7 +99,8 @@ Passwords and row values are not printed in ordinary apply progress. Relay files
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
   row identity still uses the primary key. No triggers, generated/auto-increment
   columns or partitioned targets. Discovery obtains ordered column names, types, nullability and text collation
-  from the target, validates source wire metadata and rechecks under the apply lock.
+  from the target and validates source wire metadata against that description.
+  Validated schema is cached for the session and invalidated around source DDL.
 - Declared types: signed/unsigned INT and BIGINT, VARCHAR(n) with utf8mb4_bin,
   utf8mb4_unicode_ci or utf8mb4_general_ci, and VARBINARY(n); lengths 1–16383.
   NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
@@ -108,15 +109,19 @@ Passwords and row values are not printed in ordinary apply progress. Relay files
 Target preflight checks every native channel and performance_schema worker/receiver
 state, failing on missing privileges or indeterminate results. This initial version
 rejects even retained stopped channels; explicit stopped-channel adoption is later
-work. It acquires one server-wide advisory writer lock and checks ownership/channel
-state before each source group. Administrative native starts and other writers
-must be excluded operationally; native replication does not honor this lock.
+work. It acquires one server-wide advisory writer lock on the single target
+connection, which never reconnects or releases that lock during the run.
+Ownership/channel checks also run at DDL barriers, but not for every DML group.
+The target is a dedicated replica: DBAs must exclude target-local writes, DDL,
+grant changes and administrative native starts during application. Native
+replication and other clients do not honor the advisory lock. The applier does
+not poll for these unsupported concurrent changes.
 
 MySQL 5.7's `skip-slave-start` is a startup option, not the queryable system
 variable added in 8.0.24. `nativeAutoStartDisabled` is an operator assertion,
 not proof from SQL; the harness verifies the actual container startup arguments.
 See [MySQL's system-variable worklog](https://dev.mysql.com/worklog/task/?id=14450).
-The SQL channel/worker checks remain mandatory regardless of this assertion.
+Startup SQL channel/worker checks remain mandatory regardless of this assertion.
 
 The target account needs SELECT/INSERT/UPDATE/DELETE/LOCK TABLES for declared
 tables, REPLICATION CLIENT, SUPER (MySQL 5.7 requires it to set the session
@@ -142,14 +147,20 @@ Each apply session sets `GTID_NEXT=AUTOMATIC`, autocommit, strict SQL mode and u
 The source GTID remains local replication identity, never a target SQL GTID. There
 is no target transaction pretending to make MyISAM rows atomic.
 
-The applier holds a MyISAM WRITE table lock while validating the current schema,
-reading the exact old row, issuing bound SQL and verifying affected-row count.
+The applier validates schema on discovery, on clean resume and around ordered
+source DDL. Its session cache holds at most 64 validated schemas and their SQL
+templates; releasing a table lock does not invalidate them. DDL clears both this
+cache and prepared statements, and following DML validates the new version.
+The applier holds a MyISAM WRITE table lock while reading the exact old row,
+issuing bound SQL and verifying affected-row count. Lock epochs remain bounded
+to 32 groups or 50 ms at safe boundaries, and idle capture releases the lock.
 A successful SQL response with the expected count acknowledges the row; there is
 no post-write SELECT. This acknowledges MyISAM's write acceptance, not a guarantee
 of crash durability or atomicity with SQLite. Integer primary keys identify rows. Text comparisons
 use stored UTF-8 bytes, not collation or Swift's canonical Unicode equivalence;
-binary values and full unsigned 64-bit values remain exact. INSERT requires an
-absent key; UPDATE/DELETE require the full matching before image. Key changes also
+binary values and full unsigned 64-bit values remain exact. Plain INSERT relies
+on MySQL to reject duplicate primary/unique keys, without an existence SELECT;
+UPDATE/DELETE require the full matching before image. Key changes also
 require the destination key to be absent. Drift is an error, never an upsert.
 
 Raw live events, including required format/rotation/heartbeat context, go to
@@ -172,7 +183,7 @@ the decoder's existing limits; it is never split.
 Before any target mutation, one relay sync and one FULL SQLite transaction persist
 all group identities, individual relay ranges and ordered PENDING row intents with
 schema references. Target rows are still executed individually, in source order,
-with the existing before-image, ownership, lock and affected-row checks. One
+with the before-image, table-lock and affected-row checks described above. One
 completion transaction marks acknowledged rows DONE and whole groups APPLIED, and
 advances GTID coverage, position and counters together. Existing lock epoch limits
 still apply between source groups; the batch has no atomic target visibility.

@@ -249,6 +249,189 @@ x86_64-on-ARM emulation limitation applies; repeat on intended deployment hardwa
 Full timings, output counts, runtime digest and verification:
 `artifacts/performance/20261002T053717Z-8947df8d/20261002T053718Z-adb2e740-auto-autocommit-myisam/`.
 
+### Native/custom operation counters and next optimizations, 2026-10-01
+
+Instrumentation was committed as `66dd254` before this investigation. The harness
+now saves `server-work-before.json`, `server-work-after.json`, and
+`server-work-delta.json`. It samples after schema setup, before load, and after
+catch-up but before verification SELECTs or stopping the applier. It reads the
+native SQL/worker threads and the custom `apply_fixture` thread, plus table-specific
+handler counters for `demo.bench`. It does not reset server counters or enable a
+general query log. Missing instrumentation, changed threads, disappeared nonzero
+counters and counter resets fail the measurement rather than producing a false delta.
+
+Statement, prepared-statement, status and table-handler families overlap; never
+add them together. Handler operations are not disk I/O counts. In particular,
+native row application calls storage-engine handlers internally: see
+[`Write_rows_log_event::write_row` in MySQL 8.4.8](https://github.com/mysql/mysql-server/blob/mysql-8.4.8/sql/log_event.cc)
+and [table I/O instrumentation](https://dev.mysql.com/doc/mysql-perfschema-excerpt/8.0/en/performance-schema-table-io-waits-summary-by-table-table.html).
+An absent SQL INSERT statement counter on native replication does not mean no inserts.
+
+A fresh 10K INSERT run passed exact 10,000-row comparison, clean STOPPED state and
+cleanup. Native/custom completion was observed at 15.659/175.772 s. The runtime
+image was unchanged from the previous profile; this timing difference is not a
+measured optimization. The 180-test suite passed, including counter-delta tests.
+
+| Table-specific operation | Native 8.4 | Custom target 5.7 |
+| --- | ---: | ---: |
+| INSERT handler calls | 10,000 | 10,000 |
+| FETCH handler calls | 0 | 10,000 |
+| UPDATE / DELETE handler calls | 0 / 0 | 0 / 0 |
+
+The custom target received 81,112 workload SQL commands (75,834 prepared executions
+plus 5,278 text-protocol LOCK/UNLOCK statements). Only 12 new prepared statements
+were created: the prepared-statement cache is working. The call breakdown was:
+
+| Purpose | Calls |
+| --- | ---: |
+| INSERT | 10,000 |
+| Pre-write primary-key SELECT | 10,000 |
+| Native-channel/worker checks | 20,000 |
+| Advisory writer-lock ownership | 10,000 |
+| TRIGGER visibility grants | 10,000 |
+| Engine, table charset/collation, columns, indexes, triggers and partitions | 15,834 (six queries × 2,639 lock acquisitions) |
+| LOCK / UNLOCK TABLES | 5,278 |
+
+The native statement summary recorded 10,000 BEGIN statements and no SQL INSERT
+statements, while table instrumentation recorded all 10,000 inserted rows. Native
+thread status recorded one opened table definition and two opened tables. The
+custom thread also recorded hundreds of thousands of handler operations outside
+`demo.bench`, consistent with metadata/internal work; those are not extra replicated
+row writes. Server statement timers totalled about 36.5 s on the custom thread,
+versus 60.8 s in the client's `target.sql` timer. The difference includes client
+protocol/scheduling/transport and scope differences, not just network latency.
+
+Evidence: `artifacts/performance/20261002T055725Z-07d53eae/20261002T055725Z-51507290-auto-autocommit-myisam/`.
+
+Implementation order from the measurement review (the SQL pass below implements
+items 1–2 with an explicitly revised dedicated-replica contract):
+
+1. **Remove redundant work without reducing validation coverage.** Combine engine
+   and table-collation inspection into one TABLES query; unchanged collation identity
+   already fixes its charset. Cache quoted column lists, SQL templates and key
+   indexes with the schema version, invalidating at DDL. Consider removing the
+   INSERT pre-read: plain INSERT already rejects duplicate primary/unique keys;
+   preserve strict errors, affected-row checks and partial-group evidence, and
+   qualify duplicate-key behavior explicitly. UPDATE/DELETE image checks remain.
+   The writer advisory lock is session-owned and survives commits; with the current
+   single non-reconnecting connection and no RELEASE_LOCK calls, its per-group
+   ownership SELECT appears redundant. Verify termination/lost-connection behavior
+   before removing it. [MySQL 5.7 lock semantics](https://docs.oracle.com/cd/E17952_01/mysql-5.7-en/locking-functions.html).
+2. **Reduce schema-validation exchanges.** The baseline repeated full verification
+   on lock reacquisition to detect target-local changes. The accepted contract now
+   treats the target as a dedicated replica: local writes, DDL, grant changes and
+   native replication starts must be excluded operationally during a run. Cache
+   validation by full schema description within one connection, invalidate at
+   source DDL, and revalidate on discovery/resume. This deliberately removes the
+   baseline's per-group detection of concurrent administrative changes.
+   The 50 ms lock epoch often expires after roughly four transactions; extending
+   it trades throughput for longer reader blocking. A pipeline may improve useful
+   work within the existing limit. [Metadata locking](https://docs.oracle.com/cd/E17952_01/mysql-5.7-en/metadata-locking.html).
+3. **Reduce decoder and relay allocations.** A 10K workload invokes 90,006 decodes:
+   each table map currently adds two FDE and two map probes before the normal decode.
+   Reuse validated FDE context and avoid redundant probes while retaining checksum,
+   filter, wire-shape and historical-schema checks. Fingerprint conversion currently
+   calls String(format:) per byte, approximately 2.88 million times here; a byte
+   lookup conversion can preserve identical hashes with fewer allocations. Pass
+   original event bytes internally to the relay instead of encoding and decoding
+   base64. These are candidates to measure, not established speedup claims.
+4. **Pipeline decoding and ordered apply.** Socket I/O already uses NIO threads;
+   decode/assembly and target apply currently share the serial consumer. Use one
+   decoding producer and one applying consumer, with an explicit byte/group-bounded
+   queue. Keep TargetSession, relay append/sync, SQLite and the applied checkpoint
+   owned by the applying worker. DDL/new schema versions require ordered barriers
+   and immutable versioned schema handoffs; producer callbacks must not access the
+   target connection or StateStore concurrently. Propagate errors/cancellation both
+   ways, retain prepared uncertainty, and distinguish queued/received from applied
+   progress. Give each worker its own timers: the current StageTimings is serial,
+   and times from concurrent workers cannot be summed as wall time. Decoder-only
+   overlap could hide at most roughly the prior 47 s decoding cost (about a 1.3×
+   idealized ceiling for that isolated change), before contention and barriers.
+5. **Persist diagnostic counters periodically.** Add a bounded latest-run telemetry
+   snapshot with run ID, sample timestamp, applied sequence, stage counts/times,
+   queue depth and received/applied positions. Update on activity, e.g. every five
+   seconds, piggybacking on a normal journal transaction; flush at stop/block. Do
+   not add per-event SQLite commits or an unbounded sample history. In a pipeline,
+   exchange immutable counter snapshots rather than sharing mutable timing state.
+   Telemetry may lag and must not be used for recovery. Existing applied row/transaction
+   counters continue to commit atomically with the checkpoint.
+
+### Dedicated-replica SQL pass
+
+The current applier caches validated schema and SQL templates across table-lock
+releases. Discovery, clean resume and source DDL still inspect target metadata;
+DDL clears validated plans and prepared statements before and after execution.
+Engine and default-collation verification share one TABLES query. INSERT issues
+plain bound INSERT without a primary-key existence SELECT; unique-key errors
+still block with partial-group journal evidence. UPDATE/DELETE before-image and
+affected-row checks remain.
+
+Startup still checks native channels/workers and acquires the session writer lock.
+DDL still checks ownership/channels, but DML groups issue no ownership, channel or
+TRIGGER-privilege queries. GET_LOCK lasts for the connection; the applier never
+releases it or reconnects. DBAs must exclude target-local changes during the run.
+Lock epochs still end after 32 groups/50 ms at safe boundaries and release on idle.
+
+Qualification passed 180 Swift unit tests, all 16 GTID DML cases, all 79 ordered
+GTID DDL cases and five targeted column/index/resume cases. The idle fixture
+acquired its lock three times but validated schema once, issued one before-image
+read for its UPDATE and none for its two INSERTs. Duplicate-key partial writes,
+mid-group process death and refusal to replay pending crash state still passed.
+Clean resume accepted unchanged indexed schema and rejected offline index drift.
+
+Evidence directories:
+
+- `artifacts/dml-suite/20261002T062209Z-db4965e4-auto-autocommit-myisam/`
+- `artifacts/ddl-suite/20261002T062117Z-d93fa0c5-auto-autocommit-myisam/`
+- `artifacts/ddl-suite/20261002T062643Z-5d5491b5-auto-autocommit-myisam/`
+
+The fresh 10K single-row INSERT comparison used the same TCP/TLS transport, one
+source client, unlimited offered rate, 100-byte payload, 32-group batch limit and
+five-second sampling as the counter baseline above. Exact 10,000-row comparison,
+clean STOPPED state and cleanup all passed.
+
+| Metric | Before | SQL pass |
+| --- | ---: | ---: |
+| Source load | 14.324 s | 13.420 s |
+| Native completion observed | 15.659 s | 15.642 s |
+| Custom completion observed | 175.772 s | 115.797 s |
+| Target workload SQL commands | 81,112 | 13,254 |
+| Plain INSERT executions | 10,000 | 10,000 |
+| INSERT existence SELECTs / table FETCH calls | 10,000 / 10,000 | 0 / 0 |
+| Channel/worker/ownership queries in workload interval | 30,000 | 0 |
+| TRIGGER privilege queries in workload interval | 10,000 | 1 |
+| LOCK / UNLOCK pairs | 2,639 | 1,624 |
+| `target.sql` elapsed, whole run | 60.816 s | 13.333 s |
+| Full schema validations, whole run | 2,640 | 2 |
+| Decoder elapsed, whole run | 45.899 s | 45.222 s |
+
+Workload SQL counts sum prepared executions and text-protocol LOCK/UNLOCK; PREPARE
+commands are separate (12 before, seven after). The new workload interval has
+10,006 prepared executions: 10,000 INSERTs and one six-query schema verification
+after setup DDL invalidation. No metadata verification repeats on lock expiry.
+The whole-run SQL timer includes 48 additional setup/administrative commands.
+Native and custom target both recorded 10,000 table INSERTs and zero FETCHes.
+
+This single before/after pair observed 83.7% fewer SQL commands and 34.1% less
+completion time (1.52x speedup). Native remains about 7.4x faster by this sampled
+completion measure; these are local Docker measurements with emulated x86_64
+target/applier, not production throughput claims. Faster apply also fit more work
+inside unchanged lock epochs, reducing lock commands without extending lock limits.
+SQLite commits were similar (5,291 versus 5,235); journal durability was unchanged.
+
+Largest remaining exclusive stage times were decode 45.222 s, relay append
+18.833 s, apply-batch bookkeeping 14.966 s, target SQL 13.333 s and capture processing
+7.790 s. Capture wait was 14.181 s, including idle/setup/verification time outside
+the workload; do not sum whole-run stages as workload completion latency. Progress
+output cost 1.362 s. Decoder/relay allocation work remains the next optimization
+candidate; this SQL pass adds no pipeline or periodic SQLite telemetry.
+
+Run evidence: `artifacts/performance/20261002T062904Z-82e41227/20261002T062904Z-3119894a-auto-autocommit-myisam/`.
+Runtime image: `sha256:db9b75b662157e6c5fef7b0db7434d7ac157dd2b26d63e73083148ae71f4b31d`.
+
+The historical measurements below describe earlier implementations, including
+per-group checks and schema revalidation that this pass removes.
+
 The initial optimization pass (commit `78546f0`) kept individual target row writes, full
 before/after-image checks, strict affected-row checks, FULL SQLite durability,
 relay synchronization and fail-stop/no-retry behavior:

@@ -151,7 +151,7 @@ public enum DMLQualification {
             try require(state("positive","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||applied_position||'|'||(SELECT gtids FROM snapshots ORDER BY id DESC LIMIT 1) FROM state") == "STOPPED|4|4|\(sourceEnd.position)|\(sourceEnd.gtids)","SQLite applied checkpoint differs")
             try require(state("positive","SELECT COUNT(*) FROM row_intents WHERE status='DONE'") == "4","missing completed row intents")
             let positiveReads = (positive["stageTimings"] as? [String:[String:Any]])?["target.read"]?["count"] as? Int
-            try require(positiveReads == 4,"expected only one pre-write read per fixture row")
+            try require(positiveReads == 3,"expected before-image reads only for UPDATE/DELETE")
             _ = try h.sql("native","STOP REPLICA")
             let nativeEnd = try h.boundary("native"), targetEnd = try h.boundary("target57")
             for (service,from,to) in [("source",sourceStart,sourceEnd),("native",nativeStart,nativeEnd),("target57",targetStart,targetEnd)] {
@@ -632,7 +632,7 @@ public enum DMLQualification {
                 let edgeResult = try finish(edge,"multirow",success:true)
                 try require(edgeResult["rowsApplied"] as? Int == 5 && h.rows("target57") == Fixture.final,"multirow/key-change application differs")
                 let edgeReads = (edgeResult["stageTimings"] as? [String:[String:Any]])?["target.read"]?["count"] as? Int
-                try require(edgeReads == 6,"expected five pre-write reads and one new-key absence check")
+                try require(edgeReads == 4,"expected three UPDATE/DELETE reads and one new-key absence check")
                 let edgeEnd = try h.boundary("source")
                 _ = try h.sql("native","START REPLICA")
                 let wait = try h.sql("native","SELECT SOURCE_POS_WAIT('\(edgeEnd.file)',\(edgeEnd.position),30)")
@@ -705,13 +705,13 @@ public enum DMLQualification {
                 _ = try h.sql("native","STOP REPLICA")
                 try cases.pass("discovery")
                 report["automatic_discovery"]="multiple_tables_nonleading_keys_MINIMAL_and_FULL"
-                // A warmed connection must release its table lock while idle and
-                // reject target-local schema drift when it acquires the lock again.
+                // A dedicated replica retains validated schema across idle lock
+                // releases. Local schema changes during apply are unsupported.
                 for service in ["source","target57"] {
                     let engine = service == "source" ? "InnoDB" : "MyISAM"
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.epoch(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
                 }
-                let epoch = try start(QualificationCase("lock-revalidation", "Release idle table locks and reject local schema drift before following writes"),configuration("lock-revalidation",at:try h.boundary("source"),count:3))
+                let epoch = try start(QualificationCase("schema-cache", "Release idle table locks and reuse validated schema for following writes"),configuration("schema-cache",at:try h.boundary("source"),count:3))
                 try waitForReader(epoch)
                 _ = try h.sql("source","INSERT INTO poc.epoch VALUES(1,10)")
                 let epochDeadline = Date().addingTimeInterval(15)
@@ -724,14 +724,16 @@ public enum DMLQualification {
                     Thread.sleep(forTimeInterval:0.1)
                 }
                 try require(epochApplied,"lock fixture did not apply its first group")
-                _ = try h.sql("target57","SET SESSION lock_wait_timeout=2; CREATE INDEX local_drift ON poc.epoch(v)")
-                try require(h.sql("target57","SELECT v FROM poc.epoch WHERE id=1") == "10","idle reader could not observe completed group")
+                try require(h.sql("target57","SET SESSION lock_wait_timeout=2; SELECT v FROM poc.epoch WHERE id=1") == "10","idle reader could not observe completed group")
                 _ = try h.sql("source","UPDATE poc.epoch SET v=20 WHERE id=1; INSERT INTO poc.epoch VALUES(2,30)")
-                _ = try finish(epoch,"lock-revalidation",success:false,reason:"target indexes differ")
-                try require(h.sql("target57","SELECT id,v FROM poc.epoch ORDER BY id") == "1\t10","schema drift allowed following target writes")
-                try require(state("lock-revalidation","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "BLOCKED|1|1","schema drift advanced the checkpoint")
-                try require(state("lock-revalidation","SELECT COUNT(*) FROM row_intents") == "1","schema drift wrote an intent before validation")
-                try cases.pass("lock-revalidation")
+                let epochResult = try finish(epoch,"schema-cache",success:true)
+                try require(h.sql("target57","SELECT id,v FROM poc.epoch ORDER BY id") == "1\t20\n2\t30","cached schema writes differ")
+                try require(state("schema-cache","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|3|3","cached schema checkpoint differs")
+                let epochTimings = epochResult["stageTimings"] as? [String:[String:Any]]
+                try require(epochTimings?["target.schema"]?["count"] as? Int == 1,"idle lock reacquisition repeated schema validation")
+                try require((epochTimings?["target.lock"]?["count"] as? Int ?? 0) >= 2,"fixture did not reacquire its table lock")
+                try require(epochTimings?["target.read"]?["count"] as? Int == 1,"INSERT performed an unnecessary existence read")
+                try cases.pass("schema-cache")
                 for test in [
                     QualificationCase("absent-schema", "Reject a missing target table without advancing the checkpoint"),
                     QualificationCase("incompatible-schema", "Reject target primary-key signedness incompatible with source metadata")
@@ -791,7 +793,7 @@ public enum DMLQualification {
                 _ = try h.sql("target57","INSERT INTO poc.items VALUES(21,'collision',21)")
                 let partial = try start(QualificationCase("partial", "Record partial MyISAM writes and pending intent after a duplicate-key failure"),configuration("partial",at:try h.boundary("source"),count:1)); try waitForReader(partial)
                 _ = try h.sql("source","INSERT INTO poc.items VALUES(20,'first',20),(21,'second',21)")
-                _ = try finish(partial,"partial",success:false,reason:"primary key already exists")
+                _ = try finish(partial,"partial",success:false,reason:"1062 (duplicate key)")
                 try require(h.sql("target57","SELECT id,value FROM poc.items WHERE id IN (20,21) ORDER BY id") == "20\tfirst\n21\tcollision","partial MyISAM effects differ")
                 try require(state("partial","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||COALESCE(applied_position,'NULL') FROM state") == "BLOCKED|0|0|NULL","partial group advanced checkpoint")
                 try require(state("partial","SELECT ordinal||'|'||status FROM row_intents ORDER BY ordinal") == "0|DONE\n1|PENDING","partial row intents differ")

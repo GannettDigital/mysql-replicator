@@ -157,6 +157,9 @@ public enum PerformanceBenchmark {
             }
             report["database_configuration"] = configurations
             try nativeHealthy(session)
+            var serverBefore: [String:ServerWorkCounters.Snapshot] = [:]
+            for service in ["native","target57"] { serverBefore[service]=try ServerWorkCounters.capture(session.h,service:service) }
+            try writeJSON(jsonObject(serverBefore),to:output!.appendingPathComponent("server-work-before.json"))
             let workloadHash = try runner.run(["openssl", "dgst", "-sha256", root.appendingPathComponent("docker/performance/workload.lua").path]).text.suffix(64)
             let imageHash = try session.docker(["run", "--rm", "--network", "none", "--entrypoint", "sha256sum", loadImage, "/workload.lua"]).text.prefix(64)
             try require(workloadHash == imageHash, "stale sysbench workload image; rerun without --skip-build")
@@ -236,6 +239,19 @@ public enum PerformanceBenchmark {
             report["samples"] = try jsonObject(samples)
             let finalBoundary = try session.h.boundary("source")
             report["final_boundary"] = finalBoundary.json
+            // Read before verification SELECTs and while applier threads/prepared
+            // statements still exist. No reset/truncate or continuous tracing.
+            var serverAfter: [String:ServerWorkCounters.Snapshot] = [:]
+            var serverDelta: [String:[String:ServerWorkCounters.Metric]] = [:]
+            for service in ["native","target57"] {
+                let after=try ServerWorkCounters.capture(session.h,service:service)
+                serverAfter[service]=after
+                serverDelta[service]=try ServerWorkCounters.delta(before:serverBefore[service]!,after:after)
+            }
+            try writeJSON(jsonObject(serverAfter),to:output!.appendingPathComponent("server-work-after.json"))
+            try writeJSON(jsonObject(serverDelta),to:output!.appendingPathComponent("server-work-delta.json"))
+            report["server_work"] = try jsonObject(serverDelta)
+            report["server_work_scope"] = "after schema setup, before load to caught-up before verification; applier-thread statement/status/prepared counters and demo.bench handler counters; metric families overlap and must not be summed"
             try verifyRows(session)
             try require(session.h.boundary("source").gtids == finalBoundary.gtids, "source changed during final verification")
             try session.stopWriter()

@@ -43,7 +43,10 @@ manifest for normal replication.
    description to the source table map by ordinal and validate compatibility.
    Use target names and keys to construct SQL. Keep explicit source/target type
    and collation distinctions rather than silently treating them as identical.
-   Revalidate the target under the apply lock before mutation.
+   Validate the target on discovery and clean resume. The dedicated-replica
+   contract caches validation across table-lock releases; ordered source DDL
+   invalidates it before following mutations. Concurrent target-local schema,
+   grant and writer changes are operationally excluded.
 4. Store discovered descriptions internally with schema version, discovery time,
    source coordinate/table-map fingerprint and provenance. Bind table IDs to a
    specific map/version; IDs alone are not durable schema identities. Reject

@@ -81,6 +81,10 @@ final class TargetSession {
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
     }
     var discovered: [String:ApplyTable] = [:]
+    // Dedicated replica: target-local schema/grant/channel changes during a run
+    // are outside the contract. Keep validated plans across bounded lock epochs.
+    // A new connection starts empty; ordered DDL clears these before and after.
+    private var validatedPlans: [String:DMLSQLPlan] = [:]
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
         guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
         let identity = database + "\0" + name
@@ -148,13 +152,18 @@ final class TargetSession {
         return indexes.sorted{$0.name.lowercased() < $1.name.lowercased()}
     }
     func verifySchema(_ t: ApplyTable) throws {
-        try timings.measure("target.schema") { try verifyLockedSchema(t) }
+        validatedPlans.removeValue(forKey:t.identity)
+        try timings.measure("target.schema") { try verifyTargetSchema(t) }
+        try require(validatedPlans.count < 64,"validated schema limit reached")
+        validatedPlans[t.identity] = try DMLSQLPlan(t)
     }
-    private func verifyLockedSchema(_ t: ApplyTable) throws {
+    private func verifyTargetSchema(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
-        try require(try scalar("SELECT ENGINE AS v FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds) == "MyISAM","target table is absent or not MyISAM")
-        let encoding=try tableEncoding(TableName(database:t.database,table:t.table))
-        try require(encoding.characterSet==t.defaultCharacterSet && encoding.collation==t.defaultCollation,"target table defaults differ from historical schema")
+        let metadata = try query("SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds).0.first
+        try require(metadata?.column("ENGINE")?.string == "MyISAM","target table is absent or not MyISAM")
+        // A collation uniquely determines its charset; discovery/DDL resolution
+        // already validates that mapping when constructing the ApplyTable.
+        try require(metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,"target table defaults differ from historical schema")
         let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
@@ -174,6 +183,7 @@ final class TargetSession {
         try require(grants == "1","TRIGGER visibility privilege required for target schema validation")
     }
     func invalidateStatements() throws {
+        validatedPlans.removeAll(keepingCapacity:true)
         try timings.measure("target.statement_invalidation") { try connection.clearPreparedStatementCache().wait() }
     }
     func writerExclusion() throws {
@@ -181,16 +191,15 @@ final class TargetSession {
         try require(try scalar("SELECT IS_USED_LOCK('mysql-replicator-writer')=CONNECTION_ID() AS v") == "1","writer ownership lost")
     }
     func lock(_ table: ApplyTable) throws {
-        try writerExclusion() // ownership and channels are never cached
-        if lockEpoch.canReuse(table, at:ProcessInfo.processInfo.systemUptime) {
-            // Grants can change while the table remains locked.
-            try verifyTriggerVisibility(table)
-            return
-        }
+        // GET_LOCK belongs to this connection until explicit release or session
+        // death. This session never releases it or reconnects after an error.
+        if lockEpoch.canReuse(table, at:ProcessInfo.processInfo.systemUptime) { return }
         try unlock()
         _ = try timings.measure("target.lock") { try query("LOCK TABLES \(table.sqlName) WRITE",textProtocol:true) }
         lockEpoch.acquired(table, at:ProcessInfo.processInfo.systemUptime)
-        do { try verifySchema(table) }
+        do {
+            if validatedPlans[table.identity]?.table != table { try verifySchema(table) }
+        }
         catch { try? unlock(); throw error }
     }
     func releaseExpiredLock() throws {
@@ -223,8 +232,8 @@ final class TargetSession {
         try timings.measure("target.read") { try readRow(t,key:key) }
     }
     private func readRow(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
-        let columns = try t.columns.map { try quoted($0.name) }.joined(separator:",")
-        let rows = try query("SELECT \(columns) FROM \(t.sqlName) WHERE \(quoted(t.primaryKey))=?",[try bind(key)]).0
+        let plan = try sqlPlan(t)
+        let rows = try query(plan.select,[try bind(key)]).0
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
         guard let row = rows.first else { return nil }
         return try t.columns.map { c in
@@ -242,21 +251,22 @@ final class TargetSession {
         try timings.measure("target.row") { try applyRow(m) }
     }
     private func applyRow(_ m: Mutation) throws {
-        let t = m.table, row = m.row, keyIndex = t.keyIndex
+        let t = m.table, row = m.row, plan = try sqlPlan(t)
+        let keyIndex = plan.keyIndex
         let oldKey = (row.before ?? row.after!)[keyIndex]
-        let current = try read(t,key:oldKey)
-        if row.operation == "insert" { try require(current == nil,"insert primary key already exists") }
-        else { try require(exactImage(current,row.before),"target before-image mismatch or missing row") }
+        // Plain INSERT enforces primary and secondary unique keys atomically.
+        // No IGNORE/REPLACE/upsert: duplicate keys still block the pending group.
+        if row.operation != "insert" {
+            try require(exactImage(try read(t,key:oldKey),row.before),"target before-image mismatch or missing row")
+        }
         if let before = row.before, let after = row.after, before[keyIndex] != after[keyIndex] {
             try require(try read(t,key:after[keyIndex]) == nil,"updated primary key already exists")
         }
-        let names = try t.columns.map { try quoted($0.name) }
-        let placeholders = Array(repeating:"?",count:names.count).joined(separator:",")
         let sql: String, values: [DecodedValue]
         switch row.operation {
-        case "insert": sql = "INSERT INTO \(try t.sqlName) (\(names.joined(separator:","))) VALUES (\(placeholders))"; values = row.after!
-        case "update": sql = "UPDATE \(try t.sqlName) SET \(names.map { $0 + "=?" }.joined(separator:",")) WHERE \(try quoted(t.primaryKey))=?"; values = row.after! + [oldKey]
-        case "delete": sql = "DELETE FROM \(try t.sqlName) WHERE \(try quoted(t.primaryKey))=?"; values = [oldKey]
+        case "insert": sql = plan.insert; values = row.after!
+        case "update": sql = plan.update; values = row.after! + [oldKey]
+        case "delete": sql = plan.delete; values = [oldKey]
         default: throw ApplyError("unsupported mutation")
         }
         let result = try query(sql,try values.map(bind))
@@ -265,5 +275,11 @@ final class TargetSession {
         // A successful statement with the expected affected-row count is the
         // completion signal. Pre-write images, strict SQL mode and schema checks
         // remain enforced; independent qualification compares resulting values.
+    }
+    private func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {
+        guard let plan = validatedPlans[table.identity], plan.table == table else {
+            throw ApplyError("missing validated target SQL plan")
+        }
+        return plan
     }
 }

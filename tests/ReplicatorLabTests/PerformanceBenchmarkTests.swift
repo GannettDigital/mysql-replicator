@@ -4,6 +4,19 @@ import XCTest
 final class PerformanceBenchmarkTests: XCTestCase {
     let sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
+    func testServerCounterDeltasRejectResetsMissingCountersAndThreadChanges() throws {
+        typealias M = ServerWorkCounters.Metric
+        typealias S = ServerWorkCounters.Snapshot
+        let before=S(threadIDs:[7],metrics:["table.insert":M(key:"table.insert",count:2,picoseconds:20)])
+        let after=S(threadIDs:[7],metrics:["table.insert":M(key:"table.insert",count:12,picoseconds:120),"prepared.new":M(key:"prepared.new",count:10,picoseconds:50)])
+        let delta=try ServerWorkCounters.delta(before:before,after:after)
+        XCTAssertEqual(delta["table.insert"],M(key:"table.insert",count:10,picoseconds:100))
+        XCTAssertEqual(delta["prepared.new"]?.count,10)
+        XCTAssertThrowsError(try ServerWorkCounters.delta(before:before,after:S(threadIDs:[8],metrics:after.metrics)))
+        XCTAssertThrowsError(try ServerWorkCounters.delta(before:before,after:S(threadIDs:[7],metrics:[:])))
+        XCTAssertThrowsError(try ServerWorkCounters.delta(before:after,after:before))
+    }
+
     func testCommittedGTIDCountIncludesDisjointIntervals() throws {
         XCTAssertEqual(try PerformanceBenchmark.transactionCount("", sourceUUID: sid), 0)
         XCTAssertEqual(try PerformanceBenchmark.transactionCount(sid + ":5:8-10:20-25", sourceUUID: sid), 10)
