@@ -29,7 +29,9 @@ const LIMIT: i32 = 5;
 const POISONED: i32 = 6;
 const SCHEMA: i32 = 7;
 const INTERNAL: i32 = 8;
+mod profiling;
 mod scalars;
+use profiling::{Profile, ProfileOutput};
 
 const MAX_COLUMNS: usize = 256;
 const MAX_ROWS: usize = 4096;
@@ -396,7 +398,9 @@ fn image<'a>(
         let cell = match value {
             // The pinned mysql_common LeI24 reader zero-extends its three bytes.
             // Restore the sign bit before publishing a signed MEDIUMINT value.
-            BinlogValue::Value(Value::Int(v)) if kind == 2 && ty == ColumnType::MYSQL_TYPE_INT24 => {
+            BinlogValue::Value(Value::Int(v))
+                if kind == 2 && ty == ColumnType::MYSQL_TYPE_INT24 =>
+            {
                 Cell::Signed(((v as i32) << 8 >> 8) as i64)
             }
             BinlogValue::Value(Value::Int(v)) if kind == 2 => Cell::Signed(v),
@@ -450,6 +454,7 @@ impl Decoder {
         offset: u64,
         kinds: &[u32],
         filter_table: bool,
+        profile: &Profile,
     ) -> Checked<Batch> {
         #[cfg(test)]
         if std::mem::take(&mut self.panic_next) {
@@ -521,24 +526,28 @@ impl Decoder {
         }
         // Validate physical CRC before any payload parser or state change. Only
         // FDE's BINLOG_IN_USE flag is masked, per MySQL's checksum convention.
-        let mut crc = crc32fast::Hasher::new();
-        if code == 15 {
-            crc.update(&bytes[..17]);
-            crc.update(&[bytes[17] & !1]);
-            crc.update(&bytes[18..bytes.len() - 4]);
-        } else {
-            crc.update(&bytes[..bytes.len() - 4]);
-        }
-        ensure(
-            crc.finalize() == u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap()),
-            CRC,
-            "binlog CRC32 mismatch",
-        )?;
+        profile.measure(0, || {
+            let mut crc = crc32fast::Hasher::new();
+            if code == 15 {
+                crc.update(&bytes[..17]);
+                crc.update(&[bytes[17] & !1]);
+                crc.update(&bytes[18..bytes.len() - 4]);
+            } else {
+                crc.update(&bytes[..bytes.len() - 4]);
+            }
+            ensure(
+                crc.finalize() == u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap()),
+                CRC,
+                "binlog CRC32 mismatch",
+            )
+        })?;
         let placeholder = FormatDescriptionEvent::new(BinlogVersion::Version4);
-        let event = parsed(Event::read(
-            self.fde.as_ref().unwrap_or(&placeholder),
-            bytes,
-        ))?;
+        let event = profile.measure(1, || {
+            parsed(Event::read(
+                self.fde.as_ref().unwrap_or(&placeholder),
+                bytes,
+            ))
+        })?;
         ensure(
             event.footer().get_checksum_alg().ok().flatten()
                 == Some(BinlogChecksumAlg::BINLOG_CHECKSUM_ALG_CRC32),
@@ -571,9 +580,11 @@ impl Decoder {
                 .map_err(|_| (UNSUPPORTED, "unknown event type"))?
         )
         .into_bytes();
-        out.raw = bytes.to_vec();
-        out.fingerprint = Sha256::digest(bytes).to_vec();
-        let data = parsed(event.read_data())?.ok_or((UNSUPPORTED, "event has no decoder"))?;
+        out.raw = profile.measure(2, || Ok(bytes.to_vec()))?;
+        out.fingerprint = profile.measure(3, || Ok(Sha256::digest(bytes).to_vec()))?;
+        let data = profile
+            .measure(4, || parsed(event.read_data()))?
+            .ok_or((UNSUPPORTED, "event has no decoder"))?;
         match data {
             EventData::FormatDescriptionEvent(fde) => {
                 ensure(
@@ -646,7 +657,7 @@ impl Decoder {
             EventData::StopEvent => {
                 ensure(event.data().is_empty(), MALFORMED, "trailing STOP bytes")?
             }
-            EventData::TableMapEvent(table) => {
+            EventData::TableMapEvent(table) => profile.measure(5, || {
                 let n = table.columns_count() as usize;
                 ensure(
                     n > 0 && n <= MAX_COLUMNS,
@@ -807,8 +818,9 @@ impl Decoder {
                         filtered: filter_table,
                     },
                 );
-            }
-            EventData::RowsEvent(rows) => {
+                Ok(())
+            })?,
+            EventData::RowsEvent(rows) => profile.measure(6, || {
                 // The unified upstream accessor truncates unknown flag bits.
                 // Preserve them through the ABI so policy can reject them.
                 use mysql_common::binlog::events::RowsEventData::*;
@@ -879,7 +891,8 @@ impl Decoder {
                 if rows.flags().bits() & 1 != 0 {
                     self.tables.clear();
                 }
-            }
+                Ok(())
+            })?,
             _ => return Err((UNSUPPORTED, "unsupported decoded event")),
         }
         self.next_offset = offset
@@ -894,7 +907,7 @@ pub extern "C" fn replicator_codec_abi_version() -> u32 {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
-    1
+    3
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_decoder_create(max_event: u32, out: *mut *mut Decoder) -> i32 {
@@ -966,6 +979,37 @@ pub unsafe extern "C" fn rc_decoder_feed_filtered(
     filter_table: u32,
     out: *mut *mut Batch,
 ) -> i32 {
+    unsafe {
+        rc_decoder_feed_profiled(
+            context,
+            bytes,
+            length,
+            offset,
+            kinds,
+            count,
+            filter_table,
+            out,
+            ptr::null_mut(),
+        )
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_decoder_feed_profiled(
+    context: *mut Decoder,
+    bytes: *const u8,
+    length: u64,
+    offset: u64,
+    kinds: *const u32,
+    count: u32,
+    filter_table: u32,
+    out: *mut *mut Batch,
+    profile_out: *mut ProfileOutput,
+) -> i32 {
+    if !profile_out.is_null() {
+        unsafe {
+            *profile_out = ProfileOutput::default();
+        }
+    }
     if context.is_null() {
         return ARG;
     }
@@ -977,6 +1021,7 @@ pub unsafe extern "C" fn rc_decoder_feed_filtered(
     unsafe {
         *out = ptr::null_mut();
     }
+    let profile = Profile::new(!profile_out.is_null());
     let decoded = catch_unwind(AssertUnwindSafe(|| {
         ensure(
             !context.poisoned,
@@ -1005,8 +1050,13 @@ pub unsafe extern "C" fn rc_decoder_feed_filtered(
             unsafe { slice::from_raw_parts(kinds, count as usize) }
         };
         ensure(filter_table <= 1, ARG, "invalid filter mode")?;
-        context.decode_filtered(bytes, offset, kinds, filter_table == 1)
+        context.decode_filtered(bytes, offset, kinds, filter_table == 1, &profile)
     }));
+    if !profile_out.is_null() {
+        unsafe {
+            *profile_out = profile.snapshot();
+        }
+    }
     let (status, value) = match decoded {
         Ok(Ok(value)) => (0, value),
         error => {

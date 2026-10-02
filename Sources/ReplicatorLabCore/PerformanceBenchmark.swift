@@ -12,12 +12,17 @@ public struct PerformanceOptions: Codable {
     public var sampleSeconds = 5
     public var timeoutSeconds = 300
     public var build = true
+    public var decoderProfiling = true
 
     public init(arguments: [String]) throws {
         var args = arguments.makeIterator()
         while let flag = args.next() {
             if flag == "--skip-build" { build = false; continue }
             guard let value = args.next() else { throw LabError("missing value for " + flag) }
+            if flag == "--decoder-profile" {
+                try require(["on","off"].contains(value),"decoder-profile must be on or off")
+                decoderProfiling = value == "on"; continue
+            }
             if flag == "--workload" { workload = value; continue }
             if flag == "--target-transport" { targetTransport = value; continue }
             guard let number = Int(value) else { throw LabError("expected integer for " + flag) }
@@ -121,7 +126,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions)
+            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
@@ -267,6 +272,13 @@ public enum PerformanceBenchmark {
             guard outputCounts.count >= 2, let lines=Int(outputCounts[0]), let bytes=Int(outputCounts[1]) else { throw LabError("invalid progress output counts") }
             report["progress_output"] = ["destination":"Docker volume file /evidence/applier.ndjson (not Docker logging driver)","synchronous":true,"lines":lines,"bytes":bytes]
             try writeJSON(timings,to:output!.appendingPathComponent("stage-timings.json"))
+            if options.decoderProfiling {
+                try require(timings["decode.call.event"] != nil && timings["decode.rust.crc32"] != nil,
+                            "missing decoder profile; rebuild the runtime image")
+                let profile = try decoderProfile(timings)
+                try profile.write(to:output!.appendingPathComponent("decoder-profile.tsv"),atomically:true,encoding:.utf8)
+                print("Decoder stages by self time (milliseconds; counts include probes):\n" + profile.split(separator:"\n").prefix(11).joined(separator:"\n"))
+            }
             report["result"] = "passed"
         } catch {
             failure = error; report["error"] = String(describing: error)
@@ -290,6 +302,24 @@ public enum PerformanceBenchmark {
             print("Benchmark \(failure == nil ? "passed" : "failed"): \(output.path)")
         }
         if let failure { throw failure }
+    }
+
+    static func decoderProfile(_ timings: [String:Any]) throws -> String {
+        struct Timing: Decodable {
+            let count: UInt64
+            let failures: UInt64
+            let seconds: Double
+            let selfSeconds: Double
+            let maximumSeconds: Double
+        }
+        let data = try JSONSerialization.data(withJSONObject:timings.filter { $0.key.hasPrefix("decode.") })
+        let stages = try JSONDecoder().decode([String:Timing].self,from:data)
+        var lines = ["stage\tcount\tfailures\ttotal_ms\tself_ms\tmean_us\tmax_us"]
+        for (name,s) in stages.sorted(by: { $0.value.selfSeconds == $1.value.selfSeconds ? $0.key < $1.key : $0.value.selfSeconds > $1.value.selfSeconds }) {
+            let durations = [s.seconds*1e3,s.selfSeconds*1e3,s.count == 0 ? 0 : s.seconds*1e6/Double(s.count),s.maximumSeconds*1e6]
+            lines.append(([name,String(s.count),String(s.failures)] + durations.map { String(format:"%.3f",locale:Locale(identifier:"en_US_POSIX"),$0) }).joined(separator:"\t"))
+        }
+        return lines.joined(separator:"\n") + "\n"
     }
 
     private static func counters(_ session: DemoSession.Session) throws -> (transactions: Int, rows: Int, lifecycle: String) {

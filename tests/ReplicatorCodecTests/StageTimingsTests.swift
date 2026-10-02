@@ -2,6 +2,26 @@ import XCTest
 @testable import ReplicatorCodec
 
 final class StageTimingsTests: XCTestCase {
+    func testNativeChildrenAreSubtractedOnceAndZeroCountsIgnored() {
+        var now: UInt64 = 0
+        let timings = StageTimings(clock:{ now })
+        timings.measure("outer") {
+            now = 10
+            timings.measure("ffi") {
+                timings.recordNative("rust",count:1,failures:1,nanoseconds:30)
+                timings.recordNative("unused",count:0,failures:0,nanoseconds:0)
+                now = 60
+            }
+            now = 100
+        }
+        let s=timings.snapshot
+        XCTAssertEqual(s["outer"]!.selfSeconds,50e-9,accuracy:1e-15)
+        XCTAssertEqual(s["ffi"]!.selfSeconds,20e-9,accuracy:1e-15)
+        XCTAssertEqual(s["rust"]!.selfSeconds,30e-9,accuracy:1e-15)
+        XCTAssertEqual(s["rust"]!.failures,1)
+        XCTAssertNil(s["unused"])
+    }
+
     func testExclusiveTimeSubtractsNestedWorkAndUnwindsOnFailure() throws {
         enum Failure: Error { case injected }
         var now: UInt64 = 0

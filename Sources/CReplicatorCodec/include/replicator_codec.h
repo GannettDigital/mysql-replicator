@@ -49,7 +49,7 @@ typedef struct {
 } rc_query_context;
 int32_t rc_query_context_decode(const uint8_t *bytes, uint64_t length, rc_query_context *out);
 uint32_t replicator_codec_abi_version(void);
-uint64_t replicator_codec_capabilities(void); /* bit 0: bounded offline decoder */
+uint64_t replicator_codec_capabilities(void); /* bit 0: bounded decoder; bit 1: per-feed profiling */
 int32_t rc_decoder_create(uint32_t max_event_bytes, rc_decoder **out);
 int32_t rc_decoder_reset(rc_decoder *decoder);
 void rc_decoder_free(rc_decoder *decoder);
@@ -60,6 +60,16 @@ int32_t rc_decoder_feed(rc_decoder *decoder, const uint8_t *bytes, uint64_t leng
  * remain checked; excluded row values are intentionally not interpreted. */
 int32_t rc_decoder_feed_filtered(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
     uint64_t offset, const uint32_t *column_kinds, uint32_t column_count, uint32_t filter_table, rc_result **out);
+/* Additive ABI 5 API, capability bit 1. NULL profile disables all native clocks.
+ * Caller owns the output; it is zeroed on entry and includes failed stages.
+ * Seven disjoint stages: CRC32, Event::read, raw copy, SHA256, read_data,
+ * TABLE_MAP validation/cache, row images. Each runs at most once per feed.
+ * Times are monotonic elapsed nanoseconds, not CPU samples. */
+typedef struct { uint64_t count, failures, nanoseconds; } rc_stage_timing;
+typedef struct { rc_stage_timing stages[7]; } rc_decode_profile;
+int32_t rc_decoder_feed_profiled(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
+    uint64_t offset, const uint32_t *column_kinds, uint32_t column_count, uint32_t filter_table,
+    rc_result **out, rc_decode_profile *profile);
 uint32_t rc_result_is_filtered(const rc_result *result);
 int32_t rc_result_event(const rc_result *result, rc_event *out);
 /* image: 0 before, 1 after. A missing image has only absent values.

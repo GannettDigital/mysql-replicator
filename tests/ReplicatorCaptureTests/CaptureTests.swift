@@ -10,11 +10,12 @@ import ReplicatorCodec
 final class CaptureTests: XCTestCase {
     let sid = "8ba09bde-bc41-11f1-8272-ba06e9024a03"
     var root: URL { URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
-    func config(_ mode: String = "file-position") throws -> CaptureConfiguration {
-        let object: [String: Any] = ["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"TEST_PASSWORD",
+    func config(_ mode: String = "file-position", decoderProfiling: Bool? = nil) throws -> CaptureConfiguration {
+        var object: [String: Any] = ["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"TEST_PASSWORD",
             "serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":mode,
             "start":["file":"binlog.000003","position":1589,"executedGTIDs":sid + ":1-10"],
             "tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]]
+        object["decoderProfiling"] = decoderProfiling
         return try JSONDecoder().decode(CaptureConfiguration.self, from: JSONSerialization.data(withJSONObject: object))
     }
     func le<T: FixedWidthInteger>(_ n: T) -> Data { var v = n.littleEndian; return withUnsafeBytes(of: &v) { Data($0) } }
@@ -57,6 +58,31 @@ final class CaptureTests: XCTestCase {
     }
     func packet(_ data: Data, sequence: UInt8) -> ByteBuffer {
         ByteBuffer(bytes: le(UInt32(data.count) | UInt32(sequence)<<24) + data)
+    }
+    func testDecoderProfileSeparatesProbesAndSurvivesResume() throws {
+        let frames = try recorded().filter { $0.0 >= 1589 }
+        let maps = UInt64(frames.filter { $0.1[4] == 19 }.count)
+        for enabled in [false,true] {
+            let original = try config(decoderProfiling:enabled)
+            let resumed = original.resuming(file:original.start.file,position:original.start.position,executedGTIDs:original.start.executedGTIDs)
+            XCTAssertEqual(resumed.decoderProfiling,enabled)
+            let timings = StageTimings()
+            let p = try StreamProcessor(config:resumed,includeRaw:true,emitEvent:{ _ in },emitTransaction:{ _ in },timings:timings)
+            try begin(p)
+            for (_,frame) in frames { try p.consume(frame) }
+            try p.finish()
+            XCTAssertEqual(p.transactionCount,4)
+            XCTAssertEqual(timings.snapshot["capture.decode"]?.count,1+UInt64(frames.count)+4*maps)
+            if enabled {
+                XCTAssertEqual(timings.snapshot["decode.call.probe_format"]?.count,2*maps)
+                XCTAssertEqual(timings.snapshot["decode.call.probe_identity"]?.count,maps)
+                XCTAssertEqual(timings.snapshot["decode.call.probe_metadata"]?.count,maps)
+                XCTAssertEqual(timings.snapshot["decode.call.event"]?.count,UInt64(frames.count))
+            } else {
+                XCTAssertFalse(timings.snapshot.keys.contains { $0.hasPrefix("decode.") })
+            }
+        }
+        XCTAssertNil(try config().decoderProfiling)
     }
     func testFilteredRowsKeepGTIDBoundariesWithoutSchemaDiscoveryAndCRCStillFails() throws {
         var groups: [CompleteTransaction] = []

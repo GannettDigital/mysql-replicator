@@ -113,8 +113,8 @@ final class StreamProcessor {
         }
         if type == 15 {
             guard let start = announced else { throw CaptureError("format event without rotation announcement") }
-            let fresh = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024)
-            let event = try timings.measure("capture.decode") { try fresh.decode(frame, at: 4, includeRaw: includeRaw) }
+            let fresh = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024, timings:config.decoderProfiling == true ? timings : nil)
+            let event = try measureDecode("decode.call.format") { try fresh.decode(frame, at: 4, includeRaw: includeRaw) }
             let fullFile = start.position == 4
             try check(fullFile ? UInt64(next) == UInt64(frame.count)+4 : next == 0, "unexpected dump format-event position")
             let begin = BinlogCoordinate(file: start.file, position: fullFile ? UInt64(next) : start.position)
@@ -152,17 +152,17 @@ final class StreamProcessor {
             // Probe with the same codec, then bind discovered wire/target metadata
             // (or explicit legacy debug history). Never query the source's
             // current information_schema to interpret historical events.
-            let probe = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024)
-            _ = try timings.measure("capture.decode") { try probe.decode(format!, at: 4) }
+            let probe = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024, timings:config.decoderProfiling == true ? timings : nil)
+            _ = try measureDecode("decode.call.probe_format") { try probe.decode(format!, at: 4) }
             // Identity probe accepts column types outside the applier subset.
             // Included maps are decoded again with the normal strict checks.
-            var identity = try timings.measure("capture.decode") { try probe.decode(frame, at: UInt64(format!.count)+4, filterTable: true) }
+            var identity = try measureDecode("decode.call.probe_identity") { try probe.decode(frame, at: UInt64(format!.count)+4, filterTable: true) }
             guard let db = identity.database, let name = identity.table, let id = identity.tableID else {throw CaptureError("missing table identity")}
             filterTable = ignoreTable?(db, name) ?? false
             if !filterTable {
             try probe.reset()
-            _ = try timings.measure("capture.decode") { try probe.decode(format!, at: 4) }
-            identity = try timings.measure("capture.decode") { try probe.decode(frame, at: UInt64(format!.count)+4) }
+            _ = try measureDecode("decode.call.probe_format") { try probe.decode(format!, at: 4) }
+            identity = try measureDecode("decode.call.probe_metadata") { try probe.decode(frame, at: UInt64(format!.count)+4) }
             let columns: [ColumnInterpretation]
             if config.version == 2 {
                 if let resolveSchema { columns = try resolveSchema(identity.atSourcePosition(offset),current) }
@@ -180,7 +180,7 @@ final class StreamProcessor {
             schema = TableSchema(offset:decoderOffset,eventSHA256:identity.sha256,database:db,table:name,tableID:id,columns:columns)
             }
         }
-        let event = try timings.measure("capture.decode") { try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset) }
+        let event = try measureDecode("decode.call.event") { try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset) }
         if case .query(let query) = event.control {
             try check(allowDDL || [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql),
                       "live schema window stops at DDL or non-control SQL")
@@ -204,6 +204,12 @@ final class StreamProcessor {
             try emitTransaction(complete); transactionCount += 1; completeGTIDs = nextSet
         }
         if case .rotate(let destination) = event.control { rotatedTo = destination }
+    }
+    private func measureDecode<T>(_ role: String, _ body: () throws -> T) rethrows -> T {
+        try timings.measure("capture.decode") {
+            if config.decoderProfiling == true { return try timings.measure(role,body) }
+            return try body()
+        }
     }
     func finish() throws {
         try check(announced == nil && assembler != nil, "dump ended before format context")

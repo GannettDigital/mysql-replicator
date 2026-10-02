@@ -67,7 +67,7 @@ Bounds are fixed for this increment: 4 MiB default event size (C ABI permits 23 
 
 ## Ownership and failure contract
 
-ABI version is **5**, capability bit 0 means bounded offline decoding. Inputs are borrowed only during `rc_decoder_feed`. Results own their storage independently of input and context. C views remain valid until the matching `rc_result_free`; Swift copies them before releasing the result. Contexts and results must be freed exactly once by the matching Rust function. Null handles are checked; arbitrary dangling/forged non-null pointers remain a C caller contract violation.
+ABI version is **5**, capability bit 0 means bounded offline decoding. Capability bit 1 adds optional per-feed timings through `rc_decoder_feed_profiled`; existing feed functions and structures are unchanged. A null profile disables native clocks. See the [decoder profile](PERFORMANCE_BENCHMARK.md#decoder-function-profile) for stage definitions. Inputs are borrowed only during `rc_decoder_feed`. Results own their storage independently of input and context. C views remain valid until the matching `rc_result_free`; Swift copies them before releasing the result. Contexts and results must be freed exactly once by the matching Rust function. Null handles are checked; arbitrary dangling/forged non-null pointers remain a C caller contract violation.
 
 Feed failure poisons the context and publishes no partial batch. `reset` discards all metadata and requires replay from the file FDE. Swift serializes access with a lock; future capture must run decoding off the NIO event loop. Cancellation stops between bounded frames and discards the inspector's context.
 

@@ -47,6 +47,7 @@ the stack. Do not use the interactive demo commands to manage a benchmark stack.
 | `--sample-seconds` | 5 | Desired polling interval; 1–30 seconds |
 | `--timeout` | 300 | Separate load and catch-up deadlines; 10–3600 seconds each |
 | `--batch-transactions` | 32 | Maximum source groups per journal batch; 1–256 |
+| `--decoder-profile` | on | Detailed decoder function timings; `on` or `off` |
 | `--skip-build` | off | Reuse existing runtime and load-generator images |
 
 Rebuild after code changes. The workload hash is checked even with `--skip-build`;
@@ -115,6 +116,106 @@ For a rate sweep, keep workload, row size, client count, host, and storage fixed
 increase `--rate` between fresh runs. Watch whether backlog grows during load and
 how quickly it drains afterward. Repeat runs before drawing conclusions. Use
 `--rate 0` for a burst/catch-up experiment, not as a steady-state capacity claim.
+
+## Decoder function profile
+
+Detailed decoder profiling is enabled by default in the benchmark. Ordinary
+capture/application leaves it off; enable it with `"decoderProfiling": true`
+inside the `source` configuration. Counters stay in worker-local memory and are
+exported in the existing final timing summary, with no per-call logging or SQLite
+writes. Resetting a decoder does not reset its run's counters.
+
+```sh
+make benchmark ARGS='--events 10000 --rate 0 --decoder-profile on'
+make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off'
+```
+
+`decoder-profile.tsv` sorts functions by **self time** and reports call count,
+failures, total/self milliseconds, mean microseconds per call, and maximum call
+duration. Mean and maximum refer to inclusive elapsed time. The console prints
+the ten largest entries; all entries also appear in `stage-timings.json`.
+
+| Stage | Work measured |
+| --- | --- |
+| `decode.call.event`, `.format` | Normal event and format-description decoding |
+| `decode.call.probe_format`, `.probe_identity`, `.probe_metadata` | Extra decoding to establish a table map's identity and schema |
+| `decode.rust` | Entire native feed plus importing native counters; self time is the remainder outside its named native children |
+| `decode.rust.crc32`, `.event_read`, `.payload_read` | Checksum validation, upstream event reading and payload parsing |
+| `decode.rust.raw_copy`, `.sha256` | Owned raw event copy and fingerprint computation |
+| `decode.rust.table_map`, `.rows` | Table-map validation/cache updates and row-image decoding |
+| `decode.swift.fingerprint_hex`, `.control` | Fingerprint string formatting and control-event conversion (including GTID formatting) |
+| `decode.swift.identifiers`, `.rows`, `.table_columns` | Conversion of native views into Swift identifiers, rows and schema metadata |
+| `decode.swift.raw_base64`, `.event_build` | Optional raw encoding and construction of the output event |
+| `decode.swift.context_create`, `.context_reset`, `.context_free`, `.result_free` | Native allocation/reset/release calls |
+
+Use the inclusive `decode.call.*` totals to compare normal decoding with probes;
+use function **self** times to identify expensive work. These are nested views
+of the same work, so do not add their inclusive totals together. Context lifecycle
+calls can occur outside `capture.decode`. Counts are invocations, not source
+events, transactions or rows: an included table map currently incurs four extra
+probe decodes. Some Swift conversion stages are invoked even when their input
+is empty. Rust stages count only when execution reaches that stage; failed
+stages remain in the profile. There are no per-cell clocks.
+
+Profiling adds clocks and aggregation overhead, included in the surrounding
+timers. Compare on/off runs with identical workloads and repeat measurements
+before drawing throughput conclusions. Durations are elapsed time, including
+scheduling pauses; they are not CPU samples. With profiling off, the original
+coarse stage timings remain and no `decoder-profile.tsv` is emitted.
+
+### First 10K decoder profile, 2026-10-02
+
+Two sequential runs used the same release image, 10,000 single-row INSERTs,
+100-byte payloads, one source client, unlimited offered rate, TCP/TLS target,
+and a maximum journal batch of 32 transactions. Both passed exact comparison
+of all 10,000 rows against source and native, and cleaned up successfully.
+201 Swift tests and 6 Rust tests passed, including profile on/off output
+equivalence, failure accounting, nested timing accounting and probe counts.
+
+| Measurement | Profiling on | Profiling off |
+| --- | ---: | ---: |
+| Observed custom completion | 60.702 s | 60.727 s |
+| `capture.decode` inclusive | 52.285 s | 47.795 s |
+| Decoder calls, including probes | 90,006 | 90,006 |
+| Target SQL elapsed (overlaps decoding) | 12.959 s | 14.599 s |
+
+The observed decoder duration was about 9.4% higher with profiling enabled.
+This single pair includes scheduling/load variation, and completion is polled
+roughly every five seconds; it does not establish an exact overhead percentage
+or prove unchanged throughput. These are Apple Silicon/Docker x86_64 emulation
+results, not native x86_64 capacity measurements.
+
+The detailed run identifies a much larger cost than row parsing:
+
+| Function stage | Calls | Self time |
+| --- | ---: | ---: |
+| Swift fingerprint hex formatting | 90,006 | 40.357 s |
+| Swift control conversion (includes GTID formatting) | 90,006 | 2.738 s |
+| Swift output event construction | 90,006 | 0.906 s |
+| Rust table-map validation/cache | 30,000 | 0.608 s |
+| Rust SHA-256 computation | 90,006 | 0.249 s |
+| Rust row-image decoding | 10,000 | 0.164 s |
+
+Fingerprint hex formatting accounts for 77.2% of `capture.decode`. The current
+implementation invokes `String(format: "%02x", byte)` for each digest byte.
+Replacing that formatting with a byte-to-hex lookup while preserving the exact
+string and fingerprint checks is the first optimization to test. GTID formatting
+uses the same pattern inside control conversion.
+
+Separately, the call-purpose totals show 50,005 normal event decodes, one initial
+format decode, and 40,000 extra probe decodes (20,000 format, 10,000 identity,
+10,000 metadata). Probes took 21.567 seconds inclusive, 41.2% of decode time.
+That overlaps the function times above. Reducing redundant probe work is another
+candidate, preserving filter handling, schema binding and validation. These
+measurements favor removing this repeated work before adding another decoder
+thread; no decoding behavior was optimized in this profiling change.
+
+Evidence under `artifacts/performance/` (ignored by Git):
+
+- On: `20261002T201652Z-ee99c204/20261002T201653Z-72effda4-auto-autocommit-myisam/`.
+- Off: `20261002T202036Z-3d87eac6/20261002T202036Z-ecf8579d-auto-autocommit-myisam/`.
+- Each retains `result.json`, `stage-timings.json`, and `verification.json`;
+  the on run also retains `decoder-profile.tsv` with all 24 decoder stages.
 
 ## Interpretation limits and next measurements
 

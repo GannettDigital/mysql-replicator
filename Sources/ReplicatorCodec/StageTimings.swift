@@ -18,6 +18,18 @@ public final class StageTimings {
     public init() { clock = { DispatchTime.now().uptimeNanoseconds } }
     init(clock: @escaping () -> UInt64) { self.clock = clock }
     public var snapshot: [String: Sample] { samples }
+    /// Import a disjoint native child while its enclosing Swift timer is active.
+    /// Native stages run at most once per feed, so their duration is also max.
+    func recordNative(_ stage: String, count: UInt64, failures: UInt64, nanoseconds: UInt64) {
+        guard count != 0 else { return }
+        let seconds=Double(nanoseconds)/1_000_000_000
+        var sample=samples[stage] ?? Sample()
+        sample.count += count; sample.failures += failures
+        sample.seconds += seconds; sample.selfSeconds += seconds
+        sample.maximumSeconds=max(sample.maximumSeconds,seconds)
+        samples[stage]=sample
+        if !childNanoseconds.isEmpty { childNanoseconds[childNanoseconds.count-1] += nanoseconds }
+    }
     public func measure<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
         let start = clock()
         childNanoseconds.append(0)
@@ -30,7 +42,8 @@ public final class StageTimings {
             var sample = samples[stage] ?? Sample()
             sample.count += 1; sample.failures += failed ? 1 : 0
             sample.seconds += elapsed; sample.maximumSeconds = max(sample.maximumSeconds, elapsed)
-            sample.selfSeconds += Double(nanoseconds-children) / 1_000_000_000
+            // Native and Swift clocks can round at different resolutions.
+            sample.selfSeconds += Double(nanoseconds >= children ? nanoseconds-children : 0) / 1_000_000_000
             samples[stage] = sample
         }
         let result = try body()

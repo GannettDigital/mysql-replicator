@@ -31,6 +31,8 @@ public struct CaptureConfiguration: Decodable {
     public let stopAfterTransactions: Int?
     public let idleTimeoutSeconds: Int?
     public let maximumEventBytes: UInt32?
+    /// Optional detailed worker-local decoder timings; absent/false keeps coarse timings only.
+    public let decoderProfiling: Bool?
 
     /// Keep connection/protocol options, replacing only the authoritative boundary.
     public func resuming(file: String?, position: UInt32?, executedGTIDs: String) -> CaptureConfiguration {
@@ -39,7 +41,7 @@ public struct CaptureConfiguration: Decodable {
             serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:stopAfterTransactions,
-            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes)
+            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling)
     }
 
     public func validate() throws -> DumpStart {

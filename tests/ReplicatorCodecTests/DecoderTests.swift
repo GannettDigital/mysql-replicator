@@ -5,6 +5,31 @@ import ReplicatorLabCore
 import CReplicatorCodec
 
 final class DecoderTests: XCTestCase, BinlogFixtures {
+    func testProfilingPreservesDecodedValuesAndRecordsFailedCRC() throws {
+        let input = frames(try Data(contentsOf:directory.appendingPathComponent("Synthetic/typed.binlog")))
+        let history = try schema("typed").indexed()
+        let timings = StageTimings()
+        let profiled = try BinlogDecoder(timings:timings), plain = try BinlogDecoder()
+        for (offset,frame) in input {
+            XCTAssertEqual(try profiled.decode(frame,at:offset,schema:history[offset],includeRaw:true),
+                           try plain.decode(frame,at:offset,schema:history[offset],includeRaw:true))
+        }
+        for stage in ["decode.rust","decode.rust.crc32","decode.rust.sha256","decode.swift.fingerprint_hex","decode.swift.result_free"] {
+            XCTAssertEqual(timings.snapshot[stage]?.count,UInt64(input.count),stage)
+            XCTAssertEqual(timings.snapshot[stage]?.failures,0,stage)
+        }
+        XCTAssertEqual(timings.snapshot["decode.rust.rows"]?.count,UInt64(input.filter { [23,24,25,30,31,32].contains($0.1[4]) }.count))
+        try profiled.reset()
+        var corrupt=input[0].1; corrupt[corrupt.count-1] ^= 1
+        failure(3) { _ = try profiled.decode(corrupt,at:4) }
+        failure(6) { _ = try profiled.decode(input[0].1,at:4) }
+        XCTAssertEqual(timings.snapshot["decode.rust.crc32"]?.failures,1)
+        XCTAssertEqual(timings.snapshot["decode.rust"]?.failures,1)
+        XCTAssertEqual(timings.snapshot["decode.swift.result_free"]?.count,UInt64(input.count+1))
+        try profiled.reset()
+        XCTAssertNoThrow(try profiled.decode(input[0].1,at:4))
+    }
+
     func testYearAndDecimalConsumeNumericSignednessWithoutConsumingCharsetMetadata() throws {
         let fde=frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
         let at=UInt64(fde.count+4)

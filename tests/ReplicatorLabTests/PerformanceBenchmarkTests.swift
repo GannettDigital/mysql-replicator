@@ -2,6 +2,17 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class PerformanceBenchmarkTests: XCTestCase {
+    func testDecoderReportSortsBySelfTimeAndComputesMeanFromCalls() throws {
+        let report = try PerformanceBenchmark.decoderProfile([
+            "decode.parent":["count":2,"failures":0,"seconds":0.010,"selfSeconds":0.001,"maximumSeconds":0.007],
+            "decode.child":["count":4,"failures":1,"seconds":0.009,"selfSeconds":0.009,"maximumSeconds":0.005],
+            "capture.decode":["count":2,"failures":0,"seconds":0.01,"selfSeconds":0,"maximumSeconds":0.007]])
+        let lines=report.split(separator:"\n")
+        XCTAssertEqual(lines.count,3)
+        XCTAssertEqual(lines[1],"decode.child\t4\t1\t9.000\t9.000\t2250.000\t5000.000")
+        XCTAssertEqual(lines[2],"decode.parent\t2\t0\t10.000\t1.000\t5000.000\t7000.000")
+    }
+
     let sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     func testServerCounterDeltasRejectResetsMissingCountersAndThreadChanges() throws {
@@ -67,6 +78,11 @@ final class PerformanceBenchmarkTests: XCTestCase {
         XCTAssertFalse(options.build)
         XCTAssertEqual(options.targetTransport,"tcp-tls")
         XCTAssertEqual(options.batchTransactions,32)
+        XCTAssertTrue(options.decoderProfiling)
+        XCTAssertFalse(try PerformanceOptions(arguments:["--decoder-profile","off"]).decoderProfiling)
+        XCTAssertTrue(try PerformanceOptions(arguments:["--decoder-profile","on"]).decoderProfiling)
+        XCTAssertThrowsError(try PerformanceOptions(arguments:["--decoder-profile","yes"]))
+        XCTAssertThrowsError(try PerformanceOptions(arguments:["--decoder-profile"]))
         XCTAssertEqual(try PerformanceOptions(arguments:["--batch-transactions","1"]).batchTransactions,1)
         for transport in ["tcp-tls","unix-tls","unix"] {
             XCTAssertEqual(try PerformanceOptions(arguments:["--target-transport",transport]).targetTransport,transport)
