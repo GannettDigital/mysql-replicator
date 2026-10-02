@@ -8,3 +8,4 @@ packaging/Probe/.build
 packaging/rust/target
 
 .build-asan/
+.build-tsan/

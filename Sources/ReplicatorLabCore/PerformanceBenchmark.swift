@@ -261,7 +261,8 @@ public enum PerformanceBenchmark {
                   let summary = try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any],
                   let timings = summary["stageTimings"] as? [String:Any] else { throw LabError("missing final stage timings") }
             report["stage_timings"] = timings
-            report["stage_timing_scope"] = "run-local monotonic elapsed durations, including startup and stop; seconds is inclusive, selfSeconds excludes nested measured stages; neither is CPU time"
+            report["pipeline"] = summary["pipeline"]
+            report["stage_timing_scope"] = "worker-local monotonic elapsed durations, including startup and stop; seconds is inclusive, selfSeconds excludes nested stages on that worker; capture and apply overlap, so their sum is not wall time; neither is CPU time"
             let outputCounts = try session.docker(["exec",session.helper,"wc","-lc","/evidence/applier.ndjson"]).text.split(whereSeparator: { $0.isWhitespace })
             guard outputCounts.count >= 2, let lines=Int(outputCounts[0]), let bytes=Int(outputCounts[1]) else { throw LabError("invalid progress output counts") }
             report["progress_output"] = ["destination":"Docker volume file /evidence/applier.ndjson (not Docker logging driver)","synchronous":true,"lines":lines,"bytes":bytes]

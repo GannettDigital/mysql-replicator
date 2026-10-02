@@ -236,3 +236,32 @@ public final class BinlogDecoder {
         } catch { failed = true; throw error }
     }
 }
+
+public extension DecodedEvent {
+    /// Conservative retained-data accounting, not a measurement of process RSS.
+    var retainedByteCost: Int {
+        // Accounting budget, not an RSS claim. Count owned strings, raw/base64
+        // copies, query bytes and decoded cells; bound accumulation across events.
+        var cost = 1024
+        for s in [self.offset, self.eventName, self.sha256, self.tableID, self.database,
+                  self.table, self.number, self.detailBase64, self.detailText, self.rawBase64] {
+            cost += s?.utf8.count ?? 0
+        }
+        if case .query(let query) = self.control { cost += query.sql.count + query.statusVariables.count }
+        for row in self.rows {
+            cost += 128
+            for image in [row.before, row.after] {
+                for value in image ?? [] {
+                    cost += 64
+                    switch value {
+                    case .text(let s): cost += s.utf8.count
+                    case .binary(let d): cost += d.count
+                    default: break
+                    }
+                }
+            }
+        }
+        cost += (wireColumns?.count ?? 0) * 256
+        return cost
+    }
+}

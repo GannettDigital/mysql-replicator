@@ -225,27 +225,7 @@ public final class TransactionAssembler {
         let (wire, overflow) = wireBytes.addingReportingOverflow(UInt64(event.eventSize))
         try require(!overflow && wire <= limits.wireBytes && events.count < limits.events, at,
                     "transaction event/wire-byte limit exceeded", code: .limit)
-        // Accounting budget, not an RSS claim. Count owned strings, raw/base64
-        // copies, query bytes and decoded cells; bound accumulation across events.
-        var cost = 1024
-        for s in [event.offset, event.eventName, event.sha256, event.tableID, event.database,
-                  event.table, event.number, event.detailBase64, event.detailText, event.rawBase64] {
-            cost += s?.utf8.count ?? 0
-        }
-        if case .query(let query) = event.control { cost += query.sql.count + query.statusVariables.count }
-        for row in event.rows {
-            cost += 128
-            for image in [row.before, row.after] {
-                for value in image ?? [] {
-                    cost += 64
-                    switch value {
-                    case .text(let s): cost += s.utf8.count
-                    case .binary(let d): cost += d.count
-                    default: break
-                    }
-                }
-            }
-        }
+        let cost = event.retainedByteCost
         try require(cost <= limits.retainedBytes - retainedBytes, at,
                     "transaction retained-data limit exceeded", code: .limit)
         wireBytes = wire; retainedBytes += cost; events.append(event)

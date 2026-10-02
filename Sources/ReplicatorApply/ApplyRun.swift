@@ -13,6 +13,7 @@ public struct ApplySummary: Encodable {
     public let pendingGTID: String?
     public let stateDirectory: String
     public let stageTimings: [String: StageTimings.Sample]?
+    public let pipeline: PipelineSnapshot?
     public let automaticRecovery = false
 }
 public struct ApplyRunError: Error, CustomStringConvertible {
@@ -35,10 +36,14 @@ public enum ApplyRun {
         try configuration.validate()
         let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
         let timings = StageTimings()
+        let producerTimings = StageTimings()
+        let pipeline = ApplyPipeline()
+        var consumerPending = false
         let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
         func summary(_ lifecycle: String) -> ApplySummary {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
-                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:lifecycle == "RUNNING" ? nil : timings.snapshot)
+                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:lifecycle == "RUNNING" ? nil : timings.snapshot.merging(producerTimings.snapshot) { current, _ in current },
+                pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot)
         }
         func progress() throws {
             // Include snapshot construction, JSON encoding and the synchronous
@@ -62,65 +67,85 @@ public enum ApplyRun {
             let batch = DMLBatch(policy:configuration.batchPolicy) { groups in
                 try timings.measure("apply.batch") {
                     try DMLBatch.execute(groups,state:state,cancellation:cancellation,
-                        lock:target.lock,write:target.apply,completedGroup:target.completedDMLGroup)
+                        lock:{ try pipeline.queue.checkFailure(); try target.lock($0) },
+                        write:{ try pipeline.queue.checkFailure(); try target.apply($0) },completedGroup:target.completedDMLGroup)
                     try progress()
                 }
             }
+            func event(_ record: LiveRecord) throws {
+                if !cancellation.isCancelled { try batch.flushIfExpired() }
+                try target.releaseExpiredLock()
+                try timings.measure("relay.append") { try state.append(record) }
+                if let decoded = record.event {
+                    if case .gtid = decoded.control { consumerPending = true }
+                    if decoded.eventType == 19 && !decoded.replicationFiltered {
+                        let table = try target.discover(decoded)
+                        guard let offset = UInt64(decoded.offset) else { throw ApplyError("invalid table-map coordinate") }
+                        try state.schema(table,event:decoded,coordinate:BinlogCoordinate(file:record.file,position:offset))
+                    }
+                }
+            }
+            func transaction(_ group: CompleteTransaction) throws {
+                defer { consumerPending = false }
+                if group.outcome == .statement {
+                    try batch.flush()
+                    try state.begin(group)
+                    try target.unlock()
+                    try require(group.events.count == 2, "invalid standalone DDL group")
+                    guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
+                    if try filter.ignores(query) {
+                        try state.complete(group,rowCount:0,filtered:true)
+                        try progress(); return
+                    }
+                    let statement=try DDLStatement.from(group)
+                    let plan=try target.prepareDDL(statement,query:query)
+                    try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+                    try require(!cancellation.isCancelled,"apply cancelled")
+                    try pipeline.queue.checkFailure()
+                    try target.applyDDL(plan)
+                    try state.complete(group,rowCount:0,ddl:plan)
+                    try progress()
+                    return
+                }
+                let mutations: [Mutation]
+                do { mutations = try DMLPlan.make(group,tables:Array(target.discovered.values)) }
+                catch {
+                    try batch.flush()
+                    try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
+                    throw error
+                }
+                if mutations.isEmpty {
+                    try batch.flush()
+                    try state.begin(group)
+                    try target.unlock()
+                    try state.complete(group,rowCount:0,filtered:true)
+                    try progress(); return
+                }
+                try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))
+            }
             do {
-                _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:cancellation,
-                    emitEvent: { record in
-                        if !cancellation.isCancelled { try batch.flushIfExpired() }
-                        try target.releaseExpiredLock()
-                        try timings.measure("relay.append") { try state.append(record) }
-                    },emitTransaction: { group in
-                        if group.outcome == .statement {
-                            try batch.flush()
-                            try state.begin(group)
+                try pipeline.run(cancellation:cancellation,producerTimings:producerTimings,produce:{ stop, send in
+                    _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:stop,
+                        emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
+                        timings:producerTimings,onIdle:{ try send(.idle) },allowDDL:true,
+                        ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                },consume:{ message in
+                    try timings.measure("apply.consume") {
+                        switch message {
+                        case .event(let record): try event(record)
+                        case .transaction(let group): try transaction(group)
+                        case .idle:
+                            if !cancellation.isCancelled { try batch.flush() }
                             try target.unlock()
-                            try require(group.events.count == 2, "invalid standalone DDL group")
-                            guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
-                            if try filter.ignores(query) {
-                                try state.complete(group,rowCount:0,filtered:true)
-                                try progress(); return
-                            }
-                            let statement=try DDLStatement.from(group)
-                            let plan=try target.prepareDDL(statement,query:query)
-                            try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
-                            try require(!cancellation.isCancelled,"apply cancelled")
-                            try target.applyDDL(plan)
-                            try state.complete(group,rowCount:0,ddl:plan)
-                            try progress()
-                            return
                         }
-                        let mutations: [Mutation]
-                        do { mutations = try DMLPlan.make(group,tables:Array(target.discovered.values)) }
-                        catch {
-                            try batch.flush()
-                            try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
-                            throw error
-                        }
-                        if mutations.isEmpty {
-                            try batch.flush()
-                            try state.begin(group)
-                            try target.unlock()
-                            try state.complete(group,rowCount:0,filtered:true)
-                            try progress(); return
-                        }
-                        try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))
-                    },resolveSchema: { event, coordinate in
-                        let table = try target.discover(event)
-                        try state.schema(table,event:event,coordinate:coordinate)
-                        return try (event.wireColumns ?? []).map { column in
-                            guard let kind = column.interpretation else {throw ApplyError("missing wire interpretation")}
-                            return kind
-                        }
-                    },timings:timings,onIdle:{
-                        if !cancellation.isCancelled { try batch.flush() }
-                        try target.unlock()
-                    },allowDDL:true,ignoreTable: filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                    }
+                },onWait:{
+                    if !cancellation.isCancelled { try batch.flushIfExpired() }
+                    try target.releaseExpiredLock()
+                },timings:timings)
                 try batch.flush() // Includes stopAfterTransactions and clean source EOF.
             } catch {
-                guard canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
+                guard !consumerPending && canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
             }
             try target.unlock()
             try state.stopped()

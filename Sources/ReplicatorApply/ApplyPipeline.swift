@@ -1,0 +1,136 @@
+import Foundation
+import ReplicatorCapture
+import ReplicatorCodec
+
+public struct PipelineSnapshot: Encodable {
+    public var queuedItems = 0
+    public var queuedGroups = 0
+    public var queuedBytes = 0
+    public var maximumItems = 0
+    public var maximumGroups = 0
+    public var maximumBytes = 0
+    public var groupsEnqueued = 0
+    public var groupsDequeued = 0
+}
+
+/// One producer and one consumer. Failure discards unconsumed work, success
+/// drains it. No callback executes with the mutex held. Costs are retained-data
+/// accounting (including duplicated group/event references), not an RSS bound.
+final class ApplyQueue<Element>: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var items: [(Element, Int, Int)?] = []
+    private var head = 0
+    private var ended = false
+    private var failure: Error?
+    private var counters = PipelineSnapshot()
+    let byteLimit: Int, itemLimit: Int, groupLimit: Int
+    init(byteLimit: Int = 64*1024*1024, itemLimit: Int = 4096, groupLimit: Int = 64) {
+        self.byteLimit = byteLimit; self.itemLimit = itemLimit; self.groupLimit = groupLimit
+    }
+    var snapshot: PipelineSnapshot {
+        condition.lock(); defer { condition.unlock() }; return counters
+    }
+    func checkFailure() throws {
+        condition.lock(); defer { condition.unlock() }
+        if let failure { throw failure }
+    }
+    func push(_ item: Element, bytes: Int, groups: Int = 0, cancellation: CaptureCancellation) throws {
+        try require(bytes >= 0 && bytes <= byteLimit && (0...1).contains(groups),"decoded queue item exceeds capacity")
+        condition.lock(); defer { condition.unlock() }
+        while true {
+            if let failure { throw failure }
+            if cancellation.isCancelled { throw CaptureCancelled() }
+            try require(!ended,"decoded queue already finished")
+            if counters.queuedItems < itemLimit && counters.queuedBytes <= byteLimit-bytes
+                && counters.queuedGroups+groups <= groupLimit { break }
+            _ = condition.wait(until:Date().addingTimeInterval(0.05))
+        }
+        items.append((item,bytes,groups))
+        counters.queuedItems += 1; counters.queuedBytes += bytes; counters.queuedGroups += groups
+        counters.groupsEnqueued += groups
+        counters.maximumItems = max(counters.maximumItems,counters.queuedItems)
+        counters.maximumBytes = max(counters.maximumBytes,counters.queuedBytes)
+        counters.maximumGroups = max(counters.maximumGroups,counters.queuedGroups)
+        condition.signal()
+    }
+    func finish(_ result: Result<Void,Error>) {
+        condition.lock(); defer { condition.unlock() }
+        ended = true
+        if case .failure(let error) = result, failure == nil {
+            failure = error; items = []; head = 0
+            counters.queuedItems = 0; counters.queuedBytes = 0; counters.queuedGroups = 0
+        }
+        condition.broadcast()
+    }
+    func next(onWait: () throws -> Void) throws -> Element? {
+        condition.lock(); defer { condition.unlock() }
+        while true {
+            if let failure { throw failure }
+            if head < items.count {
+                let (item,bytes,groups) = items[head]!
+                items[head] = nil; head += 1
+                counters.queuedItems -= 1; counters.queuedBytes -= bytes; counters.queuedGroups -= groups
+                counters.groupsDequeued += groups
+                if head == items.count { items = []; head = 0 }
+                else if head >= 1024 { items.removeFirst(head); head = 0 }
+                condition.signal(); return item
+            }
+            if ended { return nil }
+            _ = condition.wait(until:Date().addingTimeInterval(0.025))
+            condition.unlock()
+            do { try onWait() } catch { condition.lock(); throw error }
+            condition.lock()
+        }
+    }
+}
+
+enum ApplyMessage {
+    case event(LiveRecord)
+    case transaction(CompleteTransaction)
+    case idle
+    var cost: Int {
+        switch self {
+        case .event(let record): return 256 + (record.event?.retainedByteCost ?? record.rawBase64?.utf8.count ?? 0)
+        case .transaction(let group): return 1024 + group.events.reduce(0) { $0 + $1.retainedByteCost }
+        case .idle: return 1
+        }
+    }
+    var groups: Int { if case .transaction = self { return 1 }; return 0 }
+}
+
+/// Target SQL, relay, SQLite and DML batching stay on the calling thread. Only
+/// capture/decoding/assembly run on the producer. Wire metadata determines decode
+/// types; target schema is validated by the ordered consumer before any writes.
+final class ApplyPipeline {
+    let queue = ApplyQueue<ApplyMessage>()
+    func run(cancellation: CaptureCancellation, producerTimings: StageTimings,
+             produce: @escaping (CaptureCancellation, @escaping (ApplyMessage) throws -> Void) throws -> Void,
+             consume: (ApplyMessage) throws -> Void, onWait: () throws -> Void,
+             timings: StageTimings) throws {
+        let stop = CaptureCancellation(parent:cancellation)
+        let worker = DispatchGroup()
+        worker.enter()
+        DispatchQueue(label:"mysql-replicator.decode").async { [queue] in
+            defer { worker.leave() }
+            do {
+                try produce(stop) { message in
+                    try producerTimings.measure("pipeline.enqueue") {
+                        try queue.push(message,bytes:message.cost,groups:message.groups,cancellation:stop)
+                    }
+                }
+                queue.finish(.success(()))
+            } catch { queue.finish(.failure(error)) }
+        }
+        // Joining is mandatory before reading producer timings or destroying any
+        // captured objects, even if the target, journal or output callback fails.
+        defer { stop.cancel(); worker.wait() }
+        do {
+            while let message = try timings.measure("pipeline.wait", { try queue.next(onWait:onWait) }) {
+                try consume(message)
+            }
+        } catch {
+            queue.finish(.failure(error)); stop.cancel()
+            try queue.checkFailure() // Preserve the first failure from either side.
+        }
+    }
+}

@@ -155,7 +155,7 @@ timestamps come from the harness, include launch overhead, and are polling bound
 Every final STOPPED summary, or BLOCKED error progress, includes `stageTimings`.
 These are monotonic, run-local counters (reset on resume), with `count`, `failures`,
 `seconds`, `selfSeconds` and `maximumSeconds` per stage. `seconds` is inclusive;
-`selfSeconds` subtracts nested measured stages, including on failure. Both measure
+`selfSeconds` subtracts nested measured stages on the same worker, including on failure. Both measure
 elapsed time, including I/O waits, rather than CPU time. Failed attempts include the typed
 cancellation that ends an idle capture cleanly. Ordinary progress omits the
 timing summary to avoid repeatedly formatting it in the apply path. The benchmark
@@ -163,11 +163,16 @@ exports the final values to `stage-timings.json` and `result.json.stage_timings`
 Timings include startup and graceful stop. They are inclusive and overlap:
 `target.schema`, `target.row`, `target.lock` and `target.unlock` contain
 `target.sql`; `sqlite.capacity` can contain `sqlite.checkpoint`; `capture.wait`
-can contain idle batch application and lock release. Do not sum inclusive durations.
-Exclusive durations can be summed without nesting overlap, but cover only measured
-scopes, not the entire process lifetime or exactly the benchmark's load window.
-The outer `capture.process` timer covers event handling and its synchronous apply
-callbacks; its exclusive time identifies processing outside the narrower timers.
+contains source idle handling. Do not sum inclusive durations. In the decoder
+pipeline, capture and apply have separate collectors and run concurrently; even
+exclusive times from different workers overlap. They cannot be added to estimate
+wall time. `capture.process` covers decoding/assembly/enqueue; `apply.consume`
+covers ordered relay/schema/group handling. `pipeline.enqueue` includes producer
+backpressure and `pipeline.wait` includes consumer waits (its exclusive time omits
+nested timed maintenance). Final `result.json.pipeline` records queue high-water
+marks and enqueued/dequeued groups. Timings include startup/stop and are not
+limited to the benchmark's load window. Earlier serial-run figures below have
+different nesting: capture callbacks performed application on the same worker.
 No SQL text, bind values or credentials are included.
 
 - `capture.wait`: packet-queue wait, including source idle time and idle callbacks;
@@ -335,8 +340,9 @@ items 1–2 with an explicitly revised dedicated-replica contract):
    lookup conversion can preserve identical hashes with fewer allocations. Pass
    original event bytes internally to the relay instead of encoding and decoding
    base64. These are candidates to measure, not established speedup claims.
-4. **Pipeline decoding and ordered apply.** Socket I/O already uses NIO threads;
-   decode/assembly and target apply currently share the serial consumer. Use one
+4. **Pipeline decoding and ordered apply.** Implemented after the SQL pass below.
+   Socket I/O already used NIO threads; decode/assembly and target apply shared the
+   serial consumer. Use one
    decoding producer and one applying consumer, with an explicit byte/group-bounded
    queue. Keep TargetSession, relay append/sync, SQLite and the applied checkpoint
    owned by the applying worker. DDL/new schema versions require ordered barriers
@@ -428,6 +434,84 @@ candidate; this SQL pass adds no pipeline or periodic SQLite telemetry.
 
 Run evidence: `artifacts/performance/20261002T062904Z-82e41227/20261002T062904Z-3119894a-auto-autocommit-myisam/`.
 Runtime image: `sha256:db9b75b662157e6c5fef7b0db7434d7ac157dd2b26d63e73083148ae71f4b31d`.
+
+### Decoder producer and ordered apply consumer
+
+After commit `61099a0`, decoding/assembly moves to a dedicated worker feeding one
+ordered apply consumer. Only that consumer accesses TargetSession, relay files,
+StateStore and DMLBatch. The decoder derives types from source wire metadata;
+the consumer validates each included table map against historical target schema
+before applying its group. Thus it can decode ahead of DDL without consulting
+the target's future or current schema out of order. Source DDL remains an apply
+barrier: flush preceding groups, apply/record DDL, then validate following maps.
+
+The queue has independent limits of 4,096 items, 64 complete groups and 64 MiB
+retained-data accounting. Accounting includes decoded cells, strings, raw bytes
+represented as base64 and group references; it is deliberately conservative, not
+RSS. The socket queue, current assembler group and apply batch retain their own
+bounds. A full queue pauses production. Normal completion drains all items;
+failure discards queued work and stops/joins the producer. Target writes check
+for known producer failure before dispatch. In-flight acknowledgments retain the
+same partial-prefix journal semantics. No new SQL retry or parallel target writer
+is introduced. Separate timing collectors avoid cross-thread nesting; queue
+high-water marks and group counts appear in final summaries and benchmark output.
+
+Qualification: 187 Swift unit tests (including seven queue/worker tests),
+79 ordered GTID DDL cases, 16 GTID DML cases and four file-position/MINIMAL-metadata
+filter/resume cases passed. All ten demo cases also passed: idle heartbeats,
+ordered DDL/DML, fail-stop and explicit skip, clean SIGINT/SIGTERM, GTID/positional
+restart and repeated resume without replay. Thread Sanitizer built successfully but could not run:
+macOS rejected loading its dylib into SwiftPM's test helper with "Sanitizer load
+violates platform policy". This is not a sanitizer pass. Reproduction command:
+`swift test --sanitize=thread --scratch-path .build-tsan --filter PipelineTests`.
+
+Evidence directories:
+
+- `artifacts/ddl-suite/20261002T065515Z-be3d3cb8-auto-autocommit-myisam/`
+- `artifacts/dml-suite/20261002T070108Z-e5c11e21-auto-autocommit-myisam/`
+- `artifacts/ddl-suite/20261002T070326Z-76b6edc2-position-autocommit-myisam/`
+- `artifacts/demo-suite/20261002T070330Z-ea62ea90-auto-autocommit-myisam/`
+- `artifacts/demo-suite-idle-stop/20261002T070516Z-e26a9248-auto-autocommit-myisam/`
+- `artifacts/demo-suite-detached/20261002T070615Z-03000570-auto-autocommit-myisam/`
+
+The same 10K INSERT burst (TCP/TLS, one client, 100-byte payload, unlimited rate,
+32-group/25-ms batch limits) passed exact row comparison, clean STOPPED state and
+cleanup. This is one local before/after pair, with five-second polling; it is not
+a production throughput claim.
+
+| Metric | Serial SQL pass | Decoder pipeline |
+| --- | ---: | ---: |
+| Source load | 13.420 s | 15.098 s |
+| Native completion observed | 15.642 s | 20.701 s |
+| Custom completion observed | 115.797 s | 60.733 s |
+| Workload target SQL commands | 13,254 | 11,992 |
+| DML journal batches | 2,603 | 1,033 |
+| SQLite commits | 5,235 | 2,095 |
+| Relay syncs | 2,606 | 1,036 |
+| Table-lock epochs | 1,624 | 993 |
+| Decoder elapsed | 45.222 s | 48.778 s |
+| Target SQL elapsed | 13.333 s | 13.041 s |
+| Relay append exclusive elapsed | 18.833 s | 18.827 s |
+
+Observed completion improved by 47.6% (1.91x). This includes better utilization of
+the existing batch limits: the consumer can collect already-decoded groups while
+the producer works independently, so average DML batch size rose from 3.84 to
+9.68 groups. No journal durability or batch limits changed. All 10,000 INSERTs
+still execute individually, with zero target table FETCH calls. Native completion
+is especially sensitive to polling around source-load exit; the new sample already
+reported 10,000 native groups at 15.738 s while still labeled load, before the
+completion field was recorded in the catch-up phase at 20.701 s.
+
+Queue high-water marks were 64 groups, 390 items and 1,103,337 accounted bytes
+(1.05 MiB). All 10,002 groups (including two setup DDLs) were enqueued/dequeued,
+and the final queue was empty. Producer enqueue elapsed was 2.719 s including
+accounting, synchronization and backpressure. Consumer wait exclusive elapsed
+was 25.286 s including startup/idle/verification outside the load window. Neither
+is a pure workload stall measurement. Producer decode and consumer relay/SQL
+times overlap and must not be added together. Progress output cost 0.566 s.
+
+Evidence: `artifacts/performance/20261002T071152Z-6e7cbdd1/20261002T071152Z-3154a8f2-auto-autocommit-myisam/`.
+Runtime image: `sha256:de8ba5b8b35f77be227de0579369e2c0df21c473eb745727a8eb97e3828cec16`.
 
 The historical measurements below describe earlier implementations, including
 per-group checks and schema revalidation that this pass removes.

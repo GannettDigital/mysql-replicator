@@ -1,4 +1,5 @@
 .build/
+.build-tsan/
 .swiftpm/
 rust/target/
 artifacts/

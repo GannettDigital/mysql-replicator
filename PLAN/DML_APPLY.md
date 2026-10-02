@@ -82,6 +82,29 @@ discarded and read again from the saved applied boundary. A finite capture limit
 flushes buffered work before stopping.
 Passwords and row values are not printed in ordinary apply progress. Relay files do contain source row bytes.
 
+Capture, decoding and transaction assembly run on a dedicated producer loop.
+A bounded FIFO carries decoded events, complete-group notifications and source
+idle notifications to one ordered apply loop. The apply loop exclusively owns
+the target connection, schema cache, relay, SQLite, journal batches and progress
+output. Decoder row types come from each validated source table map; target
+compatibility and historical schema are checked when the apply loop reaches that
+map. DDL flushes preceding groups and changes target/schema state before following
+maps are validated. Decoder lookahead never advances the applied checkpoint.
+
+The FIFO allows at most 4,096 items, 64 complete groups and 64 MiB of retained-data
+accounting. These are independent limits, not an RSS promise: the socket queue,
+current bounded assembler group and current apply batch also retain data. Full
+queues pause the producer rather than dropping events. Normal finite completion
+drains the queue and flushes the final batch. Failure discards queued work,
+interrupts the other worker and joins the producer before reporting final state;
+SQL is not retried and acknowledged partial groups retain the existing journal
+semantics. Cancellation is clean only with neither a partial captured/consumed
+group nor a pending write intent; uncertain interruption remains BLOCKED.
+
+Final summaries include queue high-water marks and enqueued/dequeued group counts
+in `pipeline`. These counters reset per run and are diagnostic, not recovery state.
+Capture and apply use separate timing collectors; their elapsed times overlap.
+
 ## Declared subset and checks
 
 - MySQL 8.4 GTID-ON InnoDB source with ROW/FULL/CRC32, as qualified by live inspect;

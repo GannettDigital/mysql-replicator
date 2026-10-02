@@ -71,8 +71,9 @@ public struct LiveSummary: Encodable {
     public let durableProgress = false
 }
 
-struct CaptureCancelled: Error, CustomStringConvertible {
-    var description: String { "live inspection cancelled" }
+public struct CaptureCancelled: Error, CustomStringConvertible {
+    public init() {}
+    public var description: String { "live inspection cancelled" }
 }
 
 public struct LiveInspectionError: Error, CustomStringConvertible {

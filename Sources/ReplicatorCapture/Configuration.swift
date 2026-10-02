@@ -68,7 +68,11 @@ public struct CaptureConfiguration: Decodable {
 public final class CaptureCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
-    public init() {}
+    private let parent: CaptureCancellation?
+    public init(parent: CaptureCancellation? = nil) { self.parent = parent }
     public func cancel() { lock.lock(); value = true; lock.unlock() }
-    public var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    public var isCancelled: Bool {
+        lock.lock(); let local = value; lock.unlock()
+        return local || (parent?.isCancelled ?? false)
+    }
 }

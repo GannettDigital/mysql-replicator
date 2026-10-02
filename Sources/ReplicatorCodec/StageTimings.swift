@@ -1,6 +1,7 @@
 import Foundation
 
-/// Run-local, monotonic measurements. Call from the serial capture/apply thread.
+/// Worker-local, monotonic measurements. Never share an instance across threads;
+/// merge snapshots only after workers have joined. Parallel worker times overlap.
 /// `seconds` includes nested stages; `selfSeconds` excludes them. These are
 /// elapsed durations (including I/O), not CPU samples or the entire run lifetime.
 public final class StageTimings {
