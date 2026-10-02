@@ -17,8 +17,8 @@ public struct DecoderError: Error, CustomStringConvertible {
     }
 }
 public enum ColumnInterpretation: String, Codable {
-    case signed, unsigned, utf8, binary
-    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5 } }
+    case signed, unsigned, utf8, binary, decimal, temporal
+    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7 } }
 }
 public struct TableSchema: Codable {
     public let offset: UInt64
@@ -51,7 +51,7 @@ public struct SchemaHistory: Codable {
 }
 
 public enum DecodedValue: Equatable, Encodable {
-    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data)
+    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data), decimal(String), temporal(String)
     private enum Keys: String, CodingKey { case kind, value }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: Keys.self)
@@ -61,6 +61,8 @@ public enum DecodedValue: Equatable, Encodable {
         case .signed(let value): try container.encode("signed", forKey: .kind); try container.encode(String(value), forKey: .value)
         case .unsigned(let value): try container.encode("unsigned", forKey: .kind); try container.encode(String(value), forKey: .value)
         case .text(let value): try container.encode("utf8", forKey: .kind); try container.encode(value, forKey: .value)
+        case .decimal(let value): try container.encode("decimal", forKey: .kind); try container.encode(value, forKey: .value)
+        case .temporal(let value): try container.encode("temporal", forKey: .kind); try container.encode(value, forKey: .value)
         case .binary(let value): try container.encode("binary", forKey: .kind); try container.encode(value.base64EncodedString(), forKey: .value)
         }
     }
@@ -78,9 +80,11 @@ public struct WireColumn: Codable, Equatable {
     public let collation: UInt32
     public let primaryKey: Bool
     public let name: String?
+    public var metadata: Data = Data()
+    public var isUnsigned: Bool? = nil
 }
 public struct DecodedEvent: Equatable, Encodable {
-    public let schemaVersion = 3
+    public let schemaVersion = 4
     public let offset: String
     public let eventSize: UInt32
     public let control: BinlogControl?
@@ -127,7 +131,7 @@ public final class BinlogDecoder {
     public let maximumEventBytes: UInt32
     public init(maximumEventBytes: UInt32 = 4 * 1024 * 1024) throws {
         self.maximumEventBytes = maximumEventBytes
-        guard Codec.abiVersion == 4, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 5, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         let status = rc_decoder_create(maximumEventBytes, &context)
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
     }
@@ -185,6 +189,8 @@ public final class BinlogDecoder {
                         guard let text = String(data: bytes(value.bytes), encoding: .utf8) else { throw DecoderError(code: 8, offset: offset, reason: "codec emitted invalid UTF8") }
                         return .text(text)
                     case 5: return .binary(bytes(value.bytes))
+                    case 6: return .decimal(String(decoding:bytes(value.bytes),as:UTF8.self))
+                    case 7: return .temporal(String(decoding:bytes(value.bytes),as:UTF8.self))
                     default: throw DecoderError(code: 8, offset: offset, reason: "unknown ABI value kind")
                     }
                 }
@@ -227,9 +233,9 @@ public final class BinlogDecoder {
                 decoded.wireColumns = try (0..<info.column_count).map { index in
                     var c = rc_column()
                     guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
-                    let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary][c.kind]
+                    let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal][c.kind]
                     return WireColumn(interpretation:kind,type:c.column_type,maximumBytes:c.maximum_bytes,nullable:c.nullable != 0,
-                        collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name))
+                        collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name),metadata:bytes(c.metadata),isUnsigned:c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2)
                 }
             }
             return decoded
@@ -254,7 +260,7 @@ public extension DecodedEvent {
                 for value in image ?? [] {
                     cost += 64
                     switch value {
-                    case .text(let s): cost += s.utf8.count
+                    case .text(let s), .decimal(let s), .temporal(let s): cost += s.utf8.count
                     case .binary(let d): cost += d.count
                     default: break
                     }

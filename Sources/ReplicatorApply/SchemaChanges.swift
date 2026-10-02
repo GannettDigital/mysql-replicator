@@ -23,7 +23,9 @@ extension ApplyTable {
     func modifying(_ column:ApplyColumn,placement:ColumnPlacement?) throws -> ApplyTable {
         guard let old=columns.firstIndex(where:{$0.name == column.name}) else {throw ApplyError("MODIFY column is absent")}
         func family(_ column:ApplyColumn) -> String {
-            column.type.hasPrefix("varchar(") ? "text" : column.type.hasPrefix("varbinary(") ? "binary" : "integer"
+            guard let type=try? DMLColumnType(column.type) else {return "unsupported"}
+            if type.integerBits != nil {return "integer"}
+            return type.interpretation.rawValue
         }
         try require(family(columns[old]) == family(column),"cross-family MODIFY is unsupported")
         var replacement=column

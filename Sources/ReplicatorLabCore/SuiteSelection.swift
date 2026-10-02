@@ -25,13 +25,13 @@ public struct SuiteSelection {
             }
         }
         try require(["both", "gtid", "file-position"].contains(positioning), "invalid positioning: " + positioning)
-        let slices = ddl ? ["all", "basic", "modify-index", "database", "ordered", "filters"] : ["all", "basic"]
+        let slices = ddl ? ["all", "basic", "modify-index", "database", "ordered", "filters"] : ["all", "basic", "matrix"]
         try require(slices.contains(slice), "unknown slice; choose " + slices.joined(separator: ", "))
         if !caseIDs.isEmpty {
-            try require(ddl && ["all", "modify-index"].contains(slice), "--case selects independent MODIFY/index fixtures; use --slice for dependent workloads")
-            let known = Set(Self.independent.map(\.id))
+            try require(ddl ? ["all", "modify-index"].contains(slice) : ["all","matrix"].contains(slice), "--case selects independent fixtures; use --slice for dependent workloads")
+            let known = ddl ? Set(Self.independent.map(\.id)) : Set(DMLCompatibilityCases.cases.map{"matrix-"+$0.id} + DMLCompatibilityCases.rejections.map{"matrix-reject-"+$0.id})
             try require(caseIDs.isSubset(of: known), "unknown case IDs: " + caseIDs.subtracting(known).sorted().joined(separator: ", "))
-            slice = "modify-index"
+            slice = ddl ? "modify-index" : "matrix"
         }
     }
     var modes: [String] { positioning == "both" ? ["file-position", "gtid"] : [positioning] }
@@ -43,9 +43,13 @@ public struct SuiteSelection {
         ModifyIndexCases.cases.map(\.test) + ModifyIndexCases.failures.map(\.test) + [ModifyIndexCases.timeout, ModifyIndexCases.resume]
     }
     public func describe(ddl: Bool) {
-        print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters" : "all, basic"))
+        print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters" : "all, basic, matrix"))
         print("Every run includes the four-transaction basic DML check used by subsequent fixtures. --positioning gtid|file-position|both (default both).")
         if ddl { for test in Self.independent { print(test.description) } }
+        else {
+            for test in DMLCompatibilityCases.cases { print("matrix-"+test.id) }
+            for test in DMLCompatibilityCases.rejections { print("matrix-reject-"+test.id) }
+        }
     }
     var fields: [String: Any] { ["slice": slice, "cases": caseIDs.sorted(), "positioning": positioning, "full_suite": slice == "all", "dependencies": ["positive"]] }
 }

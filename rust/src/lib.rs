@@ -29,6 +29,8 @@ const LIMIT: i32 = 5;
 const POISONED: i32 = 6;
 const SCHEMA: i32 = 7;
 const INTERNAL: i32 = 8;
+mod scalars;
+
 const MAX_COLUMNS: usize = 256;
 const MAX_ROWS: usize = 4096;
 const MAX_TABLES: usize = 64;
@@ -90,6 +92,8 @@ pub struct ColumnView {
     collation: u32,
     primary_key: u32,
     name: Bytes,
+    metadata: Bytes,
+    unsigned_flag: u32,
 }
 struct MapColumn {
     kind: u32,
@@ -99,6 +103,8 @@ struct MapColumn {
     collation: u32,
     primary_key: u32,
     name: Vec<u8>,
+    metadata: Vec<u8>,
+    unsigned_flag: u32,
 }
 #[repr(C)]
 pub struct ValueView {
@@ -115,6 +121,8 @@ enum Cell {
     Unsigned(u64),
     Text(Vec<u8>),
     Binary(Vec<u8>),
+    Decimal(Vec<u8>),
+    Temporal(Vec<u8>),
 }
 impl Cell {
     fn view(&self) -> ValueView {
@@ -137,6 +145,14 @@ impl Cell {
             }
             Self::Text(x) => {
                 v.kind = 4;
+                v.bytes = Bytes::new(x);
+            }
+            Self::Decimal(x) => {
+                v.kind = 6;
+                v.bytes = Bytes::new(x);
+            }
+            Self::Temporal(x) => {
+                v.kind = 7;
                 v.bytes = Bytes::new(x);
             }
             Self::Binary(x) => {
@@ -277,6 +293,13 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING | MYSQL_TYPE_BLOB => {
             kind == 4 || kind == 5
         }
+        MYSQL_TYPE_NEWDECIMAL => kind == 6,
+        MYSQL_TYPE_DATE
+        | MYSQL_TYPE_NEWDATE
+        | MYSQL_TYPE_YEAR
+        | MYSQL_TYPE_TIMESTAMP2
+        | MYSQL_TYPE_DATETIME2
+        | MYSQL_TYPE_TIME2 => kind == 7,
         _ => {
             return Err((
                 UNSUPPORTED,
@@ -299,13 +322,23 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
             MALFORMED,
             "invalid BLOB metadata",
         )?,
+        MYSQL_TYPE_NEWDECIMAL => ensure(
+            meta.len() == 2 && (1..=65).contains(&meta[0]) && meta[1] <= 30 && meta[1] <= meta[0],
+            MALFORMED,
+            "invalid DECIMAL metadata",
+        )?,
+        MYSQL_TYPE_TIMESTAMP2 | MYSQL_TYPE_DATETIME2 | MYSQL_TYPE_TIME2 => ensure(
+            meta.len() == 1 && meta[0] <= 6,
+            MALFORMED,
+            "invalid temporal precision",
+        )?,
         _ => (),
     }
     Ok(ty)
 }
-// Only row-image framing is adapted here to supply authoritative signedness.
-// Scalar decoding remains mysql_common::BinlogValue::deserialize. The upstream
-// BinlogRow API otherwise defaults missing signedness to signed. See ADR.
+// Row-image framing supplies authoritative signedness; the upstream BinlogRow
+// API otherwise defaults missing signedness to signed. Scalar decoding uses
+// mysql_common with the narrow correctness fixes in scalars.rs and below.
 fn image<'a>(
     buf: &mut ParseBuf<'a>,
     table: &'a Table,
@@ -344,8 +377,28 @@ fn image<'a>(
         let kind = table.kinds[index];
         let ty = check_column(&table.event, index, kind)?;
         let meta = table.event.get_column_metadata(index).unwrap_or(&[]);
+        if kind == 6 || kind == 7 {
+            let cell = scalars::decode(ty, meta, kind, buf)?;
+            let size = match &cell {
+                Cell::Decimal(v) | Cell::Temporal(v) => v.len(),
+                _ => unreachable!(),
+            };
+            *budget += size;
+            ensure(
+                *budget <= MAX_OUTPUT,
+                LIMIT,
+                "decoded output limit exceeded",
+            )?;
+            values.push(cell);
+            continue;
+        }
         let value = parsed(BinlogValue::deserialize((ty, meta, kind == 3, false), buf))?;
         let cell = match value {
+            // The pinned mysql_common LeI24 reader zero-extends its three bytes.
+            // Restore the sign bit before publishing a signed MEDIUMINT value.
+            BinlogValue::Value(Value::Int(v)) if kind == 2 && ty == ColumnType::MYSQL_TYPE_INT24 => {
+                Cell::Signed(((v as i32) << 8 >> 8) as i64)
+            }
             BinlogValue::Value(Value::Int(v)) if kind == 2 => Cell::Signed(v),
             BinlogValue::Value(Value::UInt(v)) if kind == 3 => Cell::Unsigned(v),
             // mysql_common emits INT24 UNSIGNED as nonnegative Value::Int.
@@ -660,34 +713,47 @@ impl Decoder {
                             .get_column_type(i)
                             .map_err(|_| (UNSUPPORTED, "unknown column type"))?
                             .ok_or((MALFORMED, "missing column type"))?;
-                        let numeric = matches!(ty as u8, 1 | 2 | 3 | 8 | 9);
+                        let numeric = ty.is_numeric_type();
+                        let scalar_kind = match ty as u8 {
+                            246 => 6,
+                            10 | 14 | 13 | 17 | 18 | 19 => 7,
+                            _ => {
+                                if numeric {
+                                    2
+                                } else {
+                                    5
+                                }
+                            }
+                        };
                         // This default only validates wire metadata; it is NOT stored
                         // as history or used to interpret row values.
-                        check_column(
-                            &table,
-                            i,
-                            kinds.get(i).copied().unwrap_or(if numeric { 2 } else { 5 }),
-                        )?;
-                        let mut kind = 0;
+                        check_column(&table, i, kinds.get(i).copied().unwrap_or(scalar_kind))?;
+                        let mut kind = if scalar_kind >= 6 { scalar_kind } else { 0 };
+                        let mut unsigned_flag = 0;
                         let mut collation = 0;
                         if numeric {
                             if let Some(unsigned) = signedness.next() {
-                                kind = if unsigned { 3 } else { 2 };
+                                unsigned_flag = if unsigned { 2 } else { 1 };
+                                if scalar_kind < 6 {
+                                    kind = if unsigned { 3 } else { 2 };
+                                }
                                 if let Some(kind) = kinds.get(i) {
                                     ensure(
-                                        unsigned == (*kind == 3),
+                                        *kind >= 6 || unsigned == (*kind == 3),
                                         SCHEMA,
                                         "history conflicts with wire signedness",
                                     )?;
                                 }
                             }
-                        } else if let Some(charset) = charsets.next() {
-                            collation = parsed(charset)? as u32;
-                            kind = match collation {
-                                63 => 5,
-                                45 | 46 | 224 | 255 => 4,
-                                _ => 0,
-                            };
+                        } else if scalar_kind != 7 {
+                            if let Some(charset) = charsets.next() {
+                                collation = parsed(charset)? as u32;
+                                kind = match collation {
+                                    63 => 5,
+                                    45 | 46 | 224 | 255 => 4,
+                                    _ => 0,
+                                };
+                            }
                         }
                         let meta = table.get_column_metadata(i).unwrap_or(&[]);
                         let maximum_bytes = if ty as u8 == 15 && meta.len() == 2 {
@@ -703,6 +769,8 @@ impl Decoder {
                             collation,
                             primary_key: keys.contains(&(i as u64)) as u32,
                             name: names.get(i).cloned().unwrap_or_default(),
+                            metadata: meta.to_vec(),
+                            unsigned_flag,
                         });
                     }
                     drop(signedness);
@@ -822,7 +890,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    4
+    5
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
@@ -999,6 +1067,8 @@ pub unsafe extern "C" fn rc_result_column(
             collation: c.collation,
             primary_key: c.primary_key,
             name: Bytes::new(&c.name),
+            metadata: Bytes::new(&c.metadata),
+            unsigned_flag: c.unsigned_flag,
         };
     }
     0

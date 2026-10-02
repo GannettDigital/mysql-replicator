@@ -22,8 +22,8 @@ at once. These caches live in the Docker builder's managed storage, not in the
 host macOS `.build`; no host-path setup is needed. Pruning Docker build caches
 makes the next build cold again.
 
-The Make build touches each Swift executable's entry point after building its
-Rust archive. That forces a cheap recompile/relink while preserving dependency
+The Make build removes each Swift executable after building its Rust archive.
+That forces a relink while preserving dependency
 objects, so SwiftPM cannot silently reuse an executable linked to an older Rust
 archive. Source and lockfile changes are still checked by the build tools.
 `--skip-build` skips that verification entirely; use it only for an image already

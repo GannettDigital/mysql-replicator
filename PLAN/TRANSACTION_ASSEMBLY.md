@@ -51,12 +51,13 @@ Default per-group limits are 4096 events, 16 MiB of wire data and 32 MiB of reta
 
 ## ABI and JSON versioning
 
-The current interface is **ABI 4**, adding an owned table-map column accessor.
-Event JSON schema **3** adds `wireColumns`; transaction JSON remains version 1.
-Swift requires ABI 4; rebuild Rust and Swift together. The transaction-control
+The current interface is **ABI 5**, extending the table-map accessor with raw type
+metadata and signedness, and adding exact decimal/temporal value kinds. Event JSON
+schema **4** adds those fields and value kinds; transaction JSON remains version 1.
+Swift requires ABI 5; rebuild Rust and Swift together. The transaction-control
 change originally introduced ABI 3. `rc_event` adds event size, raw payload flags, source query error code and owned query-status bytes. Row flags are preserved without upstream's unknown-bit truncation. XID payloads must be exactly eight bytes; named GTIDs require a positive valid sequence, anonymous identities require zero SID/sequence. All C views are copied before freeing the Rust result.
 
-The transaction-control increment introduced event JSON schema version **2**, adding `eventSize`, typed `control` and row-only `rowFlags`. Existing row/detail fields remain available. Named GTIDs expose a canonical SID, exact sequence and flags; anonymous markers are distinct. Query SQL and status-variable `Data` fields encode as base64, with source error code and database. Query status variables are preserved, not semantically interpreted. XID and rotation positions are exact strings. Previous-GTID sets remain opaque bytes. Transaction JSON has its own schema version **1** and now embeds version-3 events.
+The transaction-control increment introduced event JSON schema version **2**, adding `eventSize`, typed `control` and row-only `rowFlags`. Existing row/detail fields remain available. Named GTIDs expose a canonical SID, exact sequence and flags; anonymous markers are distinct. Query SQL and status-variable `Data` fields encode as base64, with source error code and database. Query status variables are preserved, not semantically interpreted. XID and rotation positions are exact strings. Previous-GTID sets remain opaque bytes. Transaction JSON has its own schema version **1** and now embeds version-4 events.
 
 ## Evidence and limits
 

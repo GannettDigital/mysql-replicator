@@ -162,6 +162,63 @@ public enum DMLQualification {
             try require(state("positive","SELECT target_uuid FROM state") == targetUUID,"discovered target UUID was not persisted")
             try cases.pass("positive")
             report["positive"] = positive
+            if !ddl && selection.includes("matrix") {
+                let session = "USE poc; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'; "
+                for test in DMLCompatibilityCases.cases where selection.selects("matrix-"+test.id) {
+                    let table="poc.matrix_"+test.id
+                    for service in h.services {
+                        let engine=service == "source" ? "InnoDB" : "MyISAM"
+                        _ = try h.sql(service,session+"SET SESSION sql_log_bin=0; CREATE TABLE \(table)(\(test.definition)) ENGINE=\(engine) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; "+test.setup)
+                    }
+                    let columns=try h.sql("source","SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_\(test.id)' ORDER BY ORDINAL_POSITION").split(separator:"\n")
+                    let expressions=columns.map { "IFNULL(HEX(CAST(`"+$0.replacingOccurrences(of:"`",with:"``")+"` AS BINARY)),'<NULL>')" }.joined(separator:",")
+                    let observation="SELECT \(expressions) FROM \(table) ORDER BY id"
+                    for (ordinal,phase) in test.phases.enumerated() {
+                        let label="matrix-\(test.id)-\(ordinal+1)"
+                        let before=try h.boundary("source")
+                        _ = try h.sql("source",session+phase.sql)
+                        let end=try h.boundary("source")
+                        let delta=try h.sql("source","SELECT GTID_SUBTRACT('\(end.gtids)','\(before.gtids)')")
+                        let count=try DMLCompatibilityCases.transactionCount(delta)
+                        let fixture=QualificationCase(label,"MySQL 5.7 DML compatibility: "+test.id+" phase "+String(ordinal+1))
+                        if count > 0 {
+                            let client=try start(fixture,configuration(label,at:before,count:count))
+                            _ = try finish(client,label,success:true)
+                            try require(state(label,"SELECT lifecycle||'|'||transactions_applied||'|'||applied_position FROM state") == "STOPPED|\(count)|\(end.position)","matrix checkpoint differs")
+                        } else { try cases.begin(fixture) }
+                        _ = try h.sql("native","START REPLICA")
+                        try ModifyIndexCases.waitNative(h,end)
+                        _ = try h.sql("native","STOP REPLICA")
+                        var observations:[String:String]=[:]
+                        for service in h.services {
+                            try require(h.sql(service,session+phase.check) == "1","\(label) independent expectation failed on \(service)")
+                            observations[service]=try h.sql(service,session+observation,preserveWhitespace:true)
+                        }
+                        try require(observations["source"] == observations["native"] && observations["source"] == observations["target57"],"\(label) exact row bytes differ")
+                        try writeJSON(["sql":phase.sql,"check":phase.check,"observations":observations,"source_before":before.json,"source_after":end.json,"gtid_count":count],to:output.appendingPathComponent(label+"-comparison.json"))
+                        try cases.pass(label)
+                    }
+                }
+                for test in DMLCompatibilityCases.rejections where selection.selects("matrix-reject-"+test.id) {
+                    let label="matrix-reject-"+test.id
+                    let table="poc.matrix_reject_"+test.id.replacingOccurrences(of:"-",with:"_")
+                    for service in ["source","target57"] {
+                        let definition=service == "source" ? test.sourceDefinition : test.targetDefinition
+                        let engine=service == "source" ? "InnoDB" : "MyISAM"
+                        _ = try h.sql(service,session+"SET SESSION sql_log_bin=0; CREATE TABLE \(table)(\(definition)) ENGINE=\(engine)")
+                    }
+                    let before=try h.boundary("source")
+                    _ = try h.sql("source",session+"INSERT INTO \(table) VALUES"+test.values)
+                    let client=try start(QualificationCase(label,"Reject incompatible or unqualified MySQL 5.7 target schema: "+test.id),configuration(label,at:before,count:1))
+                    _ = try finish(client,label,success:false,reason:test.reason)
+                    try require(h.sql("target57","SELECT COUNT(*) FROM \(table)") == "0" && state(label,"SELECT transactions_applied FROM state") == "0","rejected matrix case changed target or checkpoint")
+                    try cases.pass(label)
+                }
+                // Negative fixtures are intentionally absent on the native reference.
+                let after=try h.boundary("source")
+                _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(after.file)',SOURCE_LOG_POS=\(after.position)")
+                report["dml_matrix"]="passed"
+            }
             if ddl {
                 if selection.includes("filters") {
                     let test = DDLCoverageCases.wildcardFilter

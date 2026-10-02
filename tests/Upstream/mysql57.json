@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "url": "https://github.com/mysql/mysql-server",
+  "tag": "mysql-5.7.44",
+  "revision": "f7680e98b6bbe3500399fbad465d08a6b75d7a5c",
+  "local_path": ".upstream/mysql-server-5.7",
+  "purpose": "MySQL 5.7 target compatibility reference; not an assertion of complete type support or executed MTR coverage",
+  "files": [
+    {
+      "path": "sql/field.cc",
+      "sha256": "5deb30ad473c8d540f503f4ce8f48fbd8aa3f72a3ba9a304f51e5815770ca421"
+    },
+    {
+      "path": "sql/log_event.cc",
+      "sha256": "f372de90a2af669f6b5fee35ad686f053449cb6fa778117f589c7931fff75110"
+    },
+    {
+      "path": "sql-common/my_time.c",
+      "sha256": "0c7345c997fd6c8a0063d7d09ab0d6c849951fe17a123a99d4a24c35d6351a4b"
+    },
+    {
+      "path": "include/mysql_time.h",
+      "sha256": "174b405cc0011aa98898b66d1d6d7dae65a5dc7b2742f6956af846d2e8efab04"
+    },
+    {
+      "path": "mysql-test/t/insert.test",
+      "sha256": "3025749f876b8aadd4119a3b76255fb7ae2af58c33b18d22f85865fbfd07fa50"
+    },
+    {
+      "path": "mysql-test/t/insert_update.test",
+      "sha256": "a939034d68738ee36677a213bb8964e5936b6b7a69a5cf2dae1fbcb0fa1e4cc0"
+    },
+    {
+      "path": "mysql-test/t/insert_select.test",
+      "sha256": "b767653710367b75b6b4fcceee26d0f738aa4a6aa66befded08d4cffa39a60f7"
+    },
+    {
+      "path": "mysql-test/t/replace.test",
+      "sha256": "32fd3f5767dd38a6dc3af0ce0e4744d2e25c1fb1da98745405ace7443b171d92"
+    },
+    {
+      "path": "mysql-test/t/type_uint.test",
+      "sha256": "39db1f937636e9ce7fc53dfd5750de0a299594253a22818f94f37d9dcae2fe22"
+    },
+    {
+      "path": "mysql-test/t/type_newdecimal.test",
+      "sha256": "734a37519cad6a54b5eac0fefd126f14d12955a59feb5eb67f760319c3f08d30"
+    },
+    {
+      "path": "mysql-test/t/type_temporal_fractional.test",
+      "sha256": "de4757a602ca795da066cd943be3b65ee36f0b2a812ad560718f129eb76c3d50"
+    },
+    {
+      "path": "mysql-test/t/type_year.test",
+      "sha256": "c54df7f4da46cb4c1b9728679278853bfb1e372289a8afd1855e472945c71cf8"
+    },
+    {
+      "path": "mysql-test/t/type_blob.test",
+      "sha256": "67b68dc2e2634677d27f2b50e4ba9b0b0adab7dd125933ae58791fab6d5fd60c"
+    },
+    {
+      "path": "mysql-test/t/auto_increment.test",
+      "sha256": "127120602418dbabb37afbf5ff83dc62ec5fd4fb460cdc463d30e61d5da239b4"
+    }
+  ]
+}

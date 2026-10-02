@@ -9,7 +9,7 @@ fixtures. General DDL/type/charset coverage and recovery are still open. The ear
 prototype validation below remains tied to that checkpoint.
 
 Reviewed DML checkpoint: `d188f58`. The current follow-up implements automatic
-schema discovery (version 2 configuration), ABI 4/event JSON 3 metadata and bounded
+schema discovery (version 2 configuration), ABI 5/event JSON 4 metadata and bounded
 SQLite history. Cleanup removes covered completed records older than the minimum
 age only when storage approaches its limit. See [the implementation and storage
 policy](SCHEMA_DISCOVERY_AND_RETENTION.md). That work is committed as `e8c0e77`.
@@ -38,18 +38,22 @@ Scope update: dump/load management and target provisioning are entirely external
 Next storage/runtime design is updated: raw events live in local binlog/relay files; SQLite holds state, GTID/file-position checkpoints, recovery intents, diagnostics and counter snapshots. SQLite exposes persisted status/statistics to external readers; a stable read contract and broader snapshots remain planned. The applier implements a bounded framed relay, state/intents and pressure-triggered SQLite history cleanup; relay rotation and reopening/recovery remain planned; see [relay state and status](RELAY_STATE_AND_STATUS.md).
 
 Current DML increment: `run --config FILE --initialize` applies one-table,
-one-statement committed groups to MySQL 5.7 MyISAM with exact before/after checks,
+one-statement committed groups to MySQL 5.7 MyISAM with exact before-image checks,
 bound SQL, native-channel exclusion and `GTID_NEXT=AUTOMATIC`. Raw events go to a
 bounded local framed relay; SQLite records baseline, intents, whole-group applied
 GTID/position, counts and diagnostics. Initialization refuses existing state;
-there is no automatic retry or reopen. All 70 Swift tests pass normally and with
-Swift/C/CLI AddressSanitizer. The Ubuntu three-server DML suite passes both start
-modes, exact-value and partial-failure cases. See [scope and validation](DML_APPLY.md).
+clean STOPPED state supports explicit resume, while uncertain writes have no
+automatic retry or crash recovery. Prepared-table types now include smaller
+integers, exact DECIMAL, temporal types, TEXT/BLOB and source-generated defaults
+and IDs, within the MySQL 5.7 feature ceiling. DDL retains its separate grammar.
+The current unit run passes 197 Swift and 5 Rust tests; this run does not extend
+the earlier sanitizer qualification. See [scope and validation](DML_APPLY.md)
+for the DML compatibility matrix and integration evidence.
 
 Implemented and validated:
 
 - Independent repository, approved architecture and accepted native-reference contract.
-- Rust/Swift C ABI version 4 with bounded offline event/row decoding, owned typed results, CRC/framing/resource checks, poisoned contexts and schema-history validation. `mysql-replicator inspect` emits NDJSON from a local file; capability bit 0 is set. See [offline inspection](OFFLINE_INSPECT.md) for the limited supported subset.
+- Rust/Swift C ABI version 5 with bounded offline event/row decoding, owned typed results, CRC/framing/resource checks, poisoned contexts and schema-history validation. `mysql-replicator inspect` emits NDJSON from a local file; capability bit 0 is set. See [offline inspection](OFFLINE_INSPECT.md) for the limited supported subset.
 - SwiftPM `replicator-lab` replaces the Python harness. Make coordinates Cargo and SwiftPM; no Python or shell workflow script is required.
 - Four-case native suite: positive autocommit and expected error 1837 under both positional and GTID auto-positioning. Exact rows, receiver/applier status, boundaries, GTID coverage, engines, rollback behavior and cleanup are asserted.
 - Physical binlog capture plus checksum-verified mysqlbinlog reference decoding and ordered logical operation comparison for the fixed fixture schema. Source/native effects and unchanged future Swift target are checked independently of final rows.

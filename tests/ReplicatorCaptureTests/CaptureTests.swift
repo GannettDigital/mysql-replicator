@@ -111,6 +111,26 @@ final class CaptureTests: XCTestCase {
         }
         XCTAssertNil(try channel.readInbound(as:MySQLPacket.self))
     }
+    func testPartialSocketReadAllowsAnotherReadWithoutACompletePacket() throws {
+        let queue=PacketQueue(byteLimit:100)
+        let channel=EmbeddedChannel(handlers:[DumpReadCompletion(queue:queue),ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes:100))])
+        defer { _ = try? channel.finish() }
+        let worker=DispatchQueue(label:"partial-dump-read-test")
+        var requests=0
+        let received=try queue.next(timeout:2,cancellation:.init(),requestRead:{
+            requests += 1
+            if requests == 1 { worker.async { queue.readComplete() } }
+            else { worker.async { try! queue.push(Data([42])) } }
+        })
+        XCTAssertEqual(requests,2)
+        XCTAssertEqual(received,Data([42]))
+        // The notification handler also forwards fragmented bytes unchanged.
+        var wire=packet(Data([1,2,3]),sequence:1)
+        _ = try channel.writeInbound(wire.readSlice(length:5)!)
+        XCTAssertNil(try channel.readInbound(as:MySQLPacket.self))
+        _ = try channel.writeInbound(wire)
+        XCTAssertEqual(Array(try XCTUnwrap(channel.readInbound(as:MySQLPacket.self)).payload.readableBytesView),[1,2,3])
+    }
     func testMultipartPacketRequiresFinalShortOrEmptyPacket() throws {
         let n = DumpPacketDecoder.fragmentBytes
         let channel = EmbeddedChannel(handler:ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes:n+2)))

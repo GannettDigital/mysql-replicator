@@ -17,7 +17,11 @@ struct DMLSQLPlan {
         let columns = names.joined(separator:",")
         let sqlName = try table.sqlName
         let predicate = try quoted(table.primaryKey) + "=?"
-        select = "SELECT \(columns) FROM \(sqlName) WHERE \(predicate)"
+        let reads = try zip(table.columns,names).map { column,name in
+            let type = try DMLColumnType(column.type)
+            return [.decimal,.temporal].contains(type.interpretation) ? "CAST(\(name) AS CHAR) AS \(name)" : name
+        }.joined(separator:",")
+        select = "SELECT \(reads) FROM \(sqlName) WHERE \(predicate)"
         insert = "INSERT INTO \(sqlName) (\(columns)) VALUES (\(Array(repeating:"?",count:names.count).joined(separator:",")))"
         update = "UPDATE \(sqlName) SET \(names.map { $0 + "=?" }.joined(separator:",")) WHERE \(predicate)"
         delete = "DELETE FROM \(sqlName) WHERE \(predicate)"

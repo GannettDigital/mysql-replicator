@@ -2,6 +2,12 @@
   "schema_version": 1,
   "repositories": [
     {
+      "id": "mysql57",
+      "url": "https://github.com/mysql/mysql-server",
+      "revision": "f7680e98b6bbe3500399fbad465d08a6b75d7a5c",
+      "local_path": ".upstream/mysql-server-5.7"
+    },
+    {
       "id": "mysql84",
       "url": "https://github.com/mysql/mysql-server",
       "revision": "0896fcd61dec11a0904166911a0126f59daaa1bf",

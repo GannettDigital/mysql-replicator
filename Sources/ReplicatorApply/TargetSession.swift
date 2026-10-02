@@ -72,11 +72,13 @@ final class TargetSession {
         try nativeExclusion()
         _ = try query("SET @@SESSION.GTID_NEXT = 'AUTOMATIC'")
         _ = try query("SET SESSION autocommit=1")
+        _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
 
     }
     func resetDMLSession() throws {
+        _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
     }
@@ -97,10 +99,10 @@ final class TargetSession {
         }
         try require(wire.count == table.columns.count,"source/target column count differs")
         for (w,c) in zip(wire,table.columns) {
-            let type: UInt32 = c.type.hasPrefix("bigint") ? 8 : c.type.hasPrefix("int") ? 3 : 15
-            try require(w.type == type && w.interpretation == c.interpretation && w.nullable == c.nullable,"source/target type, signedness, encoding or nullability differs")
-            if type == 15 {
-                try require(w.maximumBytes == UInt32(c.width! * (c.interpretation == .utf8 ? 4 : 1)),"source/target column width differs")
+            let type = try DMLColumnType(c.type)
+            try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
+            if c.interpretation == .utf8 {
+                try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
             }
             if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
         }
@@ -109,13 +111,16 @@ final class TargetSession {
     }
     func readSchema(database: String,name: String) throws -> ApplyTable {
         let binds = [MySQLData(string:database),MySQLData(string:name)]
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
         try require(keys.count == 1,"discovered target requires a single primary-key column")
         var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
             guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
             var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
-            column.characterSet=row.column("CHARACTER_SET_NAME")?.string;return column
+            column.characterSet=row.column("CHARACTER_SET_NAME")?.string
+            column.defaultValue=row.column("COLUMN_DEFAULT")?.string
+            column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
+            return column
         },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
         let encoding=try tableEncoding(TableName(database:database,table:name))
         table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
@@ -124,7 +129,7 @@ final class TargetSession {
         return table
     }
     private func normalizeType(_ type: String) -> String {
-        type.replacingOccurrences(of:#"^(int|bigint)\([0-9]+\)"#,with:"$1",options:.regularExpression)
+        type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
     func readIndexes(database:String,name:String,primaryKey:String) throws -> [ApplyIndex] {
         let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
@@ -167,7 +172,7 @@ final class TargetSession {
         let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == "" && r.column("COLUMN_DEFAULT")?.buffer == nil,"target schema differs from historical manifest")
+            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue,"target schema differs from historical manifest")
         }
         try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKey) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
@@ -217,7 +222,7 @@ final class TargetSession {
     func bind(_ value: DecodedValue) throws -> MySQLData {
         switch value {
         case .null: return .null
-        case .text(let s): return .init(string:s)
+        case .text(let s), .decimal(let s), .temporal(let s): return .init(string:s)
         case .binary(let data): return .init(type:.blob,buffer:ByteBuffer(bytes:data))
         case .signed(let n):
             var b = ByteBufferAllocator().buffer(capacity:8); b.writeInteger(n,endianness:.little)
@@ -244,6 +249,10 @@ final class TargetSession {
             case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
             case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)
             case .binary: return .binary(Data(value.buffer!.readableBytesView))
+            case .decimal:
+                guard let s=value.string else {throw ApplyError("invalid target decimal")}; let result=DecodedValue.decimal(s); try c.validate(result); return result
+            case .temporal:
+                guard let s=value.string else {throw ApplyError("invalid target temporal value")}; return .temporal(try DMLColumnType(c.type).canonicalTemporal(s))
             }
         }
     }

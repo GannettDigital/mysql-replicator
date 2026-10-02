@@ -19,20 +19,19 @@ public struct ApplyColumn: Codable, Equatable {
     public let nullable: Bool
     public let collation: String?
     public var characterSet: String? = nil
-    var interpretation: ColumnInterpretation {
-        if type.hasPrefix("varchar(") { return .utf8 }
-        if type.hasPrefix("varbinary(") { return .binary }
-        return type.hasSuffix(" unsigned") ? .unsigned : .signed
-    }
+    public var defaultValue: String? = nil
+    public var extra: String? = nil
+    var interpretation: ColumnInterpretation { (try? DMLColumnType(type).interpretation) ?? .signed }
     var width: Int? {
-        guard let a = type.firstIndex(of:"("), let b = type.firstIndex(of:")") else { return nil }
-        return Int(type[type.index(after:a)..<b])
+        guard let parsed=try? DMLColumnType(type) else { return nil }
+        if parsed.base == "varchar" || parsed.base == "varbinary" { return parsed.arguments[0] }
+        return parsed.maximumBytes
     }
     func validate() throws {
         _ = try quoted(name)
-        let integer = ["int","int unsigned","bigint","bigint unsigned"].contains(type)
-        let string = type.range(of:#"^(varchar|varbinary)\([1-9][0-9]*\)$"#,options:.regularExpression) != nil
-        try require(integer || (string && (1...16383).contains(width ?? 0)), "unsupported declared column type")
+        let parsed = try DMLColumnType(type)
+        try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
+        if extra == "auto_increment" { try require(parsed.integerBits != nil && !nullable,"invalid auto-increment column") }
         if interpretation == .utf8 {
             try require(characterSet == nil || characterSet == "utf8mb4", "unsupported discovered character set; no charset conversion is performed")
             try require(["utf8mb4_bin","utf8mb4_unicode_ci","utf8mb4_general_ci"].contains(collation ?? ""), "unsupported varchar collation")
@@ -40,17 +39,7 @@ public struct ApplyColumn: Codable, Equatable {
     }
     func validate(_ value: DecodedValue) throws {
         if value == .null { try require(nullable, "NULL in nonnullable column"); return }
-        switch (interpretation,value) {
-        case (.signed,.signed(let n)):
-            try require(type == "bigint" || (Int64(Int32.min)...Int64(Int32.max)).contains(n), "signed value out of range")
-        case (.unsigned,.unsigned(let n)):
-            try require(type == "bigint unsigned" || n <= UInt64(UInt32.max), "unsigned value out of range")
-        case (.utf8,.text(let text)):
-            try require(text.unicodeScalars.count <= (width ?? 0), "varchar value exceeds declared length")
-        case (.binary,.binary(let bytes)):
-            try require(bytes.count <= (width ?? 0), "binary value exceeds declared length")
-        default: throw ApplyError("missing or incompatible full row value")
-        }
+        try DMLColumnType(type).validate(value)
     }
 }
 public struct ApplyIndexPart: Codable, Equatable {
@@ -89,6 +78,7 @@ public struct ApplyTable: Codable, Equatable {
                 if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
             }
         }
+        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{$0.name == primaryKey},"auto-increment requires the primary key")
         guard let key = columns.first(where:{$0.name == primaryKey}) else { throw ApplyError("missing primary key column") }
         try require(!key.nullable && [.signed,.unsigned].contains(key.interpretation),"initial applier requires one nonnullable integer primary key")
     }
@@ -184,7 +174,8 @@ enum DMLPlan {
         try require(group.outcome == .committed && group.gtid != nil && !group.anonymous,"unsupported transaction identity/outcome")
         let allRows = group.events.filter { $0.rowFlags != nil }
         let rowEvents = allRows.filter { !$0.replicationFiltered }
-        if !allRows.isEmpty && rowEvents.isEmpty { return [] }
+        // A committed empty GTID has no target effects but still advances coverage.
+        if allRows.isEmpty || rowEvents.isEmpty { return [] }
         try require(allRows.filter { ($0.rowFlags ?? 0) & 1 != 0 }.count == 1,"only single-statement source groups are supported")
         var result: [Mutation] = []
         for event in rowEvents {

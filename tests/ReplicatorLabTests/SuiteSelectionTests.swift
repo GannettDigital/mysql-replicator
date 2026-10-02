@@ -2,6 +2,14 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class SuiteSelectionTests: XCTestCase {
+    func testDMLMatrixSelectsWholeDependentPhasesAndRejectsUnknownCases() throws {
+        let selected=try SuiteSelection(arguments:["--case","matrix-decimal","--positioning","gtid"],ddl:false)
+        XCTAssertEqual(selected.slice,"matrix")
+        XCTAssertTrue(selected.selects("matrix-decimal")); XCTAssertFalse(selected.selects("matrix-values"))
+        XCTAssertThrowsError(try SuiteSelection(arguments:["--case","matrix-unknown"],ddl:false))
+        XCTAssertEqual(try DMLCompatibilityCases.transactionCount("a:1-3:5,b:9-10"),6)
+        XCTAssertEqual(try DMLCompatibilityCases.transactionCount(""),0)
+    }
     func testDefaultsKeepBothFullProfilesAndInvalidSelectionsFailBeforeDocker() throws {
         let all = try SuiteSelection(arguments: [], ddl: true)
         XCTAssertEqual(all.modes, ["file-position", "gtid"])

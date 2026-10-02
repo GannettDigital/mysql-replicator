@@ -5,11 +5,37 @@ import ReplicatorLabCore
 import CReplicatorCodec
 
 final class DecoderTests: XCTestCase, BinlogFixtures {
+    func testYearAndDecimalConsumeNumericSignednessWithoutConsumingCharsetMetadata() throws {
+        let fde=frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
+        let at=UInt64(fde.count+4)
+        // YEAR, DECIMAL(10,2), TINYINT, VARCHAR(10); signedness 110, charset utf8mb4_bin.
+        let body=Data([123,0,0,0,0,0,0,0,3])+Data("poc".utf8)+Data([0,1,120,0,4,13,246,1,15,4,10,2,40,0,15,1,1,192,2,1,46])
+        let decoder=try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+        let map=try decoder.decode(event(19,body,at:at),at:at)
+        XCTAssertEqual(map.wireColumns?.map(\.interpretation),[.temporal,.decimal,.signed,.utf8])
+        XCTAssertEqual(map.wireColumns?.map(\.isUnsigned),[true,true,false,nil])
+        XCTAssertEqual(map.wireColumns?.last?.collation,46)
+        XCTAssertEqual(map.wireColumns?[1].metadata,Data([10,2]))
+    }
+    func testSignedMediumintSignExtensionFromIndependentWireBytes() throws {
+        let fde=frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
+        let at=UInt64(fde.count+4)
+        let body=Data([123,0,0,0,0,0,0,0,3])+Data("poc".utf8)+Data([0,1,120,0,1,9,0,0])
+        let map=event(19,body,at:at)
+        let decoder=try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+        let identity=try decoder.decode(map,at:at)
+        try decoder.reset(); _ = try decoder.decode(fde,at:4)
+        _ = try decoder.decode(map,at:at,schema:TableSchema(offset:at,eventSHA256:identity.sha256,database:"poc",table:"x",tableID:"123",columns:[.signed]))
+        // Header then three non-NULL values: minimum, -1, maximum.
+        let rows=Data([123,0,0,0,0,0,1,0,2,0,1,1,0,0,0,128,0,255,255,255,0,255,255,127])
+        let result=try decoder.decode(event(30,rows,at:at+UInt64(map.count)),at:at+UInt64(map.count))
+        XCTAssertEqual(result.rows.compactMap{$0.after?.first},[.signed(-8388608),.signed(-1),.signed(8388607)])
+    }
     func testFilteredUnsupportedColumnMapIsOpaqueButStillChecksRowsAndClearsMaps() throws {
         let fde = frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
         let at = UInt64(fde.count+4)
-        // One NEWDECIMAL(10,2), nullable; independent wire fixture.
-        let body = Data([123,0,0,0,0,0,0,0,3])+Data("tmp".utf8)+Data([0,1,120,0,1,246,2,10,2,1])
+        // One JSON column, nullable; still outside the qualified decoder subset.
+        let body = Data([123,0,0,0,0,0,0,0,3])+Data("tmp".utf8)+Data([0,1,120,0,1,245,1,4,1])
         let map = event(19,body,at:at)
         let strict = try BinlogDecoder(); _ = try strict.decode(fde,at:4)
         failure(4) { _ = try strict.decode(map,at:at) }

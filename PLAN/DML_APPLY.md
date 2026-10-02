@@ -120,14 +120,39 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
 - ASCII SQL identifiers (quoted, never interpolated unescaped); a single full,
   nonnullable integer primary key. Named ordinary/unique BTREE secondary indexes
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
-  row identity still uses the primary key. No triggers, generated/auto-increment
-  columns or partitioned targets. Discovery obtains ordered column names, types, nullability and text collation
+  row identity still uses the primary key. No triggers, generated
+  columns or partitioned targets. Prepared targets may use an integer primary-key
+  AUTO_INCREMENT, literal defaults and temporal CURRENT_TIMESTAMP defaults/on-update
+  attributes. All row values, including generated IDs and source-evaluated temporal
+  values, are supplied explicitly; the target does not generate replacement values.
+  Discovery obtains ordered column names, types, defaults, EXTRA attributes, nullability and text collation
   from the target and validates source wire metadata against that description.
   Validated schema is cached for the session and invalidated around source DDL.
-- Declared types: signed/unsigned INT and BIGINT, VARCHAR(n) with utf8mb4_bin,
-  utf8mb4_unicode_ci or utf8mb4_general_ci, and VARBINARY(n); lengths 1–16383.
+- Prepared-table DML types: signed/unsigned TINYINT, SMALLINT, MEDIUMINT, INT and
+  BIGINT; DECIMAL(p,s) including unsigned (precision 1–65, scale 0–30 and no greater
+  than precision); DATE, YEAR, TIME/DATETIME/TIMESTAMP with fractional precision
+  0–6; VARCHAR(n), VARBINARY(n), and TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
+  Text requires utf8mb4_bin, utf8mb4_unicode_ci or utf8mb4_general_ci, matching
+  source and target. A source 8.4-only collation fails rather than being substituted.
+  VARCHAR/VARBINARY lengths remain 1–16383. The decoder's 1 MiB individual-value
+  and event/group resource limits apply even to MEDIUM/LONG types.
   NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
   Scope/type/shape validation covers the whole source group before writing.
+
+MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
+`.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
+This is not complete 5.7 support: FLOAT/DOUBLE, BIT, CHAR/BINARY, ENUM/SET, JSON,
+spatial types, composite/noninteger primary keys and multi-statement transactions
+remain outside this increment. Broader type support here is for preprovisioned
+tables; the source DDL grammar is unchanged and can still reject definitions that
+would be accepted by prepared-table DML.
+
+The DML matrix (`make dml-suite ARGS="--slice matrix"`) checks multi-value INSERT,
+multi-row UPDATE/DELETE, upsert, REPLACE, IGNORE, INSERT…SELECT, single-target
+joined UPDATE/DELETE and LOAD DATA as row events, within the supported group and
+schema restrictions. No-op SQL that emits no GTID requires no apply; a valid empty
+committed GTID advances coverage without target writes. Select a complete fixture
+with `--case matrix-decimal`, for example; `--list` shows the available fixtures.
 
 Target preflight checks every native channel and performance_schema worker/receiver
 state, failing on missing privileges or indeterminate results. This initial version
@@ -167,6 +192,11 @@ The local account must allow non-TLS socket authentication, and the deployment
 must protect access to the socket directory. Source transport remains verified TLS.
 
 Each apply session sets `GTID_NEXT=AUTOMATIC`, autocommit, strict SQL mode and utf8mb4.
+It also sets `time_zone='+00:00'`, including after DDL session resets. DECIMAL
+stays exact decimal text throughout decoding, binding and before-image checks.
+Temporal values use canonical text with exact microseconds; target reads cast
+them to CHAR to avoid driver calendar/floating-point conversion. TIMESTAMP follows
+the 5.7 range, including its special zero value; unsupported values fail explicitly.
 The source GTID remains local replication identity, never a target SQL GTID. There
 is no target transaction pretending to make MyISAM rows atomic.
 
@@ -262,6 +292,40 @@ and MySQL/host power-loss durability remain outside this guarantee.
 
 ## Recorded validation
 
+### MySQL 5.7 DML expansion (2026-10-02)
+
+- 197 Swift unit tests and 5 Rust tests pass. The DDL catalog structure check and
+  the pinned MySQL 5.7.44 revision plus all 14 reference-file hashes pass.
+  This increment does not add sanitizer or crash-recovery qualification.
+- File-position/MINIMAL-metadata run
+  `20261002T193141Z-823f6aa8-position-autocommit-myisam` passes all 41 cases:
+  the basic workload, 32 compatibility phases and 8 expected rejections.
+  Each positive phase compares exact source/native/target row bytes plus an
+  independent SQL expectation; rejected cases assert zero target rows and zero
+  applied-transaction count.
+- GTID/FULL-metadata run
+  `20261002T194538Z-086c30df-auto-autocommit-myisam` passes all 56 cases: the same
+  matrix plus the existing DML, schema-cache, drift, partial-write and process-kill
+  regressions. Both DML runs completed cleanup. An earlier GTID attempt
+  (`20261002T193712Z-1bebd549-auto-autocommit-myisam`) passed the matrix but failed
+  the native-channel fixture during target connection setup, before preflight SQL,
+  with `Connection closed`. The fresh rerun passed without code changes or retries
+  inside the application; the failed attempt's evidence remains preserved.
+- The GTID MODIFY/index regression slice
+  `20261002T193107Z-0a458a05-auto-autocommit-myisam` passes all 27 cases, including
+  clean resume, index drift, DDL timeout and following DML.
+- These runs use Ubuntu 16.04 amd64 runtime image
+  `sha256:e00ab026c9858ec55c3aa4912a23bf1c4588cb837b68a20bc18f8ff1592cc272`,
+  MySQL 8.4.8 source/native servers and MySQL 5.7.42 target. The separately pinned
+  5.7.44 checkout is a source reference, not the tested container version.
+- Regression vectors cover signed MEDIUMINT sign extension, YEAR zero and
+  negative fractional TIME decoding. The large-value fixture covers fragmented
+  capture reads with 70 KB TEXT/BLOB values. Packaging now removes executable
+  outputs before linking, because touching an unchanged Swift entry point did
+  not reliably relink a changed Rust archive.
+
+### Original serial-applier qualification
+
 - 70 Swift tests pass normally and with Swift/C/CLI AddressSanitizer. Rust itself
   is not instrumented by that run.
 - Ubuntu 16.04 amd64 Docker runs
@@ -274,7 +338,7 @@ and MySQL/host power-loss durability remain outside this guarantee.
   `sha256:56fdba74089ae501f45549a952fd6b55e57f4d9c77bff0fa1a37cb6e9b0f0fc1`.
   The host reference mysqlbinlog is 8.4.6; fixture servers are 8.4.8 and 5.7.42.
 - Persistent BuildKit Swift/Cargo caches reduced the observed warm build step to
-  about 18 seconds. Swift entry points are recompiled to ensure fresh linkage to
+  about 18 seconds. Swift executables are removed before linking to ensure fresh linkage to
   external Rust archives. See [packaging caches](../packaging/README.md).
 
 The harness reads copied SQLite snapshots only after the writer exits. During

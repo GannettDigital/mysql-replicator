@@ -16,12 +16,13 @@ build:
 	clang $(PACKAGING_CFLAGS) -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c /opt/sqlite/sqlite3.c -o /out/native/sqlite3.o
 	llvm-ar rcs /out/native/libsqlite3.a /out/native/sqlite3.o
 	cargo build --manifest-path packaging/rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) -j 2
-	# SwiftPM cannot track external Rust archives; force just the entry point to relink.
-	touch packaging/Probe/Sources/PackagingProbe/main.swift
+	# SwiftPM does not track external Rust archives. A timestamp-only source
+	# touch can be skipped by content-based incremental builds; remove the output.
+	rm -f packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe
 	swift build --package-path packaging/Probe --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native -Xlinker -L/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release
 	cp packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe /out/packaging-probe
 	cargo build --manifest-path rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) --target-dir packaging/rust/target -j 2
-	touch Sources/ReplicatorCLI/main.swift
+	rm -f .build/x86_64-swift-linux-musl/release/mysql-replicator
 	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
 	cp .build/x86_64-swift-linux-musl/release/mysql-replicator /out/mysql-replicator
 	file /out/packaging-probe /out/mysql-replicator > /out/evidence/elf.txt
@@ -77,4 +78,3 @@ deb:
 	sha256sum /out/deb/mysql-replicator_$(VERSION)_amd64.deb > /out/deb/mysql-replicator_$(VERSION)_amd64.deb.sha256
 	dpkg-deb --info /out/deb/mysql-replicator_$(VERSION)_amd64.deb
 	dpkg-deb --contents /out/deb/mysql-replicator_$(VERSION)_amd64.deb
-

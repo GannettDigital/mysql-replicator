@@ -6,7 +6,8 @@ import MySQLNIO
 import ReplicatorCodec
 
 /// Socket auto-read is disabled during dumping. Only an empty consumer queue
-/// requests a read; a bounded socket read may deliver multiple small packets.
+/// requests a read; a bounded socket read may deliver multiple small packets or
+/// only part of one large packet. Read completion permits the next bounded read.
 /// No decoding, SQL wait, stdout write or blocking lock wait runs on NIO loops.
 final class PacketQueue: @unchecked Sendable {
     private let condition = NSCondition()
@@ -17,6 +18,11 @@ final class PacketQueue: @unchecked Sendable {
     private var readRequested = false
     let byteLimit: Int
     init(byteLimit: Int) { self.byteLimit = byteLimit }
+    func readComplete() {
+        condition.lock(); defer { condition.unlock() }
+        readRequested = false
+        condition.signal()
+    }
     func push(_ data: Data) throws {
         condition.lock(); defer { condition.unlock() }
         guard completion == nil else { return }
@@ -55,6 +61,18 @@ final class PacketQueue: @unchecked Sendable {
             if !readRequested { readRequested = true; requestRead() }
             _ = condition.wait(until: Date().addingTimeInterval(0.1))
         }
+    }
+}
+
+/// A read can finish before framing yields a packet. Without this notification,
+/// manual reads stall on packets larger than the socket/TLS read chunk.
+final class DumpReadCompletion: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+    let queue: PacketQueue
+    init(queue: PacketQueue) { self.queue = queue }
+    func channelReadComplete(context: ChannelHandlerContext) {
+        queue.readComplete()
+        context.fireChannelReadComplete()
     }
 }
 
@@ -154,6 +172,7 @@ public enum LiveInspection {
             let old = try channel.pipeline.handler(type: ByteToMessageHandler<MySQLPacketDecoder>.self).wait()
             let strict = ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes: maximum + 1), maximumBufferSize: maximum + 65536)
             try channel.pipeline.addHandler(strict, position: .before(old)).wait()
+            try channel.pipeline.addHandler(DumpReadCompletion(queue:queue), position: .before(strict)).wait()
             try channel.pipeline.removeHandler(old).wait()
             let command = DumpCommand(request: try start.packet(serverID: config.serverID, nonBlocking: config.nonBlocking ?? false), receive: queue.push)
             let finished = connection.send(command, logger: connection.logger)

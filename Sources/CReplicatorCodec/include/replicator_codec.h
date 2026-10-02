@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 4. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 5. Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -28,17 +28,19 @@ typedef struct {
     rc_bytes name, database, table, detail, raw, error, fingerprint;
 } rc_event;
 /* Value kinds: 0 absent, 1 SQL NULL, 2 signed integer, 3 unsigned integer,
- * 4 UTF-8 text, 5 binary. Text/binary are pointer+length, including embedded NUL.
- * Column interpretations supplied on TABLE_MAP only: 2/3/4/5, in column order.
+ * 4 UTF-8 text, 5 binary, 6 exact decimal text, 7 canonical temporal text. Text/binary are pointer+length, including embedded NUL.
+ * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7, in column order.
  * History is mandatory for rows, even if optional wire metadata happens to exist.
  */
 typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; rc_bytes bytes; } rc_value;
 /* TABLE_MAP metadata. kind=0 means missing/unsupported wire interpretation;
  * collation=0 means unavailable/not applicable; name may be empty in MINIMAL.
- * maximum_bytes is populated for VARCHAR/VARBINARY (wire type 15). */
-typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name; } rc_column;
+ * maximum_bytes is populated for VARCHAR/VARBINARY (wire type 15).
+ * metadata contains the raw per-column TABLE_MAP metadata bytes.
+ * unsigned_flag: 0 unavailable/not applicable, 1 signed, 2 unsigned. */
+typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name, metadata; uint32_t unsigned_flag; } rc_column;
 int32_t rc_result_column(const rc_result *result, uint32_t column, rc_column *out);
-/* Additive ABI 4 query-context API. present uses MySQL Q_* status tag bits.
+/* Query-context API. present uses MySQL Q_* status tag bits.
  * No pointers in output. Unknown, truncated or duplicate status fields fail. */
 typedef struct {
     uint64_t sql_mode;
@@ -53,7 +55,7 @@ int32_t rc_decoder_reset(rc_decoder *decoder);
 void rc_decoder_free(rc_decoder *decoder);
 int32_t rc_decoder_feed(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
     uint64_t offset, const uint32_t *column_kinds, uint32_t column_count, rc_result **out);
-/* Additive ABI 4 filter API: filter_table=1 only on TABLE_MAP with no history.
+/* Filter API: filter_table=1 only on TABLE_MAP with no history.
  * Such maps and their row events carry a filtered marker. CRC/framing/map IDs
  * remain checked; excluded row values are intentionally not interpreted. */
 int32_t rc_decoder_feed_filtered(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,

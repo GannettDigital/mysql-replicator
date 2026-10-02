@@ -66,6 +66,14 @@ final class ApplyTests: XCTestCase {
         let opaque = CompleteTransaction(start:g[0].start,end:g[0].end,gtid:g[0].gtid,anonymous:false,outcome:.statement,events:g[0].events)
         XCTAssertThrowsError(try DMLPlan.make(opaque,tables:tables()))
     }
+    func testEmptyCommittedGroupHasNoMutationsButRollbackIsNotACommit() throws {
+        let g=try groups()[0]
+        let empty=g.events.filter{$0.rowFlags == nil && $0.eventType != 19}
+        let committed=CompleteTransaction(start:g.start,end:g.end,gtid:g.gtid,anonymous:false,outcome:.committed,events:empty)
+        XCTAssertTrue(try DMLPlan.make(committed,tables:[]).isEmpty)
+        let rollback=CompleteTransaction(start:g.start,end:g.end,gtid:g.gtid,anonymous:false,outcome:.rolledBack,events:empty)
+        XCTAssertThrowsError(try DMLPlan.make(rollback,tables:[]))
+    }
     func testFullImageTypesNullAndLengthAreStrict() throws {
         let c = tables()[0].columns
         XCTAssertThrowsError(try c[0].validate(.signed(Int64(Int32.max)+1)))
