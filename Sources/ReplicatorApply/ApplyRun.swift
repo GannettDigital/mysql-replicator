@@ -12,6 +12,7 @@ public struct ApplySummary: Encodable {
     public let appliedGTIDSet: String
     public let pendingGTID: String?
     public let stateDirectory: String
+    public let stageTimings: [String: StageTimings.Sample]?
     public let automaticRecovery = false
 }
 public struct ApplyRunError: Error, CustomStringConvertible {
@@ -33,15 +34,17 @@ public enum ApplyRun {
                            initialize: Bool = false, cancellation: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
         try configuration.validate()
         let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
-        let state = try StateStore(configuration:configuration,initialize:initialize)
+        let timings = StageTimings()
+        let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
         func summary(_ lifecycle: String) -> ApplySummary {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
-                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path)
+                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:lifecycle == "RUNNING" ? nil : timings.snapshot)
         }
         let capture = try state.captureConfiguration(configuration.source)
         var started = false
         do {
-            let target = try TargetSession(configuration:configuration,password:targetPassword)
+            let target = try TargetSession(configuration:configuration,password:targetPassword,timings:timings)
+            defer { try? target.unlock() }
             try target.preflight()
             if !filter.patterns.isEmpty {
                 try require(try target.query("SELECT @@lower_case_table_names AS n").0.first?.column("n")?.string == "0", "wildcard filtering requires lower_case_table_names=0")
@@ -53,9 +56,13 @@ public enum ApplyRun {
             try state.running(); started = true
             do {
                 _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:cancellation,
-                    emitEvent:state.append,emitTransaction: { group in
+                    emitEvent: { record in
+                        try target.releaseExpiredLock()
+                        try timings.measure("relay.append") { try state.append(record) }
+                    },emitTransaction: { group in
                         try state.begin(group)
                         if group.outcome == .statement {
+                            try target.unlock()
                             try require(group.events.count == 2, "invalid standalone DDL group")
                             guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
                             if try filter.ignores(query) {
@@ -73,20 +80,19 @@ public enum ApplyRun {
                         }
                         let mutations = try DMLPlan.make(group,tables:Array(target.discovered.values))
                         if mutations.isEmpty {
+                            try target.unlock()
                             try state.complete(group,rowCount:0,filtered:true)
                             try emitProgress(summary("RUNNING")); return
                         }
                         try target.lock(mutations[0].table)
-                        var locked = true
-                        defer { if locked { try? target.unlock() } }
                         for (index,mutation) in mutations.enumerated() {
                             try require(!cancellation.isCancelled,"apply cancelled")
                             try state.intent(index,mutation)
                             try target.apply(mutation)
-                            try state.rowDone(index)
+                            if index != mutations.count-1 { try state.rowDone(index) }
                         }
-                        try state.complete(group,rowCount:mutations.count)
-                        try target.unlock(); locked = false
+                        try state.complete(group,rowCount:mutations.count,finalRow:mutations.count-1)
+                        try target.completedDMLGroup()
                         try emitProgress(summary("RUNNING"))
                     },resolveSchema: { event, coordinate in
                         let table = try target.discover(event)
@@ -95,10 +101,11 @@ public enum ApplyRun {
                             guard let kind = column.interpretation else {throw ApplyError("missing wire interpretation")}
                             return kind
                         }
-                    },allowDDL:true,ignoreTable: filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                    },timings:timings,onIdle:{ try target.unlock() },allowDDL:true,ignoreTable: filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
             } catch {
                 guard canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
             }
+            try target.unlock()
             try state.stopped()
             return summary("STOPPED")
         } catch {

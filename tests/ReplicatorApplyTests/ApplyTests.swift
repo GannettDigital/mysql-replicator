@@ -178,9 +178,16 @@ final class ApplyTests: XCTestCase {
         defer {sqlite3_close(reader)}
         XCTAssertEqual(sqlite3_exec(reader,"BEGIN; SELECT * FROM state",nil,nil,nil),SQLITE_OK)
         try store.running()
-        XCTAssertThrowsError(try store.ensureCapacity()) { error in
-            XCTAssertTrue(String(describing:error).contains("WAL checkpoint blocked"))
+        XCTAssertNoThrow(try store.ensureCapacity(), "a small WAL must not require immediate truncation")
+        var blocked = false
+        for _ in 0..<1000 {
+            do { try store.running() }
+            catch {
+                XCTAssertTrue(String(describing:error).contains("WAL checkpoint blocked"))
+                blocked = true; break
+            }
         }
+        XCTAssertTrue(blocked, "a pinned reader must stop writes at the WAL threshold")
         XCTAssertLessThan(store.sqliteBytes,c.policy.maximumSQLiteBytes)
         XCTAssertEqual(sqlite3_exec(reader,"ROLLBACK",nil,nil,nil),SQLITE_OK)
         XCTAssertNoThrow(try store.ensureCapacity())

@@ -61,6 +61,8 @@ public final class MySQLConnection: MySQLDatabase, Sendable {
         }
     }
     
+    let preparedStatements = MySQLPreparedStatementCache()
+
     public let channel: any Channel
     
     public var eventLoop: any EventLoop {

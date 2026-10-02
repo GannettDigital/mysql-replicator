@@ -357,6 +357,8 @@ extension TargetSession {
         try result.validate();return result
     }
     func prepareDDL(_ statement: DDLStatement,query source:QueryControl) throws -> PreparedDDL {
+        try unlock()
+        try invalidateStatements()
         try writerExclusion()
         let context=try QuerySessionContext(query:source)
         // The accepted grammar has only ASCII tokens/identifiers, no text literals,
@@ -469,6 +471,8 @@ extension TargetSession {
         return PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),database:PreparedDatabaseDDL(name:definition.name,before:before,after:after,serverCollation:serverCollation))
     }
     func applyDDL(_ plan: PreparedDDL) throws {
+        try unlock()
+        try invalidateStatements()
         try writerExclusion()
         if let database=plan.database {
             guard let previous=try scalar("SELECT @@SESSION.collation_server AS v") else {throw ApplyError("missing target server collation")}
@@ -477,6 +481,7 @@ extension TargetSession {
             if database.serverCollation != nil {_ = try query("SET SESSION collation_server=?",[.init(string:previous)])}
             try resetDMLSession()
             try require(try databaseEncoding(database.name)==database.after,"DDL target database defaults mismatch")
+            try invalidateStatements()
             return
         }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
@@ -488,5 +493,6 @@ extension TargetSession {
         if plan.after?.identity != name.identity {try require(!(try tableExists(name)),"DDL source table remains after rename/drop")}
         discovered.removeValue(forKey:name.identity)
         if let after=plan.after {discovered[after.identity]=after}
+        try invalidateStatements()
     }
 }

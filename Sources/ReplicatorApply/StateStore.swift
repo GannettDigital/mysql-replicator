@@ -40,12 +40,14 @@ final class StateStore {
     private let freeDisk: (URL) throws -> Int64
     let directory: URL
     let maximumBytes: UInt64
+    let timings: StageTimings
     let policy: StoragePolicy
     // Reserve enough of the total SQLite budget for a transaction touching every
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
-    init(configuration c: ApplyConfiguration, initialize: Bool = true, skipGTIDs: GTIDSet? = nil, now: @escaping () -> Date = Date.init,
+    init(configuration c: ApplyConfiguration, initialize: Bool = true, timings: StageTimings = .init(), skipGTIDs: GTIDSet? = nil, now: @escaping () -> Date = Date.init,
          freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace) throws {
+        self.timings = timings
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
@@ -81,10 +83,10 @@ final class StateStore {
             try execute("PRAGMA max_page_count=\(databaseLimit/4096)")
             try execute("PRAGMA journal_mode=WAL")
             try execute("PRAGMA synchronous=FULL")
-            try execute("PRAGMA journal_size_limit=0")
+            try execute("PRAGMA journal_size_limit=1048576")
             try execute("PRAGMA cache_spill=OFF")
             try execute("PRAGMA temp_store=MEMORY")
-            try execute("PRAGMA wal_autocheckpoint=64")
+            try execute("PRAGMA wal_autocheckpoint=0")
             try execute("PRAGMA user_version=5")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
@@ -211,10 +213,10 @@ final class StateStore {
         try execute("PRAGMA max_page_count=\(databaseLimit/4096)")
         try require(try query("PRAGMA journal_mode=WAL").first?.first == "wal","saved SQLite must use WAL")
         try execute("PRAGMA synchronous=FULL")
-        try execute("PRAGMA journal_size_limit=0")
+        try execute("PRAGMA journal_size_limit=1048576")
         try execute("PRAGMA cache_spill=OFF")
         try execute("PRAGMA temp_store=MEMORY")
-        try execute("PRAGMA wal_autocheckpoint=64")
+        try execute("PRAGMA wal_autocheckpoint=0")
         if version == 4 {
             // Old runtimes accepted only the primary index. Validate every
             // retained schema before changing the version; never bless unknown data.
@@ -275,7 +277,7 @@ final class StateStore {
         try require(try freeDisk(directory) >= policy.minimumFreeDiskBytes + extra,"storage pressure: free-disk reserve reached; replication stopped")
     }
     private func checkpoint() throws {
-        let rc = sqlite3_wal_checkpoint_v2(db,nil,SQLITE_CHECKPOINT_TRUNCATE,nil,nil)
+        let rc = timings.measure("sqlite.checkpoint") { sqlite3_wal_checkpoint_v2(db,nil,SQLITE_CHECKPOINT_TRUNCATE,nil,nil) }
         try require(rc == SQLITE_OK,"storage pressure: SQLite WAL checkpoint blocked (reader or I/O error)")
     }
     private func query(_ sql: String,_ args: [String?] = []) throws -> [[String?]] {
@@ -299,13 +301,13 @@ final class StateStore {
     private func number(_ sql: String) throws -> Int64 {Int64(try query(sql).first?.first.flatMap{$0} ?? "") ?? 0}
     private func execute(_ sql: String,_ args: [String?] = []) throws {
         if ready && !inTransaction && !maintenance {try ensureCapacity()}
-        _ = try query(sql,args)
+        _ = try timings.measure(inTransaction || sql.hasPrefix("PRAGMA ") ? "sqlite.statement" : "sqlite.commit") { try query(sql,args) }
     }
     private func atomic(_ body: () throws -> Void) throws {
         if ready && !maintenance {try ensureCapacity()}
         _ = try query("BEGIN IMMEDIATE"); inTransaction=true
         defer {inTransaction=false}
-        do {try body(); _ = try query("COMMIT")}
+        do {try body(); _ = try timings.measure("sqlite.commit") { try query("COMMIT") }}
         catch {_ = try? query("ROLLBACK"); throw error}
     }
     var sqliteBytes: Int64 {
@@ -315,8 +317,19 @@ final class StateStore {
     }
     /// Pressure-triggered, age-gated reclamation. Retention is a minimum age:
     /// young completed records are never evicted merely to keep running.
+    var walBytes: Int64 {
+        ((try? FileManager.default.attributesOfItem(atPath:directory.appendingPathComponent("state.sqlite-wal").path)[.size] as? NSNumber)?.int64Value) ?? 0
+    }
+    // Keep room for a worst-case next transaction, WAL headers and diagnostics.
+    var transactionReserve: Int64 { databaseLimit + databaseLimit/4096*24 + 131072 }
+    var checkpointThreshold: Int64 { min(1024*1024, databaseLimit/4) }
     func ensureCapacity() throws {
-        try checkpoint()
+        try timings.measure("sqlite.capacity") { try checkCapacity() }
+    }
+    private func checkCapacity() throws {
+        if walBytes >= checkpointThreshold || sqliteBytes >= policy.maximumSQLiteBytes-transactionReserve {
+            try checkpoint()
+        }
         try checkDisk(extra:policy.maximumSQLiteBytes)
         var used = try (number("PRAGMA page_count") - number("PRAGMA freelist_count"))*4096
         let threshold = databaseLimit * Int64(policy.pruneAtPercent)/100
@@ -350,7 +363,7 @@ final class StateStore {
         }
         // Leave a margin for the next write/diagnostic. max_page_count is the
         // independent hard limit if a single oversized operation exceeds it.
-        try require(used < databaseLimit * 95/100 && sqliteBytes < policy.maximumSQLiteBytes - databaseLimit,"storage pressure: SQLite budget reached; no eligible old history can free enough space")
+        try require(used < databaseLimit * 95/100 && sqliteBytes < policy.maximumSQLiteBytes - transactionReserve,"storage pressure: SQLite budget reached; no eligible old history can free enough space")
     }
     private func snapshot() throws {
         if ready && !maintenance {try ensureCapacity()}
@@ -404,7 +417,7 @@ final class StateStore {
         guard let identity = group.gtid else {throw ApplyError("group lacks GTID")}
         try require(pendingGTID == nil && !completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"duplicate or excluded applied GTID")
         let id=identity.sid+":"+identity.sequence
-        try relay!.synchronize()
+        try timings.measure("relay.sync") { try relay!.synchronize() }
         try atomic {
             try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+1),id,group.start.file,String(group.start.position),String(group.end.position),String(groupStart),String(relayLength),timestamp()])
             try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[id,String(relayLength),timestamp()])
@@ -416,13 +429,15 @@ final class StateStore {
         try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[pendingGTID,String(ordinal),mutation.eventOffset,String(mutation.rowIndex),String(schema.0),timestamp()])
     }
     func rowDone(_ ordinal: Int) throws {try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",[timestamp(),pendingGTID,String(ordinal)])}
-    func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false) throws {
+    func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false, finalRow: Int? = nil) throws {
         guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.sid+":"+identity.sequence,(rowCount>0 && ddl==nil && !filtered) || (rowCount==0 && ddl != nil && !filtered) || (filtered && rowCount==0 && ddl==nil) else {throw ApplyError("completion without matching pending group")}
         if filtered {
             try require(try query("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[pendingGTID]) == [["0"]] && query("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[pendingGTID]) == [["0"]],"filtered completion has target write intents")
         }
-        let done = try query("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='DONE'",[pendingGTID])[0][0]
-        try require(Int(done ?? "") == rowCount,"cannot complete group with unfinished row intents")
+        if let finalRow {
+            try require(rowCount > 0 && ddl == nil && !filtered && finalRow == rowCount-1,
+                        "invalid final row completion")
+        }
         if ddl != nil {
             try require(group.outcome == .statement && (try number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'")) == 1,"DDL completion without a pending intent")
         }
@@ -430,6 +445,15 @@ final class StateStore {
         var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
         let time=timestamp()
         try atomic {
+            // Only the last, already verified row is folded into this commit.
+            // Its previously committed PENDING intent survives any failure here.
+            if let finalRow {
+                try require(try query("SELECT status FROM row_intents WHERE gtid=? AND ordinal=?",[pendingGTID,String(finalRow)]) == [["PENDING"]], "final row has no pending intent")
+                try rowDone(finalRow)
+            }
+            let done = try query("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='DONE'",[pendingGTID])[0][0]
+            try require(Int(done ?? "") == rowCount,"cannot complete group with unfinished row intents")
+
             if let ddl {
                 if ddl.preservesSchema {newSchemaID=ddl.statement.name.flatMap{schemas[$0.identity]?.0}}
                 else {
@@ -454,13 +478,13 @@ final class StateStore {
     }
     func stopped() throws {
         try require(pendingGTID == nil,"cannot stop cleanly with a pending apply group")
-        try relay!.synchronize()
+        try timings.measure("relay.sync") { try relay!.synchronize() }
         if sequence != snapshotSequence {try snapshot()}
         try execute("UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
         try checkpoint()
     }
     func block(_ reason: String) throws {
-        try relay!.synchronize()
+        try timings.measure("relay.sync") { try relay!.synchronize() }
         // Best effort within existing page/WAL caps. Do not attempt retention or
         // a new large snapshot while recording a storage-pressure diagnostic.
         maintenance=true; defer {maintenance=false}

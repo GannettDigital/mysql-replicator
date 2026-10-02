@@ -8,8 +8,11 @@ import ReplicatorCodec
 final class TargetSession {
     let group: MultiThreadedEventLoopGroup
     let connection: MySQLConnection
+    let timings: StageTimings
+    var lockEpoch = TableLockEpoch()
     let config: ApplyConfiguration
-    init(configuration: ApplyConfiguration,password: String) throws {
+    init(configuration: ApplyConfiguration,password: String, timings: StageTimings = .init()) throws {
+        self.timings = timings
         config = configuration
         group = MultiThreadedEventLoopGroup(numberOfThreads:1)
         do {
@@ -28,7 +31,9 @@ final class TargetSession {
         defer { timer.cancel() }
         var affected: UInt64?
         do {
-            let rows = try textProtocol ? connection.simpleQuery(sql).wait() : connection.query(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
+            let rows = try timings.measure("target.sql") {
+                try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
+            }
             return (rows,affected)
         } catch let e as MySQLError {
             switch e {
@@ -42,11 +47,12 @@ final class TargetSession {
     func scalar(_ sql: String, _ binds: [MySQLData] = []) throws -> String? { try query(sql,binds).0.first?.column("v")?.string }
     func nativeExclusion() throws {
         try require(try query("SHOW SLAVE STATUS").0.isEmpty,"target has a native replication channel; stopped-channel adoption is not implemented")
-        for table in ["replication_connection_status","replication_applier_status","replication_applier_status_by_worker","replication_applier_status_by_coordinator"] {
-            let rows = try query("SELECT SERVICE_STATE FROM performance_schema." + table).0
-            try require(rows.allSatisfy { $0.column("SERVICE_STATE")?.string == "OFF" },"native replication worker/receiver is active or indeterminate")
-        }
+        let sql = ["replication_connection_status","replication_applier_status","replication_applier_status_by_worker","replication_applier_status_by_coordinator"]
+            .map { "SELECT SERVICE_STATE FROM performance_schema." + $0 }.joined(separator:" UNION ALL ")
+        let rows = try query(sql).0
+        try require(rows.allSatisfy { $0.column("SERVICE_STATE")?.string == "OFF" },"native replication worker/receiver is active or indeterminate")
     }
+
     private(set) var targetUUID: String?
     func preflight() throws {
         let r = try query("SELECT VERSION() AS version,@@server_uuid AS uuid,@@GLOBAL.gtid_mode AS mode,@@GLOBAL.enforce_gtid_consistency AS consistency,@@GLOBAL.log_bin AS log_bin,@@SESSION.sql_log_bin AS session_binlog,@@SESSION.binlog_format AS format,@@SESSION.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum").0.first
@@ -75,6 +81,7 @@ final class TargetSession {
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
         guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
         let identity = database + "\0" + name
+        if let held = lockEpoch.table, held.identity != identity { try unlock() }
         let table: ApplyTable
         if let cached = discovered[identity] { table = cached }
         else {
@@ -138,6 +145,9 @@ final class TargetSession {
         return indexes.sorted{$0.name.lowercased() < $1.name.lowercased()}
     }
     func verifySchema(_ t: ApplyTable) throws {
+        try timings.measure("target.schema") { try verifyLockedSchema(t) }
+    }
+    private func verifyLockedSchema(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         try require(try scalar("SELECT ENGINE AS v FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds) == "MyISAM","target table is absent or not MyISAM")
         let encoding=try tableEncoding(TableName(database:t.database,table:t.table))
@@ -148,24 +158,50 @@ final class TargetSession {
             try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == "" && r.column("COLUMN_DEFAULT")?.buffer == nil,"target schema differs from historical manifest")
         }
         try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKey) == t.secondaryIndexes,"target indexes differ from historical schema")
+        try verifyTriggerVisibility(t)
+        try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
+        try require(try query("SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL",binds).0.isEmpty,"partitioned target tables are unsupported")
+    }
+    private func verifyTriggerVisibility(_ t: ApplyTable) throws {
+        let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         // Without TRIGGER privilege an empty information_schema result can hide
         // triggers. Require visibility explicitly before asserting their absence.
         let grantee = "CONCAT(CHAR(39),REPLACE(CURRENT_USER(),'@',CONCAT(CHAR(39),'@',CHAR(39))),CHAR(39))"
         let grants = try scalar("SELECT (EXISTS(SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='TRIGGER') OR EXISTS(SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='TRIGGER' AND TABLE_SCHEMA=?) OR EXISTS(SELECT 1 FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='TRIGGER' AND TABLE_SCHEMA=? AND TABLE_NAME=?)) AS v",[binds[0],binds[0],binds[1]])
         try require(grants == "1","TRIGGER visibility privilege required for target schema validation")
-        try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
-        try require(try query("SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL",binds).0.isEmpty,"partitioned target tables are unsupported")
+    }
+    func invalidateStatements() throws {
+        try timings.measure("target.statement_invalidation") { try connection.clearPreparedStatementCache().wait() }
     }
     func writerExclusion() throws {
         try nativeExclusion()
         try require(try scalar("SELECT IS_USED_LOCK('mysql-replicator-writer')=CONNECTION_ID() AS v") == "1","writer ownership lost")
     }
     func lock(_ table: ApplyTable) throws {
-        try writerExclusion()
-        _ = try query("LOCK TABLES \(table.sqlName) WRITE",textProtocol:true)
-        try verifySchema(table)
+        try writerExclusion() // ownership and channels are never cached
+        if lockEpoch.canReuse(table, at:ProcessInfo.processInfo.systemUptime) {
+            // Grants can change while the table remains locked.
+            try verifyTriggerVisibility(table)
+            return
+        }
+        try unlock()
+        _ = try timings.measure("target.lock") { try query("LOCK TABLES \(table.sqlName) WRITE",textProtocol:true) }
+        lockEpoch.acquired(table, at:ProcessInfo.processInfo.systemUptime)
+        do { try verifySchema(table) }
+        catch { try? unlock(); throw error }
     }
-    func unlock() throws { _ = try query("UNLOCK TABLES",textProtocol:true) }
+    func releaseExpiredLock() throws {
+        if lockEpoch.expired(at:ProcessInfo.processInfo.systemUptime) { try unlock() }
+    }
+    func completedDMLGroup() throws {
+        lockEpoch.completedGroup()
+        try releaseExpiredLock()
+    }
+    func unlock() throws {
+        guard lockEpoch.table != nil else { return }
+        _ = try timings.measure("target.unlock") { try query("UNLOCK TABLES",textProtocol:true) }
+        lockEpoch.released()
+    }
     func bind(_ value: DecodedValue) throws -> MySQLData {
         switch value {
         case .null: return .null
@@ -197,6 +233,9 @@ final class TargetSession {
         }
     }
     func apply(_ m: Mutation) throws {
+        try timings.measure("target.row") { try applyRow(m) }
+    }
+    private func applyRow(_ m: Mutation) throws {
         let t = m.table, row = m.row, keyIndex = t.keyIndex
         let oldKey = (row.before ?? row.after!)[keyIndex]
         let current = try read(t,key:oldKey)

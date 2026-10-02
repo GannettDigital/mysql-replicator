@@ -14,6 +14,7 @@ public struct LiveRecord: Encodable {
 /// Decoder input offsets remain contiguous over the bytes actually delivered;
 /// source offsets are retained separately and restored on decoded observations.
 final class StreamProcessor {
+    let timings: StageTimings
     let config: CaptureConfiguration
     let excluded: GTIDSet
     var completeGTIDs: GTIDSet
@@ -41,7 +42,8 @@ final class StreamProcessor {
          emitEvent: @escaping (LiveRecord) throws -> Void,
          emitTransaction: @escaping (CompleteTransaction) throws -> Void,
          resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
-         allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws {
+         timings: StageTimings = .init(), allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws {
+        self.timings = timings
         self.ignoreTable = ignoreTable
         self.allowDDL=allowDDL
         self.resolveSchema = resolveSchema
@@ -112,7 +114,7 @@ final class StreamProcessor {
         if type == 15 {
             guard let start = announced else { throw CaptureError("format event without rotation announcement") }
             let fresh = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024)
-            let event = try fresh.decode(frame, at: 4, includeRaw: includeRaw)
+            let event = try timings.measure("capture.decode") { try fresh.decode(frame, at: 4, includeRaw: includeRaw) }
             let fullFile = start.position == 4
             try check(fullFile ? UInt64(next) == UInt64(frame.count)+4 : next == 0, "unexpected dump format-event position")
             let begin = BinlogCoordinate(file: start.file, position: fullFile ? UInt64(next) : start.position)
@@ -151,16 +153,16 @@ final class StreamProcessor {
             // (or explicit legacy debug history). Never query the source's
             // current information_schema to interpret historical events.
             let probe = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024)
-            _ = try probe.decode(format!, at: 4)
+            _ = try timings.measure("capture.decode") { try probe.decode(format!, at: 4) }
             // Identity probe accepts column types outside the applier subset.
             // Included maps are decoded again with the normal strict checks.
-            var identity = try probe.decode(frame, at: UInt64(format!.count)+4, filterTable: true)
+            var identity = try timings.measure("capture.decode") { try probe.decode(frame, at: UInt64(format!.count)+4, filterTable: true) }
             guard let db = identity.database, let name = identity.table, let id = identity.tableID else {throw CaptureError("missing table identity")}
             filterTable = ignoreTable?(db, name) ?? false
             if !filterTable {
             try probe.reset()
-            _ = try probe.decode(format!, at: 4)
-            identity = try probe.decode(frame, at: UInt64(format!.count)+4)
+            _ = try timings.measure("capture.decode") { try probe.decode(format!, at: 4) }
+            identity = try timings.measure("capture.decode") { try probe.decode(frame, at: UInt64(format!.count)+4) }
             let columns: [ColumnInterpretation]
             if config.version == 2 {
                 if let resolveSchema { columns = try resolveSchema(identity.atSourcePosition(offset),current) }
@@ -178,7 +180,7 @@ final class StreamProcessor {
             schema = TableSchema(offset:decoderOffset,eventSHA256:identity.sha256,database:db,table:name,tableID:id,columns:columns)
             }
         }
-        let event = try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset)
+        let event = try timings.measure("capture.decode") { try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset) }
         if case .query(let query) = event.control {
             try check(allowDDL || [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql),
                       "live schema window stops at DDL or non-control SQL")
@@ -192,7 +194,7 @@ final class StreamProcessor {
             }
         }
         if case .anonymousGTID = event.control { throw CaptureError("anonymous transaction from GTID-ON source") }
-        let complete = try assembler.consume(event, file: current.file)
+        let complete = try timings.measure("capture.assemble") { try assembler.consume(event, file: current.file) }
         decoderOffset += UInt64(frame.count); cursor = BinlogCoordinate(file: current.file, position: UInt64(next)); eventCount += 1
         try emitEvent(LiveRecord(kind: "event", file: current.file, observedPosition: String(next), event: event, rawBase64: nil))
         if let complete {

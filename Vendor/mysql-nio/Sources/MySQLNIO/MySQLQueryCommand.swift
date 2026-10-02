@@ -38,8 +38,67 @@ extension MySQLDatabase {
     }
 }
 
-private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
+// Connection-owned and accessed only by commands on its event loop. At capacity,
+// new SQL uses the ordinary prepare/execute/close path; it cannot grow unbounded.
+final class MySQLPreparedStatementCache: @unchecked Sendable {
+    struct Entry { let id: UInt32; let parameters: Int }
+    var entries: [String: Entry] = [:]
+    let capacity = 128
+}
+
+extension MySQLConnection {
+    /// Reuse server statements without retrying errors or changing binary values.
+    public func cachedQuery(_ sql: String, _ binds: [MySQLData] = [],
+                            onMetadata: @escaping (MySQLQueryMetadata) throws -> Void = { _ in }) -> EventLoopFuture<[MySQLRow]> {
+        nonisolated(unsafe) var rows: [MySQLRow] = []
+        let command = MySQLQueryCommand(sql: sql, binds: binds, onRow: { rows.append($0) },
+            onMetadata: onMetadata, logger: logger, cache: preparedStatements)
+        return send(command, logger: logger).map { rows }
+    }
+
+    /// A barrier: callers must await this before DDL or changing session semantics.
+    public func clearPreparedStatementCache() -> EventLoopFuture<Void> {
+        let barrier = MySQLStatementCacheBarrier(cache: preparedStatements)
+        return send(barrier, logger: logger).flatMap {
+            barrier.ids.reduce(self.eventLoop.makeSucceededFuture(())) { future, id in
+                future.flatMap { self.send(MySQLCloseStatementCommand(id: id), logger: self.logger) }
+            }
+        }
+    }
+}
+
+// Activate only after earlier queued queries have finished publishing entries.
+final class MySQLStatementCacheBarrier: MySQLCommand, @unchecked Sendable {
+    let cache: MySQLPreparedStatementCache
+    var ids: [UInt32] = []
+    init(cache: MySQLPreparedStatementCache) { self.cache = cache }
+    func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        ids = cache.entries.values.map { $0.id }
+        cache.entries.removeAll()
+        return .init(done: true)
+    }
+    func handle(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        throw MySQLError.protocolError
+    }
+}
+
+private final class MySQLCloseStatementCommand: MySQLCommand, @unchecked Sendable {
+    let id: UInt32
+    init(id: UInt32) { self.id = id }
+    func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        var packet = MySQLPacket()
+        MySQLProtocol.COM_STMT_CLOSE(statementID: id).encode(into: &packet)
+        return .init(response: [packet], done: true, resetSequence: true)
+    }
+    func handle(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        throw MySQLError.protocolError // COM_STMT_CLOSE has no response.
+    }
+}
+
+final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
     let sql: String
+    let cache: MySQLPreparedStatementCache?
+    var parameterCount = 0
     
     enum State {
         case ready
@@ -70,8 +129,10 @@ private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // th
         binds: [MySQLData],
         onRow: @escaping (MySQLRow) throws -> (),
         onMetadata: @escaping (MySQLQueryMetadata) throws -> (),
-        logger: Logger
+        logger: Logger,
+        cache: MySQLPreparedStatementCache? = nil
     ) {
+        self.cache = cache
         self.state = .ready
         self.sql = sql
         self.binds = binds
@@ -87,6 +148,7 @@ private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // th
         self.logger.trace("MySQLQueryCommand.\(self.state)")
         guard !packet.isError else {
             self.state = .done
+            self.cache?.entries.removeValue(forKey: self.sql)
 
             let errorPacket = try packet.decode(
                 MySQLProtocol.ERR_Packet.self,
@@ -123,6 +185,7 @@ private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // th
         case .ready:
             let res = try packet.decode(MySQLProtocol.COM_STMT_PREPARE_OK.self, capabilities: capabilities)
             self.ok = res
+            self.parameterCount = Int(res.numParams)
             if res.numParams != 0 {
                 self.state = .params
             } else if res.numColumns != 0 {
@@ -206,9 +269,16 @@ private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // th
                 self.lastUserError = error
             }
         }
+        if let cache, lastUserError == nil,
+           cache.entries[sql] != nil || cache.entries.count < cache.capacity {
+            cache.entries[sql] = .init(id: statementID!, parameters: parameterCount)
+            statementID = nil // ownership transferred to the connection
+            return .init(response: [], done: true, resetSequence: true)
+        }
+        cache?.entries.removeValue(forKey: sql)
         var packet = MySQLPacket()
         MySQLProtocol.COM_STMT_CLOSE(
-            statementID: self.ok!.statementID
+            statementID: self.statementID!
         ).encode(into: &packet)
         self.statementID = nil
         return .init(
@@ -220,14 +290,16 @@ private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // th
     }
     
     func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        if let entry = cache?.entries[sql] {
+            guard entry.parameters == binds.count else { throw MySQLError.protocolError }
+            statementID = entry.id
+            parameterCount = entry.parameters
+            state = .executeColumnCount
+            return try .response([.encode(MySQLProtocol.COM_STMT_EXECUTE(
+                statementID: entry.id, flags: [], values: binds), capabilities: capabilities)])
+        }
         let prepare = MySQLProtocol.COM_STMT_PREPARE(query: self.sql)
         return try .response([.encode(prepare, capabilities: capabilities)])
     }
 
-    deinit {
-        assert(self.statementID == nil, "Statement not closed: \(self.sql)")
-        if self.statementID != nil {
-            self.logger.error("Statement not closed: \(self.sql)")
-        }
-    }
 }

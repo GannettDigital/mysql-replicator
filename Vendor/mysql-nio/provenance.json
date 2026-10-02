@@ -36,7 +36,7 @@
     {
       "path": "Sources/MySQLNIO/MySQLConnection.swift",
       "upstream_sha256": "9944323e20f68634d166669eaf4ca5ba38af5edc4aa5540a8ef55a1e57c9579a",
-      "vendored_sha256": "e3dd62029af5d7617fa0ba1f656ac15d073d960e726b6264d72824d45e447de2"
+      "vendored_sha256": "65fffd7268153b4c79e248c32b7cdcddb6cd2e136ae4c4eb9ecf4358a973614c"
     },
     {
       "path": "Sources/MySQLNIO/MySQLConnectionHandler.swift",
@@ -66,7 +66,7 @@
     {
       "path": "Sources/MySQLNIO/MySQLQueryCommand.swift",
       "upstream_sha256": "3472ff936789fe9d3f070ed019947bec3337a429c054d17f28c948af10c862c1",
-      "vendored_sha256": "3472ff936789fe9d3f070ed019947bec3337a429c054d17f28c948af10c862c1"
+      "vendored_sha256": "a955f7ce3648da422fd2ea1043cb7dcd79b58d8196cf23973490b795cd1fac3a"
     },
     {
       "path": "Sources/MySQLNIO/MySQLRow.swift",

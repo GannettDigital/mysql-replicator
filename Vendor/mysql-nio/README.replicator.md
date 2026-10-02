@@ -22,3 +22,16 @@ the actual vendor handshake handler's TLS rejection and a silent-server timeout.
 Upstream Tests are retained for provenance; root `swift test` does not run that
 separate package's full test suite. The real live suite exercises caching_sha2
 password authentication over verified TLS with MySQL 8.4.8.
+
+The applier also opts into `cachedQuery`: at most 128 prepared statements per
+connection, accessed only on its event loop. Cache hits execute with fresh binary
+bindings and parse fresh result metadata. New SQL beyond the limit uses the
+ordinary prepare/execute/close path. SQL errors close and evict that statement;
+there is no automatic retry. `clearPreparedStatementCache` is an awaited command
+barrier that closes each server statement before DDL/session changes. Connection
+closure releases all remaining server statements, including uncertain commands.
+The default `query` API still uses prepare/execute/close.
+
+Root protocol tests cover reuse, bindings, affected-row metadata, error eviction,
+capacity and isolation. DML/DDL integration tests exercise exact binary/unsigned
+values, schema changes and fail-stop behavior with the cached path enabled.

@@ -33,7 +33,7 @@ final class PacketQueue: @unchecked Sendable {
         if case .failure = result { packets = []; index = 0; bytes = 0 }
         condition.broadcast()
     }
-    func next(timeout: TimeInterval, cancellation: CaptureCancellation, requestRead: () -> Void) throws -> Data? {
+    func next(timeout: TimeInterval, cancellation: CaptureCancellation, requestRead: () -> Void, onIdle: () throws -> Void = {}) throws -> Data? {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         condition.lock(); defer { condition.unlock() }
         while true {
@@ -47,6 +47,11 @@ final class PacketQueue: @unchecked Sendable {
             }
             if let completion { try completion.get(); return nil }
             guard ProcessInfo.processInfo.systemUptime < deadline else { throw CaptureError("live dump idle timeout") }
+            // Run consumer work without holding the socket queue mutex.
+            condition.unlock()
+            do { try onIdle() } catch { condition.lock(); throw error }
+            condition.lock()
+            if index < packets.count || completion != nil { continue }
             if !readRequested { readRequested = true; requestRead() }
             _ = condition.wait(until: Date().addingTimeInterval(0.1))
         }
@@ -90,9 +95,10 @@ public enum LiveInspection {
                            emitEvent: @escaping (LiveRecord) throws -> Void,
                            emitTransaction: @escaping (CompleteTransaction) throws -> Void,
                            resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
+                           timings: StageTimings = .init(), onIdle: @escaping () throws -> Void = {},
                            allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws -> LiveSummary {
         let start = try config.validate()
-        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, allowDDL: allowDDL, ignoreTable: ignoreTable)
+        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
         func summary() -> LiveSummary {
             LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,
                 eventBytesReceived: String(processor.receivedBytes), heartbeats: processor.heartbeatCount,
@@ -151,8 +157,10 @@ public enum LiveInspection {
             let command = DumpCommand(request: try start.packet(serverID: config.serverID, nonBlocking: config.nonBlocking ?? false), receive: queue.push)
             let finished = connection.send(command, logger: connection.logger)
             finished.whenComplete { queue.finish($0) }
-            while let frame = try queue.next(timeout: TimeInterval(config.idleTimeoutSeconds ?? 15), cancellation: cancellation,
-                                             requestRead: { loop.execute { channel.read() } }) {
+            while let frame = try timings.measure("capture.wait", {
+                try queue.next(timeout: TimeInterval(config.idleTimeoutSeconds ?? 15), cancellation: cancellation,
+                               requestRead: { loop.execute { channel.read() } }, onIdle: onIdle)
+            }) {
                 try processor.consume(frame)
                 if let limit = config.stopAfterTransactions, processor.transactionCount == limit {
                     try processor.finish()

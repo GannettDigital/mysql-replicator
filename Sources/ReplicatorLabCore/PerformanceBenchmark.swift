@@ -231,6 +231,13 @@ public enum PerformanceBenchmark {
             try require(session.h.boundary("source").gtids == finalBoundary.gtids, "source changed during final verification")
             try session.stopWriter()
             try require(session.state("SELECT lifecycle FROM state") == "STOPPED", "replicator did not stop cleanly")
+            let diagnostic = try session.docker(["exec",session.helper,"cat","/evidence/applier.stderr"]).stdout
+            guard let last = String(decoding:diagnostic,as:UTF8.self).split(separator:"\n").last,
+                  let summary = try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any],
+                  let timings = summary["stageTimings"] as? [String:Any] else { throw LabError("missing final stage timings") }
+            report["stage_timings"] = timings
+            report["stage_timing_scope"] = "inclusive run-local monotonic durations, including startup and stop; nested stages overlap"
+            try writeJSON(timings,to:output!.appendingPathComponent("stage-timings.json"))
             report["result"] = "passed"
         } catch {
             failure = error; report["error"] = String(describing: error)

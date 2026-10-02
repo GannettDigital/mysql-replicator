@@ -1,55 +1,129 @@
 --- a/Sources/MySQLNIO/MySQLConnection.swift
 +++ b/Sources/MySQLNIO/MySQLConnection.swift
-@@ -11,10 +11,13 @@
-         password: String? = nil,
-         tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
-         serverHostname: String? = nil,
+@@ -13,0 +14,2 @@
 +        requireTLS: Bool = false,
 +        handshakeTimeout: TimeAmount? = nil,
-         logger: Logger = .init(label: "codes.vapor.mysql"),
-         on eventLoop: any EventLoop
-     ) -> EventLoopFuture<MySQLConnection> {
-         let bootstrap = ClientBootstrap(group: eventLoop)
+@@ -17,0 +20 @@
 +            .connectTimeout(.seconds(10))
-             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
-         
-         logger.debug("Opening new connection to \(socketAddress)")
-@@ -22,6 +25,10 @@
-         return bootstrap.connect(to: socketAddress).flatMap { channel in
-             let sequence = MySQLPacketSequence()
-             let done = channel.eventLoop.makePromise(of: Void.self)
+@@ -24,0 +28,4 @@
 +            if let handshakeTimeout {
 +                let timeout = channel.eventLoop.scheduleTask(in: handshakeTimeout) { done.fail(MySQLError.closed) }
 +                done.futureResult.whenComplete { _ in timeout.cancel() }
 +            }
-             done.futureResult.whenFailure { _ in
-                 channel.close(mode: .all, promise: nil)
-             }
-@@ -36,6 +43,7 @@
-                         logger: logger
-                     )),
-                     MySQLConnectionHandler(logger: logger, state: .handshake(.init(
+@@ -38,0 +46 @@
 +                        requireTLS: requireTLS,
-                         username: username,
-                         database: database,
-                         password: password,
+@@ -55,0 +64,2 @@
++    let preparedStatements = MySQLPreparedStatementCache()
++
 --- a/Sources/MySQLNIO/MySQLConnectionHandler.swift
 +++ b/Sources/MySQLNIO/MySQLConnectionHandler.swift
-@@ -21,6 +21,7 @@
-     }
-     
-     struct HandshakeState {
+@@ -23,0 +24 @@
 +        var requireTLS: Bool = false
-         let username: String
-         let database: String
-         let password: String?
-@@ -112,6 +113,9 @@
-         self.logger.trace("Handling MySQL handshake \(handshakeRequest)")
-         guard handshakeRequest.capabilities.contains(.CLIENT_PROTOCOL_41) else {
-             throw MySQLError.unsupportedServer(message: "Client protocol 4.1 required")
+@@ -114,0 +116,3 @@
 +        }
 +        guard !state.requireTLS || (state.tlsConfiguration != nil && handshakeRequest.capabilities.contains(.CLIENT_SSL)) else {
 +            throw MySQLError.unsupportedServer(message: "TLS is required; refusing authentication without TLS")
-         }
-         self.serverCapabilities = handshakeRequest.capabilities
-         if let tlsConfiguration = state.tlsConfiguration, handshakeRequest.capabilities.contains(.CLIENT_SSL) {
+--- a/Sources/MySQLNIO/MySQLQueryCommand.swift
++++ b/Sources/MySQLNIO/MySQLQueryCommand.swift
+@@ -41 +41,58 @@
+-private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
++// Connection-owned and accessed only by commands on its event loop. At capacity,
++// new SQL uses the ordinary prepare/execute/close path; it cannot grow unbounded.
++final class MySQLPreparedStatementCache: @unchecked Sendable {
++    struct Entry { let id: UInt32; let parameters: Int }
++    var entries: [String: Entry] = [:]
++    let capacity = 128
++}
++
++extension MySQLConnection {
++    /// Reuse server statements without retrying errors or changing binary values.
++    public func cachedQuery(_ sql: String, _ binds: [MySQLData] = [],
++                            onMetadata: @escaping (MySQLQueryMetadata) throws -> Void = { _ in }) -> EventLoopFuture<[MySQLRow]> {
++        nonisolated(unsafe) var rows: [MySQLRow] = []
++        let command = MySQLQueryCommand(sql: sql, binds: binds, onRow: { rows.append($0) },
++            onMetadata: onMetadata, logger: logger, cache: preparedStatements)
++        return send(command, logger: logger).map { rows }
++    }
++
++    /// A barrier: callers must await this before DDL or changing session semantics.
++    public func clearPreparedStatementCache() -> EventLoopFuture<Void> {
++        let barrier = MySQLStatementCacheBarrier(cache: preparedStatements)
++        return send(barrier, logger: logger).flatMap {
++            barrier.ids.reduce(self.eventLoop.makeSucceededFuture(())) { future, id in
++                future.flatMap { self.send(MySQLCloseStatementCommand(id: id), logger: self.logger) }
++            }
++        }
++    }
++}
++
++// Activate only after earlier queued queries have finished publishing entries.
++final class MySQLStatementCacheBarrier: MySQLCommand, @unchecked Sendable {
++    let cache: MySQLPreparedStatementCache
++    var ids: [UInt32] = []
++    init(cache: MySQLPreparedStatementCache) { self.cache = cache }
++    func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
++        ids = cache.entries.values.map { $0.id }
++        cache.entries.removeAll()
++        return .init(done: true)
++    }
++    func handle(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
++        throw MySQLError.protocolError
++    }
++}
++
++private final class MySQLCloseStatementCommand: MySQLCommand, @unchecked Sendable {
++    let id: UInt32
++    init(id: UInt32) { self.id = id }
++    func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
++        var packet = MySQLPacket()
++        MySQLProtocol.COM_STMT_CLOSE(statementID: id).encode(into: &packet)
++        return .init(response: [packet], done: true, resetSequence: true)
++    }
++    func handle(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
++        throw MySQLError.protocolError // COM_STMT_CLOSE has no response.
++    }
++}
++
++final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
+@@ -42,0 +100,2 @@
++    let cache: MySQLPreparedStatementCache?
++    var parameterCount = 0
+@@ -73 +132,2 @@
+-        logger: Logger
++        logger: Logger,
++        cache: MySQLPreparedStatementCache? = nil
+@@ -74,0 +135 @@
++        self.cache = cache
+@@ -89,0 +151 @@
++            self.cache?.entries.removeValue(forKey: self.sql)
+@@ -125,0 +188 @@
++            self.parameterCount = Int(res.numParams)
+@@ -208,0 +272,7 @@
++        if let cache, lastUserError == nil,
++           cache.entries[sql] != nil || cache.entries.count < cache.capacity {
++            cache.entries[sql] = .init(id: statementID!, parameters: parameterCount)
++            statementID = nil // ownership transferred to the connection
++            return .init(response: [], done: true, resetSequence: true)
++        }
++        cache?.entries.removeValue(forKey: sql)
+@@ -211 +281 @@
+-            statementID: self.ok!.statementID
++            statementID: self.statementID!
+@@ -222,0 +293,8 @@
++        if let entry = cache?.entries[sql] {
++            guard entry.parameters == binds.count else { throw MySQLError.protocolError }
++            statementID = entry.id
++            parameterCount = entry.parameters
++            state = .executeColumnCount
++            return try .response([.encode(MySQLProtocol.COM_STMT_EXECUTE(
++                statementID: entry.id, flags: [], values: binds), capabilities: capabilities)])
++        }
+@@ -227,7 +305 @@
+-    deinit {
+-        assert(self.statementID == nil, "Statement not closed: \(self.sql)")
+-        if self.statementID != nil {
+-            self.logger.error("Statement not closed: \(self.sql)")
+-        }
+-    }
+-}
++}

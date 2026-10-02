@@ -701,6 +701,33 @@ public enum DMLQualification {
                 _ = try h.sql("native","STOP REPLICA")
                 try cases.pass("discovery")
                 report["automatic_discovery"]="multiple_tables_nonleading_keys_MINIMAL_and_FULL"
+                // A warmed connection must release its table lock while idle and
+                // reject target-local schema drift when it acquires the lock again.
+                for service in ["source","target57"] {
+                    let engine = service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.epoch(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
+                }
+                let epoch = try start(QualificationCase("lock-revalidation", "Release idle table locks and reject local schema drift before following writes"),configuration("lock-revalidation",at:try h.boundary("source"),count:3))
+                try waitForReader(epoch)
+                _ = try h.sql("source","INSERT INTO poc.epoch VALUES(1,10)")
+                let epochDeadline = Date().addingTimeInterval(15)
+                var epochApplied = false
+                while Date() < epochDeadline {
+                    let log = try docker(["logs",epoch]).stdout
+                    if let last = String(decoding:log,as:UTF8.self).split(separator:"\n").last,
+                       let progress = try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any],
+                       progress["transactionsApplied"] as? Int == 1 { epochApplied = true; break }
+                    Thread.sleep(forTimeInterval:0.1)
+                }
+                try require(epochApplied,"lock fixture did not apply its first group")
+                _ = try h.sql("target57","SET SESSION lock_wait_timeout=2; CREATE INDEX local_drift ON poc.epoch(v)")
+                try require(h.sql("target57","SELECT v FROM poc.epoch WHERE id=1") == "10","idle reader could not observe completed group")
+                _ = try h.sql("source","UPDATE poc.epoch SET v=20 WHERE id=1; INSERT INTO poc.epoch VALUES(2,30)")
+                _ = try finish(epoch,"lock-revalidation",success:false,reason:"target indexes differ")
+                try require(h.sql("target57","SELECT id,v FROM poc.epoch ORDER BY id") == "1\t10","schema drift allowed following target writes")
+                try require(state("lock-revalidation","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "BLOCKED|1|1","schema drift advanced the checkpoint")
+                try require(state("lock-revalidation","SELECT COUNT(*) FROM row_intents") == "1","schema drift wrote an intent before validation")
+                try cases.pass("lock-revalidation")
                 for test in [
                     QualificationCase("absent-schema", "Reject a missing target table without advancing the checkpoint"),
                     QualificationCase("incompatible-schema", "Reject target primary-key signedness incompatible with source metadata")

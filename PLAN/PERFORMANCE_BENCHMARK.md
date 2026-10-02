@@ -148,3 +148,102 @@ Local evidence is retained under `artifacts/performance/20261002T011855Z-99bb41d
 (mixed) and `artifacts/performance/20261002T012126Z-b2f83a63/` (burst). Artifacts are
 ignored by Git. The source load duration comes from sysbench; replica completion
 timestamps come from the harness, include launch overhead, and are polling bounds.
+
+## Stage timings and optimizations
+
+Every final STOPPED summary, or BLOCKED error progress, includes `stageTimings`.
+These are monotonic, run-local counters (reset on resume), with `count`, `failures`,
+`seconds` and `maximumSeconds` per stage. Failed attempts include the typed
+cancellation that ends an idle capture cleanly. Ordinary per-group progress omits the
+timing summary to avoid repeatedly formatting it in the apply path. The benchmark
+exports the final values to `stage-timings.json` and `result.json.stage_timings`.
+Timings include startup and graceful stop. They are inclusive and overlap:
+`target.schema`, `target.row`, `target.lock` and `target.unlock` contain
+`target.sql`; `sqlite.capacity` can contain `sqlite.checkpoint`; `capture.wait`
+can contain idle lock release. Do not sum all stage durations as elapsed time.
+No SQL text, bind values or credentials are included.
+
+- `capture.wait`: waiting for dump packets (including source idle time).
+- `capture.decode`, `capture.assemble`: decoding/probing and group assembly.
+- `relay.append`, `relay.sync`: relay framing/writes and durable synchronization.
+- `sqlite.capacity`, `sqlite.checkpoint`: capacity enforcement and WAL checkpoint.
+- `sqlite.commit`: autocommit write execution or explicit COMMIT; includes failed
+  attempts. Initialization PRAGMAs are counted as statements, not commits.
+- `sqlite.statement`: statements executed inside SQLite transactions and PRAGMAs.
+- `target.sql`: awaited SQL commands, including preparation on a cache miss.
+- `target.schema`, `target.row`, `target.lock`, `target.unlock`,
+  `target.statement_invalidation`: inclusive target operations.
+
+The initial optimization pass keeps individual target row writes, full
+before/after-image checks, strict affected-row checks, FULL SQLite durability,
+relay synchronization and fail-stop/no-retry behavior:
+
+1. WAL truncation runs at a size/capacity threshold, during pressure maintenance,
+   or on clean stop/block. The normal threshold is the smaller of 1 MiB and a
+   quarter of the database budget. Capacity checks still run before each write
+   transaction and reserve a worst-case transaction plus WAL headers/diagnostic
+   space. Pinned readers may coexist with a small WAL; they cause a safe stop if
+   they prevent the required checkpoint. Autocheckpoint is disabled so these
+   explicit checkpoints are measured and bounded.
+2. The target connection caches at most 128 prepared statements. DDL barriers
+   clear them, errors evict them without retry, and closing the connection
+   releases the cache. The four native-worker status queries use one UNION ALL;
+   channel and writer ownership checks still run for every DML group.
+3. The last verified row's DONE update and its group's applied checkpoint commit
+   together. Its PENDING intent was durably committed before the target write.
+   A failed completion commit leaves the intent PENDING and cannot advance the
+   checkpoint. Earlier rows retain individual durable DONE records.
+4. Consecutive groups can reuse the same continuously held WRITE table lock and
+   validated schema. An epoch ends after 32 groups or 50 ms, checked at safe
+   boundaries; this is not a hard deadline interrupting an in-flight group or
+   SQL command. Idle capture, table changes, DDL, filtering, stop and failure
+   release the lock. Reacquisition revalidates the complete schema. Trigger
+   visibility privileges and writer/channel checks are never cached across
+   groups. Target-local DDL cannot change the locked table; after release its
+   changes must pass validation before another mutation.
+
+SQLite durability does not make a MyISAM target write atomic with its journal.
+Uncertain target outcomes remain blocked for explicit operator resolution. There
+is no row batching, parallel application or speculative checkpoint advancement.
+
+## Optimization validation, 2026-10-01
+
+164 Swift tests pass, including rollback of the combined final-row/checkpoint
+commit, bounded WAL growth with a pinned reader, prepared-statement bindings and
+invalidation, and lock-epoch limits. The GTID DML suite passed 14 cases, including
+partial writes and a new live check that target-local index DDL succeeds during
+idle capture, then blocks the next source write at schema revalidation. The
+ordered GTID DDL suite passed 79 cases covering schema/data/binlog order and
+expected rejections. The DDL catalog structure check also passes.
+
+The final 1,000 single-row INSERT burst passed exact data comparison and cleanup:
+
+| Observation | Original harness run | Optimized final run |
+| --- | ---: | ---: |
+| Source load duration | 1.624 s | 1.636 s |
+| Native completion observed | 3.860 s | 3.888 s |
+| Custom completion observed | 53.053 s | 38.208 s |
+
+This is about 28% less observed custom completion time (1.39x ratio), not an
+isolated attribution to individual optimizations or a production capacity claim.
+An exploratory optimized run observed 34.807 s before the final instrumentation
+changes; shared-host/emulation variation and polling remain material.
+
+Final run stage totals include target SQL 10.709 s, capacity checks 5.471 s,
+decoding 4.884 s, SQLite commits 2.803 s, relay appends 2.583 s, and relay syncs
+0.672 s. There were 44 explicit WAL checkpoints (0.083 s), 535 table-lock epochs,
+and 11,329 SQL commands including setup. Schema checks took 5.238 s and overlap the SQL total; these durations must
+not be added together. Capture wait includes setup/idle time and is not apply
+latency. These results identify remaining work; they do not justify removing
+checks or weakening durability.
+
+Final burst evidence:
+`artifacts/performance/20261002T021411Z-5d924715/20261002T021412Z-21fe7c1b-auto-autocommit-myisam/`.
+DML evidence: `artifacts/dml-suite/20261002T020555Z-79f95d3d-auto-autocommit-myisam/`.
+Ordered DDL evidence: `artifacts/ddl-suite/20261002T020557Z-b815140b-auto-autocommit-myisam/`.
+
+A final mixed run also passed exact data comparison and cleanup: 300 transactions,
+two source clients, three rows per statement, offered at 20 transactions/sec;
+900 row changes applied. Source load was 15.637 s, native completion was observed
+at 19.223 s and custom completion at 22.339 s. Evidence:
+`artifacts/performance/20261002T021655Z-c4964d59/20261002T021655Z-9f088254-auto-autocommit-myisam/`.
