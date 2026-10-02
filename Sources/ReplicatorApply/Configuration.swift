@@ -110,22 +110,38 @@ extension ApplyTable {
     }
 }
 public struct TargetConfiguration: Decodable {
-    public let host: String
-    public let port: Int
+    public let host: String?
+    public let port: Int?
+    public let unixSocket: String?
+    public let requireTLS: Bool
     public let username: String
     public let passwordEnvironment: String
-    public let serverHostname: String
+    public let serverHostname: String?
     public let caFile: String?
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,username,passwordEnvironment,serverHostname,caFile,nativeAutoStartDisabled,targetUUID}
+    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,serverHostname,caFile,nativeAutoStartDisabled,targetUUID}
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
-        host=try c.decode(String.self,forKey:.host); port=try c.decode(Int.self,forKey:.port)
+        host=try c.decodeIfPresent(String.self,forKey:.host); port=try c.decodeIfPresent(Int.self,forKey:.port)
+        unixSocket=try c.decodeIfPresent(String.self,forKey:.unixSocket)
+        requireTLS=try c.decodeIfPresent(Bool.self,forKey:.requireTLS) ?? true
         username=try c.decode(String.self,forKey:.username); passwordEnvironment=try c.decode(String.self,forKey:.passwordEnvironment)
-        serverHostname=try c.decode(String.self,forKey:.serverHostname); caFile=try c.decodeIfPresent(String.self,forKey:.caFile)
+        serverHostname=try c.decodeIfPresent(String.self,forKey:.serverHostname); caFile=try c.decodeIfPresent(String.self,forKey:.caFile)
         nativeAutoStartDisabled=try c.decode(Bool.self,forKey:.nativeAutoStartDisabled)
+    }
+    func validate() throws {
+        try require(!username.isEmpty && !passwordEnvironment.isEmpty,"invalid target credentials")
+        if let path = unixSocket {
+            try require(host == nil && port == nil,"choose target unixSocket or host/port, not both")
+            try require(path.hasPrefix("/") && !path.utf8.contains(0) && path.utf8.count <= 103,"target unixSocket must be an absolute path of at most 103 UTF-8 bytes without NUL")
+        } else {
+            try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
+            try require(requireTLS,"target TCP connections require TLS; only a Unix socket may disable TLS")
+        }
+        if requireTLS { try require(!(serverHostname ?? "").isEmpty,"target TLS requires serverHostname") }
+        else { try require(serverHostname == nil && caFile == nil,"remove target TLS settings when requireTLS is false") }
     }
 }
 public struct ApplyConfiguration: Decodable {
@@ -143,7 +159,7 @@ public struct ApplyConfiguration: Decodable {
     public func validate() throws {
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
         _ = try source.validate()
-        try require(!target.host.isEmpty && (1...65535).contains(target.port) && !target.username.isEmpty && !target.passwordEnvironment.isEmpty && !target.serverHostname.isEmpty,"invalid target connection")
+        try target.validate()
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")

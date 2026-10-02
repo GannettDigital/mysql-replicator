@@ -82,7 +82,8 @@ Passwords and row values are not printed in ordinary apply progress. Relay files
 ## Declared subset and checks
 
 - MySQL 8.4 GTID-ON InnoDB source with ROW/FULL/CRC32, as qualified by live inspect;
-  verified TLS with CA/hostname checking on both connections.
+  verified TLS with CA/hostname checking on both connections by default; the
+  local target Unix-socket option is described below.
 - MySQL 5.7 target, UUID distinct from the source, OFF_PERMISSIVE/WARN, ROW/FULL/CRC32
   binary logging enabled globally and on the apply session. The deployment must
   set `--skip-slave-start` and assert `target.nativeAutoStartDisabled: true`.
@@ -123,6 +124,16 @@ triggers; the applier creates none. It needs no schema creation or GTID_PURGED
 mutation privileges. The fixture grants these explicitly.
 
 ## Apply and state ordering
+
+For an applier deployed on the MySQL 5.7 host, replace target `host` and `port`
+with `"unixSocket": "/var/run/mysqld/mysqld.sock"`. The path must be absolute,
+without NUL, and at most 103 UTF-8 bytes. Socket errors fail the connection; there
+is no TCP fallback. TLS remains required by default, including CA/hostname
+verification. To use a plain local socket, explicitly set `"requireTLS": false`
+and omit target `serverHostname` and `caFile`. TCP always requires TLS. MySQL
+password authentication, target UUID checks and writer exclusion still apply.
+The local account must allow non-TLS socket authentication, and the deployment
+must protect access to the socket directory. Source transport remains verified TLS.
 
 Each apply session sets `GTID_NEXT=AUTOMATIC`, autocommit, strict SQL mode and utf8mb4.
 The source GTID remains local replication identity, never a target SQL GTID. There

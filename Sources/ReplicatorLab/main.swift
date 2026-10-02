@@ -17,6 +17,7 @@ func main() throws -> Int32 {
                     [--case ID ...] [--positioning both|gtid|file-position] [--list]
           native-ddl-suite
           benchmark [--skip-build] [--events N] [--threads N] [--rate N]
+                    [--target-transport tcp-tls|unix-tls|unix]
                     [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
                     [--sample-seconds N] [--timeout N]
           ddl-catalog check

@@ -221,6 +221,77 @@ seconds of activity, with earlier checks near pressure. Configure
 conservative byte accounting preserve per-write limits without filesystem or
 page-count queries on every write. See the [storage policy](SCHEMA_DISCOVERY_AND_RETENTION.md).
 
+## Local target transport comparison
+
+The next journal-batching design can use DBA-led reconciliation as its recovery
+contract: durably record source group identities, ordered row references, schema
+and affected-table identities, and relay byte ranges before attempting a batch.
+On acknowledgment, commit completion and the contiguous applied boundary together.
+Retain unresolved batch evidence and block replay after an uncertain outcome.
+The journal identifies recorded work and boundaries, not the exact crash instant
+or MyISAM's physical durability. DBA restoration requires a consistent source
+snapshot and a matching GTID boundary, coordinated with tables that were not
+restored. This is a future batching contract; the transport comparison below
+keeps the existing per-group journal behavior.
+
+`benchmark --target-transport tcp-tls|unix-tls|unix` selects loopback TCP with
+verified TLS (default), a Unix socket with the same TLS verification, or a plain
+Unix socket. The applier already shares the target's network namespace; all three
+modes run beside MySQL 5.7 in the same Docker VM. A project-scoped volume exposes
+only its socket directory to the applier. No host MySQL socket is mounted.
+
+Compare equal workloads sequentially with the same runtime image; reverse mode
+order on a repeat to expose shared-host variability. `result.json` records the
+requested mode and MySQL's observed connection type. Applier preflight checks the
+session cipher against the requested TLS policy. Exact source/native/target data
+comparison and SQLite progress checks remain enabled for every mode. The source
+connection always uses TLS. The plain socket fixture account is local-only; the
+TCP account still requires TLS and the server retains `require_secure_transport`.
+
+```sh
+swift run replicator-lab benchmark --events 1000 --rate 0 --sample-seconds 2 --target-transport tcp-tls
+swift run replicator-lab benchmark --skip-build --events 1000 --rate 0 --sample-seconds 2 --target-transport unix-tls
+swift run replicator-lab benchmark --skip-build --events 1000 --rate 0 --sample-seconds 2 --target-transport unix
+```
+
+A socket changes per-exchange overhead, not SQL command count. Separating Unix
+socket with TLS from plain Unix socket distinguishes transport overhead from TLS
+cost. ARM-host emulation of the x86_64 applier and MySQL 5.7 remains a limitation;
+repeat on the intended deployment host before treating the result as a capacity
+estimate.
+
+### Local transport results, 2026-10-01
+
+The Linux release build and 170 Swift tests passed. Two 1,000-event single-row
+INSERT bursts per mode used the same image. Order was TCP+TLS, Unix+TLS, Unix,
+then Unix, Unix+TLS, TCP+TLS, with one fixture running at a time. All six passed
+exact source/native/target data comparison, clean STOPPED checkpoints and cleanup.
+
+| Target transport | Completion observed, run 1 | Run 2 | Row-apply stage, run 1 / run 2 |
+| --- | ---: | ---: | ---: |
+| Loopback TCP + TLS | 31.724 s | 28.879 s | 2.549 / 2.327 s |
+| Unix socket + TLS | 34.815 s | 31.920 s | 2.567 / 2.568 s |
+| Plain Unix socket | 28.897 s | 29.031 s | 2.229 / 2.200 s |
+
+There is no demonstrated end-to-end throughput gain beyond host/polling variation:
+the faster TCP run matched both plain-socket runs. The fixed 1,000-row apply stage
+averaged about 9% less time for plain sockets than TCP+TLS. Total target SQL time
+averaged 7.486 s versus 8.535 s, but command counts vary with time-bounded lock
+epochs, so that comparison includes fewer schema/lock commands as well. Unix+TLS
+showed no benefit; its first run also spent 7.244 s decoding versus roughly
+4.7–4.8 s in the other runs, illustrating unrelated host variation. Every run
+retained 3,021 SQLite commits and 1,003 relay syncs.
+
+This supports an optional local transport, not a claimed major speedup or a new
+default. Journal batching and reducing SQL exchanges remain separate work.
+Machine-readable summary, runtime digest and all six evidence paths:
+`artifacts/performance/socket-comparison-20261002.json`.
+
+A plain-socket mixed run also passed exact comparison and cleanup: 300 source
+transactions, two threads, 20 events/s and three rows/event (900 row mutations).
+Both replicas were observed complete at 19.5 s. Evidence:
+`artifacts/performance/20261002T031131Z-80709d4e/20261002T031131Z-c381e5dd-auto-autocommit-myisam/`.
+
 ## Acknowledgment and periodic-capacity validation, 2026-10-01
 
 168 Swift tests pass, including inspection cadence/time/headroom boundaries,

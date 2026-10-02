@@ -78,7 +78,8 @@ public enum DemoSession {
             try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
         }
-        func up(build: Bool, showInstructions: Bool = true) throws {
+        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls") throws {
+            try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"invalid target transport")
             try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a demo session already exists; use demo-status or demo-down (up never resets data)")
             let id = runID(), runner = ProcessRunner(root: root), tag = "mysql-replicator-packaging:demo"
             if build {
@@ -114,9 +115,19 @@ public enum DemoSession {
             }
             _ = try h.sql("source", "CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'capture_fixture'@'%'; CREATE USER 'native_fixture'@'%' IDENTIFIED BY 'fixture-native-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'native_fixture'@'%'; SET GLOBAL binlog_row_metadata=FULL")
             _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            let localTLS = targetTransport == "unix" ? "NONE" : "SSL"
+            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'localhost' IDENTIFIED BY 'fixture-apply-only' REQUIRE \(localTLS); GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'localhost'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'localhost'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'localhost'")
             let boundary = try h.boundary("source"), uuid = try h.sql("source", "SELECT @@server_uuid")
             try writeJSON(boundary.json, to: h.output.appendingPathComponent("baseline.json"))
-            let config: [String: Any] = ["version": 2, "stateDirectory": "/evidence/state", "source": ["version": 2, "host": "source", "port": 3306, "username": "capture_fixture", "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "caFile": "/evidence/tls/ca.pem", "serverID": 9100, "sourceUUID": uuid, "mode": "gtid", "start": ["executedGTIDs": boundary.gtids], "idleTimeoutSeconds": 30], "target": ["host": "127.0.0.1", "port": 3306, "username": "apply_fixture", "passwordEnvironment": "TARGET_PASSWORD", "serverHostname": "target57", "caFile": "/evidence/tls/ca.pem", "nativeAutoStartDisabled": true]]
+            var target: [String:Any] = ["username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","nativeAutoStartDisabled":true]
+            if targetTransport == "tcp-tls" { target["host"] = "127.0.0.1"; target["port"] = 3306 }
+            else {
+                try require(h.sql("target57","SELECT @@socket") == "/var/run/mysqld/mysqld.sock","unexpected fixture socket path")
+                target["unixSocket"] = "/target-socket/mysqld.sock"
+            }
+            target["requireTLS"] = targetTransport != "unix"
+            if targetTransport != "unix" { target["serverHostname"] = "target57"; target["caFile"] = "/evidence/tls/ca.pem" }
+            let config: [String: Any] = ["version": 2, "stateDirectory": "/evidence/state", "source": ["version": 2, "host": "source", "port": 3306, "username": "capture_fixture", "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "caFile": "/evidence/tls/ca.pem", "serverID": 9100, "sourceUUID": uuid, "mode": "gtid", "start": ["executedGTIDs": boundary.gtids], "idleTimeoutSeconds": 30], "target": target]
             try writeJSON(config, to: h.output.appendingPathComponent("apply.json"))
             _ = try docker(["cp", h.output.appendingPathComponent("apply.json").path, helper + ":/evidence/apply.json"])
             // Mount the same trusted CA used by the existing source/target overlay.

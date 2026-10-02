@@ -1,6 +1,9 @@
 # Demo-only overlay on compose.yaml + docker/dml/compose.yaml.
 # Keep a shell-accessible Ubuntu container up; replication starts only on request.
 services:
+  target57:
+    volumes:
+      - "target-socket:/var/run/mysqld"
   applier:
     image: "${REPLICATOR_DEMO_IMAGE:?demo runtime image digest required}"
     platform: linux/amd64
@@ -18,3 +21,7 @@ services:
       TARGET_PASSWORD: fixture-apply-only
     volumes:
       - "dml-evidence:/evidence"
+      - "target-socket:/target-socket:ro"
+
+volumes:
+  target-socket:

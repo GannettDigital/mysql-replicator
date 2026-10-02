@@ -17,10 +17,12 @@ final class TargetSession {
         group = MultiThreadedEventLoopGroup(numberOfThreads:1)
         do {
             let c = configuration.target
+            try c.validate()
             var tls = TLSConfiguration.makeClientConfiguration(); tls.certificateVerification = .fullVerification
             if let ca = c.caFile { tls.trustRoots = .file(ca) }
-            let address = try SocketAddress.makeAddressResolvingHost(c.host,port:c.port)
-            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:tls,serverHostname:c.serverHostname,requireTLS:true,handshakeTimeout:.seconds(10),on:group.next()).wait()
+            let address = try c.unixSocket.map { try SocketAddress(unixDomainSocketPath:$0) }
+                ?? SocketAddress.makeAddressResolvingHost(c.host!,port:c.port!)
+            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.requireTLS ? tls : nil,serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
         } catch { try? group.syncShutdownGracefully(); throw error }
     }
     deinit { try? connection.close().wait(); try? group.syncShutdownGracefully() }
@@ -63,7 +65,8 @@ final class TargetSession {
         try require(r?.column("mode")?.string == "OFF_PERMISSIVE" && r?.column("consistency")?.string == "WARN", "target must use OFF_PERMISSIVE/WARN")
         try require(r?.column("log_bin")?.int == 1 && r?.column("session_binlog")?.int == 1 && r?.column("format")?.string == "ROW" && r?.column("row_image")?.string == "FULL" && r?.column("checksum")?.string == "CRC32","target binary logging differs from contract")
         let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'").0
-        try require(!(ssl.first?.column("Value")?.string ?? "").isEmpty,"target session has no TLS cipher")
+        let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
+        try require(encrypted == config.target.requireTLS,"target session TLS differs from configured transport")
         try nativeExclusion()
         try require(try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v") == "1","target already has a Swift writer")
         try nativeExclusion()

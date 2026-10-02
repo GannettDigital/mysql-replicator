@@ -7,6 +7,7 @@ public struct PerformanceOptions: Codable {
     public var rowsPerEvent = 1
     public var payloadBytes = 100
     public var workload = "insert"
+    public var targetTransport = "tcp-tls"
     public var sampleSeconds = 5
     public var timeoutSeconds = 300
     public var build = true
@@ -17,6 +18,7 @@ public struct PerformanceOptions: Codable {
             if flag == "--skip-build" { build = false; continue }
             guard let value = args.next() else { throw LabError("missing value for " + flag) }
             if flag == "--workload" { workload = value; continue }
+            if flag == "--target-transport" { targetTransport = value; continue }
             guard let number = Int(value) else { throw LabError("expected integer for " + flag) }
             switch flag {
             case "--events": events = number
@@ -35,6 +37,7 @@ public struct PerformanceOptions: Codable {
         try require((1...100).contains(rowsPerEvent), "rows-per-event must be 1...100")
         try require((0...1024).contains(payloadBytes), "payload-bytes must be 0...1024")
         try require(["insert", "mixed"].contains(workload), "workload must be insert or mixed")
+        try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"target-transport must be tcp-tls, unix-tls or unix")
         try require((1...30).contains(sampleSeconds), "sample-seconds must be 1...30")
         try require((10...3600).contains(timeoutSeconds), "timeout must be 10...3600 seconds per load/catch-up phase")
         try require(rate == 0 || Double(events) / Double(rate) < Double(timeoutSeconds), "requested load exceeds timeout; increase --timeout")
@@ -115,7 +118,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false)
+            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
@@ -129,6 +132,9 @@ public enum PerformanceBenchmark {
             _ = try session.h.sql("source", "SET SESSION sql_log_bin=0; CREATE USER 'benchmark_fixture'@'%' IDENTIFIED BY 'fixture-benchmark-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE ON demo.* TO 'benchmark_fixture'@'%'")
             try prepareLoadTLS(session)
             try session.start()
+            let connectionType = try session.h.sql("target57","SELECT CONNECTION_TYPE FROM performance_schema.threads WHERE PROCESSLIST_USER='apply_fixture'")
+            try require(connectionType == (options.targetTransport == "unix" ? "Socket" : "SSL/TLS"),"target connection type differs: " + connectionType)
+            report["target_connection_type"] = connectionType
             _ = try session.h.sql("source", "CREATE DATABASE demo CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE demo.bench(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,payload VARCHAR(1024) NOT NULL,quantity BIGINT UNSIGNED NOT NULL)")
             let baseline = try session.h.boundary("source")
             let uuid = try session.h.sql("source", "SELECT @@server_uuid")
