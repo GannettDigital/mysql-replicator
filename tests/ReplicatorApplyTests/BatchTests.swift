@@ -21,7 +21,7 @@ extension ApplyTests {
                     XCTAssertEqual(detail["apply.detail.journal.complete_batch"]?.failures,1)
                     XCTAssertEqual(detail["apply.detail.journal.gtid"]?.count,UInt64(batch.count*2))
                     XCTAssertEqual(detail["apply.detail.relay.metadata"]?.count,UInt64(batch.reduce(0) { $0+$1.group.events.count }))
-                    XCTAssertEqual(detail["apply.detail.sqlite.prepare"]?.count,detail["apply.detail.sqlite.finalize"]?.count)
+                    XCTAssertGreaterThan(detail["apply.detail.sqlite.cache_hit"]?.count ?? 0,0)
                     XCTAssertGreaterThan(detail["apply.detail.sqlite.step"]?.count ?? 0,0)
                 } else { XCTAssertTrue(detail.isEmpty) }
             }

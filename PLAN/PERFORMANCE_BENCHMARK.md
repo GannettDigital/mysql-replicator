@@ -146,7 +146,8 @@ The following names have the prefix `apply.detail.`:
 | `relay.base64`, `.metadata`, `.frame`, `.write` | Original-byte decoding, relay metadata encoding (binary in the current runtime), frame assembly, file write |
 | `journal.prepare_batch`, `.complete_batch` | Durable pending-intent preparation and acknowledged-prefix completion |
 | `journal.gtid`, `.timestamp`, `.schema`, `.snapshot` | GTID updates in batches, timestamp formatting, schema cache/check/insert, progress snapshot |
-| `sqlite.prepare`, `.bind`, `.step`, `.finalize` | Every journal query, including direct SELECTs and transaction commands; step includes result extraction and commit I/O |
+| `sqlite.prepare`, `.bind`, `.step`, `.finalize` | Explicit preparation on cache misses or uncached SQL, binding, execution/result extraction (including commit I/O), and statement destruction |
+| `sqlite.cache_hit`, `.cache_evict`, `.reset`, `.clear_bindings` | Statement reuse, bounded-cache eviction, and cleanup before reuse |
 | `dml.plan` | Complete-group DML validation and mutation construction |
 | `target.discover`, `.read_schema`, `.sql_plan` | Table-map compatibility checks, schema cache misses, validated SQL-plan lookup |
 | `target.bind`, `.decode_result` | Write-value conversion and returned before-image conversion |
@@ -342,12 +343,10 @@ truncated frames, and leaves the file unchanged. It reads framing and metadata;
 it does not validate binlog payload CRCs or authorize recovery. Use a stopped or
 archived relay to avoid reading a concurrently appended partial frame.
 
-Next optimization to investigate: cache the repeated SQLite statements in
-`StateStore.query`. The earlier mixed run prepared 595 statements, and the 10K run
-prepared 66,106. Use a bounded per-connection cache, reset each statement and clear
-bindings between uses, preserve error handling without retrying uncertain work,
-and finalize cached statements before closing SQLite. Measure it separately
-from the metadata/formatter changes.
+The next candidate identified at this checkpoint was SQLite statement reuse:
+the earlier mixed run prepared 595 statements, and the initial 10K profile
+prepared 66,106. Its implementation and separate measurements are recorded below
+under [SQLite statement caching](#sqlite-statement-caching).
 
 #### First optimized 10K result, 2026-10-02
 
@@ -404,6 +403,92 @@ repeated restart without replay. Evidence:
 - `artifacts/demo-suite/20261002T215524Z-578b5832-auto-autocommit-myisam/`
 - `artifacts/demo-suite-idle-stop/20261002T215715Z-11bc1dce-auto-autocommit-myisam/`
 - `artifacts/demo-suite-detached/20261002T215814Z-b30331e2-auto-autocommit-myisam/`
+
+### SQLite statement caching
+
+The binary-metadata/formatter change was committed as `5743ced` before this
+increment. `StateStore` now owns a serial cache of up to 64 statements keyed by
+complete internal SQL text. It reuses SELECT/INSERT/UPDATE/DELETE and transaction
+control statements. Least-recently-used entries are finalized on eviction.
+PRAGMA, schema changes and maintenance commands remain single-use because they
+are infrequent and [some PRAGMAs have prepare-time effects](https://www.sqlite.org/pragma.html).
+
+Each successful cached query is stepped through all rows to SQLITE_DONE, then
+reset and stripped of bindings before reuse. Both return codes are checked:
+[SQLite reset can report errors and retains bindings](https://www.sqlite.org/c3ref/reset.html),
+while [clear_bindings sets all parameters to NULL](https://www.sqlite.org/c3ref/clear_bindings.html).
+This also releases statement execution state before checkpoints and prevents
+previous values from leaking into a later call with NULL or omitted parameters.
+
+A bind, execution or cleanup error removes and finalizes that statement and
+propagates to the existing journal rollback/block path. There is no application
+retry. SQLite's existing `prepare_v2` semantics allow
+[automatic recompilation when the schema changes](https://www.sqlite.org/c3ref/prepare.html),
+which is exercised by tests that alter a table and add a failure trigger after
+warming cached statements. The cache is finalized before closing its database,
+both during normal destruction and failed initialization; it is never shared
+between connections or workers. Commit boundaries and FULL durability remain as
+before. No configuration or persistent state format change is needed.
+
+Profiling records cache hits, eviction, reset and binding cleanup in
+`apply.detail.sqlite.*`. `prepare` now counts explicit prepare calls, not every
+query or SQLite's internal schema-driven recompilations. Normal store destruction
+happens after the final summary, so the summary's `finalize` count excludes the
+final cache drain; lifecycle tests verify that all statements are released.
+
+224 Swift tests passed, including alternating and omitted bindings, consuming all
+rows, bounded LRU eviction, uncached PRAGMA behavior, schema changes, constraint
+and bind failures, warmed-write trigger failures, rollback/reuse, profiling-off
+behavior and complete cleanup. Existing batch tests still verify pending intents
+before target writes, exactly two commits, acknowledged-prefix handling and
+failure paths without target write retries. Existing pressure/retention and
+resume tests also passed with caching enabled.
+
+#### First cached-statement 10K profile, 2026-10-02
+
+The same profiled single-row insert workload passed exact source/native/target
+comparison and stopped at the source boundary. The cache removed nearly all
+explicit preparation work:
+
+| Measurement | Before cache | With cache |
+| --- | ---: | ---: |
+| Explicit SQLite prepares | 62,220 | 67 |
+| Preparation elapsed | 1.390 s | 0.025 s |
+| Cache hits | — | 62,195 |
+| Cache-hit bookkeeping | — | 0.026 s |
+| Statement reset | — | 0.053 s |
+| Binding cleanup | — | 0.065 s |
+| SQLite step/result extraction | 2.333 s | 2.454 s |
+| MySQL calls, inclusive | 13.085 s | 16.653 s |
+| Inclusive `apply.consume` | 33.187 s | 36.046 s |
+| Observed replication completion | 35.678 s | 40.726 s |
+
+There were no cache evictions or SQL failures. The observed end-to-end run was
+slower even though preparation plus reuse cleanup became cheaper. MySQL-call
+elapsed time increased by about 3.6 s, exceeding the preparation savings. These
+shared-host runs establish reduced preparation work, not a reliable throughput
+improvement or isolated explanation of the MySQL timing variation. Completion
+polling remains five seconds.
+
+Evidence:
+`artifacts/performance/20261002T220657Z-4405cc74/20261002T220658Z-3d43cb79-auto-autocommit-myisam/`.
+
+The cached runtime also passed the profiling-off 10K run. Inclusive consumer time
+was 30.792 s versus 32.947 s in the prior uncached profiling-off run, while observed
+completion stayed in the same polling bucket (35.956 s versus 35.704 s). MySQL-call
+time was 12.718 s versus 13.462 s, so some of the consumer-time difference is also
+outside SQLite. These samples support the reduced preparation cost; they do not
+establish a precise end-to-end speedup. Both detailed profiles were disabled and
+no `apply.detail.*` stages were emitted. Evidence:
+`artifacts/performance/20261002T220957Z-52907002/20261002T220957Z-709fbab9-auto-autocommit-myisam/`.
+
+The live suite passed with cached statements: DML/DDL, fail-stop, explicit skip,
+following MODIFY/index DML, SIGINT/SIGTERM shutdown, GTID and file-position resume,
+and repeated restart without replay. Evidence:
+
+- `artifacts/demo-suite/20261002T221209Z-486f6514-auto-autocommit-myisam/`
+- `artifacts/demo-suite-idle-stop/20261002T221400Z-14117633-auto-autocommit-myisam/`
+- `artifacts/demo-suite-detached/20261002T221500Z-a9fe8a88-auto-autocommit-myisam/`
 
 ## Decoder function profile
 

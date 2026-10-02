@@ -28,6 +28,7 @@ private final class WALGrowth {
 /// only after a covering snapshot has committed. No uncertain target write is retried.
 final class StateStore {
     private var db: OpaquePointer?
+    private var statements: SQLiteStatementCache?
     private var relay: FileHandle?
     private var writerLock: FileHandle?
     private var targetUUID: String?
@@ -128,9 +129,13 @@ final class StateStore {
             try checkpoint()
             ready = true
             try Self.syncDirectory(directory)
-        } catch {sqlite3_close(db); db=nil; try? relay?.close(); relay=nil; throw error}
+        } catch {closeDatabase(); try? relay?.close(); relay=nil; throw error}
     }
-    deinit {try? relay?.close(); sqlite3_close(db); try? writerLock?.close()}
+    deinit {try? relay?.close(); closeDatabase(); try? writerLock?.close()}
+    private func closeDatabase() {
+        statements?.close(); statements=nil
+        sqlite3_close(db); db=nil
+    }
 
     private func coordinate(_ file: String?, _ position: String?) throws -> BinlogCoordinate? {
         if file == nil && position == nil { return nil }
@@ -326,28 +331,9 @@ final class StateStore {
         wal.frames = 0
     }
     private func query(_ sql: String,_ args: [String?] = []) throws -> [[String?]] {
-        var stmt: OpaquePointer?
-        try profile("sqlite.prepare") {
-            guard sqlite3_prepare_v2(db,sql,-1,&stmt,nil)==SQLITE_OK else {throw ApplyError("SQLite preparation failed")}
-        }
-        defer { _ = profile("sqlite.finalize") { sqlite3_finalize(stmt) } }
-        try profile("sqlite.bind") {
-            let transient = unsafeBitCast(-1,to:sqlite3_destructor_type.self)
-            for (i,arg) in args.enumerated() {
-                let rc = arg.map {sqlite3_bind_text(stmt,Int32(i+1),$0,-1,transient)} ?? sqlite3_bind_null(stmt,Int32(i+1))
-                try require(rc == SQLITE_OK,"SQLite bind failed")
-            }
-        }
-        return try profile("sqlite.step") {
-            var output: [[String?]] = []
-            var rc = sqlite3_step(stmt)
-            while rc == SQLITE_ROW {
-                output.append((0..<sqlite3_column_count(stmt)).map {i in sqlite3_column_text(stmt,i).map {String(cString:$0)}})
-                rc = sqlite3_step(stmt)
-            }
-            try require(rc == SQLITE_DONE,"SQLite operation failed (code \(rc)); replication stopped")
-            return output
-        }
+        guard let db else { throw ApplyError("SQLite is not open") }
+        if statements == nil { statements=SQLiteStatementCache(db:db,timings:timings,profiling:applierProfiling) }
+        return try statements!.query(sql,args)
     }
 
     private func number(_ sql: String,_ args: [String?] = []) throws -> Int64 {Int64(try query(sql,args).first?.first.flatMap{$0} ?? "") ?? 0}
