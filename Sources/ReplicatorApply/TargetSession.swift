@@ -73,6 +73,8 @@ final class TargetSession {
         let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'").0
         let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
         try require(encrypted == config.target.requireTLS,"target session TLS differs from configured transport")
+        guard let packet = Int(try scalar("SELECT @@max_allowed_packet AS v") ?? ""), packet >= 4096 else { throw ApplyError("invalid target packet limit") }
+        insertByteLimit = min(config.batchPolicy.maximumInsertBytes,packet/2)
         try nativeExclusion()
         try require(try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v") == "1","target already has a Swift writer")
         try nativeExclusion()
@@ -88,6 +90,7 @@ final class TargetSession {
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
     }
+    private(set) var insertByteLimit = 1024*1024
     var discovered: [String:ApplyTable] = [:]
     // Dedicated replica: target-local schema/grant/channel changes during a run
     // are outside the contract. Keep validated plans across bounded lock epochs.
@@ -95,26 +98,34 @@ final class TargetSession {
     private var validatedPlans: [String:DMLSQLPlan] = [:]
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
         try profile("target.discover") {
-            guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
+            guard let database = event.database, let name = event.table, event.wireColumns != nil else {throw ApplyError("missing table-map metadata")}
             let identity = database + "\0" + name
-            if let held = lockEpoch.table, held.identity != identity { try unlock() }
             let table: ApplyTable
             if let cached = discovered[identity] { table = cached }
             else {
                 try require(discovered.count < 64,"discovered schema limit reached")
+                // Discovery is a drained barrier. Release any prior table lock
+                // before querying metadata for a previously unseen table.
+                try unlock()
                 table=try readSchema(database:database,name:name)
             }
-            try require(wire.count == table.columns.count,"source/target column count differs")
-            for (w,c) in zip(wire,table.columns) {
-                let type = try DMLColumnType(c.type)
-                try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
-                if c.interpretation == .utf8 {
-                    try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
-                }
-                if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
-            }
+            try Self.validateTableMap(event, table:table)
             discovered[identity] = table
             return table
+        }
+    }
+    /// Pure source/target compatibility validation; safe with an immutable table
+    /// snapshot while the target connection executes an earlier batch.
+    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable) throws {
+        guard let wire = event.wireColumns else { throw ApplyError("missing table-map metadata") }
+        try require(wire.count == table.columns.count,"source/target column count differs")
+        for (w,c) in zip(wire,table.columns) {
+            let type = try DMLColumnType(c.type)
+            try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
+            if c.interpretation == .utf8 {
+                try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
+            }
+            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
         }
     }
     func readSchema(database: String,name: String) throws -> ApplyTable {
@@ -297,6 +308,19 @@ final class TargetSession {
         // A successful statement with the expected affected-row count is the
         // completion signal. Pre-write images, strict SQL mode and schema checks
         // remain enforced; independent qualification compares resulting values.
+    }
+    func applyInserts(_ mutations: [Mutation]) throws {
+        try timings.measure("target.insert_chunk") {
+            guard let first = mutations.first else { throw ApplyError("empty INSERT chunk") }
+            try require(mutations.count <= config.batchPolicy.maximumInsertRows && mutations.allSatisfy {
+                $0.table == first.table && $0.row.operation == "insert" && $0.row.before == nil && $0.row.after?.count == first.table.columns.count
+            }, "incompatible INSERT chunk")
+            try require(mutations.reduce(0) { $0+DMLExecution.insertBytes($1) } <= insertByteLimit,"INSERT chunk exceeds packet budget")
+            let plan = try sqlPlan(first.table)
+            let binds = try profile("target.bind") { try mutations.flatMap { try $0.row.after!.map(bind) } }
+            let result = try query(plan.insertSQL(rows:mutations.count),binds)
+            try require(result.1 == UInt64(mutations.count),"unexpected multi-row INSERT affected-row count")
+        }
     }
     private func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {
         try profile("target.sql_plan") {

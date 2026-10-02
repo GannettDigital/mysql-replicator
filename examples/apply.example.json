@@ -35,6 +35,10 @@
     "capacityCheckIntervalSeconds": 5
   },
   "batch": {
+    "maximumInsertRows": 32,
+    "maximumInsertBytes": 1048576,
+    "overlapPreparation": true,
+    "flushOnTableChange": false,
     "maximumTransactions": 32,
     "maximumRows": 4096,
     "maximumWireBytes": 8388608,

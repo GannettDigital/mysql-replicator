@@ -4,6 +4,13 @@ Recorded 2026-10-02, following the decoder pipeline checkpoint `f0a2e31`.
 This is a proposed implementation and qualification sequence, not a claim that
 SQL batching or parallel target application is already supported.
 
+Update, 2026-10-02: the workload matrix, bounded multi-row INSERT execution,
+overlapping preparation with one target writer, and journal batches spanning
+table changes are now implemented. See the current
+[implementation and benchmark evidence](PERFORMANCE_BENCHMARK.md#insert-execution-and-preparation-overlap-2026-10-02).
+The baseline and sequence below preserve the original proposal; table-based
+parallel appliers remain future work.
+
 ## Objective and baseline
 
 Increase capacity for the production source streams listed in

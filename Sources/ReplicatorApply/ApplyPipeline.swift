@@ -98,9 +98,10 @@ enum ApplyMessage {
     var groups: Int { if case .transaction = self { return 1 }; return 0 }
 }
 
-/// Target SQL, relay, SQLite and DML batching stay on the calling thread. Only
-/// capture/decoding/assembly run on the producer. Wire metadata determines decode
-/// types; target schema is validated by the ordered consumer before any writes.
+/// Capture/decoding/assembly run on the producer. The consumer owns relay,
+/// SQLite and DML preparation, and may dispatch one durable batch to a separate
+/// target executor. Wire metadata determines decode types; schema validation
+/// and durable intents precede any writes.
 final class ApplyPipeline {
     let queue = ApplyQueue<ApplyMessage>()
     func run(cancellation: CaptureCancellation, producerTimings: StageTimings,

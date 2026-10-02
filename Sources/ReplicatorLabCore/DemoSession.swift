@@ -78,7 +78,7 @@ public enum DemoSession {
             try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
         }
-        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false) throws {
+        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false) throws {
             try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"invalid target transport")
             try require((1...256).contains(batchTransactions),"invalid DML batch size")
             try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a demo session already exists; use demo-status or demo-down (up never resets data)")
@@ -130,7 +130,7 @@ public enum DemoSession {
             if targetTransport != "unix" { target["serverHostname"] = "target57"; target["caFile"] = "/evidence/tls/ca.pem" }
             let config: [String: Any] = ["version": 2, "applierProfiling": applierProfiling, "stateDirectory": "/evidence/state", "source": ["version": 2, "host": "source", "port": 3306, "username": "capture_fixture", "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "caFile": "/evidence/tls/ca.pem", "serverID": 9100, "sourceUUID": uuid, "mode": "gtid", "start": ["executedGTIDs": boundary.gtids], "idleTimeoutSeconds": 30, "decoderProfiling": decoderProfiling], "target": target]
             var batchedConfig=config
-            batchedConfig["batch"] = ["maximumTransactions":batchTransactions]
+            batchedConfig["batch"] = ["maximumTransactions":batchTransactions,"maximumInsertRows":insertRows,"overlapPreparation":overlapPreparation,"flushOnTableChange":flushOnTableChange]
             try writeJSON(batchedConfig, to: h.output.appendingPathComponent("apply.json"))
             _ = try docker(["cp", h.output.appendingPathComponent("apply.json").path, helper + ":/evidence/apply.json"])
             // Mount the same trusted CA used by the existing source/target overlay.

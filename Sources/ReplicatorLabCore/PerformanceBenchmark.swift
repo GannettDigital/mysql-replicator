@@ -7,8 +7,15 @@ public struct PerformanceOptions: Codable {
     public var rowsPerEvent = 1
     public var payloadBytes = 100
     public var workload = "insert"
+    public var tables = 1
+    public var tableDistribution = "uniform"
+    public var tableRun = 1
+    var tableNames: [String] { (0..<tables).map { $0 == 0 ? "bench" : "bench_\($0)" } }
     public var targetTransport = "tcp-tls"
     public var batchTransactions = 32
+    public var insertRows = 32
+    public var overlapPreparation = true
+    public var flushOnTableChange = false
     public var sampleSeconds = 5
     public var timeoutSeconds = 300
     public var build = true
@@ -20,6 +27,12 @@ public struct PerformanceOptions: Codable {
         while let flag = args.next() {
             if flag == "--skip-build" { build = false; continue }
             guard let value = args.next() else { throw LabError("missing value for " + flag) }
+            if ["--overlap-preparation","--flush-on-table-change"].contains(flag) {
+                try require(["on","off"].contains(value),flag + " must be on or off")
+                if flag == "--overlap-preparation" { overlapPreparation = value == "on" }
+                else { flushOnTableChange = value == "on" }
+                continue
+            }
             if flag == "--applier-profile" {
                 try require(["on","off"].contains(value),"applier-profile must be on or off")
                 applierProfiling = value == "on"; continue
@@ -28,10 +41,13 @@ public struct PerformanceOptions: Codable {
                 try require(["on","off"].contains(value),"decoder-profile must be on or off")
                 decoderProfiling = value == "on"; continue
             }
+            if flag == "--table-distribution" { tableDistribution = value; continue }
             if flag == "--workload" { workload = value; continue }
             if flag == "--target-transport" { targetTransport = value; continue }
             guard let number = Int(value) else { throw LabError("expected integer for " + flag) }
             switch flag {
+            case "--tables": tables = number
+            case "--table-run": tableRun = number
             case "--events": events = number
             case "--threads": threads = number
             case "--rate": rate = number
@@ -39,6 +55,7 @@ public struct PerformanceOptions: Codable {
             case "--payload-bytes": payloadBytes = number
             case "--sample-seconds": sampleSeconds = number
             case "--timeout": timeoutSeconds = number
+            case "--insert-rows": insertRows = number
             case "--batch-transactions": batchTransactions = number
             default: throw LabError("unknown benchmark option: " + flag)
             }
@@ -48,8 +65,12 @@ public struct PerformanceOptions: Codable {
         try require((0...100_000).contains(rate), "rate must be 0...100000 (0 means unlimited)")
         try require((1...100).contains(rowsPerEvent), "rows-per-event must be 1...100")
         try require((0...1024).contains(payloadBytes), "payload-bytes must be 0...1024")
+        try require((1...32).contains(tables), "tables must be 1...32")
+        try require((1...10000).contains(tableRun), "table-run must be 1...10000")
+        try require(["uniform","hot80"].contains(tableDistribution) && (tableDistribution != "hot80" || tables > 1), "table-distribution must be uniform, or hot80 with at least two tables")
         try require(["insert", "mixed"].contains(workload), "workload must be insert or mixed")
         try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"target-transport must be tcp-tls, unix-tls or unix")
+        try require((1...128).contains(insertRows),"insert-rows must be 1...128")
         try require((1...256).contains(batchTransactions),"batch-transactions must be 1...256")
         try require((1...30).contains(sampleSeconds), "sample-seconds must be 1...30")
         try require((10...3600).contains(timeoutSeconds), "timeout must be 10...3600 seconds per load/catch-up phase")
@@ -120,7 +141,7 @@ public enum PerformanceBenchmark {
         let loadTag = "mysql-replicator-benchmark:sysbench"
         var loadContainer: String?
         var failure: Error?
-        var report: [String: Any] = ["schema_version": 1, "result": "failed", "options": try jsonObject(options),
+        var report: [String: Any] = ["schema_version": 2, "result": "failed", "options": try jsonObject(options),
             "scope": "shared-host source8.4/native8.4/target5.7; release x86_64 applier; no production capacity claim",
             "timing": "monotonic host polling; source statement latency is not replication latency"]
         var output: URL?
@@ -131,7 +152,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling)
+            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling, insertRows:options.insertRows, overlapPreparation:options.overlapPreparation, flushOnTableChange:options.flushOnTableChange)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
@@ -148,7 +169,10 @@ public enum PerformanceBenchmark {
             let connectionType = try session.h.sql("target57","SELECT CONNECTION_TYPE FROM performance_schema.threads WHERE PROCESSLIST_USER='apply_fixture'")
             try require(connectionType == (options.targetTransport == "unix" ? "Socket" : "SSL/TLS"),"target connection type differs: " + connectionType)
             report["target_connection_type"] = connectionType
-            _ = try session.h.sql("source", "CREATE DATABASE demo CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE demo.bench(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,payload VARCHAR(1024) NOT NULL,quantity BIGINT UNSIGNED NOT NULL)")
+            _ = try session.h.sql("source", "CREATE DATABASE demo CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+            for name in options.tableNames {
+                _ = try session.h.sql("source", "CREATE TABLE demo.\(name)(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,payload VARCHAR(1024) NOT NULL,quantity BIGINT UNSIGNED NOT NULL)")
+            }
             let baseline = try session.h.boundary("source")
             let uuid = try session.h.sql("source", "SELECT @@server_uuid")
             let preparationDeadline = Date().addingTimeInterval(30)
@@ -168,7 +192,7 @@ public enum PerformanceBenchmark {
             report["database_configuration"] = configurations
             try nativeHealthy(session)
             var serverBefore: [String:ServerWorkCounters.Snapshot] = [:]
-            for service in ["native","target57"] { serverBefore[service]=try ServerWorkCounters.capture(session.h,service:service) }
+            for service in ["native","target57"] { serverBefore[service]=try ServerWorkCounters.capture(session.h,service:service,tables:options.tableNames) }
             try writeJSON(jsonObject(serverBefore),to:output!.appendingPathComponent("server-work-before.json"))
             let workloadHash = try runner.run(["openssl", "dgst", "-sha256", root.appendingPathComponent("docker/performance/workload.lua").path]).text.suffix(64)
             let imageHash = try session.docker(["run", "--rm", "--network", "none", "--entrypoint", "sha256sum", loadImage, "/workload.lua"]).text.prefix(64)
@@ -183,7 +207,7 @@ public enum PerformanceBenchmark {
                            "--mysql-db=demo", "--mysql-ssl=on", "--mysql-ignore-errors=", "--db-ps-mode=disable",
                            "--events=\(options.events)", "--time=0", "--threads=\(options.threads)", "--rate=\(options.rate)",
                            "--rows-per-event=\(options.rowsPerEvent)", "--payload-bytes=\(options.payloadBytes)",
-                           "--workload=\(options.workload)", "--report-interval=1", "--percentile=95", "run"]
+                           "--workload=\(options.workload)", "--tables=\(options.tables)", "--table-distribution=\(options.tableDistribution)", "--table-run=\(options.tableRun)", "--report-interval=1", "--percentile=95", "run"]
             report["load_command"] = command
             let traceURL = output!.appendingPathComponent("samples.tsv")
             try "start_seconds\tend_seconds\tphase\tsource_before\tsource_after\tnative_applied\treplicator_applied\treplicator_rows\tnative_backlog_lower\tnative_backlog_upper\treplicator_backlog_lower\treplicator_backlog_upper\n".write(to: traceURL, atomically: true, encoding: .utf8)
@@ -254,15 +278,15 @@ public enum PerformanceBenchmark {
             var serverAfter: [String:ServerWorkCounters.Snapshot] = [:]
             var serverDelta: [String:[String:ServerWorkCounters.Metric]] = [:]
             for service in ["native","target57"] {
-                let after=try ServerWorkCounters.capture(session.h,service:service)
+                let after=try ServerWorkCounters.capture(session.h,service:service,tables:options.tableNames)
                 serverAfter[service]=after
                 serverDelta[service]=try ServerWorkCounters.delta(before:serverBefore[service]!,after:after)
             }
             try writeJSON(jsonObject(serverAfter),to:output!.appendingPathComponent("server-work-after.json"))
             try writeJSON(jsonObject(serverDelta),to:output!.appendingPathComponent("server-work-delta.json"))
             report["server_work"] = try jsonObject(serverDelta)
-            report["server_work_scope"] = "after schema setup, before load to caught-up before verification; applier-thread statement/status/prepared counters and demo.bench handler counters; metric families overlap and must not be summed"
-            try verifyRows(session)
+            report["server_work_scope"] = "after schema setup, before load to caught-up before verification; applier-thread statement/status/prepared counters and all benchmark table handler counters; metric families overlap and must not be summed"
+            try verifyRows(session,tables:options.tableNames)
             try require(session.h.boundary("source").gtids == finalBoundary.gtids, "source changed during final verification")
             try session.stopWriter()
             try require(session.state("SELECT lifecycle FROM state") == "STOPPED", "replicator did not stop cleanly")
@@ -368,20 +392,24 @@ public enum PerformanceBenchmark {
     }
 
     /// Compare ordered exact values in bounded pages after both appliers catch up.
-    private static func verifyRows(_ session: DemoSession.Session) throws {
-        var cursor: UInt64 = 0, rows = 0
-        while true {
-            let sql = "SELECT id,HEX(payload),quantity FROM demo.bench WHERE id>\(cursor) ORDER BY id LIMIT 1000"
-            let source = try session.h.sql("source", sql)
-            for service in ["native", "target57"] {
-                try require(session.h.sql(service, sql) == source, "\(service) row mismatch after id \(cursor)")
+    private static func verifyRows(_ session: DemoSession.Session, tables: [String]) throws {
+        var totals: [String:Int] = [:]
+        for table in tables {
+            var cursor: UInt64 = 0, rows = 0
+            while true {
+                let sql = "SELECT id,HEX(payload),quantity FROM demo.\(table) WHERE id>\(cursor) ORDER BY id LIMIT 1000"
+                let source = try session.h.sql("source", sql)
+                for service in ["native", "target57"] {
+                    try require(session.h.sql(service, sql) == source, "\(service) row mismatch in \(table) after id \(cursor)")
+                }
+                let lines = source.split(separator: "\n")
+                if lines.isEmpty { break }
+                guard let id = lines.last?.split(separator: "\t").first, let next = UInt64(id), next > cursor else { throw LabError("invalid row verification cursor") }
+                cursor = next; rows += lines.count
             }
-            let lines = source.split(separator: "\n")
-            if lines.isEmpty { break }
-            guard let id = lines.last?.split(separator: "\t").first, let next = UInt64(id), next > cursor else { throw LabError("invalid row verification cursor") }
-            cursor = next; rows += lines.count
+            totals[table] = rows
         }
-        try writeJSON(["result": "passed", "rows_compared": rows, "comparison": "ordered id, HEX(payload), quantity; source equals native and target57"],
+        try writeJSON(["result": "passed", "rows_compared": totals.values.reduce(0,+), "table_rows": totals, "comparison": "ordered id, HEX(payload), quantity; source equals native and target57"],
                       to: session.h.output.appendingPathComponent("verification.json"))
     }
 }

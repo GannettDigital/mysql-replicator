@@ -47,6 +47,12 @@ the stack. Do not use the interactive demo commands to manage a benchmark stack.
 | `--sample-seconds` | 5 | Desired polling interval; 1–30 seconds |
 | `--timeout` | 300 | Separate load and catch-up deadlines; 10–3600 seconds each |
 | `--batch-transactions` | 32 | Maximum source groups per journal batch; 1–256 |
+| `--tables` | 1 | Benchmark tables (`bench`, `bench_1`, ...); 1–32 |
+| `--table-distribution` | uniform | `uniform`, or `hot80` with at least two tables |
+| `--table-run` | 1 | Consecutive INSERT cycles per table selection per client; 1–10,000 |
+| `--insert-rows` | 32 | Maximum rows in a target INSERT statement; 1–128; 1 disables fusion |
+| `--overlap-preparation` | on | Collect/validate the next batch while target SQL executes |
+| `--flush-on-table-change` | off | Enable to compare with the old table-change journal barrier |
 | `--decoder-profile` | on | Detailed decoder function timings; `on` or `off` |
 | `--applier-profile` | on | Detailed applier timings; `on` or `off` (normal benchmark only) |
 | `--skip-build` | off | Reuse existing runtime and load-generator images |
@@ -77,6 +83,20 @@ event changes exactly `rows-per-event` rows. Each client owns disjoint keys.
 run may end partway through a client's cycle. Errors are fatal rather than
 silently retried. The event limit, committed GTID count, and applied row count
 must agree.
+
+Table routing is deterministic per client. `uniform` rotates through all tables;
+`hot80` sends four of each five selections to `bench`, rotating the remaining
+selection through the other tables. Finite runs and partially completed cycles
+can differ from precisely 80%. All three phases of a mixed cycle use the same
+table. `--table-run 16` produces longer runs on each selected table; the default
+of 1 exercises frequent table switches. Neither option reorders replication.
+
+For the three basic 10K scenarios, use `--events 10000 --rate 0
+--decoder-profile off`, with `--tables 1`, `--tables 8`, and
+`--tables 8 --table-distribution hot80`. Add `--table-run 16` to test the benefit
+of consecutive compatible INSERTs across multiple tables. Exact verification
+covers every table, and server-work artifacts include aggregate table counters
+and per-table INSERT counts. The report schema is version 2.
 
 Schema creation and applier startup finish before measurement. The baseline
 excludes setup transactions. There is no warm-up phase yet; initial table/schema
@@ -489,6 +509,240 @@ and repeated restart without replay. Evidence:
 - `artifacts/demo-suite/20261002T221209Z-486f6514-auto-autocommit-myisam/`
 - `artifacts/demo-suite-idle-stop/20261002T221400Z-14117633-auto-autocommit-myisam/`
 - `artifacts/demo-suite-detached/20261002T221500Z-a9fe8a88-auto-autocommit-myisam/`
+
+### Discovery and DML planning analysis, 2026-10-02
+
+SQLite statement caching was committed as `ef51fce` before this investigation.
+In the latest profiled 10K run, the two timers cover:
+
+| Stage | Calls | Self seconds | Meaning |
+| --- | ---: | ---: | --- |
+| `apply.detail.target.discover` | 10,000 | 2.758 | Validate each included table map against the discovered target schema |
+| `apply.detail.dml.plan` | 10,000 | 1.721 | Validate a complete source group and construct its row mutations |
+
+Together these account for 4.479 s, about 12.4% of the measured 36.046 s consumer
+elapsed time. These are whole-function timings; they do not separately attribute
+time to type parsing, value checks, collection allocation or lookup.
+
+`TargetSession.discover` checks table-map metadata, releases a lock if switching
+tables, resolves the target table from `discovered` (or reads its schema on a
+miss), and validates every source wire column against the target. Checks include
+type/encoding/signedness/precision, column count, nullability, supported matching
+collation, and optional source column-name/primary-key metadata. It then stores
+the table in `discovered` again. Only included table maps enter this path.
+
+In this run discovery's total and self times are identical: no timed SQL/schema
+child ran inside those 10,000 calls. Schema SQL is already cached. The run had one
+`target.read_schema` invocation elsewhere in setup/DDL handling, and workload
+server counters show the schema SELECTs executing once, not per transaction.
+
+For each column, discovery constructs `DMLColumnType(c.type)` and then constructs
+it again through `c.interpretation`. With three columns and 10,000 table maps,
+that is about 60,000 type-parser invocations in this path. Parsing performs string
+suffix checks/splitting, argument parsing, type lookups and type-definition
+validation on the same three unchanged type strings.
+
+`DMLPlan.make` checks committed/nonanonymous GTID identity, selects row events,
+applies filtering rules, enforces the single-source-statement limit, resolves
+each row event to a target table, validates row operation/image shape and column
+counts, then validates every before/after value and builds `Mutation` objects.
+Finally it requires a nonempty single-table result for included row events.
+SQL text is generated separately by the already-cached `DMLSQLPlan`.
+
+Every non-NULL value calls `ApplyColumn.validate(value)`, which reparses its type.
+The three-column, single-row INSERT workload adds about 30,000 parses here, for
+roughly 90,000 across both paths. These counts are inferred from the code and
+workload, not separate profiler counters. UPDATEs can validate both images, so
+parsing repeats more often for the same row. Value checks themselves (NULL,
+integer range, text/binary length, decimal and temporal rules) must still run.
+
+Recommended sequence:
+
+1. Build immutable parsed column descriptors once per target schema version and
+   use them in both discovery and DML value validation. Discovery can immediately
+   use the already-parsed `type.interpretation` instead of reparsing through
+   `c.interpretation`. Keep descriptors session-local, separate from persisted
+   `ApplyTable` data and from proof that a locked target schema was verified.
+2. Cache the last successfully validated wire-column description for each table
+   and target schema version. An identical description can reuse the validation;
+   a changed description must undergo all existing checks. Compare all relevant
+   wire fields, including optional names, primary-key flags, raw type metadata,
+   signedness, nullability and collation. Key by full table identity and schema
+   version, not an event fingerprint or numeric table ID alone.
+3. Resolve DML tables directly by identity instead of allocating
+   `Array(target.discovered.values)` and linearly searching it for every group.
+   This is a secondary cleanup for the one-table fixture, more useful across
+   multiple tables. Preserve filtered-group and single-statement rules.
+
+The existing `invalidateStatements()` hooks run before and after ordered DDL,
+including database DDL; new validation caches should be cleared there and start
+empty on every session. Schema replacement/rename/drop must never retain an old
+wire-validation result. Cache-miss failures must continue to block before writes,
+and every row's values must still be checked even after identical metadata hits.
+Tests should cover changed signedness/collation/nullability/type metadata,
+optional metadata changes, DDL invalidation and bad values following a cache hit.
+
+The repeated parsing is a concrete optimization candidate, but the current
+measurements do not prove how much of the combined 4.479 s it consumes. The full
+stages cannot disappear because per-row validation and mutation construction
+remain necessary. Measure the same 10K and mixed workloads after implementing
+parsed descriptors and wire-validation reuse; no production change was made in
+this analysis.
+
+## INSERT execution and preparation overlap, 2026-10-02
+
+The expanded harness was run against the unchanged `ef51fce` applier before
+runtime edits. All three scenarios used 10,000 single-row INSERT transactions,
+one source client, unlimited offered rate, 100-byte payloads, TCP/TLS, detailed
+applier profiling on and decoder profiling off. The source and both replicas
+matched exactly, including each of the eight tables where applicable.
+
+| Baseline scenario | Observed custom completion | Native completion | Journal batches | SQLite commits | Target SQL calls |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| One table | 35.693 s | 15.912 s | 357 | 743 | 11,113 |
+| Eight tables, uniform, run length 1 | 80.797 s | 20.706 s | 10,000 | 20,051 | 30,267 |
+| Eight tables, 80% hot, run length 1 | 55.739 s | 20.721 s | 4,005 | 8,061 | 18,281 |
+
+Evidence under `artifacts/performance/`:
+
+- `20261002T223656Z-66eb3b8e/20261002T223657Z-50519453-auto-autocommit-myisam/`
+- `20261002T224010Z-efe99dad/20261002T224010Z-0cef7e3b-auto-autocommit-myisam/`
+- `20261002T224228Z-1045737a/20261002T224229Z-4e57cb68-auto-autocommit-myisam/`
+
+The uniform scenario exposed a journal batch flush on every table switch.
+SQLite commit time rose from 0.965 s to 16.672 s; this was a material workload
+difference hidden by the one-table benchmark. These are shared-host observations
+with five-second polling, not isolated capacity measurements.
+
+### Execution changes
+
+Consecutive compatible INSERTs now use bounded multi-row SQL with bound
+parameters. The default maximum is 32 rows and a conservative 1 MiB byte budget,
+further capped using the target's `max_allowed_packet`. Power-of-two chunk sizes
+bound prepared-statement variants. At most 128 rows with 256 columns keeps
+parameter counts below MySQL's 65,535 limit. Larger individual rows continue
+through the existing single-row path. SQL/parameter byte bounds include escaped
+identifiers and protocol overhead.
+
+Single-row source groups can share one target INSERT. A larger source group can
+use multiple chunks but is not fused with adjacent source groups, and retains
+its table lock between chunks. No chunk crosses a table/schema or operation
+boundary. UPDATE/DELETE before-image checks remain unchanged. Source group IDs
+and relay references remain separate in SQLite; target SQL/binlog statement
+boundaries can differ from source statement boundaries.
+
+Every row intent is durable before target execution. Only a successful response
+with the expected affected-row count acknowledges a chunk. An error, disconnect
+or unexpected count leaves the entire failed chunk pending, including any rows
+MyISAM might already have written. Earlier successful chunks retain their known
+acknowledgments. There is no retry and no inference of a successful prefix inside
+an unsuccessful statement. The live duplicate-key fixture explicitly tests this.
+
+A single target worker executes one durable batch while the coordinator appends
+relay records, validates table maps/row values and collects the next bounded
+batch. SQLite, relay ownership and progress callbacks remain on the coordinator.
+The next batch's intent commit waits for completion of the previous batch; this
+does not introduce multiple outstanding journal batches or out-of-order target
+application. The existing decode queue supplies bounded backpressure as before.
+The worker is joined before DDL, schema discovery requiring SQL, target-session
+access, shutdown or final diagnostics. Worker-local timers are merged after
+joining; overlapping elapsed times must not be added as wall time.
+
+Journal collection can now span table changes. Execution still follows source
+order and switches WRITE locks when needed; it does not reorder tables to make
+larger INSERT chunks. DDL and filtered groups retain explicit barriers. Configure
+`batch.flushOnTableChange=true` to restore table-change collection barriers,
+`batch.maximumInsertRows=1` to disable SQL fusion, and
+`batch.overlapPreparation=false` to wait immediately for each target batch.
+
+New measurements include `apply.batch.prepare`, `apply.batch.execute`,
+`apply.execution_wait`, `target.insert_chunk`, and `apply.batch.flush.*` counters
+for transaction/row/byte/age limits and explicit barriers. `apply.consume` now
+measures coordinator work and waits; target execution is measured separately.
+There is no per-row stdout logging.
+
+### Measured results
+
+The same profiled workloads passed exact source/native/target comparison:
+
+| Scenario | Observed custom completion | Native completion | Journal batches | SQLite commits | Target SQL calls | Target INSERT executions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| One table | 25.734 s | 16.018 s | 613 | 1,255 | 2,347 | 1,505 |
+| Eight tables, uniform, run length 1 | 40.706 s | 20.707 s | 372 | 794 | 30,272 | 10,000 |
+| Eight tables, 80% hot, run length 1 | 25.772 s | 20.687 s | 373 | 796 | 12,657 | 4,367 |
+| One table, overlap disabled | 25.925 s | 16.041 s | 373 | 775 | 1,710 | 902 |
+| Eight tables, uniform, run length 16 | 25.799 s | 20.776 s | 606 | 1,262 | 4,022 | 2,412 |
+
+All rows above represent 10,000 source transactions and 10,000 inserted rows.
+INSERT execution counts sum the target's prepared INSERT counters; handler row
+counts independently remain 10,000. Setup is included in the stage counts but
+excluded from server-counter deltas. Uniform routing produced exactly 1,250
+rows per table. The hot-table run produced 8,000 rows in `bench`, with 285 or 286
+in each other table.
+
+The uniform run-length-1 workload cannot fuse INSERTs without reordering. Its
+MySQL-call time stayed essentially unchanged (21.316 to 21.356 s), but journal
+batches fell from 10,000 to 372, SQLite commit time fell from 16.672 to 1.068 s,
+and preparation overlapped execution. Actual table lock switching still occurs;
+this change removes the journal barrier at each switch.
+
+Overlap alone did not establish a throughput improvement on the one-table
+sample: both settings completed in the same polling bucket, with coordinator
+elapsed 22.052 s enabled versus 22.201 s disabled. Enabled overlap reduced
+explicit execution-wait time from 2.548 to 0.157 s, but the 25 ms collection
+deadline produced smaller batches and more journal work (613 versus 373 batches).
+This is evidence for retaining independent controls and measuring the tradeoff,
+not a claim that another thread always increases throughput. Larger collection
+deadlines are a possible later experiment.
+
+Evidence, in table order, under `artifacts/performance/`:
+
+- `20261002T225108Z-2a9a6a01/20261002T225108Z-0b6e218e-auto-autocommit-myisam/`
+- `20261002T225258Z-c3293542/20261002T225258Z-295f3aea-auto-autocommit-myisam/`
+- `20261002T225436Z-23748d9d/20261002T225436Z-384dfae6-auto-autocommit-myisam/`
+- `20261002T225559Z-84879c0c/20261002T225559Z-5ee5e86b-auto-autocommit-myisam/`
+- `20261002T225716Z-e9115ff0/20261002T225716Z-61bd9ae5-auto-autocommit-myisam/`
+
+These are single shared-host samples with profiling enabled and five-second
+completion polling. The observed improvements are workload-dependent and are
+not production throughput guarantees.
+
+The mixed workload also passed: 3,000 source transactions, two clients, four rows
+per statement (12,000 row mutations), eight tables, 80% hot routing and run length
+4. Observed custom completion was 25.695 s and native completion 5.646 s. Every
+UPDATE/DELETE still performed its before-image check; this is a correctness
+qualification and a new baseline for mixed traffic, not an improvement claim
+against the INSERT-only scenarios. Evidence:
+`artifacts/performance/20261002T225839Z-9033a043/20261002T225839Z-c61b5696-auto-autocommit-myisam/`.
+
+### Correctness qualification
+
+231 Swift tests passed. New coverage exercises durable intents before combined
+INSERTs, separate source identities, byte/table/operation/group chunk boundaries,
+partial chunk failure without retry, cancellation, known acknowledgments after
+unlock failure, bounded target-worker overlap/join, and ordered collection across
+tables. The added fixture-selection checks also passed.
+
+The live DML compatibility matrix passed all datatype/statement and rejection
+cases in `artifacts/dml-suite/20261002T230111Z-727c128c-auto-autocommit-myisam/`.
+That overall run subsequently failed in the crash fixture before its source SQL
+could execute: a 20,000-row `mysql -e` argument exceeded Linux's argument limit.
+The fixture now uses 8,000 source rows with four-row target chunks. The existing
+dependent failure/recovery sequence is selectable with
+`make dml-suite ARGS='--skip-build --positioning gtid --slice extended'`.
+
+All 16 extended cases then passed in
+`artifacts/dml-suite/20261002T231356Z-a1132d28-auto-autocommit-myisam/`, including
+the duplicate-key partial write (both rows of the unsuccessful INSERT remain
+pending), SIGKILL during chunked execution, retention of all 8,000 prepared row
+intents, rejection of automatic replay, and before-image mismatch checks.
+
+The final demo runtime passed DDL/DML, fail-stop, explicit skip, SIGINT/SIGTERM,
+GTID/file-position resume and repeated restart without replay. Evidence:
+
+- `artifacts/demo-suite/20261002T231103Z-ce229672-auto-autocommit-myisam/`
+- `artifacts/demo-suite-idle-stop/20261002T231252Z-cf800c63-auto-autocommit-myisam/`
+- `artifacts/demo-suite-detached/20261002T231352Z-8989fee9-auto-autocommit-myisam/`
 
 ## Decoder function profile
 

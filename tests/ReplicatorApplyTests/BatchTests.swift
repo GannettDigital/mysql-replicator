@@ -38,7 +38,7 @@ extension ApplyTests {
             return PreparedDMLGroup(group:group,mutations:try DMLPlan.make(group,tables:tables()),relayEnd:store.relayLength)
         }
     }
-    private func withBatchFixture(profiling: Bool = false, _ body: (StateStore,[PreparedDMLGroup]) throws -> Void) throws {
+    func withBatchFixture(profiling: Bool = false, _ body: (StateStore,[PreparedDMLGroup]) throws -> Void) throws {
         let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
         defer { try? FileManager.default.removeItem(at:parent) }
@@ -173,6 +173,7 @@ extension ApplyTests {
         try withBatchFixture { _,input in
             for limit in ["rows","bytes","table"] {
                 var policy=BatchPolicy(), sizes:[Int]=[]
+                policy.flushOnTableChange = true
                 if limit == "rows" { policy.maximumRows=1 }
                 if limit == "bytes" { policy.maximumWireBytes=input[0].wireBytes+input[1].wireBytes-1 }
                 let buffer=DMLBatch(policy:policy) { sizes.append($0.count) }

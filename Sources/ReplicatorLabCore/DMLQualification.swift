@@ -681,7 +681,7 @@ public enum DMLQualification {
                 report["ddl_policy"]="unchanged DDL; source InnoDB and both replicas MyISAM via local defaults"
                 report["ddl_steps"]=changes.map{$0.sql};report["ddl_result"]=ddlResult
                 }
-            } else if mode == "gtid" && selection.includes("all") {
+            } else if mode == "gtid" && selection.includes("extended") {
                 // Additional accepted shapes: multi-row statement and key change.
                 let edgeStart = try h.boundary("source"), edgeNativeStart = try h.boundary("native"), edgeTargetStart = try h.boundary("target57")
                 let edge = try start(QualificationCase("multirow", "Replicate multirow INSERT and DELETE with a primary-key update"),configuration("multirow",at:edgeStart,count:3)); try waitForReader(edge)
@@ -853,7 +853,7 @@ public enum DMLQualification {
                 _ = try finish(partial,"partial",success:false,reason:"1062 (duplicate key)")
                 try require(h.sql("target57","SELECT id,value FROM poc.items WHERE id IN (20,21) ORDER BY id") == "20\tfirst\n21\tcollision","partial MyISAM effects differ")
                 try require(state("partial","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||COALESCE(applied_position,'NULL') FROM state") == "BLOCKED|0|0|NULL","partial group advanced checkpoint")
-                try require(state("partial","SELECT ordinal||'|'||status FROM row_intents ORDER BY ordinal") == "0|DONE\n1|PENDING","partial row intents differ")
+                try require(state("partial","SELECT ordinal||'|'||status FROM row_intents ORDER BY ordinal") == "0|PENDING\n1|PENDING","failed INSERT chunk must retain every row as uncertain")
                 try cases.pass("partial")
                 // Kill a disposable writer after MyISAM has accepted some rows.
                 // The whole prepared group must remain unresolved on disk, and
@@ -863,10 +863,13 @@ public enum DMLQualification {
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.batch_crash(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
                 }
                 let crashStart=try h.boundary("source")
-                let crashConfig=configuration("batch-crash",at:crashStart,count:1)
+                var crashConfig=configuration("batch-crash",at:crashStart,count:1)
+                // Stay below Linux's per-argument limit for mysql -e, while
+                // retaining enough SQL chunks to observe and kill mid-group.
+                crashConfig["batch"] = ["maximumInsertRows":4]
                 let crash=try start(QualificationCase("batch-crash","Kill a writer mid-group and retain all prepared intents without advancing progress"),crashConfig)
                 try waitForReader(crash)
-                _ = try h.sql("source","INSERT INTO poc.batch_crash VALUES " + (1...2000).map{"(\($0),\($0))"}.joined(separator:","))
+                _ = try h.sql("source","INSERT INTO poc.batch_crash VALUES " + (1...8000).map{"(\($0),\($0))"}.joined(separator:","))
                 let crashDeadline=Date().addingTimeInterval(30)
                 while true {
                     let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='batch_crash'")) ?? 0
@@ -880,11 +883,11 @@ public enum DMLQualification {
                 try crashedLogs.stdout.write(to:output.appendingPathComponent("batch-crash.ndjson"))
                 try crashedLogs.stderr.write(to:output.appendingPathComponent("batch-crash.diagnostic.json"))
                 let partialRows=Int(try h.sql("target57","SELECT COUNT(*) FROM poc.batch_crash")) ?? -1
-                try require((1..<2000).contains(partialRows),"crash did not interrupt a partially applied group")
+                try require((1..<8000).contains(partialRows),"crash did not interrupt a partially applied group")
                 try require(state("batch-crash","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||(active_gtid IS NOT NULL) FROM state") == "RUNNING|0|0|1","crash advanced or cleared the pending checkpoint")
-                try require(state("batch-crash","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "2000","crash lost prepared intents or prematurely completed rows")
+                try require(state("batch-crash","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "8000","crash lost prepared intents or prematurely completed rows")
                 try require(state("batch-crash","SELECT COUNT(*) FROM groups WHERE status='PENDING'") == "1","crash lost the pending group")
-                try writeJSON(["target_rows_at_crash":partialRows,"prepared_rows":2000,"automatic_replay":false],to:output.appendingPathComponent("batch-crash-evidence.json"))
+                try writeJSON(["target_rows_at_crash":partialRows,"prepared_rows":8000,"automatic_replay":false],to:output.appendingPathComponent("batch-crash-evidence.json"))
                 try cases.pass("batch-crash")
                 let resumed=try start(QualificationCase("batch-crash-resume","Refuse automatic replay of a crashed prepared group"),crashConfig,initialize:false)
                 _ = try finish(resumed,"batch-crash-resume",success:false,reason:"cleanly STOPPED")

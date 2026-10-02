@@ -37,12 +37,18 @@ public enum ApplyRun {
         let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
         let timings = StageTimings()
         let producerTimings = StageTimings()
+        let targetTimings = StageTimings()
         let pipeline = ApplyPipeline()
         var consumerPending = false
         let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
+        func finalTimings() -> [String:StageTimings.Sample] {
+            let merged = StageTimings()
+            merged.merge(timings.snapshot); merged.merge(producerTimings.snapshot); merged.merge(targetTimings.snapshot)
+            return merged.snapshot
+        }
         func summary(_ lifecycle: String) -> ApplySummary {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
-                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:lifecycle == "RUNNING" ? nil : timings.snapshot.merging(producerTimings.snapshot) { current, _ in current },
+                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:lifecycle == "RUNNING" ? nil : finalTimings(),
                 pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot)
         }
         func progress() throws {
@@ -53,7 +59,7 @@ public enum ApplyRun {
         let capture = try state.captureConfiguration(configuration.source)
         var started = false
         do {
-            let target = try TargetSession(configuration:configuration,password:targetPassword,timings:timings)
+            let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
             defer { try? target.unlock() }
             try target.preflight()
             if !filter.patterns.isEmpty {
@@ -64,22 +70,59 @@ public enum ApplyRun {
                 try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
             }
             try state.running(); started = true
-            let batch = DMLBatch(policy:configuration.batchPolicy) { groups in
-                try timings.measure("apply.batch") {
-                    try DMLBatch.execute(groups,state:state,cancellation:cancellation,
-                        lock:{ try pipeline.queue.checkFailure(); try target.lock($0) },
-                        write:{ try pipeline.queue.checkFailure(); try target.apply($0) },completedGroup:target.completedDMLGroup)
-                    try progress()
+            let executor = DMLExecutor()
+            let executionStop = CaptureCancellation(parent:cancellation)
+            var planningTables = target.discovered
+            func finishExecution() throws {
+                guard executor.active else { return }
+                let outcome = timings.measure("apply.execution_wait") { executor.join()! }
+                try outcome.record(in:state)
+                try progress()
+            }
+            // Always join before target destruction, diagnostics or a journal
+            // error path. Main-thread failures stop further target statements.
+            defer { executionStop.cancel(); _ = executor.join() }
+            let batch = DMLBatch(policy:configuration.batchPolicy,onFlush:{ reason in timings.measure("apply.batch.flush." + reason) {} }) { groups in
+                try finishExecution()
+                try pipeline.queue.checkFailure()
+                try target.lock(groups[0].mutations[0].table)
+                try timings.measure("apply.batch.prepare") { try state.beginBatch(groups) }
+                let byteLimit = target.insertByteLimit
+                executor.start {
+                    targetTimings.measure("apply.batch.execute") {
+                        DMLExecution.run(groups,cancellation:executionStop,
+                            maximumInsertRows:configuration.batchPolicy.maximumInsertRows,maximumInsertBytes:byteLimit,
+                            lock:{ try pipeline.queue.checkFailure(); try target.lock($0) },
+                            write:{ try pipeline.queue.checkFailure(); try target.apply($0) },
+                            insert:{ try pipeline.queue.checkFailure(); try target.applyInserts($0) },
+                            completedGroup:target.completedDMLGroup)
+                    }
                 }
+                if !configuration.batchPolicy.overlapPreparation { try finishExecution() }
+            }
+            func barrier(_ reason: String = "barrier") throws { try batch.flush(reason:reason); try finishExecution() }
+            func maintainExecution() throws {
+                if executor.ready { try finishExecution() }
+                if !executor.active { try target.releaseExpiredLock() }
             }
             func event(_ record: LiveRecord) throws {
                 if !cancellation.isCancelled { try batch.flushIfExpired() }
-                try target.releaseExpiredLock()
+                try maintainExecution()
                 try timings.measure("relay.append") { try state.append(record) }
                 if let decoded = record.event {
                     if case .gtid = decoded.control { consumerPending = true }
                     if decoded.eventType == 19 && !decoded.replicationFiltered {
-                        let table = try target.discover(decoded)
+                        guard let database = decoded.database, let name = decoded.table else { throw ApplyError("missing table-map identity") }
+                        let identity = database + "\0" + name
+                        let table: ApplyTable
+                        if let cached = planningTables[identity] {
+                            try state.profile("target.discover") { try TargetSession.validateTableMap(decoded,table:cached) }
+                            table = cached
+                        } else {
+                            try barrier()
+                            table = try target.discover(decoded)
+                            planningTables[identity] = table
+                        }
                         guard let offset = UInt64(decoded.offset) else { throw ApplyError("invalid table-map coordinate") }
                         try state.schema(table,event:decoded,coordinate:BinlogCoordinate(file:record.file,position:offset))
                     }
@@ -88,7 +131,7 @@ public enum ApplyRun {
             func transaction(_ group: CompleteTransaction) throws {
                 defer { consumerPending = false }
                 if group.outcome == .statement {
-                    try batch.flush()
+                    try barrier()
                     try state.begin(group)
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
@@ -103,19 +146,20 @@ public enum ApplyRun {
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try pipeline.queue.checkFailure()
                     try target.applyDDL(plan)
+                    planningTables = target.discovered
                     try state.complete(group,rowCount:0,ddl:plan)
                     try progress()
                     return
                 }
                 let mutations: [Mutation]
-                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:Array(target.discovered.values)) } }
+                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:Array(planningTables.values)) } }
                 catch {
-                    try batch.flush()
+                    try barrier()
                     try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
                     throw error
                 }
                 if mutations.isEmpty {
-                    try batch.flush()
+                    try barrier()
                     try state.begin(group)
                     try target.unlock()
                     try state.complete(group,rowCount:0,filtered:true)
@@ -135,16 +179,22 @@ public enum ApplyRun {
                         case .event(let record): try event(record)
                         case .transaction(let group): try transaction(group)
                         case .idle:
-                            if !cancellation.isCancelled { try batch.flush() }
+                            if !cancellation.isCancelled { try barrier("idle") }
+                            else { try finishExecution() }
                             try target.unlock()
                         }
                     }
                 },onWait:{
                     if !cancellation.isCancelled { try batch.flushIfExpired() }
-                    try target.releaseExpiredLock()
+                    try maintainExecution()
                 },timings:timings)
-                try batch.flush() // Includes stopAfterTransactions and clean source EOF.
+                try barrier("end") // Includes stopAfterTransactions and clean source EOF.
             } catch {
+                executionStop.cancel()
+                // Preserve acknowledged work even if preparation/decoding failed.
+                // Unwritten collected work is discarded; uncertain SQL is never retried.
+                do { try finishExecution() }
+                catch let executionError { throw ApplyError("\(error); target completion: \(executionError)") }
                 guard !consumerPending && canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
             }
             try target.unlock()

@@ -7,6 +7,10 @@ final class SuiteSelectionTests: XCTestCase {
         XCTAssertEqual(selected.slice,"matrix")
         XCTAssertTrue(selected.selects("matrix-decimal")); XCTAssertFalse(selected.selects("matrix-values"))
         XCTAssertThrowsError(try SuiteSelection(arguments:["--case","matrix-unknown"],ddl:false))
+        let extended = try SuiteSelection(arguments:["--slice","extended","--positioning","gtid"],ddl:false)
+        XCTAssertTrue(extended.includes("extended")); XCTAssertFalse(extended.includes("matrix"))
+        XCTAssertTrue(try SuiteSelection(arguments:[],ddl:false).includes("extended"))
+        XCTAssertThrowsError(try SuiteSelection(arguments:["--slice","extended","--positioning","file-position"],ddl:false))
         XCTAssertEqual(try DMLCompatibilityCases.transactionCount("a:1-3:5,b:9-10"),6)
         XCTAssertEqual(try DMLCompatibilityCases.transactionCount(""),0)
     }

@@ -25,7 +25,7 @@ enum ServerWorkCounters {
         }
         return result
     }
-    static func capture(_ h: NativeHarness, service: String) throws -> Snapshot {
+    static func capture(_ h: NativeHarness, service: String, tables: [String] = ["bench"]) throws -> Snapshot {
         let predicate = service == "target57" ? "PROCESSLIST_USER='apply_fixture'"
             : "NAME IN ('thread/sql/replica_sql','thread/sql/slave_sql','thread/sql/replica_worker','thread/sql/slave_worker')"
         let ids=try h.sql(service,"SELECT THREAD_ID FROM performance_schema.threads WHERE \(predicate) ORDER BY THREAD_ID")
@@ -39,10 +39,13 @@ enum ServerWorkCounters {
         let prepared = "SELECT JSON_OBJECT('key',CONCAT('prepared.',SQL_TEXT),'count',SUM(COUNT_EXECUTE),'picoseconds',SUM(SUM_TIMER_EXECUTE)) FROM performance_schema.prepared_statements_instances WHERE OWNER_THREAD_ID IN (\(list)) GROUP BY SQL_TEXT"
         let status = "SELECT JSON_OBJECT('key',CONCAT('status.',VARIABLE_NAME),'count',CAST(SUM(VARIABLE_VALUE) AS UNSIGNED),'picoseconds',0) FROM performance_schema.status_by_thread WHERE THREAD_ID IN (\(list)) AND (VARIABLE_NAME LIKE 'Handler_%' OR VARIABLE_NAME IN ('Com_stmt_prepare','Com_stmt_execute','Com_select','Com_insert','Com_update','Com_delete','Com_lock_tables','Com_unlock_tables','Opened_tables','Opened_table_definitions')) GROUP BY VARIABLE_NAME"
         var queries=[statements,prepared,status]
+        try require(!tables.isEmpty && tables.allSatisfy { $0.range(of: #"^bench(_[0-9]+)?$"#, options:.regularExpression) != nil }, "invalid benchmark table names")
+        let tableList = tables.map { "'" + $0 + "'" }.joined(separator:",")
         for operation in ["FETCH","INSERT","UPDATE","DELETE"] {
-            queries.append("SELECT JSON_OBJECT('key','table.\(operation.lowercased())','count',COUNT_\(operation),'picoseconds',SUM_TIMER_\(operation)) FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='demo' AND OBJECT_NAME='bench'")
+            queries.append("SELECT JSON_OBJECT('key','table.\(operation.lowercased())','count',SUM(COUNT_\(operation)),'picoseconds',SUM(SUM_TIMER_\(operation))) FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='demo' AND OBJECT_NAME IN (\(tableList))")
         }
-        queries.append("SELECT JSON_OBJECT('key','table.lock','count',COUNT_STAR,'picoseconds',SUM_TIMER_WAIT) FROM performance_schema.table_lock_waits_summary_by_table WHERE OBJECT_SCHEMA='demo' AND OBJECT_NAME='bench'")
+        queries.append("SELECT JSON_OBJECT('key','table.lock','count',SUM(COUNT_STAR),'picoseconds',SUM(SUM_TIMER_WAIT)) FROM performance_schema.table_lock_waits_summary_by_table WHERE OBJECT_SCHEMA='demo' AND OBJECT_NAME IN (\(tableList))")
+        queries.append("SELECT JSON_OBJECT('key',CONCAT('table_rows.',OBJECT_NAME,'.insert'),'count',COUNT_INSERT,'picoseconds',SUM_TIMER_INSERT) FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='demo' AND OBJECT_NAME IN (\(tableList))")
         let raw=try h.sql(service,queries.joined(separator:"; "))
         var metrics: [String:Metric] = [:]
         for line in raw.split(separator:"\n") {
