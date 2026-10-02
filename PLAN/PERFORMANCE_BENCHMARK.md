@@ -154,17 +154,26 @@ timestamps come from the harness, include launch overhead, and are polling bound
 
 Every final STOPPED summary, or BLOCKED error progress, includes `stageTimings`.
 These are monotonic, run-local counters (reset on resume), with `count`, `failures`,
-`seconds` and `maximumSeconds` per stage. Failed attempts include the typed
-cancellation that ends an idle capture cleanly. Ordinary per-group progress omits the
+`seconds`, `selfSeconds` and `maximumSeconds` per stage. `seconds` is inclusive;
+`selfSeconds` subtracts nested measured stages, including on failure. Both measure
+elapsed time, including I/O waits, rather than CPU time. Failed attempts include the typed
+cancellation that ends an idle capture cleanly. Ordinary progress omits the
 timing summary to avoid repeatedly formatting it in the apply path. The benchmark
 exports the final values to `stage-timings.json` and `result.json.stage_timings`.
 Timings include startup and graceful stop. They are inclusive and overlap:
 `target.schema`, `target.row`, `target.lock` and `target.unlock` contain
 `target.sql`; `sqlite.capacity` can contain `sqlite.checkpoint`; `capture.wait`
-can contain idle lock release. Do not sum all stage durations as elapsed time.
+can contain idle batch application and lock release. Do not sum inclusive durations.
+Exclusive durations can be summed without nesting overlap, but cover only measured
+scopes, not the entire process lifetime or exactly the benchmark's load window.
+The outer `capture.process` timer covers event handling and its synchronous apply
+callbacks; its exclusive time identifies processing outside the narrower timers.
 No SQL text, bind values or credentials are included.
 
-- `capture.wait`: waiting for dump packets (including source idle time).
+- `capture.wait`: packet-queue wait, including source idle time and idle callbacks;
+  use its exclusive time to exclude measured idle work.
+- `capture.process`: event handling, including nested decoding, relay and apply work.
+- `capture.idle`: idle callbacks, including batch flush and lock release.
 - `capture.decode`, `capture.assemble`: decoding/probing and group assembly.
 - `relay.append`, `relay.sync`: relay framing/writes and durable synchronization.
 - `sqlite.capacity`, `sqlite.checkpoint`: full capacity inspection and WAL checkpoint.
@@ -176,6 +185,69 @@ No SQL text, bind values or credentials are included.
 - `target.read`: pre-write row reads, including the new-key check for key changes.
 - `target.schema`, `target.row`, `target.lock`, `target.unlock`,
   `target.statement_invalidation`: inclusive target operations.
+- `progress.emit`: progress snapshot construction plus callback execution; the CLI
+  callback JSON-encodes and synchronously writes stdout. Final stderr summary
+  serialization is outside this counter.
+
+### Stdout and Docker logging
+
+The CLI uses synchronous `FileHandle.standardOutput.write`; it has no asynchronous
+logging queue or application-level log batching. A slow file, pipe or logging
+consumer can delay the serial applier. Kernel buffering can absorb bursts, but
+does not guarantee that writes never block.
+
+The benchmark/demo launch redirects stdout to `/evidence/applier.ndjson` and stderr
+to `/evidence/applier.stderr`, on a project Docker volume. These writes bypass the
+Docker logging driver. `result.json.progress_output` records the destination and
+line/byte counts; `progress.emit` measures the actual synchronous output path.
+Watching the file with `tail -f` is not a consumer the writer must wait for.
+
+For deployments writing to container stdout, Docker defaults to blocking delivery.
+Its optional non-blocking mode uses a bounded buffer and drops new messages when
+full. See [Docker's delivery-mode documentation](https://docs.docker.com/engine/logging/configure/#configure-the-delivery-mode-of-log-messages-from-container-to-log-driver).
+This benchmark does not measure that Docker-driver path or change its settings.
+
+### 10,000-transaction profile, 2026-10-01
+
+After adding exclusive timings and `progress.emit`, 179 Swift tests and the static
+Linux release build passed. The following run used single-row INSERTs, TCP+TLS,
+the default batch limits, one source client, and five-second sampling:
+
+```sh
+.build/debug/replicator-lab benchmark --skip-build --events 10000 --rate 0 --sample-seconds 5 --timeout 600 --batch-transactions 32
+```
+
+All 10,000 final rows matched source/native/target exactly; the checkpoint was
+cleanly STOPPED and cleanup passed. Source load took 13.625 s. Native completion
+was observed at 15.655 s and custom completion at 185.785 s. Stage totals cover
+the process's measured scopes, including setup/idle/verification waiting, rather
+than exactly that benchmark interval. The exclusive total was 195.408 s.
+
+| Stage | Exclusive seconds | Observations |
+| --- | ---: | --- |
+| Target SQL | 64.486 | 81,401 calls, mean 0.792 ms; protocol work and server waits together |
+| Binlog decode/probes | 46.788 | 90,006 calls, mean 0.520 ms; includes Swift conversion and repeated map probes |
+| Relay framing/append | 19.790 | 50,115 events; formatting, copies and file writes, excluding nested capacity work |
+| Other batch processing | 19.400 | Work outside nested timers within 2,649 DML batches |
+| Packet-queue wait | 13.372 | Excludes measured idle flushes; includes setup/verification idle time |
+| SQLite commit/statement/checkpoint/capacity | 8.607 | 5,327 commits and 45,330 statements; not solely fsync time |
+| Other event processing | 8.258 | Event work outside narrower timers |
+| Relay sync | 2.141 | 2,652 syncs |
+| Progress snapshot/JSON/stdout | 1.518 | 2,651 records, 783,020 bytes, mean 0.572 ms and maximum 5.132 ms |
+
+The table lists the main costs, not every stage. Exclusive times avoid counting
+SQL again inside schema/row/batch timings. Progress output accounted for about
+0.8% of the measured total; actual file-write time is only part of that cost.
+Suppressing output alone therefore has little headroom in this fixture. This
+does not establish the cost of a deployment's Docker logging driver.
+
+The larger opportunities are SQL exchanges, decoder/probe work, relay framing and
+the remaining unclassified batch work. These timings do not yet separate CPU,
+allocation, kernel I/O and MySQL server execution within each category. The same
+x86_64-on-ARM emulation limitation applies; repeat on intended deployment hardware.
+
+Full timings, output counts, runtime digest and verification:
+`artifacts/performance/20261002T053717Z-8947df8d/20261002T053718Z-adb2e740-auto-autocommit-myisam/`.
 
 The initial optimization pass (commit `78546f0`) kept individual target row writes, full
 before/after-image checks, strict affected-row checks, FULL SQLite durability,

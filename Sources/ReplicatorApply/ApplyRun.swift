@@ -40,6 +40,11 @@ public enum ApplyRun {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
                 appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:lifecycle == "RUNNING" ? nil : timings.snapshot)
         }
+        func progress() throws {
+            // Include snapshot construction, JSON encoding and the synchronous
+            // output callback so stdout backpressure is visible in final timings.
+            try timings.measure("progress.emit") { try emitProgress(summary("RUNNING")) }
+        }
         let capture = try state.captureConfiguration(configuration.source)
         var started = false
         do {
@@ -58,7 +63,7 @@ public enum ApplyRun {
                 try timings.measure("apply.batch") {
                     try DMLBatch.execute(groups,state:state,cancellation:cancellation,
                         lock:target.lock,write:target.apply,completedGroup:target.completedDMLGroup)
-                    try emitProgress(summary("RUNNING"))
+                    try progress()
                 }
             }
             do {
@@ -76,7 +81,7 @@ public enum ApplyRun {
                             guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
                             if try filter.ignores(query) {
                                 try state.complete(group,rowCount:0,filtered:true)
-                                try emitProgress(summary("RUNNING")); return
+                                try progress(); return
                             }
                             let statement=try DDLStatement.from(group)
                             let plan=try target.prepareDDL(statement,query:query)
@@ -84,7 +89,7 @@ public enum ApplyRun {
                             try require(!cancellation.isCancelled,"apply cancelled")
                             try target.applyDDL(plan)
                             try state.complete(group,rowCount:0,ddl:plan)
-                            try emitProgress(summary("RUNNING"))
+                            try progress()
                             return
                         }
                         let mutations: [Mutation]
@@ -99,7 +104,7 @@ public enum ApplyRun {
                             try state.begin(group)
                             try target.unlock()
                             try state.complete(group,rowCount:0,filtered:true)
-                            try emitProgress(summary("RUNNING")); return
+                            try progress(); return
                         }
                         try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))
                     },resolveSchema: { event, coordinate in

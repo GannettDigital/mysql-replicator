@@ -159,9 +159,10 @@ public enum LiveInspection {
             finished.whenComplete { queue.finish($0) }
             while let frame = try timings.measure("capture.wait", {
                 try queue.next(timeout: TimeInterval(config.idleTimeoutSeconds ?? 15), cancellation: cancellation,
-                               requestRead: { loop.execute { channel.read() } }, onIdle: onIdle)
+                               requestRead: { loop.execute { channel.read() } },
+                               onIdle: { try timings.measure("capture.idle",onIdle) })
             }) {
-                try processor.consume(frame)
+                try timings.measure("capture.process") { try processor.consume(frame) }
                 if let limit = config.stopAfterTransactions, processor.transactionCount == limit {
                     try processor.finish()
                     return summary()
