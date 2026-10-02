@@ -50,6 +50,12 @@ final class StateStore {
     private var inTransaction = false
     private var maintenance = false
     private var ready = false
+    // Used serially by this store, including formatting retention cutoffs.
+    private let timestampFormatter: ISO8601DateFormatter = {
+        let formatter=ISO8601DateFormatter()
+        formatter.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+        return formatter
+    }()
     private let now: () -> Date
     private let freeDisk: (URL) throws -> Int64
     private let uptime: () -> Double
@@ -108,7 +114,7 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=5")
+            try execute("PRAGMA user_version=6")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
@@ -139,7 +145,7 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5].contains(version),"unsupported saved state version")
+        try require([4,5,6].contains(version),"unsupported saved state version")
         try require(version != 4 || skipGTIDs == nil,"format-4 BLOCKED state requires resolution with its original runtime before upgrading")
         try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")
         let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
@@ -247,8 +253,11 @@ final class StateStore {
                 let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
                 try require(table.secondaryIndexes.isEmpty,"format-4 state contains unsupported index metadata")
             }
-            try atomic { try execute("PRAGMA user_version=5") }
         }
+        // Preserve every existing relay byte and offset. New frames carry their
+        // own binary version; inspection supports legacy JSON and mixed files.
+        // Older runtimes reject version 6 before opening it for appends.
+        if version < 6 { try atomic { try execute("PRAGMA user_version=6") } }
         ready=true
     }
     private func singleton(_ text: String) throws -> (sid:String,sequence:String) {
@@ -292,8 +301,7 @@ final class StateStore {
     }
     func timestamp(_ date: Date? = nil) -> String {
         profile("journal.timestamp") {
-            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime,.withFractionalSeconds]
-            return f.string(from:date ?? now())
+            timestampFormatter.string(from:date ?? now())
         }
     }
     static func syncDirectory(_ url: URL) throws {
@@ -459,7 +467,7 @@ final class StateStore {
             return bytes
         }
         let metadata = try profile("relay.metadata") {
-            try JSONSerialization.data(withJSONObject:["kind":record.kind,"file":record.file,"observedPosition":record.observedPosition],options:[.sortedKeys])
+            try RelayMetadata(kind:record.kind,file:record.file,observedPosition:record.observedPosition).encoded()
         }
         let frame = profile("relay.frame") {
             var frame = Data()

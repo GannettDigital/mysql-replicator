@@ -22,6 +22,7 @@ func main() throws {
         Usage: mysql-replicator inspect FILE [--schema HISTORY.json] [--include-raw]
                    [--transactions --binlog-file SOURCE_FILENAME]
                mysql-replicator inspect --source-config SOURCE.json [--transactions] [--include-raw]
+               mysql-replicator inspect-relay FILE [--include-raw]
                mysql-replicator run --config APPLY.json [--initialize]
                mysql-replicator blackhole --source-config SOURCE.json
                mysql-replicator skip GTID_SET --config APPLY.json
@@ -36,6 +37,16 @@ func main() throws {
         Automatic reconnect and recovery of interrupted/uncertain writes are not implemented.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
+        return
+    }
+    if args.first == "inspect-relay" {
+        guard args.count == 2 || (args.count == 3 && args[2] == "--include-raw") else {
+            throw ApplyError("use inspect-relay FILE [--include-raw]")
+        }
+        let encoder=JSONEncoder(); encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
+        try RelayInspection.inspect(file:URL(fileURLWithPath:args[1]),includeRaw:args.count == 3) {
+            try FileHandle.standardOutput.write(contentsOf:encoder.encode($0)+Data([10]))
+        }
         return
     }
     if args.first == "blackhole" {

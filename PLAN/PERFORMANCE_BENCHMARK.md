@@ -143,7 +143,7 @@ The following names have the prefix `apply.detail.`:
 
 | Stage | Work measured |
 | --- | --- |
-| `relay.base64`, `.metadata`, `.frame`, `.write` | Original-byte decoding, sorted JSON metadata, frame assembly, file write |
+| `relay.base64`, `.metadata`, `.frame`, `.write` | Original-byte decoding, relay metadata encoding (binary in the current runtime), frame assembly, file write |
 | `journal.prepare_batch`, `.complete_batch` | Durable pending-intent preparation and acknowledged-prefix completion |
 | `journal.gtid`, `.timestamp`, `.schema`, `.snapshot` | GTID updates in batches, timestamp formatting, schema cache/check/insert, progress snapshot |
 | `sqlite.prepare`, `.bind`, `.step`, `.finalize` | Every journal query, including direct SELECTs and transaction commands; step includes result extraction and commit I/O |
@@ -238,6 +238,172 @@ A separate profiled mixed run (60 transactions, two source clients, three rows p
 statement) passed source/native/target comparison, exercising 180 writes and 120
 before-image reads/result conversions. Its evidence is under
 `artifacts/performance/20261002T213134Z-5eeda276/20261002T213134Z-323ff509-auto-autocommit-myisam/`.
+
+### Relay encoding and timestamp analysis, 2026-10-02
+
+Instrumentation was committed as `d268600` before this analysis. An isolated
+release-mode Swift probe used the same static x86_64 Linux SDK and Docker runtime
+as the full benchmark. It encoded all 50,064 metadata records extracted from the
+profiled relay and formatted 2,022 timestamps, matching the earlier call counts.
+Three measured rounds rotated candidate order; medians are below. Input decoding,
+output comparisons and baseline construction were outside measured sections.
+The probe retained encoded outputs to prevent unused-result optimization.
+
+| Operation | Median seconds | Relative to current implementation |
+| --- | ---: | ---: |
+| Current sorted `JSONSerialization` dictionary | 11.887 | 1.00× |
+| Unsorted `JSONSerialization` dictionary | 8.514 | 1.40× faster |
+| Typed `Encodable`, sorted reused `JSONEncoder` | 1.325 | 8.97× faster |
+| Typed `Encodable`, sorted fresh `JSONEncoder` | 1.408 | 8.44× faster |
+| Typed `Encodable`, unsorted reused `JSONEncoder` | 1.222 | 9.73× faster |
+| Current fresh `ISO8601DateFormatter` | 0.936 | 1.00× |
+| Reused `ISO8601DateFormatter` | 0.030 | 31.16× faster |
+
+Recommended implementation: a private relay metadata `Encodable` containing the
+same three String fields (`file`, `kind`, `observedPosition`), a sorted JSON encoder
+owned by each `StateStore`, and one ISO formatter per store configured once with
+`.withInternetDateTime` and `.withFractionalSeconds`. Keep each actual date fresh
+and preserve the injectable clock and explicit-date argument. Formatter reuse
+preserves the textual timestamps used by SQLite's retention comparisons.
+
+The larger JSON win comes from switching the dictionary/`JSONSerialization` path
+to typed encoding; merely removing sorting helps much less. Reusing the encoder
+has a smaller additional benefit. Retaining sorting preserves current key order
+with little cost in the typed encoder. A custom JSON writer or binary metadata
+format is unnecessary for this first optimization.
+
+All real-record sorted encodings matched byte-for-byte. Separate checks covered
+quotes, backslashes, slashes, control characters, non-ASCII text, combining marks,
+Unicode line separators, empty and long strings; the reused sorted encoder also
+matched the old bytes for these inputs. Fresh and reused timestamp outputs
+matched, including fractional-second, pre-epoch and calendar-boundary examples.
+Production qualification should turn these checks into repository tests and run
+the full 10K and mixed-workload benchmarks, plus resume/retention checks.
+
+These are isolated encoder measurements, not an end-to-end throughput result.
+Their baseline is faster than the concurrent full run's 16.180 s JSON and 2.564 s
+timestamps, so do not directly subtract the probe's savings from the earlier
+60.667 s completion time. Faster event processing can also change batch fullness.
+The recommendation preserves relay framing, source coordinates, timestamp text
+and durable prepare/apply/complete ordering; production code is unchanged here.
+
+Local experiment source, extracted inputs and complete measured output:
+`artifacts/applier-encoding-analysis/` (`Sources/EncodingProbe/main.swift`,
+`metadata.json`, `results.txt`). Build with the existing
+`mysql-replicator-packaging-toolchain:6.2.1` image using
+`swift build --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2`,
+then run the static executable in `mysql-replicator-packaging:demo` with this
+artifact directory as its working directory. Both containers can run without
+network access.
+
+### Binary metadata and cached timestamps
+
+New relay frames now use binary metadata v1, and each `StateStore` reuses an
+ISO-8601 formatter configured with the original fractional-second options. Actual
+dates still come from the injected clock or explicit argument; formatted strings
+are not cached. The existing `relay.metadata` and `journal.timestamp` timers
+continue to measure these paths.
+
+The outer relay frame remains `UInt32LE metadataLength`, `UInt32LE eventLength`,
+metadata bytes, original event bytes. Binary metadata is:
+
+| Offset | Field |
+| --- | --- |
+| 0–2 | ASCII `RMD` magic |
+| 3 | Metadata version, currently 1 |
+| 4 | Kind: 1=event, 2=rotationAnnouncement, 3=formatContext, 4=heartbeat |
+| 5–12 | Observed source position, UInt64 little-endian |
+| 13–14 | UTF-8 source filename byte count, UInt16 little-endian |
+| 15 onward | Filename bytes, 1–255 bytes, no NUL |
+
+All integers use explicit byte order; no native struct layout is written.
+`binlog.000003` metadata takes 28 bytes. Raw binlog payloads, per-frame source
+identity, durable sync/commit ordering and journal offsets retain their meaning.
+
+New state directories use SQLite `user_version=6`. A validated version-4/5
+resume upgrades the version transactionally before any new binary frame is
+appended. Existing relay bytes and offsets are preserved, so an upgraded relay
+can contain a JSON prefix and binary suffix. Version-4 schema validation and
+BLOCKED-state restrictions still apply. Version-5 skip retains its existing
+no-write-intent checks. Older runtimes reject version 6; downgrading a state
+directory is unsupported.
+
+To inspect either format, including mixed files:
+
+```sh
+.build/debug/mysql-replicator inspect-relay /path/to/state/relay.frames
+.build/debug/mysql-replicator inspect-relay /path/to/state/relay.frames --include-raw
+```
+
+The command emits NDJSON with local start/end offsets, metadata version (0 for
+legacy JSON), kind, source filename/position, event byte count and optional raw
+base64. It bounds allocations, rejects unknown metadata versions/kinds and
+truncated frames, and leaves the file unchanged. It reads framing and metadata;
+it does not validate binlog payload CRCs or authorize recovery. Use a stopped or
+archived relay to avoid reading a concurrently appended partial frame.
+
+Next optimization to investigate: cache the repeated SQLite statements in
+`StateStore.query`. The earlier mixed run prepared 595 statements, and the 10K run
+prepared 66,106. Use a bounded per-connection cache, reset each statement and clear
+bindings between uses, preserve error handling without retrying uncertain work,
+and finalize cached statements before closing SQLite. Measure it separately
+from the metadata/formatter changes.
+
+#### First optimized 10K result, 2026-10-02
+
+The same 10K single-row insert workload (unlimited rate, one client, 100-byte
+payloads, TCP/TLS, 32-group/25-ms limits, decoder profiling off, applier profiling
+on) passed exact source/native/target row comparison and stopped at the source
+boundary. Compared with the earlier instrumented JSON run:
+
+| Measurement | JSON/fresh formatter | Binary/cached formatter |
+| --- | ---: | ---: |
+| Observed replication completion | 60.667 s | 35.678 s |
+| Inclusive `apply.consume` | 56.554 s | 33.187 s |
+| Relay metadata encoding | 16.180 s / 50,064 calls | 0.630 s / 50,038 calls |
+| Timestamp formatting | 2.564 s / 2,022 calls | 0.136 s / 728 calls |
+| DML batches | 999 | 352 |
+| SQLite commits, including startup/stop | 2,027 | 733 |
+| MySQL calls, inclusive | 13.067 s | 13.085 s |
+
+Completion was observed about 41% sooner, roughly 1.7× the previous run's
+end-to-end transaction rate. The source workload and batch limits were unchanged.
+Average workload batch size increased from about 10 to 28 transactions as local
+processing got cheaper. Timestamp totals therefore benefit from both formatter
+reuse and fewer calls; the commit reduction is also a batching consequence.
+Heartbeat counts differ because the runs have different durations. Shared-host
+scheduling and five-second completion polling still limit precision.
+
+Evidence:
+`artifacts/performance/20261002T215006Z-de08a7fc/20261002T215007Z-2eb453eb-auto-autocommit-myisam/`.
+The remaining largest profiled costs are prepared MySQL calls (12.257 s), GTID
+updates (5.191 s), local table-map checks (2.695 s), SQLite step/result extraction
+(2.333 s), DML planning (1.702 s), and SQLite preparation (1.390 s / 62,220 calls).
+
+The matching optimized run with both detailed profilers disabled also passed
+10,000-row comparison and the final source checkpoint, with observed completion
+35.704 s and inclusive consumer time 32.947 s. The prior unprofiled JSON run was
+55.723 s, so this pair finished about 36% sooner. Both optimized completion times
+fall in the same five-second polling bucket; this does not establish zero
+profiling overhead. Unprofiled evidence:
+`artifacts/performance/20261002T215316Z-a729623c/20261002T215316Z-df30a0e1-auto-autocommit-myisam/`.
+
+The profiled relay shrank from 8,044,897 to 6,053,241 bytes (about 25%); the small
+heartbeat-count difference also affects file length. All 218 Swift tests passed,
+including the binary golden layout, all record kinds, Unicode filenames, invalid
+metadata, partial frames, oversized lengths, a real legacy-JSON prefix followed
+by binary appends and a second resume, and timestamp/retention behavior. The new
+CLI was independently checked against every metadata field, frame offset and raw
+payload in both the 50,064-record old relay and the 50,038-record new relay. CLI
+output is retained locally under `artifacts/binary-relay-analysis/`.
+
+The live demo suite also passed DML/DDL, fail-stop, explicit skip, following
+MODIFY/index DML, graceful SIGINT/SIGTERM, saved GTID/file-position resume and
+repeated restart without replay. Evidence:
+
+- `artifacts/demo-suite/20261002T215524Z-578b5832-auto-autocommit-myisam/`
+- `artifacts/demo-suite-idle-stop/20261002T215715Z-11bc1dce-auto-autocommit-myisam/`
+- `artifacts/demo-suite-detached/20261002T215814Z-b30331e2-auto-autocommit-myisam/`
 
 ## Decoder function profile
 

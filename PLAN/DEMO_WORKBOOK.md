@@ -243,10 +243,11 @@ comparing. Row 1001 has been deleted; rows 1, 3, 999 and 1000 remain. After catc
 up, Swift reports 17 transactions, 11 rows and 7 DDL statements. Native 8.4 remains
 blocked on the earlier intentional failure, so compare source with 5.7 here.
 
-New state uses SQLite format 5. Clean STOPPED format-4 state upgrades on resume;
+New state uses SQLite format 6 with versioned binary relay metadata. Clean STOPPED
+format-4/5 state upgrades on resume, preserving existing relay bytes and offsets;
 BLOCKED format-4 state must be resolved using its original binary first. For this
 workbook, use a fresh demo built from the current code. Do not change SQLite's
-version number manually. See [scope and state compatibility](DDL_MODIFY_AND_INDEXES.md).
+version number manually. See [relay format and compatibility](PERFORMANCE_BENCHMARK.md#binary-metadata-and-cached-timestamps).
 
 ## Longer DDL/DML validation on separate stacks
 

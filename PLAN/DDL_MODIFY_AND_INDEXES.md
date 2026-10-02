@@ -236,8 +236,10 @@ DML suite and ordered DDL regression stream remain intact.
 
 Operational details: grant INDEX on intended databases; dropping an indexed
 column and narrowing below a retained prefix length fail before a write intent.
-New SQLite state uses format 5; clean STOPPED format-4 history upgrades atomically
-after validation. BLOCKED/uncertain old state requires its original runtime's
+This increment introduced SQLite format 5; clean STOPPED format-4 history upgrades
+atomically after validation. The current runtime writes format 6 for binary relay
+metadata and preserves old relay prefixes during upgrade; see
+[relay compatibility](PERFORMANCE_BENCHMARK.md#binary-metadata-and-cached-timestamps). BLOCKED/uncertain old state requires its original runtime's
 resolution path before upgrade. No engine, charset or index definition is rewritten.
 
 ## Qualification results (2026-10-01)
