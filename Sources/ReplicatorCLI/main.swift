@@ -23,6 +23,7 @@ func main() throws {
                    [--transactions --binlog-file SOURCE_FILENAME]
                mysql-replicator inspect --source-config SOURCE.json [--transactions] [--include-raw]
                mysql-replicator run --config APPLY.json [--initialize]
+               mysql-replicator blackhole --source-config SOURCE.json
                mysql-replicator skip GTID_SET --config APPLY.json
                mysql-replicator --version | --help
         Output: one JSON event per line; diagnostics on stderr, failure exits nonzero.
@@ -35,6 +36,22 @@ func main() throws {
         Automatic reconnect and recovery of interrupted/uncertain writes are not implemented.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
+        return
+    }
+    if args.first == "blackhole" {
+        guard args.count == 3, args[1] == "--source-config" else { throw CaptureError("use blackhole --source-config SOURCE.json") }
+        let config=try JSONDecoder().decode(CaptureConfiguration.self,from:readBounded(URL(fileURLWithPath:args[2])))
+        guard let password=ProcessInfo.processInfo.environment[config.passwordEnvironment] else { throw CaptureError("source password environment variable is unset") }
+        let cancellation=CaptureCancellation()
+        signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN)
+        let signals=[SIGINT,SIGTERM].map { number -> DispatchSourceSignal in
+            let source=DispatchSource.makeSignalSource(signal:number,queue:.global())
+            source.setEventHandler { cancellation.cancel() }; source.resume(); return source
+        }
+        defer { signals.forEach { $0.cancel() } }
+        let result=try BlackholeRun.run(configuration:config,password:password,cancellation:cancellation)
+        let encoder=JSONEncoder(); encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
+        try FileHandle.standardOutput.write(contentsOf:encoder.encode(result)+Data([10]))
         return
     }
     if args.first == "skip" {

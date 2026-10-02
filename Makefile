@@ -72,3 +72,7 @@ demo-up demo-start demo-status demo-compare demo-fail demo-down demo-suite:
 
 demo-sql:
 	swift run replicator-lab demo-sql "$(FILE)"
+
+.PHONY: benchmark-capture
+benchmark-capture:
+	swift run replicator-lab benchmark-capture $(ARGS)

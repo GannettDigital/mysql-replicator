@@ -1,6 +1,7 @@
 import Foundation
 import NIOCore
 import MySQLNIO
+import ReplicatorCodec
 
 public struct CaptureError: Error, CustomStringConvertible {
     public let description: String
@@ -124,9 +125,14 @@ struct DumpPacketDecoder: ByteToMessageDecoder {
     typealias InboundOut = MySQLPacket
     static let fragmentBytes = 0xffffff
     let maximumMessageBytes: Int
+    var timings: StageTimings? = nil
     var expectedSequence: UInt8 = 1
     var pending: ByteBuffer?
     mutating func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
+        if let timings { return try timings.measure("binlog.packet_frame") { try decodeFrame(context:context,buffer:&buffer) } }
+        return try decodeFrame(context:context,buffer:&buffer)
+    }
+    private mutating func decodeFrame(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
         guard let header: UInt32 = buffer.getInteger(at: buffer.readerIndex, endianness: .little) else { return .needMoreData }
         let length = Int(header & 0xffffff), sequence = UInt8(header >> 24)
         guard sequence == expectedSequence else { throw CaptureError("dump packet sequence mismatch") }
@@ -154,11 +160,16 @@ struct DumpPacketDecoder: ByteToMessageDecoder {
 final class DumpCommand: MySQLCommand {
     let request: MySQLPacket
     let receive: (Data) throws -> Void
-    init(request: MySQLPacket, receive: @escaping (Data) throws -> Void) {
-        self.request = request; self.receive = receive
+    let timings: StageTimings?
+    init(request: MySQLPacket, timings: StageTimings? = nil, receive: @escaping (Data) throws -> Void) {
+        self.request = request; self.receive = receive; self.timings=timings
     }
     func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState { .init(response: [request]) }
     func handle(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        if let timings { return try timings.measure("binlog.dump_response") { try handleResponse(packet:&packet,capabilities:capabilities) } }
+        return try handleResponse(packet:&packet,capabilities:capabilities)
+    }
+    private func handleResponse(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
         if packet.isError {
             let e = try packet.decode(MySQLProtocol.ERR_Packet.self, capabilities: capabilities)
             throw CaptureError("source dump error \(e.errorCode): \(e.sqlState ?? "") \(e.errorMessage)")

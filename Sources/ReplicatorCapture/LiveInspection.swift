@@ -32,6 +32,20 @@ final class PacketQueue: @unchecked Sendable {
         packets.append(data); bytes += data.count; readRequested = false
         condition.signal()
     }
+    /// Drain only frames already queued; the receiver can publish a disk batch
+    /// without waiting for the source to fill an arbitrary byte threshold.
+    func takeAvailable(maximumBytes: Int = 256*1024) -> [Data] {
+        condition.lock(); defer { condition.unlock() }
+        var result: [Data] = [], total = 0
+        while index < packets.count && total < maximumBytes {
+            let packet = packets[index]
+            if packet.count > maximumBytes-total { break }
+            index += 1; bytes -= packet.count
+            result.append(packet); total += packet.count
+        }
+        if index == packets.count { packets = []; index = 0 }
+        return result
+    }
     func finish(_ result: Result<Void, Error>) {
         condition.lock(); defer { condition.unlock() }
         guard completion == nil else { return }
@@ -86,6 +100,8 @@ public struct LiveSummary: Encodable {
     public let lastCompleteBoundary: BinlogCoordinate?
     public let pendingTransactionStart: BinlogCoordinate?
     public let completeGTIDSet: String
+    public var download: DownloadSnapshot? = nil
+    public var stageTimings: [String:StageTimings.Sample]? = nil
     public let durableProgress = false
 }
 
@@ -118,11 +134,14 @@ public enum LiveInspection {
                            allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws -> LiveSummary {
         let start = try config.validate()
         let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
+        var download: DownloadSnapshot?
         func summary() -> LiveSummary {
-            LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,
+            var result = LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,
                 eventBytesReceived: String(processor.receivedBytes), heartbeats: processor.heartbeatCount,
                 rotationAnnouncements: processor.announcementCount, lastCompleteBoundary: processor.lastCompleteBoundary,
                 pendingTransactionStart: processor.pendingTransactionStart, completeGTIDSet: processor.completeGTIDs.canonical)
+            result.download = download; result.stageTimings = timings.snapshot
+            return result
         }
         do {
             let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -170,24 +189,64 @@ public enum LiveInspection {
             try channel.setOption(ChannelOptions.maxMessagesPerRead, value: 1).wait()
             try channel.setOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 64*1024)).wait()
             let old = try channel.pipeline.handler(type: ByteToMessageHandler<MySQLPacketDecoder>.self).wait()
-            let strict = ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes: maximum + 1), maximumBufferSize: maximum + 65536)
+            let wireTimings = config.decoderProfiling == true ? StageTimings() : nil
+            let strict = ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes: maximum + 1, timings:wireTimings), maximumBufferSize: maximum + 65536)
             try channel.pipeline.addHandler(strict, position: .before(old)).wait()
             try channel.pipeline.addHandler(DumpReadCompletion(queue:queue), position: .before(strict)).wait()
             try channel.pipeline.removeHandler(old).wait()
-            let command = DumpCommand(request: try start.packet(serverID: config.serverID, nonBlocking: config.nonBlocking ?? false), receive: queue.push)
+            let command = DumpCommand(request: try start.packet(serverID: config.serverID, nonBlocking: config.nonBlocking ?? false), timings:wireTimings, receive: queue.push)
             let finished = connection.send(command, logger: connection.logger)
             finished.whenComplete { queue.finish($0) }
-            while let frame = try timings.measure("capture.wait", {
-                try queue.next(timeout: TimeInterval(config.idleTimeoutSeconds ?? 15), cancellation: cancellation,
-                               requestRead: { loop.execute { channel.read() } },
-                               onIdle: { try timings.measure("capture.idle",onIdle) })
-            }) {
-                try timings.measure("capture.process") { try processor.consume(frame) }
-                if let limit = config.stopAfterTransactions, processor.transactionCount == limit {
-                    try processor.finish()
-                    return summary()
-                }
+            let cache = try DownloadCache(maximumBytes:config.downloadCacheBytes ?? 256*1024*1024,
+                                          maximumEventBytes:maximum)
+            let receiverTimings = StageTimings()
+            let stop = CaptureCancellation(parent:cancellation)
+            let worker = DispatchGroup()
+            let receivedAt = DispatchTime.now().uptimeNanoseconds
+            worker.enter()
+            DispatchQueue(label:"mysql-replicator.download").async {
+                defer { worker.leave() }
+                do {
+                    while let first = try receiverTimings.measure("download.socket_wait", {
+                        try queue.next(timeout:TimeInterval(config.idleTimeoutSeconds ?? 15),cancellation:stop,
+                                       requestRead:{ loop.execute { channel.read() } })
+                    }) {
+                        let frames = [first] + queue.takeAvailable(maximumBytes:max(0,256*1024-first.count))
+                        try cache.append(frames,cancellation:stop,timings:receiverTimings)
+                    }
+                    cache.finish(.success(()),elapsed:Double(DispatchTime.now().uptimeNanoseconds-receivedAt)/1e9)
+                } catch { cache.finish(.failure(error),elapsed:Double(DispatchTime.now().uptimeNanoseconds-receivedAt)/1e9) }
             }
+            func joinReceiver() {
+                stop.cancel(); worker.wait()
+                try? connection.close().wait()
+                if let wireTimings, let snapshot = try? loop.submit({ wireTimings.snapshot }).wait() { timings.merge(snapshot) }
+                download = cache.snapshot
+                timings.merge(receiverTimings.snapshot)
+            }
+            // Always join before reading the receiver's counters or deleting files.
+            // Errors in transport/cache are surfaced by next(), not mistaken for EOF.
+            do {
+                var reachedLimit = false
+                while let frames = try timings.measure("capture.wait", {
+                    try cache.next(cancellation:stop,timings:timings,onIdle:{ try timings.measure("capture.idle",onIdle) })
+                }) {
+                    for frame in frames {
+                        try cache.checkFailure()
+                        try timings.measure("capture.process") { try processor.consume(frame) }
+                        if let limit = config.stopAfterTransactions, processor.transactionCount == limit {
+                            reachedLimit = true; break
+                        }
+                    }
+                    if reachedLimit { break }
+                }
+                joinReceiver()
+            } catch {
+                stop.cancel(); cache.finish(.failure(error))
+                joinReceiver()
+                throw error
+            }
+            try cache.checkFailure(ignoringCancellation:true)
             try processor.finish()
             if let required = config.stopAfterTransactions, processor.transactionCount < required {
                 throw CaptureError("source EOF before requested transaction count")

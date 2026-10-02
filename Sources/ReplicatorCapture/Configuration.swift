@@ -33,6 +33,8 @@ public struct CaptureConfiguration: Decodable {
     public let maximumEventBytes: UInt32?
     /// Optional detailed worker-local decoder timings; absent/false keeps coarse timings only.
     public let decoderProfiling: Bool?
+    /// Bounded disposable download backlog; no fsync and never a restart checkpoint.
+    public let downloadCacheBytes: Int?
 
     /// Keep connection/protocol options, replacing only the authoritative boundary.
     public func resuming(file: String?, position: UInt32?, executedGTIDs: String) -> CaptureConfiguration {
@@ -41,7 +43,7 @@ public struct CaptureConfiguration: Decodable {
             serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:stopAfterTransactions,
-            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling)
+            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
     }
 
     public func validate() throws -> DumpStart {
@@ -50,6 +52,7 @@ public struct CaptureConfiguration: Decodable {
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
               (1...300).contains(idleTimeoutSeconds ?? 15),
               (23...16*1024*1024).contains(maximumEventBytes ?? 4*1024*1024),
+              (20*1024*1024...1024*1024*1024).contains(downloadCacheBytes ?? 256*1024*1024),
               stopAfterTransactions == nil || (1...1_000_000).contains(stopAfterTransactions!) else {
             throw CaptureError("invalid live capture configuration")
         }

@@ -18,6 +18,17 @@ public final class StageTimings {
     public init() { clock = { DispatchTime.now().uptimeNanoseconds } }
     init(clock: @escaping () -> UInt64) { self.clock = clock }
     public var snapshot: [String: Sample] { samples }
+    /// Import a worker's final snapshot only after that worker has joined.
+    /// Times on separate workers overlap and are not children of this worker.
+    public func merge(_ other: [String:Sample]) {
+        for (name,value) in other {
+            var sample = samples[name] ?? Sample()
+            sample.count += value.count; sample.failures += value.failures
+            sample.seconds += value.seconds; sample.selfSeconds += value.selfSeconds
+            sample.maximumSeconds = max(sample.maximumSeconds,value.maximumSeconds)
+            samples[name] = sample
+        }
+    }
     /// Import a disjoint native child while its enclosing Swift timer is active.
     /// Native stages run at most once per feed, so their duration is also max.
     func recordNative(_ stage: String, count: UInt64, failures: UInt64, nanoseconds: UInt64) {

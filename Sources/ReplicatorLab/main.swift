@@ -16,6 +16,7 @@ func main() throws -> Int32 {
           ddl-suite [--skip-build] [--slice all|basic|modify-index|database|ordered|filters]
                     [--case ID ...] [--positioning both|gtid|file-position] [--list]
           native-ddl-suite
+          benchmark-capture [--skip-build] [--events N] [--rate N] [--decoder-profile on|off]
           benchmark [--skip-build] [--events N] [--threads N] [--rate N]
                     [--target-transport tcp-tls|unix-tls|unix]
                     [--batch-transactions N] [--decoder-profile on|off]
@@ -46,6 +47,9 @@ func main() throws -> Int32 {
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
     if command.hasPrefix("demo-") {
         try DemoSession.run(root: root, command: command, arguments: args); return 0
+    }
+    if command == "benchmark-capture" {
+        try CaptureBenchmark.run(root:root,arguments:args); return 0
     }
     if command == "benchmark" {
         try PerformanceBenchmark.run(root: root, arguments: args); return 0

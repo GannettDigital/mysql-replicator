@@ -328,7 +328,7 @@ public enum PerformanceBenchmark {
         return (transactions, rows, parts[2])
     }
 
-    private static func prepareLoadTLS(_ session: DemoSession.Session) throws {
+    static func prepareLoadTLS(_ session: DemoSession.Session) throws {
         // sysbench 1.0.20's MySQL driver uses these three fixed filenames in cwd.
         // Supply a fixture client certificate, signed by the existing fixture CA.
         let tls = session.h.output.appendingPathComponent("tls")

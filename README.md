@@ -63,7 +63,8 @@ For broader coverage, run `make dml-suite` and `make ddl-suite`. See
 [incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selecting individual cases.
 
 To compare native and custom replication under source write load, run
-`make benchmark`. See the [performance harness](PLAN/PERFORMANCE_BENCHMARK.md)
+`make benchmark`; use `make benchmark-capture` to isolate download and decoding
+with a blackhole sink. See the [performance harness](PLAN/PERFORMANCE_BENCHMARK.md)
 for sysbench workloads, progress measurements, and interpretation limits.
 
 ## Try the interactive demo

@@ -258,6 +258,128 @@ Evidence under `artifacts/performance/` (ignored by Git):
 - Profiled: `20261002T202717Z-0f5cabee/20261002T202718Z-26df3666-auto-autocommit-myisam/`.
 - Profiling off: `20261002T203102Z-9b182733/20261002T203102Z-6a658ca4-auto-autocommit-myisam/`.
 
+## Download/decoder isolation and the blackhole benchmark
+
+Live capture now has a receiver worker that drains the socket into a bounded
+local cache, independently of the decoder. The decoder reads published batches
+from that cache. In normal replication, the existing bounded decoded queue
+still connects the decoder to the serial SQL/journal consumer:
+
+```mermaid
+flowchart LR
+    S[Source binlog stream] --> R[Receiver worker]
+    R --> C[Disposable local cache]
+    C --> D[Decoder and transaction assembly]
+    D --> Q[Bounded decoded queue]
+    Q --> A[SQL and journal consumer]
+    D --> B[Blackhole counter sink in benchmark mode]
+```
+
+This follows MySQL's separation of [receiver and applier roles](https://dev.mysql.com/doc/refman/8.4/en/replication-threads.html).
+The cache holds length-prefixed raw wire events, including rotation and format
+context; its batch files are not standalone MySQL binlog files. Files are private
+to one capture attempt under the OS temporary directory. Publication follows a
+successful write; there is **no fsync**. Reading removes consumed batches, and
+joined shutdown removes the attempt's directory. The default backlog limit is
+256 MiB, configurable with `source.downloadCacheBytes` (20 MiB–1 GiB), with a
+second limit of 1,024 queued batches. A full cache backpressures the receiver.
+Batch buffers and the decoder's in-flight batch add bounded memory outside that
+disk backlog limit. A missing/truncated cache file or write failure fails capture.
+
+The cache is never a restart checkpoint. After a clean stop, SQLite's saved
+**applied** file/position and GTID set select where to re-fetch, even if receiving
+or decoding had advanced farther. After a crash, incomplete cache files may
+remain in the temporary directory but are never reused; they can be removed
+while that capture is stopped. Re-fetch requires the source to retain the needed
+history. MySQL's [relay-log recovery](https://dev.mysql.com/doc/refman/8.4/en/replication-options-replica.html)
+similarly initializes receiving from applier progress. This change does not
+enable automatic recovery of uncertain MyISAM writes: the existing durable
+SQLite intent journal and `relay.frames` recovery evidence retain their current
+sync and fail-stop rules. Download-cache durability and target-write recovery
+are separate concerns.
+
+To measure receiving/decoding without target SQL, recovery-journal writes, or
+per-event JSON output:
+
+```sh
+make benchmark-capture ARGS='--events 10000 --rate 0 --decoder-profile on'
+make benchmark-capture ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off'
+```
+
+The new harness uses an isolated stack, generates the **entire backlog first**,
+then runs these measured phases sequentially:
+
+1. Native receiver only, with the SQL thread stopped and `sync_relay_log=0`.
+   Completion is bounded by status polling; connection/start-command overhead
+   is included. The lower bound may be zero for a short download.
+2. Native single SQL thread consuming its cached relay, with receiving stopped.
+   This does apply to MyISAM; exact final native rows are verified outside timing.
+3. Custom blackhole capture: receive to the disposable cache, fully decode and
+   assemble transactions, count rows, and discard them. Download and decode
+   overlap. Overall elapsed time includes connection/preflight/cleanup;
+   `receiverSeconds` starts when the receiver begins draining the dump queue.
+
+Every run forces a physical binlog rotation, checks exact source GTID counts,
+decoded transaction/row counts, downloaded versus decoded byte counts, final
+decoded file/position, complete EOF, and absence of applied state. Blackhole
+does not compare target rows or claim that any write was applied. Its CLI is
+`mysql-replicator blackhole --source-config SOURCE.json`, requires
+`nonBlocking: true` without `stopAfterTransactions`, and accepts no apply config
+or state directory. It writes one JSON summary and fails on unsupported or
+malformed events. Keep source writes stopped for a repeatable fixed backlog.
+
+New timings include `binlog.packet_frame` and `binlog.dump_response` on the NIO
+worker when detailed profiling is enabled; `download.socket_wait`, `.pack`,
+`.write`, and `.backpressure` on the receiver; and `download.cache_wait`, `.read`,
+`.unpack`, and `.unlink` on the decoder. These supplement existing decoder
+function timings and `blackhole.consume`. Worker snapshots are merged only after
+joining; overlapping worker durations must not be summed as wall time. No timer
+writes to SQLite or emits per-event logs. `download` counters report wire frames,
+event bytes, batches, cache high-water marks, elapsed receiving time and EOF.
+
+Artifacts are under `artifacts/capture-performance/`: `result.json`,
+`blackhole.json`, `blackhole.stderr`, `stage-timings.json`, optional
+`decoder-profile.tsv`, native receiver status, source boundaries/binlog sizes,
+configuration/input hashes and cleanup evidence. The normal `make benchmark`
+continues to measure real application.
+
+### Initial 10K fixed-backlog results, 2026-10-02
+
+Both runs decoded 10,000 single-row INSERT transactions, 50,008 wire events and
+4,250,556 event bytes, including rotation. All counts, EOF and final positions
+matched; native final rows matched source and cleanup passed.
+
+| Measurement | Detailed profiling on | Detailed profiling off |
+| --- | ---: | ---: |
+| Custom receiver to EOF | 0.720 s | 0.468 s |
+| Full blackhole elapsed | 14.952 s | 11.131 s |
+| `capture.decode` inclusive | 9.747 s | 6.282 s |
+| Native receiver observed upper bound | 0.226 s | 0.204 s |
+| Native SQL from cached relay, observed | 7.126 s | 7.400 s |
+
+The unprofiled blackhole rate was about 898 transactions/sec. Receiving completed
+well ahead of decoding: peak cached event/framing bytes were about 4.3 MB. The
+profiled decoder spent 2.707 s in control conversion (including GTID formatting),
+and `capture.process` had 4.008 s outside named nested stages. Those costs and
+repeated table-map probes remain optimization candidates. This evidence does
+**not** establish native-speed decoding: our decoder still takes longer than
+native SQL applying this backlog. Native receiver-only time measures a smaller
+amount of work, and these shared-host/emulated runs are not fleet throughput
+measurements. No speed threshold is a pass/fail condition yet.
+
+Evidence directories:
+
+- On: `20261002T210032Z-7d97201f/20261002T210033Z-6474dbd3-auto-autocommit-myisam/`.
+- Off: `20261002T210315Z-e975b924/20261002T210315Z-68e59f1e-auto-autocommit-myisam/`.
+
+Qualification also passed 210 Swift tests, including cache order/capacity,
+corruption/missing-file rejection, cancellation and evidence validation. The
+live demo suite passed DML/DDL, fail-stop and explicit skip, graceful stops,
+GTID/file-position resume, repeated resume and cleanup. A final two-client mixed
+run decoded 60 transactions and 180 row changes with three rows per statement,
+including INSERT/UPDATE/DELETE and rotation, and passed all checks. Its evidence
+is `20261002T211018Z-319b6aef/20261002T211018Z-2c7e76a2-auto-autocommit-myisam/`.
+
 ## Interpretation limits and next measurements
 
 All services share the Docker host. Native and custom targets use different
