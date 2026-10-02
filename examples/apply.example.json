@@ -34,6 +34,12 @@
     "capacityCheckEveryTransactions": 1000,
     "capacityCheckIntervalSeconds": 5
   },
+  "batch": {
+    "maximumTransactions": 32,
+    "maximumRows": 4096,
+    "maximumWireBytes": 8388608,
+    "maximumDelayMilliseconds": 25
+  },
   "ddlTimeoutSeconds": 300,
   "replicateWildIgnoreTable": []
 }

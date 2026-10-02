@@ -46,6 +46,7 @@ the stack. Do not use the interactive demo commands to manage a benchmark stack.
 | `--payload-bytes` | 100 | ASCII payload bytes per row; 0–1024 |
 | `--sample-seconds` | 5 | Desired polling interval; 1–30 seconds |
 | `--timeout` | 300 | Separate load and catch-up deadlines; 10–3600 seconds each |
+| `--batch-transactions` | 32 | Maximum source groups per journal batch; 1–256 |
 | `--skip-build` | off | Reuse existing runtime and load-generator images |
 
 Rebuild after code changes. The workload hash is checked even with `--skip-build`;
@@ -221,18 +222,78 @@ seconds of activity, with earlier checks near pressure. Configure
 conservative byte accounting preserve per-write limits without filesystem or
 page-count queries on every write. See the [storage policy](SCHEMA_DISCOVERY_AND_RETENTION.md).
 
-## Local target transport comparison
+## Journal batching
 
-The next journal-batching design can use DBA-led reconciliation as its recovery
-contract: durably record source group identities, ordered row references, schema
-and affected-table identities, and relay byte ranges before attempting a batch.
-On acknowledgment, commit completion and the contiguous applied boundary together.
-Retain unresolved batch evidence and block replay after an uncertain outcome.
+Journal batching uses DBA-led reconciliation as its recovery contract. Before
+target writes, one relay sync and one SQLite FULL transaction record source group
+identities, ordered row references, schema/affected-table identities and individual
+relay ranges. A second transaction records acknowledged rows and advances the
+contiguous whole-group applied boundary. Target SQL remains individual and ordered;
+this does not combine source transactions into a MySQL transaction. DDL is a barrier.
+Detected failures retain the acknowledged prefix and unresolved intents. A crash
+before the completion commit leaves the whole prepared batch uncertain and blocks
+automatic replay. Existing lock epoch limits still apply between groups.
+
+The default `batch` configuration collects at most 32 groups, 4,096 rows, 8 MiB
+of wire events or 25 ms (checked at capture callbacks). Idle capture flushes
+immediately; there is no deliberate wait for a full batch. Table/schema changes,
+filtered groups, DDL and finite stop boundaries also flush. An oversized source
+group runs alone within existing decoder limits. `apply.batch` measures execution,
+including journal preparation/completion, but excludes time collecting groups.
+
+Compare `--batch-transactions 1` and `--batch-transactions 32` on identical burst
+workloads using the same image and transport. Size 1 still uses the new two-commit
+path for all rows of a source group; it does not restore the old per-row journal.
+Check `sqlite.commit`, `relay.sync`, `apply.batch` and exact final data as well as
+catch-up time. The full configuration and selected transaction limit are archived.
+
 The journal identifies recorded work and boundaries, not the exact crash instant
 or MyISAM's physical durability. DBA restoration requires a consistent source
 snapshot and a matching GTID boundary, coordinated with tables that were not
-restored. This is a future batching contract; the transport comparison below
-keeps the existing per-group journal behavior.
+restored. See [DML apply](DML_APPLY.md) for inspection and failure semantics.
+
+### Journal batching validation, 2026-10-01
+
+The static Linux release build, 178 Swift tests, 16 live GTID DML cases and 79
+ordered GTID DDL cases passed. Journal fault tests cover rollback during preparation
+and completion, acknowledged prefixes, partial rows, unresolved restart refusal and
+collection limits. The live process-kill case interrupted a 2,000-row group after
+58 target rows: all 2,000 intents remained PENDING, the applied checkpoint remained
+unchanged, and restart refused replay without changing those 58 rows. This tests
+process-crash evidence, not MySQL/host power-loss durability.
+
+Four sequential 1,000-event single-row INSERT bursts used the same release image
+and TCP+TLS transport, in size order 1, 32, 32, 1. All passed exact comparison,
+clean STOPPED checkpoints and cleanup.
+
+| Maximum groups | Completion, run 1 / run 2 | SQLite commits | Relay syncs | Actual DML batches |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 25.555 / 25.656 s | 2,021 / 2,021 | 1,003 / 1,003 | 1,000 / 1,000 |
+| 32 | 19.645 / 19.335 s | 552 / 544 | 269 / 265 | 266 / 262 |
+
+Observed catch-up took about 24% less time; SQLite commits fell about 73%.
+Collection averaged 3.8 groups because time/idle boundaries flushed before the
+count limit. Inclusive `apply.batch` time fell from 16.6 s to 10.1–10.6 s.
+Target SQL still took 6.4–6.8 s and capture decoding 4.6 s in the size-32 runs;
+these nested stage totals must not be added together as independent elapsed time.
+Polling was about three seconds, and the applier/MySQL 5.7 ran under x86_64
+emulation on an ARM Docker host. This is a local comparison, not production capacity.
+
+Machine-readable measurements, the common runtime digest and all four evidence
+paths are in `artifacts/performance/batch-comparison-20261002.json`. Qualification
+evidence is under `artifacts/dml-suite/20261002T050948Z-3ff4c9e3-auto-autocommit-myisam/`
+and `artifacts/ddl-suite/20261002T050832Z-60df0bea-auto-autocommit-myisam/`.
+
+A concurrent mixed run also passed exact comparison and cleanup: 300 transactions,
+two clients, 20 events/s and three rows per statement (900 row mutations), using
+the default batch limit of 32. Native and custom replication were both observed
+complete at 19.3 s. Evidence:
+`artifacts/performance/20261002T052129Z-0b463815/20261002T052129Z-c930aae7-auto-autocommit-myisam/`.
+
+## Local target transport comparison
+
+The recorded transport comparison below predates journal batching and keeps the
+then-current per-group journal behavior.
 
 `benchmark --target-transport tcp-tls|unix-tls|unix` selects loopback TCP with
 verified TLS (default), a Unix socket with the same TLS verification, or a plain
@@ -283,7 +344,7 @@ showed no benefit; its first run also spent 7.244 s decoding versus roughly
 retained 3,021 SQLite commits and 1,003 relay syncs.
 
 This supports an optional local transport, not a claimed major speedup or a new
-default. Journal batching and reducing SQL exchanges remain separate work.
+default. These measurements isolate transport from the later journal batching change.
 Machine-readable summary, runtime digest and all six evidence paths:
 `artifacts/performance/socket-comparison-20261002.json`.
 

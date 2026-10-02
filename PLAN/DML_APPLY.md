@@ -71,12 +71,15 @@ checks do not certify the external snapshot/load.
 
 `stopAfterTransactions` / `nonBlocking` on `source` provide bounded qualification
 runs. Otherwise the command follows the source until stopped or an error occurs.
-Stdout contains one progress JSON record per fully applied source group; stderr
+Stdout contains a progress JSON record after each completed DML batch or standalone group; stderr
 contains the final summary or a structured error. SIGINT/SIGTERM at a complete
 capture/apply boundary persist STOPPED and exit zero; a partial capture/apply
 interruption remains BLOCKED. A known transport or apply failure is not converted
 to success by a concurrent stop. A clean STOPPED state can then be resumed
 explicitly; uncertain writes are never retried.
+On clean capture cancellation, buffered groups with no prepared intents can be
+discarded and read again from the saved applied boundary. A finite capture limit
+flushes buffered work before stopping.
 Passwords and row values are not printed in ordinary apply progress. Relay files do contain source row bytes.
 
 ## Declared subset and checks
@@ -158,22 +161,41 @@ source binlog accepted directly by mysqlbinlog. Source event headers are unchang
 `state.sqlite` uses WAL/FULL and stores identities, schema/baseline metadata, group
 source boundaries and relay byte references, per-row event offset/row ordinal
 intents, completion, applied GTID/position, counts and diagnostics. Raw events and
-decoded rows are not copied into SQLite. Before any mutation, relay data is synced
-and the group reference is committed, then the row's PENDING intent is committed.
-After SQL acknowledgment and affected-row validation the row becomes DONE. The
-last row's DONE update commits atomically with marking the source group applied
-and advancing its checkpoint/counters, after checking all earlier rows are DONE.
-Table locks remain held through that commit. A failed or uncertain SQL outcome
-leaves the intent unresolved; no write is retried automatically.
+decoded rows are not copied into SQLite. DML collection defaults to 32 source
+groups, 4,096 rows, 8 MiB of wire events or 25 ms, whichever boundary is reached
+first. Configure the optional `batch` object in the configuration template.
+Time is checked at capture callbacks, rather than by a background deadline.
+Idle capture, table/schema changes, DDL, filtered groups and finite stop boundaries
+flush the buffer. A source group exceeding a collection limit runs alone within
+the decoder's existing limits; it is never split.
+
+Before any target mutation, one relay sync and one FULL SQLite transaction persist
+all group identities, individual relay ranges and ordered PENDING row intents with
+schema references. Target rows are still executed individually, in source order,
+with the existing before-image, ownership, lock and affected-row checks. One
+completion transaction marks acknowledged rows DONE and whole groups APPLIED, and
+advances GTID coverage, position and counters together. Existing lock epoch limits
+still apply between source groups; the batch has no atomic target visibility.
+
+On a detected failure, completion records the acknowledged whole-group prefix and
+any acknowledged rows of the first incomplete group. Remaining prepared intents
+stay PENDING. A process crash before completion leaves the entire prepared batch
+unresolved, even if some writes succeeded. No target write is inferred or retried.
+`active_gtid` identifies the first unresolved group; inspect all PENDING `groups`
+ordered by `sequence`, then their `row_intents` and referenced `schemas`. These
+records use the existing version-5 schema, with no new migration required.
 
 Baseline GTIDs are externally asserted coverage; initialization does not count them
 as work performed by this process or claim a locally verified applied position.
 Received relay bytes, a pending group and completed target writes are distinct.
-If a later row fails, earlier MyISAM mutations remain; the last whole-group applied
-checkpoint stays unchanged, and the journal records the partial work. Failures set
+If a later row fails, earlier MyISAM mutations remain; only fully acknowledged
+groups advance the checkpoint, and the journal records partial work. Failures set
 BLOCKED where storage is writable and exit nonzero. An uncertain SQL outcome closes
 its connection and is never automatically retried. A target/host crash can lose
 MyISAM data despite durable local metadata; there is no crash-safe recovery claim.
+DBA reconciliation must use a consistent source snapshot and matching GTID boundary,
+coordinated with tables not restored. The journal identifies the uncertain work
+window and affected tables, not the exact crash instant or durable MyISAM contents.
 
 Relay size defaults to 256 MiB and can be set to 1 MiB–1 GiB using
 `maximumRelayBytes`; reaching it stops the attempt. Relay segment purge and re-download remain unimplemented. SQLite history has
@@ -189,7 +211,8 @@ The initial workload compares exact final rows, ordered source/native/Swift binl
 operations through MySQL's independent decoder, anonymous target GTID behavior,
 and SQLite applied boundaries/counters. Additional cases cover multi-row statements,
 key changes, before-image mismatch, existing-state refusal, native-channel exclusion,
-trigger rejection, missing DELETE rows, partial multi-row failure and the known
+trigger rejection, missing DELETE rows, partial multi-row failure, process kill
+during a prepared group, refusal to replay that crashed group, and the known
 native multi-statement error 1837. Extended multi-row/key-change history is also
 compared through mysqlbinlog. A separate table uses an independent SQL HEX oracle
 after each group for integer extremes, quotes, backslashes, NUL/tab, multibyte
@@ -198,8 +221,10 @@ binary values; these are outside the narrow mysqlbinlog text normalizer.
 
 Unit tests exercise group-wide validation, exact UINT64_MAX/null/length behavior,
 UTF-8 byte equality, GTID-only configuration, raw relay preservation, unfinished
-intent rejection and atomic whole-group checkpoint advancement. They do not claim
-crash/reconnect recovery. That qualification follows DDL correctness.
+intent rejection, batch limits/barriers, failed journal preparation/completion,
+and atomic advancement through the acknowledged group prefix. The process-kill
+qualification checks evidence retention and replay refusal; automatic recovery
+and MySQL/host power-loss durability remain outside this guarantee.
 
 ## Recorded validation
 

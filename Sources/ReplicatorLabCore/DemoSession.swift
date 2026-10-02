@@ -78,8 +78,9 @@ public enum DemoSession {
             try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
         }
-        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls") throws {
+        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32) throws {
             try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"invalid target transport")
+            try require((1...256).contains(batchTransactions),"invalid DML batch size")
             try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a demo session already exists; use demo-status or demo-down (up never resets data)")
             let id = runID(), runner = ProcessRunner(root: root), tag = "mysql-replicator-packaging:demo"
             if build {
@@ -128,7 +129,9 @@ public enum DemoSession {
             target["requireTLS"] = targetTransport != "unix"
             if targetTransport != "unix" { target["serverHostname"] = "target57"; target["caFile"] = "/evidence/tls/ca.pem" }
             let config: [String: Any] = ["version": 2, "stateDirectory": "/evidence/state", "source": ["version": 2, "host": "source", "port": 3306, "username": "capture_fixture", "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "caFile": "/evidence/tls/ca.pem", "serverID": 9100, "sourceUUID": uuid, "mode": "gtid", "start": ["executedGTIDs": boundary.gtids], "idleTimeoutSeconds": 30], "target": target]
-            try writeJSON(config, to: h.output.appendingPathComponent("apply.json"))
+            var batchedConfig=config
+            batchedConfig["batch"] = ["maximumTransactions":batchTransactions]
+            try writeJSON(batchedConfig, to: h.output.appendingPathComponent("apply.json"))
             _ = try docker(["cp", h.output.appendingPathComponent("apply.json").path, helper + ":/evidence/apply.json"])
             // Mount the same trusted CA used by the existing source/target overlay.
             let nativeID = try h.compose(["ps", "-q", "native"]).text

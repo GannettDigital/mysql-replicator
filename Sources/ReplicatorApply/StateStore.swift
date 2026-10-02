@@ -42,6 +42,7 @@ final class StateStore {
     private(set) var applied: BinlogCoordinate?
     private(set) var pendingGTID: String?
     private var pendingSequence: Int64 = 0
+    private var pendingBatch: [PreparedDMLGroup] = []
     private var sequence: Int64 = 0
     private var snapshotSequence: Int64 = 0
     private var skipBoundary: BinlogCoordinate?
@@ -326,7 +327,7 @@ final class StateStore {
         try require(rc == SQLITE_DONE,"SQLite operation failed (code \(rc)); replication stopped")
         return output
     }
-    private func number(_ sql: String) throws -> Int64 {Int64(try query(sql).first?.first.flatMap{$0} ?? "") ?? 0}
+    private func number(_ sql: String,_ args: [String?] = []) throws -> Int64 {Int64(try query(sql,args).first?.first.flatMap{$0} ?? "") ?? 0}
     private func execute(_ sql: String,_ args: [String?] = []) throws {
         if ready && !inTransaction && !maintenance {try ensureCapacity(force:false)}
         _ = try timings.measure(inTransaction || sql.hasPrefix("PRAGMA ") ? "sqlite.statement" : "sqlite.commit") { try query(sql,args) }
@@ -453,6 +454,68 @@ final class StateStore {
         targetUUID=uuid.lowercased()
     }
     func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
+    /// One synced relay prefix and one FULL SQLite commit precede every target
+    /// write in the batch. Existing tables retain each source group's identity.
+    func beginBatch(_ batch: [PreparedDMLGroup]) throws {
+        try require(pendingGTID == nil && !batch.isEmpty && batch.count <= 256,"invalid pending DML batch")
+        var seen=completedGTIDs, relayStart=groupStart
+        for item in batch {
+            guard let id=item.group.gtid else { throw ApplyError("batch lacks source GTID") }
+            try require(!item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,"invalid DML batch relay boundary")
+            try require(!seen.contains(sid:id.sid,sequence:id.sequence),"duplicate or excluded batch GTID")
+            try seen.include(sid:id.sid,sequence:id.sequence)
+            relayStart=item.relayEnd
+            for row in item.mutations { try require(schemas[row.table.identity]?.1 == row.table,"batch schema is not current") }
+        }
+        try timings.measure("relay.sync") { try relay!.synchronize() }
+        let time=timestamp()
+        try atomic {
+            var start=groupStart
+            for (index,item) in batch.enumerated() {
+                try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+Int64(index)+1),item.id,item.group.start.file,String(item.group.start.position),String(item.group.end.position),String(start),String(item.relayEnd),time])
+                for (ordinal,row) in item.mutations.enumerated() {
+                    try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[item.id,String(ordinal),row.eventOffset,String(row.rowIndex),String(schemas[row.table.identity]!.0),time])
+                }
+                start=item.relayEnd
+            }
+            try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[batch[0].id,String(relayLength),time])
+        }
+        pendingBatch=batch; pendingGTID=batch[0].id; pendingSequence=sequence+1
+    }
+    /// Commit only the acknowledged prefix. On crash before this commit every
+    /// prepared row remains uncertain. No target write is inferred or retried.
+    func finishBatch(acknowledgedRows: [Int]) throws {
+        let batch=pendingBatch
+        try require(!batch.isEmpty && acknowledgedRows.count == batch.count,"completion without prepared batch")
+        var completed=0, rowCount=0, incomplete=false, next=completedGTIDs
+        for (index,item) in batch.enumerated() {
+            let count=acknowledgedRows[index]
+            try require((0...item.mutations.count).contains(count) && (!incomplete || count == 0),"batch acknowledgments are not a contiguous prefix")
+            if count == item.mutations.count {
+                completed+=1; rowCount+=count
+                try next.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence)
+            } else { incomplete=true }
+        }
+        let active=completed < batch.count ? batch[completed].id : nil
+        let end=completed > 0 ? batch[completed-1].group.end : applied
+        let time=timestamp()
+        try atomic {
+            for (index,item) in batch.enumerated() {
+                try require(try query("SELECT status FROM groups WHERE gtid=?",[item.id]) == [["PENDING"]]
+                    && number("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='PENDING'",[item.id]) == Int64(item.mutations.count),"batch journal no longer matches preparation")
+                if acknowledgedRows[index] > 0 {
+                    try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal<?",[time,item.id,String(acknowledgedRows[index])])
+                }
+                if index < completed { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
+            }
+            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",[end?.file,end.map{String($0.position)},String(sequence+Int64(completed)),String(transactions+completed),String(rows+rowCount),active,time,String(completed),time])
+        }
+        completedGTIDs=next; applied=end; sequence+=Int64(completed); transactions+=completed; rows+=rowCount
+        if completed > 0 { groupStart=batch[completed-1].relayEnd }
+        pendingGTID=active; pendingSequence=sequence+1
+        pendingBatch=Array(batch.dropFirst(completed))
+        if sequence-snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
+    }
     func begin(_ group: CompleteTransaction) throws {
         guard let identity = group.gtid else {throw ApplyError("group lacks GTID")}
         try require(pendingGTID == nil && !completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"duplicate or excluded applied GTID")
@@ -470,6 +533,7 @@ final class StateStore {
     }
     func rowDone(_ ordinal: Int) throws {try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",[timestamp(),pendingGTID,String(ordinal)])}
     func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false, finalRow: Int? = nil) throws {
+        try require(pendingBatch.isEmpty,"batched DML requires batch completion")
         guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.sid+":"+identity.sequence,(rowCount>0 && ddl==nil && !filtered) || (rowCount==0 && ddl != nil && !filtered) || (filtered && rowCount==0 && ddl==nil) else {throw ApplyError("completion without matching pending group")}
         if filtered {
             try require(try query("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[pendingGTID]) == [["0"]] && query("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[pendingGTID]) == [["0"]],"filtered completion has target write intents")

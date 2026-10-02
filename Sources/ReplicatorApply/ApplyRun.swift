@@ -54,14 +54,23 @@ public enum ApplyRun {
                 try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
             }
             try state.running(); started = true
+            let batch = DMLBatch(policy:configuration.batchPolicy) { groups in
+                try timings.measure("apply.batch") {
+                    try DMLBatch.execute(groups,state:state,cancellation:cancellation,
+                        lock:target.lock,write:target.apply,completedGroup:target.completedDMLGroup)
+                    try emitProgress(summary("RUNNING"))
+                }
+            }
             do {
                 _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:cancellation,
                     emitEvent: { record in
+                        if !cancellation.isCancelled { try batch.flushIfExpired() }
                         try target.releaseExpiredLock()
                         try timings.measure("relay.append") { try state.append(record) }
                     },emitTransaction: { group in
-                        try state.begin(group)
                         if group.outcome == .statement {
+                            try batch.flush()
+                            try state.begin(group)
                             try target.unlock()
                             try require(group.events.count == 2, "invalid standalone DDL group")
                             guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
@@ -78,22 +87,21 @@ public enum ApplyRun {
                             try emitProgress(summary("RUNNING"))
                             return
                         }
-                        let mutations = try DMLPlan.make(group,tables:Array(target.discovered.values))
+                        let mutations: [Mutation]
+                        do { mutations = try DMLPlan.make(group,tables:Array(target.discovered.values)) }
+                        catch {
+                            try batch.flush()
+                            try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
+                            throw error
+                        }
                         if mutations.isEmpty {
+                            try batch.flush()
+                            try state.begin(group)
                             try target.unlock()
                             try state.complete(group,rowCount:0,filtered:true)
                             try emitProgress(summary("RUNNING")); return
                         }
-                        try target.lock(mutations[0].table)
-                        for (index,mutation) in mutations.enumerated() {
-                            try require(!cancellation.isCancelled,"apply cancelled")
-                            try state.intent(index,mutation)
-                            try target.apply(mutation)
-                            if index != mutations.count-1 { try state.rowDone(index) }
-                        }
-                        try state.complete(group,rowCount:mutations.count,finalRow:mutations.count-1)
-                        try target.completedDMLGroup()
-                        try emitProgress(summary("RUNNING"))
+                        try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))
                     },resolveSchema: { event, coordinate in
                         let table = try target.discover(event)
                         try state.schema(table,event:event,coordinate:coordinate)
@@ -101,7 +109,11 @@ public enum ApplyRun {
                             guard let kind = column.interpretation else {throw ApplyError("missing wire interpretation")}
                             return kind
                         }
-                    },timings:timings,onIdle:{ try target.unlock() },allowDDL:true,ignoreTable: filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                    },timings:timings,onIdle:{
+                        if !cancellation.isCancelled { try batch.flush() }
+                        try target.unlock()
+                    },allowDDL:true,ignoreTable: filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                try batch.flush() // Includes stopAfterTransactions and clean source EOF.
             } catch {
                 guard canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
             }

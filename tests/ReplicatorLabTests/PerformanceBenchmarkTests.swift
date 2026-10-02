@@ -43,7 +43,8 @@ final class PerformanceBenchmarkTests: XCTestCase {
                      ["--workload", "oltp"], ["--rows-per-event", "101"], ["--payload-bytes", "1025"],
                      ["--sample-seconds", "0"], ["--timeout", "0"], ["--events", "1000", "--rate", "1"],
                      ["--events", "1", "--threads", "2"], ["--host", "production"], ["--events"],
-                     ["--target-transport","tcp"], ["--target-transport"]] {
+                     ["--target-transport","tcp"], ["--target-transport"],
+                     ["--batch-transactions","0"], ["--batch-transactions","257"]] {
             XCTAssertThrowsError(try PerformanceOptions(arguments: args), String(describing: args))
         }
         let options = try PerformanceOptions(arguments: ["--events", "300", "--rate", "0", "--workload", "mixed", "--threads", "4", "--skip-build"])
@@ -52,6 +53,8 @@ final class PerformanceBenchmarkTests: XCTestCase {
         XCTAssertEqual(options.workload, "mixed")
         XCTAssertFalse(options.build)
         XCTAssertEqual(options.targetTransport,"tcp-tls")
+        XCTAssertEqual(options.batchTransactions,32)
+        XCTAssertEqual(try PerformanceOptions(arguments:["--batch-transactions","1"]).batchTransactions,1)
         for transport in ["tcp-tls","unix-tls","unix"] {
             XCTAssertEqual(try PerformanceOptions(arguments:["--target-transport",transport]).targetTransport,transport)
         }

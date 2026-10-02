@@ -91,13 +91,13 @@ is also unrotated and bounded by a stop-at-limit policy. Those were limitations 
 
 Separate authoritative applied coverage from bounded history. Do not expire
 executed GTIDs by age: losing that coverage can cause already applied MyISAM
-operations to be replayed. Do not postpone the durable record of successful apply
-until a periodic timer.
+operations to be replayed. Commit successful apply at each bounded DML batch
+boundary; a crash before completion leaves the prepared batch unresolved.
 
 - Persist one small applied delta per completed group: ordered local sequence,
   source GTID, source end coordinate, completion time and counter changes. Commit
-  it atomically with whole-group completion after every row has been acknowledged
-  by the target with the expected affected-row count.
+  it atomically with the batch's acknowledged whole-group prefix, after each
+  included group's rows have the expected affected-row counts.
   Pending row intents still precede mutation and survive until resolved.
 - Periodically fold completed deltas into a compact cumulative GTID snapshot,
   with a generation, covered sequence, file/position and snapshot timestamp.
@@ -198,8 +198,10 @@ neither capacity caching nor the hook changes FULL commit durability. The timer
 is checked on activity, not by a background thread. External disk use can only be
 detected at the next inspection or I/O failure.
 
-Each completed group durably records one GTID delta, its end coordinate and
-completion timestamp with the counters. `last_applied_at` is distinct from lifecycle
+Each completed group records one GTID delta, its end coordinate and completion
+timestamp with the counters. DML groups commit together at the bounded batch
+boundary; prepared but uncommitted completions remain unresolved after a crash.
+`last_applied_at` is distinct from lifecycle
 `updated_at`. Read authoritative coverage as the latest snapshot plus subsequent
 APPLIED groups, not a potentially stale snapshot alone. No full GTID set is
 rewritten per group. Snapshots occur at cadence, pressure cleanup and clean stop.

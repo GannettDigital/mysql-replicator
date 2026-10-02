@@ -155,6 +155,8 @@ public struct ApplyConfiguration: Decodable {
     public let ddlTimeoutSeconds: Int?
     var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
+    public let batch: BatchPolicy?
+    var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate() throws {
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
@@ -165,6 +167,7 @@ public struct ApplyConfiguration: Decodable {
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
         _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()
+        try batchPolicy.validate()
     }
 }
 

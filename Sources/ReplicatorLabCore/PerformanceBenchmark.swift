@@ -8,6 +8,7 @@ public struct PerformanceOptions: Codable {
     public var payloadBytes = 100
     public var workload = "insert"
     public var targetTransport = "tcp-tls"
+    public var batchTransactions = 32
     public var sampleSeconds = 5
     public var timeoutSeconds = 300
     public var build = true
@@ -28,6 +29,7 @@ public struct PerformanceOptions: Codable {
             case "--payload-bytes": payloadBytes = number
             case "--sample-seconds": sampleSeconds = number
             case "--timeout": timeoutSeconds = number
+            case "--batch-transactions": batchTransactions = number
             default: throw LabError("unknown benchmark option: " + flag)
             }
         }
@@ -38,6 +40,7 @@ public struct PerformanceOptions: Codable {
         try require((0...1024).contains(payloadBytes), "payload-bytes must be 0...1024")
         try require(["insert", "mixed"].contains(workload), "workload must be insert or mixed")
         try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"target-transport must be tcp-tls, unix-tls or unix")
+        try require((1...256).contains(batchTransactions),"batch-transactions must be 1...256")
         try require((1...30).contains(sampleSeconds), "sample-seconds must be 1...30")
         try require((10...3600).contains(timeoutSeconds), "timeout must be 10...3600 seconds per load/catch-up phase")
         try require(rate == 0 || Double(events) / Double(rate) < Double(timeoutSeconds), "requested load exceeds timeout; increase --timeout")
@@ -118,7 +121,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport)
+            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
