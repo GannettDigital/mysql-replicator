@@ -42,6 +42,9 @@ make test-asan
 Run incremental integration checks against local container fixtures:
 
 ```sh
+# Small DML/DDL sample used by CI:
+make integration-smoke
+
 # Basic DML qualification:
 make dml-suite ARGS="--slice basic"
 
@@ -51,6 +54,10 @@ make ddl-suite ARGS="--slice modify-index --positioning gtid"
 # Debian packaging smoke test on Ubuntu 16.04:
 make deb
 ```
+
+Integration checks need OpenSSL, the SQLite CLI, and MySQL 8.4 `mysqlbinlog` in
+`PATH` (or set `MYSQLBINLOG` to its executable path). See
+[incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selection and evidence details.
 
 ### 4. DDL Coverage Catalog Checks
 

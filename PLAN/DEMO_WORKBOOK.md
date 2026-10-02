@@ -10,7 +10,7 @@ Run the setup block below in each host terminal. It reads the current session, s
 stay correct after rebuilding the demo.
 
 ```sh
-cd /Users/k.antselovich/REPO/mysql-replicator
+cd /path/to/mysql-replicator
 export DEMO_STACK="replicator-lab-$(swift -e '
 import Foundation
 let data = try Data(contentsOf: URL(fileURLWithPath: "artifacts/demo/current.json"))

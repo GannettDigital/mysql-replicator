@@ -14,7 +14,8 @@ public struct DebianPackagingOptions {
                 guard let v = iter.next(), !v.isEmpty else {
                     throw LabError("--version requires a non-empty version string")
                 }
-                guard v.range(of: #"^[0-9][a-zA-Z0-9.+~]*(?:-[a-zA-Z0-9.+~]+)?$"#, options: .regularExpression) != nil else {
+                // Absolute anchors reject trailing line terminators on Linux as well as macOS.
+                guard v.range(of: #"\A[0-9][a-zA-Z0-9.+~]*(?:-[a-zA-Z0-9.+~]+)?\z"#, options: .regularExpression) != nil else {
                     throw LabError("invalid Debian package version: '\(v)' (expected e.g. 0.1.0 or 0.1.0-1)")
                 }
                 self.version = v

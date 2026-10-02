@@ -32,7 +32,7 @@ jobs:
 
   packaging-and-smoke:
     name: Debian Packaging & Integration Smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -51,3 +51,34 @@ jobs:
             artifacts/deb/*.deb
             artifacts/deb/*.sha256
           if-no-files-found: error
+
+      - name: Install integration test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3 openssl zlib1g libstdc++6
+
+      - name: Set up MySQL 8.4 reference decoder
+        run: |
+          # mysqlbinlog ships in server-core; extract it without installing a server.
+          # Match the 8.4.8 fixtures, independent of Ubuntu's default MySQL version.
+          cd "$RUNNER_TEMP"
+          curl --fail --show-error --location --retry 3 \
+            https://repo.mysql.com/apt/ubuntu/pool/mysql-8.4-lts/m/mysql-community/mysql-community-server-core_8.4.8-1ubuntu24.04_amd64.deb \
+            --output mysql-server-core.deb
+          echo 'ba41bfb4ad355ded41c15b1280c36701149931019c9fd7529785d45bd34afd78  mysql-server-core.deb' | sha256sum --check
+          dpkg-deb --extract mysql-server-core.deb mysql-reference
+          "$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" --no-defaults --version
+          echo "MYSQLBINLOG=$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" >> "$GITHUB_ENV"
+
+      - name: Run DML and DDL integration sample
+        run: make integration-smoke
+
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-evidence
+          path: |
+            artifacts/ddl-suite/
+            artifacts/dml-suite/build-*.log
+          if-no-files-found: ignore

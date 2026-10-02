@@ -24,8 +24,11 @@ final class DebianPackagingTests: XCTestCase {
     }
 
     func testInvalidVersionStringsAreRejected() throws {
-        for invalid in ["", "abc", "1.0.0/evil", "1.0.0\n", "1.0.0; rm -rf", "1.0.0--beta"] {
-            XCTAssertThrowsError(try DebianPackagingOptions(arguments: ["--version", invalid]))
+        for invalid in ["", "abc", "1.0.0/evil", "1.0.0\n", "1.0.0\r", "1.0.0\r\n",
+                        "1.0.0\u{0085}", "1.0.0\u{2028}", "1.0.0\u{2029}", "1.0.0\n2",
+                        "\n1.0.0", "1.0.0 ", "1.0.0; rm -rf", "1.0.0--beta"] {
+            XCTAssertThrowsError(try DebianPackagingOptions(arguments: ["--version", invalid]),
+                                 "accepted invalid version: \(String(reflecting: invalid))")
         }
     }
 

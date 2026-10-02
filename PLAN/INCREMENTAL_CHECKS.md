@@ -6,6 +6,15 @@ SQL statements inside a workload and leave later cases without their schema/data
 All commands below run from the repository root. SwiftPM owns the runner; Make
 forwards `ARGS`. Docker's existing mapped build caches remain in use.
 
+`make integration-smoke` is the small CI sample: one GTID profile containing the
+four-transaction basic DML comparison, `ddl-modify-demo-varchar-120`, and
+`ddl-index-create`. Both DDL cases check schema metadata and following
+INSERT/UPDATE/DELETE operations. It uses one three-server stack and retains
+evidence under `artifacts/ddl-suite/`. Requirements are Docker Compose with amd64
+support, host Swift, OpenSSL, SQLite CLI, and MySQL 8.4 `mysqlbinlog` (or
+`MYSQLBINLOG=/path/to/mysqlbinlog`). CI extracts a checksum-pinned MySQL 8.4.8
+reference decoder from the official Ubuntu package, matching the fixture version.
+
 ```sh
 # List slices and individually selectable case IDs, names and definition locations.
 make ddl-suite ARGS='--list'
