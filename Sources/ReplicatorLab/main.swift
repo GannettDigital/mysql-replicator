@@ -16,6 +16,9 @@ func main() throws -> Int32 {
           ddl-suite [--skip-build] [--slice all|basic|modify-index|database|ordered|filters]
                     [--case ID ...] [--positioning both|gtid|file-position] [--list]
           native-ddl-suite
+          benchmark [--skip-build] [--events N] [--threads N] [--rate N]
+                    [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
+                    [--sample-seconds N] [--timeout N]
           ddl-catalog check
           ddl-catalog report [--format markdown|json] [--evidence PATH ...]
           ddl-catalog upstream-check [--mysql-source PATH]
@@ -41,6 +44,9 @@ func main() throws -> Int32 {
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
     if command.hasPrefix("demo-") {
         try DemoSession.run(root: root, command: command, arguments: args); return 0
+    }
+    if command == "benchmark" {
+        try PerformanceBenchmark.run(root: root, arguments: args); return 0
     }
     if command == "ddl-catalog" {
         try DDLCoverage.run(root: root, arguments: args); return 0

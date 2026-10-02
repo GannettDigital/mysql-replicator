@@ -62,6 +62,10 @@ and can take several minutes.
 For broader coverage, run `make dml-suite` and `make ddl-suite`. See
 [incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selecting individual cases.
 
+To compare native and custom replication under source write load, run
+`make benchmark`. See the [performance harness](PLAN/PERFORMANCE_BENCHMARK.md)
+for sysbench workloads, progress measurements, and interpretation limits.
+
 ## Try the interactive demo
 
 The demo needs Swift, Docker Compose with Linux/amd64 support, and OpenSSL.

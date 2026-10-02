@@ -78,7 +78,7 @@ public enum DemoSession {
             try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
         }
-        func up(build: Bool) throws {
+        func up(build: Bool, showInstructions: Bool = true) throws {
             try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a demo session already exists; use demo-status or demo-down (up never resets data)")
             let id = runID(), runner = ProcessRunner(root: root), tag = "mysql-replicator-packaging:demo"
             if build {
@@ -137,8 +137,10 @@ public enum DemoSession {
             try require(h.sql("source", "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='capture_fixture'") == "0", "demo-up opened a Swift capture connection")
             try require(!hasState(), "demo-up unexpectedly created replication state")
             manifest!.ready = true; try save()
-            try instructions().write(to: h.output.appendingPathComponent("COMMANDS.txt"), atomically: true, encoding: .utf8)
-            print(instructions())
+            if showInstructions {
+                try instructions().write(to: h.output.appendingPathComponent("COMMANDS.txt"), atomically: true, encoding: .utf8)
+                print(instructions())
+            }
         }
         func instructions() -> String {
             """

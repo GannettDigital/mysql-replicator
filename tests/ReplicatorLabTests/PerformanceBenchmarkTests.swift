@@ -1,0 +1,54 @@
+import XCTest
+@testable import ReplicatorLabCore
+
+final class PerformanceBenchmarkTests: XCTestCase {
+    let sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    func testCommittedGTIDCountIncludesDisjointIntervals() throws {
+        XCTAssertEqual(try PerformanceBenchmark.transactionCount("", sourceUUID: sid), 0)
+        XCTAssertEqual(try PerformanceBenchmark.transactionCount(sid + ":5:8-10:20-25", sourceUUID: sid), 10)
+        XCTAssertEqual(try PerformanceBenchmark.transactionCount(sid.uppercased() + ":1-1000\n", sourceUUID: sid), 1000)
+    }
+
+    func testInvalidGTIDsCannotProducePlausibleThroughput() {
+        for value in [sid, sid + ":0", sid + ":2-1", sid + ":1-3:3-5", sid + ":1-2-3", sid + ":1:",
+                      sid + ":1,bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee:1", sid + ":9223372036854775808"] {
+            XCTAssertThrowsError(try PerformanceBenchmark.transactionCount(value, sourceUUID: sid), value)
+        }
+        XCTAssertThrowsError(try PerformanceBenchmark.transactionCount(sid + ":1", sourceUUID: "another-source"))
+    }
+
+    func testCounterSamplesExpressPollingUncertainty() {
+        let sample = PerformanceBenchmark.Sample(phase: "load", startSeconds: 1, endSeconds: 2,
+            sourceBefore: 100, sourceAfter: 120, native: 110, replicator: 80, replicatorRows: 160)
+        XCTAssertEqual(sample.nativeBacklogLower, 0)
+        XCTAssertEqual(sample.nativeBacklogUpper, 10)
+        XCTAssertEqual(sample.replicatorBacklogLower, 20)
+        XCTAssertEqual(sample.replicatorBacklogUpper, 40)
+    }
+
+    func testLoadSummaryRequiresActualCompletedEventsAndFiniteTime() throws {
+        let log = "General statistics:\n    total time:                          10.0031s\n    total number of events:              1000\n"
+        let result = try PerformanceBenchmark.sysbenchTotals(log)
+        XCTAssertEqual(result.events, 1000)
+        XCTAssertEqual(result.seconds, 10.0031)
+        for invalid in ["FATAL: connection failed", log + log, log.replacingOccurrences(of: "10.0031", with: "nan"),
+                        log.replacingOccurrences(of: "10.0031", with: "0")] {
+            XCTAssertThrowsError(try PerformanceBenchmark.sysbenchTotals(invalid))
+        }
+    }
+
+    func testBenchmarkOptionsRejectUnboundedOrUnsupportedRuns() throws {
+        for args in [["--events", "0"], ["--events", "-1"], ["--threads", "33"], ["--rate", "-1"],
+                     ["--workload", "oltp"], ["--rows-per-event", "101"], ["--payload-bytes", "1025"],
+                     ["--sample-seconds", "0"], ["--timeout", "0"], ["--events", "1000", "--rate", "1"],
+                     ["--events", "1", "--threads", "2"], ["--host", "production"], ["--events"]] {
+            XCTAssertThrowsError(try PerformanceOptions(arguments: args), String(describing: args))
+        }
+        let options = try PerformanceOptions(arguments: ["--events", "300", "--rate", "0", "--workload", "mixed", "--threads", "4", "--skip-build"])
+        XCTAssertEqual(options.events, 300)
+        XCTAssertEqual(options.rate, 0)
+        XCTAssertEqual(options.workload, "mixed")
+        XCTAssertFalse(options.build)
+    }
+}

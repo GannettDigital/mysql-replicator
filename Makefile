@@ -44,6 +44,10 @@ ddl-suite:
 integration-smoke:
 	swift run replicator-lab ddl-suite --positioning gtid --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
 
+.PHONY: benchmark
+benchmark:
+	swift run replicator-lab benchmark $(ARGS)
+
 .PHONY: native-ddl-suite
 native-ddl-suite:
 	swift run replicator-lab native-ddl-suite
