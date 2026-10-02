@@ -129,8 +129,10 @@ The source GTID remains local replication identity, never a target SQL GTID. The
 is no target transaction pretending to make MyISAM rows atomic.
 
 The applier holds a MyISAM WRITE table lock while validating the current schema,
-reading the exact old row, issuing bound SQL, verifying affected-row count and
-reading the exact result. Integer primary keys identify rows. Text comparisons
+reading the exact old row, issuing bound SQL and verifying affected-row count.
+A successful SQL response with the expected count acknowledges the row; there is
+no post-write SELECT. This acknowledges MyISAM's write acceptance, not a guarantee
+of crash durability or atomicity with SQLite. Integer primary keys identify rows. Text comparisons
 use stored UTF-8 bytes, not collation or Swift's canonical Unicode equivalence;
 binary values and full unsigned 64-bit values remain exact. INSERT requires an
 absent key; UPDATE/DELETE require the full matching before image. Key changes also
@@ -147,9 +149,11 @@ source boundaries and relay byte references, per-row event offset/row ordinal
 intents, completion, applied GTID/position, counts and diagnostics. Raw events and
 decoded rows are not copied into SQLite. Before any mutation, relay data is synced
 and the group reference is committed, then the row's PENDING intent is committed.
-After readback verification the row becomes DONE. Only after every row is DONE does
-one SQLite transaction mark the source group applied and advance the applied
-checkpoint/counters. Table locks remain held through that commit.
+After SQL acknowledgment and affected-row validation the row becomes DONE. The
+last row's DONE update commits atomically with marking the source group applied
+and advancing its checkpoint/counters, after checking all earlier rows are DONE.
+Table locks remain held through that commit. A failed or uncertain SQL outcome
+leaves the intent unresolved; no write is retried automatically.
 
 Baseline GTIDs are externally asserted coverage; initialization does not count them
 as work performed by this process or claim a locally verified applied position.

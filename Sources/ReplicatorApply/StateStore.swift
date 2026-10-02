@@ -10,6 +10,19 @@ import Glibc
 import Darwin
 #endif
 
+/// SQLite invokes the hook after a successful WAL commit. It only records sizes;
+/// returning an error here would misleadingly report failure after commit.
+private final class WALGrowth {
+    var frames: Int64 = 0
+    var growthFrames: Int64 = 0
+    var bytes: Int64 { frames == 0 ? 0 : 32+frames*(4096+24) }
+    func committed(frames: Int32) {
+        let next = Int64(frames)
+        growthFrames += next >= self.frames ? next-self.frames : next
+        self.frames = next
+    }
+}
+
 /// Journal with explicit initialization and validated clean-stop reopening. Each completed group is a durable GTID delta. Old
 /// completed history is eligible for deletion only under storage pressure and
 /// only after a covering snapshot has committed. No uncertain target write is retried.
@@ -38,6 +51,9 @@ final class StateStore {
     private var ready = false
     private let now: () -> Date
     private let freeDisk: (URL) throws -> Int64
+    private let uptime: () -> Double
+    private let wal = WALGrowth()
+    private var capacity = CapacityWindow()
     let directory: URL
     let maximumBytes: UInt64
     let timings: StageTimings
@@ -46,12 +62,13 @@ final class StateStore {
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
     init(configuration c: ApplyConfiguration, initialize: Bool = true, timings: StageTimings = .init(), skipGTIDs: GTIDSet? = nil, now: @escaping () -> Date = Date.init,
+         uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
          freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace) throws {
         self.timings = timings
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
-        self.now = now; self.freeDisk = freeDisk
+        self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
         try require(skipGTIDs == nil || !initialize,"skip requires existing state")
         if initialize {
@@ -87,6 +104,7 @@ final class StateStore {
             try execute("PRAGMA cache_spill=OFF")
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
+            installWALTracking()
             try execute("PRAGMA user_version=5")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
@@ -217,6 +235,7 @@ final class StateStore {
         try execute("PRAGMA cache_spill=OFF")
         try execute("PRAGMA temp_store=MEMORY")
         try execute("PRAGMA wal_autocheckpoint=0")
+        installWALTracking()
         if version == 4 {
             // Old runtimes accepted only the primary index. Validate every
             // retained schema before changing the version; never bless unknown data.
@@ -274,11 +293,20 @@ final class StateStore {
         guard fsync(fd)==0 else {throw ApplyError("cannot synchronize state directory")}
     }
     private func checkDisk(extra: Int64) throws {
-        try require(try freeDisk(directory) >= policy.minimumFreeDiskBytes + extra,"storage pressure: free-disk reserve reached; replication stopped")
+        try require(try timings.measure("storage.free_space", { try freeDisk(directory) }) >= policy.minimumFreeDiskBytes + extra,"storage pressure: free-disk reserve reached; replication stopped")
+    }
+    private func installWALTracking() {
+        wal.frames = max(0,(walBytes-32)/(4096+24))
+        sqlite3_wal_hook(db, { context, _, _, frames in
+            guard let context else { return SQLITE_OK }
+            Unmanaged<WALGrowth>.fromOpaque(context).takeUnretainedValue().committed(frames:frames)
+            return SQLITE_OK
+        },Unmanaged.passUnretained(wal).toOpaque())
     }
     private func checkpoint() throws {
         let rc = timings.measure("sqlite.checkpoint") { sqlite3_wal_checkpoint_v2(db,nil,SQLITE_CHECKPOINT_TRUNCATE,nil,nil) }
         try require(rc == SQLITE_OK,"storage pressure: SQLite WAL checkpoint blocked (reader or I/O error)")
+        wal.frames = 0
     }
     private func query(_ sql: String,_ args: [String?] = []) throws -> [[String?]] {
         var stmt: OpaquePointer?
@@ -300,11 +328,11 @@ final class StateStore {
     }
     private func number(_ sql: String) throws -> Int64 {Int64(try query(sql).first?.first.flatMap{$0} ?? "") ?? 0}
     private func execute(_ sql: String,_ args: [String?] = []) throws {
-        if ready && !inTransaction && !maintenance {try ensureCapacity()}
+        if ready && !inTransaction && !maintenance {try ensureCapacity(force:false)}
         _ = try timings.measure(inTransaction || sql.hasPrefix("PRAGMA ") ? "sqlite.statement" : "sqlite.commit") { try query(sql,args) }
     }
     private func atomic(_ body: () throws -> Void) throws {
-        if ready && !maintenance {try ensureCapacity()}
+        if ready && !maintenance {try ensureCapacity(force:false)}
         _ = try query("BEGIN IMMEDIATE"); inTransaction=true
         defer {inTransaction=false}
         do {try body(); _ = try timings.measure("sqlite.commit") { try query("COMMIT") }}
@@ -323,17 +351,27 @@ final class StateStore {
     // Keep room for a worst-case next transaction, WAL headers and diagnostics.
     var transactionReserve: Int64 { databaseLimit + databaseLimit/4096*24 + 131072 }
     var checkpointThreshold: Int64 { min(1024*1024, databaseLimit/4) }
-    func ensureCapacity() throws {
-        try timings.measure("sqlite.capacity") { try checkCapacity() }
+    func ensureCapacity(force: Bool = true, incomingRelayBytes: Int64 = 0) throws {
+        // Always cheap: a very large group cannot bypass the WAL bound merely
+        // because no source transaction has completed yet.
+        if wal.bytes >= checkpointThreshold { try checkpoint() }
+        if force || capacity.needsInspection(sequence:sequence,time:uptime(),relay:relayLength,
+            incoming:incomingRelayBytes,growth:wal.growthFrames*4096,databaseLimit:databaseLimit,policy:policy) {
+            try timings.measure("sqlite.capacity") { try checkCapacity(incomingRelayBytes:incomingRelayBytes) }
+        }
+        try require(databaseLimit+wal.bytes+131072+transactionReserve < policy.maximumSQLiteBytes,
+                    "storage pressure: SQLite transaction reserve exhausted")
     }
-    private func checkCapacity() throws {
+    private func checkCapacity(incomingRelayBytes: Int64) throws {
         if walBytes >= checkpointThreshold || sqliteBytes >= policy.maximumSQLiteBytes-transactionReserve {
             try checkpoint()
         }
-        try checkDisk(extra:policy.maximumSQLiteBytes)
+        let free = try timings.measure("storage.free_space") { try freeDisk(directory) }
+        try require(free >= policy.minimumFreeDiskBytes+policy.maximumSQLiteBytes+incomingRelayBytes,
+                    "storage pressure: free-disk reserve reached; replication stopped")
         var used = try (number("PRAGMA page_count") - number("PRAGMA freelist_count"))*4096
         let threshold = databaseLimit * Int64(policy.pruneAtPercent)/100
-        let diskPressure = try freeDisk(directory) < policy.minimumFreeDiskBytes + policy.maximumSQLiteBytes*2
+        let diskPressure = free < policy.minimumFreeDiskBytes + policy.maximumSQLiteBytes*2
         if used >= threshold || diskPressure {
             maintenance=true; defer {maintenance=false}
             // Durable snapshot first. A crash between this commit and DELETE
@@ -364,9 +402,11 @@ final class StateStore {
         // Leave a margin for the next write/diagnostic. max_page_count is the
         // independent hard limit if a single oversized operation exceeds it.
         try require(used < databaseLimit * 95/100 && sqliteBytes < policy.maximumSQLiteBytes - transactionReserve,"storage pressure: SQLite budget reached; no eligible old history can free enough space")
+        capacity.record(sequence:sequence,time:uptime(),relay:relayLength,free:free,used:used)
+        wal.growthFrames = 0
     }
     private func snapshot() throws {
-        if ready && !maintenance {try ensureCapacity()}
+        if ready && !maintenance {try ensureCapacity(force:false)}
         if ready && sequence == snapshotSequence {return}
         let wasMaintenance=maintenance; maintenance=true
         defer {maintenance=wasMaintenance}
@@ -400,7 +440,7 @@ final class StateStore {
         for n in [UInt32(metadata.count),UInt32(bytes.count)] {var le=n.littleEndian; withUnsafeBytes(of:&le){frame.append(contentsOf:$0)}}
         frame += metadata; frame += bytes
         try require(UInt64(frame.count) <= maximumBytes-relayLength,"relay storage limit reached")
-        try checkDisk(extra:policy.maximumSQLiteBytes+Int64(frame.count))
+        try ensureCapacity(force:false,incomingRelayBytes:Int64(frame.count))
         try relay!.write(contentsOf:frame); relayLength += UInt64(frame.count)
     }
     func bindTargetIdentity(_ uuid: String) throws {
@@ -445,7 +485,7 @@ final class StateStore {
         var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
         let time=timestamp()
         try atomic {
-            // Only the last, already verified row is folded into this commit.
+            // Only the last, already acknowledged row is folded into this commit.
             // Its previously committed PENDING intent survives any failure here.
             if let finalRow {
                 try require(try query("SELECT status FROM row_intents WHERE gtid=? AND ordinal=?",[pendingGTID,String(finalRow)]) == [["PENDING"]], "final row has no pending intent")

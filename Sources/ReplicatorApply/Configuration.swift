@@ -202,8 +202,10 @@ public struct StoragePolicy: Codable {
     public var pruneAtPercent: Int = 80
     public var historyRetentionSeconds: Int = 86400
     public var snapshotEveryTransactions: Int = 1000
+    public var capacityCheckEveryTransactions: Int = 1000
+    public var capacityCheckIntervalSeconds: Int = 5
     public init() {}
-    enum CodingKeys: String, CodingKey {case maximumSQLiteBytes, minimumFreeDiskBytes, pruneAtPercent, historyRetentionSeconds, snapshotEveryTransactions}
+    enum CodingKeys: String, CodingKey {case maximumSQLiteBytes, minimumFreeDiskBytes, pruneAtPercent, historyRetentionSeconds, snapshotEveryTransactions, capacityCheckEveryTransactions, capacityCheckIntervalSeconds}
     public init(from decoder: Decoder) throws {
         self.init(); let c = try decoder.container(keyedBy:CodingKeys.self)
         maximumSQLiteBytes = try c.decodeIfPresent(Int64.self,forKey:.maximumSQLiteBytes) ?? maximumSQLiteBytes
@@ -211,10 +213,13 @@ public struct StoragePolicy: Codable {
         pruneAtPercent = try c.decodeIfPresent(Int.self,forKey:.pruneAtPercent) ?? pruneAtPercent
         historyRetentionSeconds = try c.decodeIfPresent(Int.self,forKey:.historyRetentionSeconds) ?? historyRetentionSeconds
         snapshotEveryTransactions = try c.decodeIfPresent(Int.self,forKey:.snapshotEveryTransactions) ?? snapshotEveryTransactions
+        capacityCheckEveryTransactions = try c.decodeIfPresent(Int.self,forKey:.capacityCheckEveryTransactions) ?? capacityCheckEveryTransactions
+        capacityCheckIntervalSeconds = try c.decodeIfPresent(Int.self,forKey:.capacityCheckIntervalSeconds) ?? capacityCheckIntervalSeconds
     }
     func validate() throws {
         try require((8*1024*1024...1024*1024*1024).contains(maximumSQLiteBytes),"SQLite limit must be 8 MiB to 1 GiB")
         try require((1*1024*1024...Int64.max/2).contains(minimumFreeDiskBytes),"invalid free-disk reserve")
+        try require((1...10000).contains(capacityCheckEveryTransactions) && (1...60).contains(capacityCheckIntervalSeconds),"invalid capacity inspection interval")
         try require((50...90).contains(pruneAtPercent) && (1...31536000).contains(historyRetentionSeconds) && (1...10000).contains(snapshotEveryTransactions),"invalid retention/checkpoint policy")
     }
 }

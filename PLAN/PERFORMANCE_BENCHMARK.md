@@ -166,15 +166,17 @@ No SQL text, bind values or credentials are included.
 - `capture.wait`: waiting for dump packets (including source idle time).
 - `capture.decode`, `capture.assemble`: decoding/probing and group assembly.
 - `relay.append`, `relay.sync`: relay framing/writes and durable synchronization.
-- `sqlite.capacity`, `sqlite.checkpoint`: capacity enforcement and WAL checkpoint.
+- `sqlite.capacity`, `sqlite.checkpoint`: full capacity inspection and WAL checkpoint.
+- `storage.free_space`: filesystem free-space sampling.
 - `sqlite.commit`: autocommit write execution or explicit COMMIT; includes failed
   attempts. Initialization PRAGMAs are counted as statements, not commits.
 - `sqlite.statement`: statements executed inside SQLite transactions and PRAGMAs.
 - `target.sql`: awaited SQL commands, including preparation on a cache miss.
+- `target.read`: pre-write row reads, including the new-key check for key changes.
 - `target.schema`, `target.row`, `target.lock`, `target.unlock`,
   `target.statement_invalidation`: inclusive target operations.
 
-The initial optimization pass keeps individual target row writes, full
+The initial optimization pass (commit `78546f0`) kept individual target row writes, full
 before/after-image checks, strict affected-row checks, FULL SQLite durability,
 relay synchronization and fail-stop/no-retry behavior:
 
@@ -205,6 +207,60 @@ relay synchronization and fail-stop/no-retry behavior:
 SQLite durability does not make a MyISAM target write atomic with its journal.
 Uncertain target outcomes remain blocked for explicit operator resolution. There
 is no row batching, parallel application or speculative checkpoint advancement.
+
+The subsequent pass removes post-write SELECTs: a successful target SQL response
+with the expected affected-row count permits DONE. Before-image, absent-key,
+schema and strict-mode checks remain. MyISAM write acceptance does not imply crash
+durability; ambiguous outcomes still block. Qualification independently compares
+source, native and custom replica values and asserts the remaining read counts.
+
+Capacity inspection now defaults to every 1,000 completed source groups or five
+seconds of activity, with earlier checks near pressure. Configure
+`storage.capacityCheckEveryTransactions` up to 10,000 and
+`storage.capacityCheckIntervalSeconds` up to 60. In-memory WAL frame tracking and
+conservative byte accounting preserve per-write limits without filesystem or
+page-count queries on every write. See the [storage policy](SCHEMA_DISCOVERY_AND_RETENTION.md).
+
+## Acknowledgment and periodic-capacity validation, 2026-10-01
+
+168 Swift tests pass, including inspection cadence/time/headroom boundaries,
+cached capacity with bounded WAL growth during unfinished groups, a pinned reader
+blocking the required checkpoint, and external disk pressure detected on timer
+expiry. The GTID DML suite passed all 14 cases. A selected GTID DDL run passed its
+basic DML dependency, VARCHAR widening and index creation, including subsequent
+INSERT/UPDATE/DELETE and independent schema/data/binlog comparisons. The full
+ordered DDL suite was not repeated for this pass.
+
+The same 1,000 single-row INSERT burst passed exact data comparison and cleanup:
+
+| Observation | Previous pass | This pass |
+| --- | ---: | ---: |
+| Source load duration | 1.636 s | 1.673 s |
+| Native completion observed | 3.888 s | 3.394 s |
+| Custom completion observed | 38.208 s | 28.071 s |
+| Full SQLite capacity inspections | 3,011 | 8 |
+| Capacity inspection time | 5.471 s | 0.019 s |
+| SQLite commits | 3,021 | 3,021 |
+| WAL checkpoints | 44 | 44 |
+| Target SQL commands, including setup | 11,329 | 9,353 |
+
+Observed custom completion time fell about 27% in this run. Host emulation and
+polling still limit timing precision; this is not isolated attribution or a
+production throughput estimate. The current run sampled filesystem free space
+nine times and issued exactly 1,000 pre-write row reads. Fewer lock epochs
+(413 versus 535) also reduced schema-related SQL as application became faster.
+
+Burst evidence:
+`artifacts/performance/20261002T024054Z-d3c5b8b8/20261002T024054Z-596d767b-auto-autocommit-myisam/`.
+DML evidence: `artifacts/dml-suite/20261002T023701Z-0505f352-auto-autocommit-myisam/`.
+Selected DDL evidence: `artifacts/ddl-suite/20261002T023611Z-70c2bf7d-auto-autocommit-myisam/`;
+its coverage inputs remained unchanged during the run.
+
+The mixed workload also passed exact data comparison and cleanup: 300 source
+transactions, two threads, 20 events/s, three rows/event (900 row mutations).
+Source load took 14.501 s; both replicas were observed complete at 18.267 s.
+This rate-limited observation is not a claim of equal maximum throughput.
+Evidence: `artifacts/performance/20261002T024238Z-c8737d95/20261002T024238Z-f6c4225b-auto-autocommit-myisam/`.
 
 ## Optimization validation, 2026-10-01
 

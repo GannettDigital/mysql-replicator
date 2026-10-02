@@ -96,7 +96,8 @@ until a periodic timer.
 
 - Persist one small applied delta per completed group: ordered local sequence,
   source GTID, source end coordinate, completion time and counter changes. Commit
-  it atomically with whole-group completion after every row has been verified.
+  it atomically with whole-group completion after every row has been acknowledged
+  by the target with the expected affected-row count.
   Pending row intents still precede mutation and survive until resolved.
 - Periodically fold completed deltas into a compact cumulative GTID snapshot,
   with a generation, covered sequence, file/position and snapshot timestamp.
@@ -177,12 +178,25 @@ The optional `storage` object accepts these defaults:
 | `pruneAtPercent` | 80 | Trigger as occupied main-database pages approach their budget |
 | `historyRetentionSeconds` | 86400 | Minimum age before completed history is eligible |
 | `snapshotEveryTransactions` | 1000 | Periodic cumulative GTID snapshot cadence |
+| `capacityCheckEveryTransactions` | 1000 | Full capacity inspection after this many completed groups; 1–10000 |
+| `capacityCheckIntervalSeconds` | 5 | Maximum inspection age while work continues; 1–60 seconds |
 
 The main database receives roughly one third of the total budget. Remaining
 space bounds WAL growth and maintenance; `max_page_count` is a separate hard
 limit, with cache spilling disabled. Cleanup also starts when disk free space
 approaches the reserve plus two SQLite budgets; writes stop before falling below
 the reserve plus one SQLite budget. These are conservative POC limits.
+
+Full inspections sample filesystem free space, physical SQLite sizes and occupied
+pages at the transaction or time interval, whichever comes first. Between them,
+relay bytes are charged against sampled headroom and SQLite's entire budget is
+reserved. A WAL commit hook tracks frames in memory; estimated page growth or
+reduced disk headroom triggers earlier inspection. Near pressure, inspections
+occur before each write. Each write still enforces the cheap WAL/reserve bound,
+including within unfinished source groups. WAL checkpoints remain size-triggered;
+neither capacity caching nor the hook changes FULL commit durability. The timer
+is checked on activity, not by a background thread. External disk use can only be
+detected at the next inspection or I/O failure.
 
 Each completed group durably records one GTID delta, its end coordinate and
 completion timestamp with the counters. `last_applied_at` is distinct from lifecycle

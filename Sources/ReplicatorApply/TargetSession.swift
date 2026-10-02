@@ -217,6 +217,9 @@ final class TargetSession {
         }
     }
     func read(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
+        try timings.measure("target.read") { try readRow(t,key:key) }
+    }
+    private func readRow(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
         let columns = try t.columns.map { try quoted($0.name) }.joined(separator:",")
         let rows = try query("SELECT \(columns) FROM \(t.sqlName) WHERE \(quoted(t.primaryKey))=?",[try bind(key)]).0
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
@@ -256,9 +259,8 @@ final class TargetSession {
         let result = try query(sql,try values.map(bind))
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
-        if let after = row.after {
-            try require(exactImage(try read(t,key:after[keyIndex]),after),"target after-image differs")
-            if oldKey != after[keyIndex] { try require(try read(t,key:oldKey) == nil,"old key remains after update") }
-        } else { try require(try read(t,key:oldKey) == nil,"deleted row remains") }
+        // A successful statement with the expected affected-row count is the
+        // completion signal. Pre-write images, strict SQL mode and schema checks
+        // remain enforced; independent qualification compares resulting values.
     }
 }

@@ -150,6 +150,8 @@ public enum DMLQualification {
             try require(h.sql("target57","SELECT @@GLOBAL.gtid_executed").isEmpty,"Swift injected source GTIDs into target")
             try require(state("positive","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||applied_position||'|'||(SELECT gtids FROM snapshots ORDER BY id DESC LIMIT 1) FROM state") == "STOPPED|4|4|\(sourceEnd.position)|\(sourceEnd.gtids)","SQLite applied checkpoint differs")
             try require(state("positive","SELECT COUNT(*) FROM row_intents WHERE status='DONE'") == "4","missing completed row intents")
+            let positiveReads = (positive["stageTimings"] as? [String:[String:Any]])?["target.read"]?["count"] as? Int
+            try require(positiveReads == 4,"expected only one pre-write read per fixture row")
             _ = try h.sql("native","STOP REPLICA")
             let nativeEnd = try h.boundary("native"), targetEnd = try h.boundary("target57")
             for (service,from,to) in [("source",sourceStart,sourceEnd),("native",nativeStart,nativeEnd),("target57",targetStart,targetEnd)] {
@@ -629,6 +631,8 @@ public enum DMLQualification {
                 _ = try h.sql("source","INSERT INTO poc.items VALUES(10,'ten',10),(11,'eleven',18446744073709551615); UPDATE poc.items SET id=12,value='twelve' WHERE id=11; DELETE FROM poc.items WHERE id IN (10,12)")
                 let edgeResult = try finish(edge,"multirow",success:true)
                 try require(edgeResult["rowsApplied"] as? Int == 5 && h.rows("target57") == Fixture.final,"multirow/key-change application differs")
+                let edgeReads = (edgeResult["stageTimings"] as? [String:[String:Any]])?["target.read"]?["count"] as? Int
+                try require(edgeReads == 6,"expected five pre-write reads and one new-key absence check")
                 let edgeEnd = try h.boundary("source")
                 _ = try h.sql("native","START REPLICA")
                 let wait = try h.sql("native","SELECT SOURCE_POS_WAIT('\(edgeEnd.file)',\(edgeEnd.position),30)")

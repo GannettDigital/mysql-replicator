@@ -172,7 +172,8 @@ final class ApplyTests: XCTestCase {
         try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
         defer {try? FileManager.default.removeItem(at:parent)}
         let c=try config(parent.appendingPathComponent("state").path)
-        let store=try StateStore(configuration:c)
+        var time = Date()
+        let store=try StateStore(configuration:c,now:{time})
         var reader: OpaquePointer?
         XCTAssertEqual(sqlite3_open_v2(store.directory.appendingPathComponent("state.sqlite").path,&reader,SQLITE_OPEN_READONLY,nil),SQLITE_OK)
         defer {sqlite3_close(reader)}
@@ -181,6 +182,7 @@ final class ApplyTests: XCTestCase {
         XCTAssertNoThrow(try store.ensureCapacity(), "a small WAL must not require immediate truncation")
         var blocked = false
         for _ in 0..<1000 {
+            time.addTimeInterval(1) // Ensure a real page change even on a fast host.
             do { try store.running() }
             catch {
                 XCTAssertTrue(String(describing:error).contains("WAL checkpoint blocked"))

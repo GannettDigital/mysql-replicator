@@ -30,7 +30,9 @@
     "minimumFreeDiskBytes": 536870912,
     "pruneAtPercent": 80,
     "historyRetentionSeconds": 86400,
-    "snapshotEveryTransactions": 1000
+    "snapshotEveryTransactions": 1000,
+    "capacityCheckEveryTransactions": 1000,
+    "capacityCheckIntervalSeconds": 5
   },
   "ddlTimeoutSeconds": 300,
   "replicateWildIgnoreTable": []
