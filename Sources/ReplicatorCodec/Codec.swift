@@ -199,7 +199,11 @@ public final class BinlogDecoder {
                 return text
             }
             let (database,table) = try profile("decode.swift.identifiers") { (try identifier(info.database),try identifier(info.table)) }
-            let digest = profile("decode.swift.fingerprint_hex") { bytes(info.fingerprint).map { String(format: "%02x", $0) }.joined() }
+            let digest = profile("decode.swift.fingerprint_hex") {
+                // The native result owns these bytes until the deferred free;
+                // the returned String owns its encoded storage independently.
+                HexEncoding.lowercase(UnsafeBufferPointer(start:info.fingerprint.data,count:Int(info.fingerprint.length)))
+            }
             if let schema {
                 guard schema.eventSHA256 == digest, schema.tableID == String(info.table_id), schema.database == database, schema.table == table else {
                     throw DecoderError(code: 7, offset: offset, eventType: type, reason: "schema history fingerprint or table identity differs")

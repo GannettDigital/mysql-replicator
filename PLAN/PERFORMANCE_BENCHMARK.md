@@ -196,8 +196,8 @@ The detailed run identifies a much larger cost than row parsing:
 | Rust SHA-256 computation | 90,006 | 0.249 s |
 | Rust row-image decoding | 10,000 | 0.164 s |
 
-Fingerprint hex formatting accounts for 77.2% of `capture.decode`. The current
-implementation invokes `String(format: "%02x", byte)` for each digest byte.
+Fingerprint hex formatting accounts for 77.2% of `capture.decode`. At this baseline,
+the implementation invoked `String(format: "%02x", byte)` for each digest byte.
 Replacing that formatting with a byte-to-hex lookup while preserving the exact
 string and fingerprint checks is the first optimization to test. GTID formatting
 uses the same pattern inside control conversion.
@@ -216,6 +216,47 @@ Evidence under `artifacts/performance/` (ignored by Git):
 - Off: `20261002T202036Z-3d87eac6/20261002T202036Z-ecf8579d-auto-autocommit-myisam/`.
 - Each retains `result.json`, `stage-timings.json`, and `verification.json`;
   the on run also retains `decoder-profile.tsv` with all 24 decoder stages.
+
+### Direct fingerprint hex encoding, 2026-10-02
+
+After profiling was committed as `133f1f0`, fingerprint conversion was changed
+to write lowercase hex directly into the final String's UTF-8 buffer. It reads
+the borrowed native digest while its result is alive, avoiding the intermediate
+Data copy, 32 separate formatted Strings, and joining. SHA-256 computation,
+the 64-character representation, fingerprint validation, and probe behavior
+remain unchanged. GTID formatting is also unchanged in this comparison.
+
+The same 10K workload with profiling enabled measured:
+
+| Measurement | Before | Direct encoding |
+| --- | ---: | ---: |
+| Fingerprint hex encoding, 90,006 calls | 40.357 s | 0.367 s |
+| Total `capture.decode` | 52.285 s | 12.619 s |
+| Producer enqueue/backpressure | 2.126 s | 39.097 s |
+| Observed custom completion | 60.702 s | 60.683 s |
+
+The formatter was about 110 times faster and total decoding about 4.1 times
+faster, but observed completion was essentially unchanged. The bounded queue
+again reached 64 groups, and the faster decoder now waits for the serial
+consumer. In the optimized profiled run, relay append self time was 19.043 s,
+target SQL took 13.715 s, and batch processing self time was 10.715 s. These
+remaining consumer costs are the next place to investigate for throughput.
+Further decoder savings alone need not improve catch-up time for this workload.
+
+A second optimized run with profiling off measured 8.226 s in `capture.decode`
+(baseline off: 47.795 s), with completion observed at 55.684 s (baseline off:
+60.727 s). Both optimized runs verified all 10,000 final rows against source
+and native and cleaned up successfully. Single-run variation and five-second
+polling prevent treating that completion difference as a precise speedup;
+these remain measurements on the shared, emulated Docker setup.
+
+203 Swift tests passed, including every possible input byte, leading zeroes,
+empty input, result ownership, and existing schema-fingerprint rejection tests.
+
+Evidence under `artifacts/performance/` (ignored by Git):
+
+- Profiled: `20261002T202717Z-0f5cabee/20261002T202718Z-26df3666-auto-autocommit-myisam/`.
+- Profiling off: `20261002T203102Z-9b182733/20261002T203102Z-6a658ca4-auto-autocommit-myisam/`.
 
 ## Interpretation limits and next measurements
 
