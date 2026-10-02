@@ -108,9 +108,11 @@ public struct TargetConfiguration: Decodable {
     public let passwordEnvironment: String
     public let serverHostname: String?
     public let caFile: String?
+    /// Optional client LOCK/UNLOCK TABLES; internal MyISAM locking still applies.
+    public let explicitTableLocks: Bool
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,serverHostname,caFile,nativeAutoStartDisabled,targetUUID}
+    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
@@ -119,6 +121,7 @@ public struct TargetConfiguration: Decodable {
         requireTLS=try c.decodeIfPresent(Bool.self,forKey:.requireTLS) ?? true
         username=try c.decode(String.self,forKey:.username); passwordEnvironment=try c.decode(String.self,forKey:.passwordEnvironment)
         serverHostname=try c.decodeIfPresent(String.self,forKey:.serverHostname); caFile=try c.decodeIfPresent(String.self,forKey:.caFile)
+        explicitTableLocks=try c.decodeIfPresent(Bool.self,forKey:.explicitTableLocks) ?? false
         nativeAutoStartDisabled=try c.decode(Bool.self,forKey:.nativeAutoStartDisabled)
     }
     func validate() throws {
@@ -173,26 +176,41 @@ enum DMLPlan {
     /// Validate the entire group before the first mutation. One source statement
     /// may span several row events/rows, but multi-statement groups are rejected.
     static func make(_ group: CompleteTransaction, tables: [ApplyTable]) throws -> [Mutation] {
+        var plans: [String:DMLTablePlan] = [:]
+        for table in tables {
+            try require(plans[table.identity] == nil,"duplicate table manifest")
+            plans[table.identity] = try DMLTablePlan(table)
+        }
+        return try make(group,tables:plans)
+    }
+    static func make(_ group: CompleteTransaction, tables: [String:DMLTablePlan]) throws -> [Mutation] {
         try require(group.outcome == .committed && group.gtid != nil && !group.anonymous,"unsupported transaction identity/outcome")
-        let allRows = group.events.filter { $0.rowFlags != nil }
-        let rowEvents = allRows.filter { !$0.replicationFiltered }
-        // A committed empty GTID has no target effects but still advances coverage.
-        if allRows.isEmpty || rowEvents.isEmpty { return [] }
-        try require(allRows.filter { ($0.rowFlags ?? 0) & 1 != 0 }.count == 1,"only single-statement source groups are supported")
+        var statementEnds = 0, includedEvents = 0
+        for event in group.events where event.rowFlags != nil {
+            if event.rowFlags! & 1 != 0 { statementEnds += 1 }
+            if !event.replicationFiltered { includedEvents += 1 }
+        }
+        if includedEvents == 0 { return [] }
+        try require(statementEnds == 1,"only single-statement source groups are supported")
         var result: [Mutation] = []
-        for event in rowEvents {
-            guard let table = tables.first(where:{$0.database == event.database && $0.table == event.table}) else { throw ApplyError("row event outside configured scope") }
+        var firstIdentity: String?
+        for event in group.events where event.rowFlags != nil && !event.replicationFiltered {
+            guard let database = event.database, let name = event.table,
+                  let plan = tables[database + "\0" + name] else { throw ApplyError("row event outside configured scope") }
+            if !event.rows.isEmpty {
+                let identity = plan.table.identity
+                if let firstIdentity { try require(firstIdentity == identity,"initial applier requires a single-table DML statement") }
+                else { firstIdentity = identity }
+            }
             for (index,row) in event.rows.enumerated() {
-                try require(["insert","update","delete"].contains(row.operation),"unsupported row operation")
+                try require(row.operation == "insert" || row.operation == "update" || row.operation == "delete","unsupported row operation")
                 try require((row.before != nil) == (row.operation != "insert") && (row.after != nil) == (row.operation != "delete"),"invalid row image shape")
-                for values in [row.before,row.after].compactMap({$0}) {
-                    try require(values.count == table.columns.count,"row/manifest column count differs")
-                    for (column,value) in zip(table.columns,values) { try column.validate(value) }
-                }
-                result.append(Mutation(table:table,row:row,eventOffset:event.offset,rowIndex:index))
+                if let before = row.before { try plan.validate(before) }
+                if let after = row.after { try plan.validate(after) }
+                result.append(Mutation(table:plan.table,row:row,eventOffset:event.offset,rowIndex:index))
             }
         }
-        try require(!result.isEmpty && Set(result.map { $0.table.identity }).count == 1,"initial applier requires a single-table DML statement")
+        try require(!result.isEmpty,"initial applier requires a single-table DML statement")
         return result
     }
 }

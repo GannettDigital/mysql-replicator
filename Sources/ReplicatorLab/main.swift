@@ -20,6 +20,7 @@ func main() throws -> Int32 {
           benchmark [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
                     [--target-transport tcp-tls|unix-tls|unix]
                     [--insert-rows N] [--overlap-preparation on|off] [--flush-on-table-change on|off]
+                    [--explicit-table-locks on|off]
                     [--batch-transactions N] [--decoder-profile on|off] [--applier-profile on|off]
                     [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
                     [--sample-seconds N] [--timeout N]

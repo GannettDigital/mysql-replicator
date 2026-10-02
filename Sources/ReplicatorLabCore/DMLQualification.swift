@@ -768,7 +768,11 @@ public enum DMLQualification {
                     let engine = service == "source" ? "InnoDB" : "MyISAM"
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.epoch(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
                 }
-                let epoch = try start(QualificationCase("schema-cache", "Release idle table locks and reuse validated schema for following writes"),configuration("schema-cache",at:try h.boundary("source"),count:3))
+                var epochConfig = configuration("schema-cache",at:try h.boundary("source"),count:3)
+                var epochTarget = epochConfig["target"] as! [String:Any]
+                epochTarget["explicitTableLocks"] = true
+                epochConfig["target"] = epochTarget
+                let epoch = try start(QualificationCase("schema-cache", "Release idle table locks and reuse validated schema for following writes"),epochConfig)
                 try waitForReader(epoch)
                 _ = try h.sql("source","INSERT INTO poc.epoch VALUES(1,10)")
                 let epochDeadline = Date().addingTimeInterval(15)

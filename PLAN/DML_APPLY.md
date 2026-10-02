@@ -171,8 +171,8 @@ not proof from SQL; the harness verifies the actual container startup arguments.
 See [MySQL's system-variable worklog](https://dev.mysql.com/worklog/task/?id=14450).
 Startup SQL channel/worker checks remain mandatory regardless of this assertion.
 
-The target account needs SELECT/INSERT/UPDATE/DELETE/LOCK TABLES for declared
-tables, REPLICATION CLIENT, SUPER (MySQL 5.7 requires it to set the session
+The target account needs SELECT/INSERT/UPDATE/DELETE for declared tables
+(and LOCK TABLES when `target.explicitTableLocks` is enabled), REPLICATION CLIENT, SUPER (MySQL 5.7 requires it to set the session
 [GTID_NEXT](https://dev.mysql.com/doc/refman/5.7/en/replication-options-gtids.html)), SELECT on the queried performance_schema replication
 status tables, and TRIGGER visibility for declared tables (global/schema/table
 TRIGGER grant). That last privilege prevents an empty metadata result from hiding
@@ -204,9 +204,24 @@ The applier validates schema on discovery, on clean resume and around ordered
 source DDL. Its session cache holds at most 64 validated schemas and their SQL
 templates; releasing a table lock does not invalidate them. DDL clears both this
 cache and prepared statements, and following DML validates the new version.
-The applier holds a MyISAM WRITE table lock while reading the exact old row,
-issuing bound SQL and verifying affected-row count. Lock epochs remain bounded
-to 32 groups or 50 ms at safe boundaries, and idle capture releases the lock.
+`target.explicitTableLocks` defaults to `false`: the applier sends no client
+LOCK/UNLOCK TABLES commands. MyISAM still takes its internal per-statement locks.
+This relies on the dedicated-replica contract: no other target writers or local
+schema changes. Readers can observe intermediate SQL chunks of a source group,
+including the gap between an UPDATE/DELETE before-image read and its write.
+The advisory writer lock, native replication exclusion, schema checks,
+before-image checks and affected-row checks remain mandatory.
+
+Set `target.explicitTableLocks: true` to retain the previous WRITE lock behavior
+across before-image reads and writes. Lock epochs are bounded to 32 groups or
+50 ms at safe boundaries, and idle capture releases the lock. Neither mode
+provides MyISAM rollback or crash durability.
+
+The preparation loop caches parsed column types and the last successfully
+validated full wire description per schema, using a database/table lookup.
+Changed metadata is revalidated; row values are still validated individually.
+Ordered DDL replaces this cache after execution drains. The SQL worker owns
+separate immutable column descriptors for exact target result decoding.
 A successful SQL response with the expected count acknowledges the row; there is
 no post-write SELECT. This acknowledges MyISAM's write acceptance, not a guarantee
 of crash durability or atomicity with SQLite. Integer primary keys identify rows. Text comparisons
@@ -235,8 +250,9 @@ the decoder's existing limits; it is never split.
 
 Before any target mutation, one relay sync and one FULL SQLite transaction persist
 all group identities, individual relay ranges and ordered PENDING row intents with
-schema references. Target rows are still executed individually, in source order,
-with the before-image, table-lock and affected-row checks described above. One
+schema references. Target writes execute in source order; consecutive eligible
+INSERTs may share a bounded multi-row statement. The before-image, optional
+table-lock and affected-row checks described above remain in place. One
 completion transaction marks acknowledged rows DONE and whole groups APPLIED, and
 advances GTID coverage, position and counters together. Existing lock epoch limits
 still apply between source groups; the batch has no atomic target visibility.

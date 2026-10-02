@@ -118,16 +118,9 @@ final class TargetSession {
     /// snapshot while the target connection executes an earlier batch.
     static func validateTableMap(_ event: DecodedEvent, table: ApplyTable) throws {
         guard let wire = event.wireColumns else { throw ApplyError("missing table-map metadata") }
-        try require(wire.count == table.columns.count,"source/target column count differs")
-        for (w,c) in zip(wire,table.columns) {
-            let type = try DMLColumnType(c.type)
-            try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
-            if c.interpretation == .utf8 {
-                try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
-            }
-            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
-        }
+        try DMLTablePlan(table).validate(wire:wire)
     }
+
     func readSchema(database: String,name: String) throws -> ApplyTable {
         try profile("target.read_schema") {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
@@ -219,6 +212,10 @@ final class TargetSession {
     func lock(_ table: ApplyTable) throws {
         // GET_LOCK belongs to this connection until explicit release or session
         // death. This session never releases it or reconnects after an error.
+        if !config.target.explicitTableLocks {
+            if validatedPlans[table.identity]?.table != table { try verifySchema(table) }
+            return
+        }
         if lockEpoch.canReuse(table, at:ProcessInfo.processInfo.systemUptime) { return }
         try unlock()
         _ = try timings.measure("target.lock") { try query("LOCK TABLES \(table.sqlName) WRITE",textProtocol:true) }
@@ -229,9 +226,11 @@ final class TargetSession {
         catch { try? unlock(); throw error }
     }
     func releaseExpiredLock() throws {
+        guard config.target.explicitTableLocks else { return }
         if lockEpoch.expired(at:ProcessInfo.processInfo.systemUptime) { try unlock() }
     }
     func completedDMLGroup() throws {
+        guard config.target.explicitTableLocks else { return }
         lockEpoch.completedGroup()
         try releaseExpiredLock()
     }
@@ -263,18 +262,19 @@ final class TargetSession {
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
         guard let row = rows.first else { return nil }
         return try profile("target.decode_result") {
-            try t.columns.map { c in
+            try t.columns.enumerated().map { index,c in
+                let type = plan.columnTypes[index]
                 guard let value = row.column(c.name) else { throw ApplyError("missing target column") }
                 if value.buffer == nil { return .null }
-                switch c.interpretation {
+                switch type.interpretation {
                 case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
                 case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
                 case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)
                 case .binary: return .binary(Data(value.buffer!.readableBytesView))
                 case .decimal:
-                    guard let s=value.string else {throw ApplyError("invalid target decimal")}; let result=DecodedValue.decimal(s); try c.validate(result); return result
+                    guard let s=value.string else {throw ApplyError("invalid target decimal")}; let result=DecodedValue.decimal(s); try type.validate(result); return result
                 case .temporal:
-                    guard let s=value.string else {throw ApplyError("invalid target temporal value")}; return .temporal(try DMLColumnType(c.type).canonicalTemporal(s))
+                    guard let s=value.string else {throw ApplyError("invalid target temporal value")}; return .temporal(try type.canonicalTemporal(s))
                 }
             }
         }

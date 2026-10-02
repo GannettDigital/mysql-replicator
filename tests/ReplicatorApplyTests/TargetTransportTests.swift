@@ -6,6 +6,7 @@ extension ApplyTests {
         let target = try config().target
         try target.validate()
         XCTAssertTrue(target.requireTLS)
+        XCTAssertFalse(target.explicitTableLocks)
         XCTAssertNil(target.unixSocket)
         XCTAssertEqual(target.host,"target57")
     }
@@ -15,9 +16,10 @@ extension ApplyTests {
             let base: [String:Any] = ["username":"apply","passwordEnvironment":"PASSWORD","nativeAutoStartDisabled":true]
             return try JSONDecoder().decode(TargetConfiguration.self,from:JSONSerialization.data(withJSONObject:base.merging(options){_,new in new}))
         }
-        let local = try decode(["unixSocket":"/run/mysqld/mysqld.sock","requireTLS":false])
+        let local = try decode(["unixSocket":"/run/mysqld/mysqld.sock","requireTLS":false,"explicitTableLocks":true])
         try local.validate()
         XCTAssertNil(local.host)
+        XCTAssertTrue(local.explicitTableLocks)
         let encrypted = try decode(["unixSocket":"/run/mysqld/mysqld.sock","serverHostname":"target57"])
         try encrypted.validate()
         XCTAssertTrue(encrypted.requireTLS)

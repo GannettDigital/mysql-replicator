@@ -4,6 +4,7 @@ import Foundation
 /// recovery authority; source DDL invalidates it along with prepared statements.
 struct DMLSQLPlan {
     let table: ApplyTable
+    let columnTypes: [DMLColumnType]
     let keyIndex: Int
     let select: String
     let insert: String
@@ -17,13 +18,13 @@ struct DMLSQLPlan {
 
     init(_ table: ApplyTable) throws {
         self.table = table
+        columnTypes = try DMLTablePlan(table).columnTypes
         keyIndex = table.keyIndex
         let names = try table.columns.map { try quoted($0.name) }
         let columns = names.joined(separator:",")
         let sqlName = try table.sqlName
         let predicate = try quoted(table.primaryKey) + "=?"
-        let reads = try zip(table.columns,names).map { column,name in
-            let type = try DMLColumnType(column.type)
+        let reads = zip(columnTypes,names).map { type,name in
             return [.decimal,.temporal].contains(type.interpretation) ? "CAST(\(name) AS CHAR) AS \(name)" : name
         }.joined(separator:",")
         select = "SELECT \(reads) FROM \(sqlName) WHERE \(predicate)"

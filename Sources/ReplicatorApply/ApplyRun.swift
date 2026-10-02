@@ -72,7 +72,7 @@ public enum ApplyRun {
             try state.running(); started = true
             let executor = DMLExecutor()
             let executionStop = CaptureCancellation(parent:cancellation)
-            var planningTables = target.discovered
+            var planningCache = try DMLPlanningCache(target.discovered)
             func finishExecution() throws {
                 guard executor.active else { return }
                 let outcome = timings.measure("apply.execution_wait") { executor.join()! }
@@ -115,13 +115,13 @@ public enum ApplyRun {
                         guard let database = decoded.database, let name = decoded.table else { throw ApplyError("missing table-map identity") }
                         let identity = database + "\0" + name
                         let table: ApplyTable
-                        if let cached = planningTables[identity] {
-                            try state.profile("target.discover") { try TargetSession.validateTableMap(decoded,table:cached) }
-                            table = cached
+                        if planningCache.tables[identity] != nil {
+                            table = try state.profile("target.discover") { try planningCache.validate(decoded) }
                         } else {
                             try barrier()
                             table = try target.discover(decoded)
-                            planningTables[identity] = table
+                            try planningCache.insert(table)
+                            _ = try planningCache.validate(decoded)
                         }
                         guard let offset = UInt64(decoded.offset) else { throw ApplyError("invalid table-map coordinate") }
                         try state.schema(table,event:decoded,coordinate:BinlogCoordinate(file:record.file,position:offset))
@@ -146,13 +146,13 @@ public enum ApplyRun {
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try pipeline.queue.checkFailure()
                     try target.applyDDL(plan)
-                    planningTables = target.discovered
+                    planningCache = try DMLPlanningCache(target.discovered)
                     try state.complete(group,rowCount:0,ddl:plan)
                     try progress()
                     return
                 }
                 let mutations: [Mutation]
-                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:Array(planningTables.values)) } }
+                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:planningCache.tables) } }
                 catch {
                     try barrier()
                     try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.

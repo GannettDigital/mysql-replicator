@@ -35,8 +35,8 @@ struct DMLExecution {
                     while end < rows.count && end-cursor < maximumInsertRows {
                         let next = rows[end].1, cost = insertBytes(next)
                         // Coalesce across source groups only when both groups
-                        // contain one row. Larger groups keep their lock until
-                        // their last chunk, including when a statement is split.
+                        // contain one row. With explicit locks enabled, larger
+                        // groups keep their lock until their last chunk.
                         if rows[end].0 != rows[cursor].0 && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1) { break }
                         guard next.row.operation == "insert", next.table == first.table,
                               bytes <= maximumInsertBytes-cost else { break }

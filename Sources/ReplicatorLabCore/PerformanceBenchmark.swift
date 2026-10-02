@@ -16,6 +16,7 @@ public struct PerformanceOptions: Codable {
     public var insertRows = 32
     public var overlapPreparation = true
     public var flushOnTableChange = false
+    public var explicitTableLocks = false
     public var sampleSeconds = 5
     public var timeoutSeconds = 300
     public var build = true
@@ -27,9 +28,10 @@ public struct PerformanceOptions: Codable {
         while let flag = args.next() {
             if flag == "--skip-build" { build = false; continue }
             guard let value = args.next() else { throw LabError("missing value for " + flag) }
-            if ["--overlap-preparation","--flush-on-table-change"].contains(flag) {
+            if ["--overlap-preparation","--flush-on-table-change","--explicit-table-locks"].contains(flag) {
                 try require(["on","off"].contains(value),flag + " must be on or off")
                 if flag == "--overlap-preparation" { overlapPreparation = value == "on" }
+                else if flag == "--explicit-table-locks" { explicitTableLocks = value == "on" }
                 else { flushOnTableChange = value == "on" }
                 continue
             }
@@ -152,7 +154,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling, insertRows:options.insertRows, overlapPreparation:options.overlapPreparation, flushOnTableChange:options.flushOnTableChange)
+            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling, insertRows:options.insertRows, overlapPreparation:options.overlapPreparation, flushOnTableChange:options.flushOnTableChange, explicitTableLocks:options.explicitTableLocks)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text

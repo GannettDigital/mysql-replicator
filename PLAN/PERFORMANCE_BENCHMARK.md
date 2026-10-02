@@ -53,6 +53,7 @@ the stack. Do not use the interactive demo commands to manage a benchmark stack.
 | `--insert-rows` | 32 | Maximum rows in a target INSERT statement; 1–128; 1 disables fusion |
 | `--overlap-preparation` | on | Collect/validate the next batch while target SQL executes |
 | `--flush-on-table-change` | off | Enable to compare with the old table-change journal barrier |
+| `--explicit-table-locks` | off | Send client LOCK/UNLOCK TABLES commands; internal MyISAM locks always apply |
 | `--decoder-profile` | on | Detailed decoder function timings; `on` or `off` |
 | `--applier-profile` | on | Detailed applier timings; `on` or `off` (normal benchmark only) |
 | `--skip-build` | off | Reuse existing runtime and load-generator images |
@@ -1665,3 +1666,109 @@ two source clients, three rows per statement, offered at 20 transactions/sec;
 900 row changes applied. Source load was 15.637 s, native completion was observed
 at 19.223 s and custom completion at 22.339 s. Evidence:
 `artifacts/performance/20261002T021655Z-c4964d59/20261002T021655Z-9f088254-auto-autocommit-myisam/`.
+
+## Optional explicit locks, cached planning and numeric GTID updates (2026-10-02)
+
+This change follows the multi-row INSERT/overlapping-preparation baseline at
+`c9381e8`. Four costs are addressed:
+
+1. `target.explicitTableLocks` defaults to `false`, eliminating client
+   `LOCK TABLES` / `UNLOCK TABLES` round trips. Set it to `true` to retain bounded
+   WRITE lock epochs; benchmark either mode with `--explicit-table-locks on|off`.
+   Native MySQL also locks internally: its MySQL 5.7 rows-event handler calls
+   `open_and_lock_tables()` in `sql/log_event.cc`. Neither native replication nor
+   this option disables MyISAM's internal table locks. The optional client lock
+   protects the span across several client SQL statements, at a round-trip cost.
+   Without it, readers may see intermediate chunks, and correctness relies on
+   the existing exclusion of other target writers/schema changes. Advisory writer
+   ownership, native-channel exclusion, schema validation, before-image validation
+   and affected-row checks remain enabled. See [the apply contract](DML_APPLY.md).
+2. A runtime schema descriptor parses each column type once. Preparation retains
+   the last successfully validated complete `WireColumn` array per schema;
+   unchanged TABLE_MAP metadata skips repeated type/encoding checks. Changed
+   metadata still validates, including signedness, optional names/key flags,
+   precision and collation. Row values always undergo range/type/length checks.
+3. DML planning uses a database/table dictionary directly, without rebuilding an
+   array and searching it for every group. Statement-end counting, row image
+   validation and single-table checks use loops without intermediate filters or
+   sets. The target SQL plan also retains parsed column types for result decoding.
+   Preparation and execution own separate caches. Ordered source DDL drains the
+   worker, invalidates SQL plans and replaces the preparation cache.
+4. `GTIDSet.include` updates sorted numeric intervals directly. It finds the
+   insertion point, extends/bridges ranges, or ignores a duplicate without
+   serializing and reparsing the set. A maintained canonical byte count preserves
+   the 1 MiB bound; 64 SIDs and 4,096 normalized intervals per SID remain bounded.
+   Duplicate/merging updates remain legal at interval capacity. Invalid updates
+   leave the old set intact. Persisted GTID text and binary protocol formats stay
+   unchanged.
+
+The earlier results in this document used explicit client locks unless otherwise
+stated. Cached metadata is never a recovery authority; persisted schema and
+restart validation remain unchanged. There is no change to row ordering,
+acknowledged-prefix recording, or the handling of uncertain MyISAM writes.
+
+Validation for this change:
+
+- `swift test`: 238 tests passed, including changed-wire/schema invalidation,
+  cached row-value validation, GTID normalization/binary equivalence, interval/SID
+  capacity, byte bounds and atomic rejection of invalid updates.
+- Full GTID DML suite: all 56 cases passed, including MySQL 5.7 datatypes,
+  statement variants, metadata rejection, partial writes and missing before images.
+  The `schema-cache` fixture explicitly enables table locks and verifies idle
+  release/reacquisition without repeated schema validation. Other fixtures use
+  the new default. Evidence:
+  `artifacts/dml-suite/20261002T234134Z-06b06831-auto-autocommit-myisam/`.
+- The crash fixture observed 388 of 8,000 target rows written; all 8,000 prepared
+  row intents remained pending, the checkpoint did not advance, and restart
+  refused automatic replay.
+- Demo suite passed DDL/DML, MODIFY/index changes, fail-stop/explicit skip,
+  SIGINT/SIGTERM, GTID and positional saved-state resume, and cleanup. Evidence:
+  `artifacts/demo-suite/20261002T234129Z-ffb4b27b-auto-autocommit-myisam/`.
+
+### Measured 10K comparison
+
+Both final runs passed exact source/native/custom row comparison and cleanup.
+Commands used the existing sysbench INSERT workload, `--events 10000 --rate 0`,
+`--decoder-profile off --applier-profile on`, 32-row INSERT chunks and overlapping
+preparation. The eight-table run used `--tables 8 --table-distribution uniform`
+with the default table run of one. The runtime was rebuilt and qualified before
+using `--skip-build`; no other qualification or benchmark ran during either load.
+
+| Seconds unless indicated | One table before | One table after | Eight tables before | Eight tables after |
+| --- | ---: | ---: | ---: | ---: |
+| Observed custom completion | 25.734 | 20.652 | 40.706 | 25.682 |
+| Observed native completion | 16.018 | 20.652 | 20.707 | 20.721 |
+| Apply consumer elapsed | 22.052 | 7.029 | 35.154 | 21.052 |
+| SQL text round trips | 0.634 | 0.010 | 7.375 | 0.026 |
+| Metadata validation (`target.discover`) | 2.800 | 0.141 | 2.805 | 0.120 |
+| DML planning | 1.861 | 0.288 | 1.902 | 0.240 |
+| Journal GTID updates | 5.376 | 0.145 | 5.219 | 0.136 |
+| Total target SQL elapsed | 4.013 | 3.291 | 21.356 | 15.301 |
+| Target SQL calls | 2,347 | 1,426 | 30,272 | 10,268 |
+| SQL text calls | 786 | 2 | 20,013 | 9 |
+| Explicit LOCK calls | 392 | 0 | 10,002 | 0 |
+| Explicit UNLOCK calls | 392 | 0 | 10,002 | 0 |
+| SQLite commits | 1,255 | 1,111 | 794 | 700 |
+
+Metadata validation and DML planning each still cover all 10,000 transactions;
+the GTID stage covers 20,000 journal updates. No explicit table-lock commands
+remain in the default mode. The remaining text SQL handles DDL and its database context. The eight-table
+case still needs 10,000 INSERT executions because neighboring groups target
+different tables; this change deliberately preserves source order. Target SQL
+is now the largest measured worker cost for that workload.
+
+Observed completion improved by about 20% for one table and 37% for eight tables.
+These are individual shared-host ARM/emulated-amd64 runs, with five-second
+completion polling. The one-table after run is close to load-limited: native and
+custom completion were observed in the same polling window, which does not prove
+identical throughput. Stage durations are inclusive and preparation overlaps
+execution; do not add worker times to estimate wall time.
+
+Final runtime image: `sha256:6e07283244be4d192e4487422bce7b392eea0d86431c9976a86a85508ae73861`.
+
+Evidence, in table-column order:
+
+- `artifacts/performance/20261002T225108Z-2a9a6a01/20261002T225108Z-0b6e218e-auto-autocommit-myisam`
+- `artifacts/performance/20261002T235113Z-5490d59d/20261002T235113Z-4c6e380a-auto-autocommit-myisam`
+- `artifacts/performance/20261002T225258Z-c3293542/20261002T225258Z-295f3aea-auto-autocommit-myisam`
+- `artifacts/performance/20261002T234912Z-cc430679/20261002T234912Z-3e565d0a-auto-autocommit-myisam`

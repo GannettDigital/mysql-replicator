@@ -12,7 +12,16 @@ public struct CaptureError: Error, CustomStringConvertible {
 /// config. MySQL encodes inclusive text ends as exclusive binary ends.
 public struct GTIDSet: Equatable {
     struct SID: Equatable { let uuid: UUID; var intervals: [ClosedRange<UInt64>] }
-    var sids: [SID]
+    private(set) var sids: [SID]
+    private var canonicalBytes: Int
+    private static func digits(_ value: UInt64) -> Int {
+        var n = value, count = 1
+        while n >= 10 { n /= 10; count += 1 }
+        return count
+    }
+    private static func bytes(_ range: ClosedRange<UInt64>) -> Int {
+        digits(range.lowerBound) + (range.lowerBound == range.upperBound ? 0 : 1 + digits(range.upperBound))
+    }
     public init(_ text: String) throws {
         guard text.utf8.count <= 1024 * 1024 else { throw CaptureError("GTID set exceeds 1 MiB") }
         var result: [SID] = []
@@ -42,6 +51,9 @@ public struct GTIDSet: Equatable {
             }
         }
         sids = result.sorted { $0.uuid.uuidString < $1.uuid.uuidString }
+        canonicalBytes = max(0,sids.count-1) + sids.reduce(0) { total,sid in
+            total + 36 + sid.intervals.reduce(0) { $0 + 1 + Self.bytes($1) }
+        }
     }
     public var isEmpty: Bool { sids.isEmpty }
     public var canonical: String {
@@ -64,11 +76,43 @@ public struct GTIDSet: Equatable {
         }
     }
     public mutating func include(sid: String, sequence: String) throws {
-        guard let uuid = UUID(uuidString: sid) else { throw CaptureError("invalid observed SID") }
-        let components = canonical.split(separator: ",").map(String.init)
-        var updated = components.map { $0.hasPrefix(uuid.uuidString.lowercased() + ":") ? $0 + ":" + sequence : $0 }
-        if !sids.contains(where: { $0.uuid == uuid }) { updated.append(uuid.uuidString.lowercased() + ":" + sequence) }
-        self = try GTIDSet(updated.joined(separator: ","))
+        guard let uuid = UUID(uuidString: sid), !sequence.isEmpty,
+              sequence.utf8.allSatisfy({ (48...57).contains($0) }),
+              let n = UInt64(sequence), n > 0, n < UInt64(Int64.max) else {
+            throw CaptureError("invalid observed GTID")
+        }
+        guard let index = sids.firstIndex(where: { $0.uuid == uuid }) else {
+            let size = canonicalBytes + (sids.isEmpty ? 0 : 1) + 37 + Self.digits(n)
+            guard sids.count < 64, size <= 1024*1024 else { throw CaptureError("GTID set limit exceeded") }
+            let position = sids.firstIndex { $0.uuid.uuidString > uuid.uuidString } ?? sids.count
+            sids.insert(SID(uuid:uuid,intervals:[n...n]),at:position)
+            canonicalBytes = size
+            return
+        }
+        // Find the first interval whose end reaches n. Usually this is an
+        // append to the final interval; no text serialization or sorting.
+        var low = 0, high = sids[index].intervals.count
+        while low < high {
+            let mid = low + (high-low)/2
+            if sids[index].intervals[mid].upperBound < n { low = mid+1 } else { high = mid }
+        }
+        if low < sids[index].intervals.count, sids[index].intervals[low].contains(n) { return }
+        var start = low, end = low, lower = n, upper = n
+        if low > 0, sids[index].intervals[low-1].upperBound + 1 == n {
+            start -= 1; lower = sids[index].intervals[start].lowerBound
+        }
+        if low < sids[index].intervals.count, sids[index].intervals[low].lowerBound == n+1 {
+            end += 1; upper = sids[index].intervals[low].upperBound
+        }
+        let replacement = lower...upper
+        let removedBytes = sids[index].intervals[start..<end].reduce(0) { $0 + 1 + Self.bytes($1) }
+        let size = canonicalBytes - removedBytes + 1 + Self.bytes(replacement)
+        guard sids[index].intervals.count - (end-start) + 1 <= 4096,
+              size <= 1024*1024 else { throw CaptureError("GTID set limit exceeded") }
+        // Check all bounds before mutation, so a rejected update is atomic.
+        if end-start == 1 { sids[index].intervals[start] = replacement }
+        else { sids[index].intervals.replaceSubrange(start..<end,with:[replacement]) }
+        canonicalBytes = size
     }
     func encoded() -> ByteBuffer {
         var buffer = ByteBufferAllocator().buffer(capacity: 128)

@@ -78,7 +78,7 @@ public enum DemoSession {
             try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
         }
-        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false) throws {
+        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false, explicitTableLocks: Bool = false) throws {
             try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"invalid target transport")
             try require((1...256).contains(batchTransactions),"invalid DML batch size")
             try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a demo session already exists; use demo-status or demo-down (up never resets data)")
@@ -120,7 +120,7 @@ public enum DemoSession {
             _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'localhost' IDENTIFIED BY 'fixture-apply-only' REQUIRE \(localTLS); GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'localhost'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'localhost'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'localhost'")
             let boundary = try h.boundary("source"), uuid = try h.sql("source", "SELECT @@server_uuid")
             try writeJSON(boundary.json, to: h.output.appendingPathComponent("baseline.json"))
-            var target: [String:Any] = ["username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","nativeAutoStartDisabled":true]
+            var target: [String:Any] = ["username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","nativeAutoStartDisabled":true,"explicitTableLocks":explicitTableLocks]
             if targetTransport == "tcp-tls" { target["host"] = "127.0.0.1"; target["port"] = 3306 }
             else {
                 try require(h.sql("target57","SELECT @@socket") == "/var/run/mysqld/mysqld.sock","unexpected fixture socket path")

@@ -74,7 +74,7 @@ final class PerformanceBenchmarkTests: XCTestCase {
     }
 
     func testBenchmarkOptionsRejectUnboundedOrUnsupportedRuns() throws {
-        for args in [["--insert-rows","0"], ["--insert-rows","129"], ["--overlap-preparation","yes"], ["--flush-on-table-change","yes"], ["--tables","0"], ["--tables","33"], ["--table-run","0"], ["--table-distribution","hot80"], ["--table-distribution","random"], ["--events", "0"], ["--events", "-1"], ["--threads", "33"], ["--rate", "-1"],
+        for args in [["--insert-rows","0"], ["--insert-rows","129"], ["--overlap-preparation","yes"], ["--flush-on-table-change","yes"], ["--explicit-table-locks","yes"], ["--tables","0"], ["--tables","33"], ["--table-run","0"], ["--table-distribution","hot80"], ["--table-distribution","random"], ["--events", "0"], ["--events", "-1"], ["--threads", "33"], ["--rate", "-1"],
                      ["--workload", "oltp"], ["--rows-per-event", "101"], ["--payload-bytes", "1025"],
                      ["--sample-seconds", "0"], ["--timeout", "0"], ["--events", "1000", "--rate", "1"],
                      ["--events", "1", "--threads", "2"], ["--host", "production"], ["--events"],
@@ -83,6 +83,8 @@ final class PerformanceBenchmarkTests: XCTestCase {
             XCTAssertThrowsError(try PerformanceOptions(arguments: args), String(describing: args))
         }
         let options = try PerformanceOptions(arguments: ["--events", "300", "--rate", "0", "--workload", "mixed", "--threads", "4", "--skip-build"])
+        XCTAssertFalse(try PerformanceOptions(arguments:[]).explicitTableLocks)
+        XCTAssertTrue(try PerformanceOptions(arguments:["--explicit-table-locks","on"]).explicitTableLocks)
         let multi = try PerformanceOptions(arguments:["--tables","8","--table-distribution","hot80","--table-run","16"])
         XCTAssertEqual(multi.tableNames,["bench","bench_1","bench_2","bench_3","bench_4","bench_5","bench_6","bench_7"])
         XCTAssertFalse(try PerformanceOptions(arguments:["--overlap-preparation","off"]).overlapPreparation)
