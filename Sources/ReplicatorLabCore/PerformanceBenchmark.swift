@@ -13,12 +13,17 @@ public struct PerformanceOptions: Codable {
     public var timeoutSeconds = 300
     public var build = true
     public var decoderProfiling = true
+    public var applierProfiling = true
 
     public init(arguments: [String]) throws {
         var args = arguments.makeIterator()
         while let flag = args.next() {
             if flag == "--skip-build" { build = false; continue }
             guard let value = args.next() else { throw LabError("missing value for " + flag) }
+            if flag == "--applier-profile" {
+                try require(["on","off"].contains(value),"applier-profile must be on or off")
+                applierProfiling = value == "on"; continue
+            }
             if flag == "--decoder-profile" {
                 try require(["on","off"].contains(value),"decoder-profile must be on or off")
                 decoderProfiling = value == "on"; continue
@@ -126,7 +131,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling)
+            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
@@ -279,6 +284,13 @@ public enum PerformanceBenchmark {
                 try profile.write(to:output!.appendingPathComponent("decoder-profile.tsv"),atomically:true,encoding:.utf8)
                 print("Decoder stages by self time (milliseconds; counts include probes):\n" + profile.split(separator:"\n").prefix(11).joined(separator:"\n"))
             }
+            if options.applierProfiling {
+                try require(timings["apply.detail.relay.metadata"] != nil && timings["apply.detail.sqlite.step"] != nil,
+                            "missing applier profile; rebuild the runtime image")
+                let profile = try applierProfile(timings)
+                try profile.write(to:output!.appendingPathComponent("applier-profile.tsv"),atomically:true,encoding:.utf8)
+                print("Applier stages by self time (milliseconds; includes startup and stop):\n" + profile.split(separator:"\n").prefix(11).joined(separator:"\n"))
+            }
             report["result"] = "passed"
         } catch {
             failure = error; report["error"] = String(describing: error)
@@ -305,6 +317,13 @@ public enum PerformanceBenchmark {
     }
 
     static func decoderProfile(_ timings: [String:Any]) throws -> String {
+        try stageProfile(timings.filter { $0.key.hasPrefix("decode.") })
+    }
+    static func applierProfile(_ timings: [String:Any]) throws -> String {
+        let prefixes = ["apply.","relay.","sqlite.","target.","storage.","progress."]
+        return try stageProfile(timings.filter { name,_ in prefixes.contains { name.hasPrefix($0) } })
+    }
+    private static func stageProfile(_ timings: [String:Any]) throws -> String {
         struct Timing: Decodable {
             let count: UInt64
             let failures: UInt64
@@ -312,7 +331,7 @@ public enum PerformanceBenchmark {
             let selfSeconds: Double
             let maximumSeconds: Double
         }
-        let data = try JSONSerialization.data(withJSONObject:timings.filter { $0.key.hasPrefix("decode.") })
+        let data = try JSONSerialization.data(withJSONObject:timings)
         let stages = try JSONDecoder().decode([String:Timing].self,from:data)
         var lines = ["stage\tcount\tfailures\ttotal_ms\tself_ms\tmean_us\tmax_us"]
         for (name,s) in stages.sorted(by: { $0.value.selfSeconds == $1.value.selfSeconds ? $0.key < $1.key : $0.value.selfSeconds > $1.value.selfSeconds }) {

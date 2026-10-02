@@ -57,6 +57,7 @@ final class StateStore {
     private var capacity = CapacityWindow()
     let directory: URL
     let maximumBytes: UInt64
+    let applierProfiling: Bool
     let timings: StageTimings
     let policy: StoragePolicy
     // Reserve enough of the total SQLite budget for a transaction touching every
@@ -66,6 +67,7 @@ final class StateStore {
          uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
          freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace) throws {
         self.timings = timings
+        applierProfiling = c.applierProfiling ?? false
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
@@ -284,9 +286,15 @@ final class StateStore {
         guard let n = try FileManager.default.attributesOfFileSystem(forPath:url.path)[.systemFreeSize] as? NSNumber else {throw ApplyError("cannot inspect free disk space")}
         return n.int64Value
     }
+    func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
+        if !applierProfiling { return try body() }
+        return try timings.measure("apply.detail." + stage,body)
+    }
     func timestamp(_ date: Date? = nil) -> String {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime,.withFractionalSeconds]
-        return f.string(from:date ?? now())
+        profile("journal.timestamp") {
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime,.withFractionalSeconds]
+            return f.string(from:date ?? now())
+        }
     }
     static func syncDirectory(_ url: URL) throws {
         let fd = open(url.path,O_RDONLY); guard fd >= 0 else {throw ApplyError("cannot open state directory")}
@@ -311,22 +319,29 @@ final class StateStore {
     }
     private func query(_ sql: String,_ args: [String?] = []) throws -> [[String?]] {
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db,sql,-1,&stmt,nil)==SQLITE_OK else {throw ApplyError("SQLite preparation failed")}
-        defer {sqlite3_finalize(stmt)}
-        let transient = unsafeBitCast(-1,to:sqlite3_destructor_type.self)
-        for (i,arg) in args.enumerated() {
-            let rc = arg.map {sqlite3_bind_text(stmt,Int32(i+1),$0,-1,transient)} ?? sqlite3_bind_null(stmt,Int32(i+1))
-            try require(rc == SQLITE_OK,"SQLite bind failed")
+        try profile("sqlite.prepare") {
+            guard sqlite3_prepare_v2(db,sql,-1,&stmt,nil)==SQLITE_OK else {throw ApplyError("SQLite preparation failed")}
         }
-        var output: [[String?]] = []
-        var rc = sqlite3_step(stmt)
-        while rc == SQLITE_ROW {
-            output.append((0..<sqlite3_column_count(stmt)).map {i in sqlite3_column_text(stmt,i).map {String(cString:$0)}})
-            rc = sqlite3_step(stmt)
+        defer { _ = profile("sqlite.finalize") { sqlite3_finalize(stmt) } }
+        try profile("sqlite.bind") {
+            let transient = unsafeBitCast(-1,to:sqlite3_destructor_type.self)
+            for (i,arg) in args.enumerated() {
+                let rc = arg.map {sqlite3_bind_text(stmt,Int32(i+1),$0,-1,transient)} ?? sqlite3_bind_null(stmt,Int32(i+1))
+                try require(rc == SQLITE_OK,"SQLite bind failed")
+            }
         }
-        try require(rc == SQLITE_DONE,"SQLite operation failed (code \(rc)); replication stopped")
-        return output
+        return try profile("sqlite.step") {
+            var output: [[String?]] = []
+            var rc = sqlite3_step(stmt)
+            while rc == SQLITE_ROW {
+                output.append((0..<sqlite3_column_count(stmt)).map {i in sqlite3_column_text(stmt,i).map {String(cString:$0)}})
+                rc = sqlite3_step(stmt)
+            }
+            try require(rc == SQLITE_DONE,"SQLite operation failed (code \(rc)); replication stopped")
+            return output
+        }
     }
+
     private func number(_ sql: String,_ args: [String?] = []) throws -> Int64 {Int64(try query(sql,args).first?.first.flatMap{$0} ?? "") ?? 0}
     private func execute(_ sql: String,_ args: [String?] = []) throws {
         if ready && !inTransaction && !maintenance {try ensureCapacity(force:false)}
@@ -407,14 +422,16 @@ final class StateStore {
         wal.growthFrames = 0
     }
     private func snapshot() throws {
-        if ready && !maintenance {try ensureCapacity(force:false)}
-        if ready && sequence == snapshotSequence {return}
-        let wasMaintenance=maintenance; maintenance=true
-        defer {maintenance=wasMaintenance}
-        try atomic {
-            try execute("INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",[String(sequence),completedGTIDs.canonical,applied?.file,applied.map{String($0.position)},timestamp()])
+        try profile("journal.snapshot") {
+            if ready && !maintenance {try ensureCapacity(force:false)}
+            if ready && sequence == snapshotSequence {return}
+            let wasMaintenance=maintenance; maintenance=true
+            defer {maintenance=wasMaintenance}
+            try atomic {
+                try execute("INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",[String(sequence),completedGTIDs.canonical,applied?.file,applied.map{String($0.position)},timestamp()])
+            }
+            snapshotSequence=sequence
         }
-        snapshotSequence=sequence
     }
     private func insertSchema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws -> Int64 {
         let schema=String(decoding:try JSONEncoder().encode(table),as:UTF8.self)
@@ -423,9 +440,11 @@ final class StateStore {
         return sqlite3_last_insert_rowid(db)
     }
     func schema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
-        if let old=schemas[table.identity] {try require(old.1==table,"schema changed without ordered DDL");return}
-        try require(schemas.count<64,"schema cache limit reached")
-        schemas[table.identity]=(try insertSchema(table,event:event,coordinate:coordinate),table)
+        try profile("journal.schema") {
+            if let old=schemas[table.identity] {try require(old.1==table,"schema changed without ordered DDL");return}
+            try require(schemas.count<64,"schema cache limit reached")
+            schemas[table.identity]=(try insertSchema(table,event:event,coordinate:coordinate),table)
+        }
     }
     func ddlIntent(_ plan: PreparedDDL,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
         try require(pendingGTID != nil,"DDL intent without pending group")
@@ -435,15 +454,25 @@ final class StateStore {
         try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,databaseJSON,timestamp()])
     }
     func append(_ record: LiveRecord) throws {
-        guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
-        let metadata = try JSONSerialization.data(withJSONObject:["kind":record.kind,"file":record.file,"observedPosition":record.observedPosition],options:[.sortedKeys])
-        var frame = Data()
-        for n in [UInt32(metadata.count),UInt32(bytes.count)] {var le=n.littleEndian; withUnsafeBytes(of:&le){frame.append(contentsOf:$0)}}
-        frame += metadata; frame += bytes
+        let bytes: Data = try profile("relay.base64") {
+            guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
+            return bytes
+        }
+        let metadata = try profile("relay.metadata") {
+            try JSONSerialization.data(withJSONObject:["kind":record.kind,"file":record.file,"observedPosition":record.observedPosition],options:[.sortedKeys])
+        }
+        let frame = profile("relay.frame") {
+            var frame = Data()
+            for n in [UInt32(metadata.count),UInt32(bytes.count)] {var le=n.littleEndian; withUnsafeBytes(of:&le){frame.append(contentsOf:$0)}}
+            frame += metadata; frame += bytes
+            return frame
+        }
         try require(UInt64(frame.count) <= maximumBytes-relayLength,"relay storage limit reached")
         try ensureCapacity(force:false,incomingRelayBytes:Int64(frame.count))
-        try relay!.write(contentsOf:frame); relayLength += UInt64(frame.count)
+        try profile("relay.write") { try relay!.write(contentsOf:frame) }
+        relayLength += UInt64(frame.count)
     }
+
     func bindTargetIdentity(_ uuid: String) throws {
         try require(UUID(uuidString:uuid) != nil,"invalid discovered target identity")
         if let targetUUID {
@@ -457,64 +486,68 @@ final class StateStore {
     /// One synced relay prefix and one FULL SQLite commit precede every target
     /// write in the batch. Existing tables retain each source group's identity.
     func beginBatch(_ batch: [PreparedDMLGroup]) throws {
-        try require(pendingGTID == nil && !batch.isEmpty && batch.count <= 256,"invalid pending DML batch")
-        var seen=completedGTIDs, relayStart=groupStart
-        for item in batch {
-            guard let id=item.group.gtid else { throw ApplyError("batch lacks source GTID") }
-            try require(!item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,"invalid DML batch relay boundary")
-            try require(!seen.contains(sid:id.sid,sequence:id.sequence),"duplicate or excluded batch GTID")
-            try seen.include(sid:id.sid,sequence:id.sequence)
-            relayStart=item.relayEnd
-            for row in item.mutations { try require(schemas[row.table.identity]?.1 == row.table,"batch schema is not current") }
-        }
-        try timings.measure("relay.sync") { try relay!.synchronize() }
-        let time=timestamp()
-        try atomic {
-            var start=groupStart
-            for (index,item) in batch.enumerated() {
-                try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+Int64(index)+1),item.id,item.group.start.file,String(item.group.start.position),String(item.group.end.position),String(start),String(item.relayEnd),time])
-                for (ordinal,row) in item.mutations.enumerated() {
-                    try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[item.id,String(ordinal),row.eventOffset,String(row.rowIndex),String(schemas[row.table.identity]!.0),time])
-                }
-                start=item.relayEnd
+        try profile("journal.prepare_batch") {
+            try require(pendingGTID == nil && !batch.isEmpty && batch.count <= 256,"invalid pending DML batch")
+            var seen=completedGTIDs, relayStart=groupStart
+            for item in batch {
+                guard let id=item.group.gtid else { throw ApplyError("batch lacks source GTID") }
+                try require(!item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,"invalid DML batch relay boundary")
+                try require(!seen.contains(sid:id.sid,sequence:id.sequence),"duplicate or excluded batch GTID")
+                try profile("journal.gtid") { try seen.include(sid:id.sid,sequence:id.sequence) }
+                relayStart=item.relayEnd
+                for row in item.mutations { try require(schemas[row.table.identity]?.1 == row.table,"batch schema is not current") }
             }
-            try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[batch[0].id,String(relayLength),time])
+            try timings.measure("relay.sync") { try relay!.synchronize() }
+            let time=timestamp()
+            try atomic {
+                var start=groupStart
+                for (index,item) in batch.enumerated() {
+                    try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+Int64(index)+1),item.id,item.group.start.file,String(item.group.start.position),String(item.group.end.position),String(start),String(item.relayEnd),time])
+                    for (ordinal,row) in item.mutations.enumerated() {
+                        try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[item.id,String(ordinal),row.eventOffset,String(row.rowIndex),String(schemas[row.table.identity]!.0),time])
+                    }
+                    start=item.relayEnd
+                }
+                try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[batch[0].id,String(relayLength),time])
+            }
+            pendingBatch=batch; pendingGTID=batch[0].id; pendingSequence=sequence+1
         }
-        pendingBatch=batch; pendingGTID=batch[0].id; pendingSequence=sequence+1
     }
     /// Commit only the acknowledged prefix. On crash before this commit every
     /// prepared row remains uncertain. No target write is inferred or retried.
     func finishBatch(acknowledgedRows: [Int]) throws {
-        let batch=pendingBatch
-        try require(!batch.isEmpty && acknowledgedRows.count == batch.count,"completion without prepared batch")
-        var completed=0, rowCount=0, incomplete=false, next=completedGTIDs
-        for (index,item) in batch.enumerated() {
-            let count=acknowledgedRows[index]
-            try require((0...item.mutations.count).contains(count) && (!incomplete || count == 0),"batch acknowledgments are not a contiguous prefix")
-            if count == item.mutations.count {
-                completed+=1; rowCount+=count
-                try next.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence)
-            } else { incomplete=true }
-        }
-        let active=completed < batch.count ? batch[completed].id : nil
-        let end=completed > 0 ? batch[completed-1].group.end : applied
-        let time=timestamp()
-        try atomic {
+        try profile("journal.complete_batch") {
+            let batch=pendingBatch
+            try require(!batch.isEmpty && acknowledgedRows.count == batch.count,"completion without prepared batch")
+            var completed=0, rowCount=0, incomplete=false, next=completedGTIDs
             for (index,item) in batch.enumerated() {
-                try require(try query("SELECT status FROM groups WHERE gtid=?",[item.id]) == [["PENDING"]]
-                    && number("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='PENDING'",[item.id]) == Int64(item.mutations.count),"batch journal no longer matches preparation")
-                if acknowledgedRows[index] > 0 {
-                    try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal<?",[time,item.id,String(acknowledgedRows[index])])
-                }
-                if index < completed { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
+                let count=acknowledgedRows[index]
+                try require((0...item.mutations.count).contains(count) && (!incomplete || count == 0),"batch acknowledgments are not a contiguous prefix")
+                if count == item.mutations.count {
+                    completed+=1; rowCount+=count
+                    try profile("journal.gtid") { try next.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
+                } else { incomplete=true }
             }
-            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",[end?.file,end.map{String($0.position)},String(sequence+Int64(completed)),String(transactions+completed),String(rows+rowCount),active,time,String(completed),time])
+            let active=completed < batch.count ? batch[completed].id : nil
+            let end=completed > 0 ? batch[completed-1].group.end : applied
+            let time=timestamp()
+            try atomic {
+                for (index,item) in batch.enumerated() {
+                    try require(try query("SELECT status FROM groups WHERE gtid=?",[item.id]) == [["PENDING"]]
+                        && number("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='PENDING'",[item.id]) == Int64(item.mutations.count),"batch journal no longer matches preparation")
+                    if acknowledgedRows[index] > 0 {
+                        try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal<?",[time,item.id,String(acknowledgedRows[index])])
+                    }
+                    if index < completed { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
+                }
+                try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",[end?.file,end.map{String($0.position)},String(sequence+Int64(completed)),String(transactions+completed),String(rows+rowCount),active,time,String(completed),time])
+            }
+            completedGTIDs=next; applied=end; sequence+=Int64(completed); transactions+=completed; rows+=rowCount
+            if completed > 0 { groupStart=batch[completed-1].relayEnd }
+            pendingGTID=active; pendingSequence=sequence+1
+            pendingBatch=Array(batch.dropFirst(completed))
+            if sequence-snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
         }
-        completedGTIDs=next; applied=end; sequence+=Int64(completed); transactions+=completed; rows+=rowCount
-        if completed > 0 { groupStart=batch[completed-1].relayEnd }
-        pendingGTID=active; pendingSequence=sequence+1
-        pendingBatch=Array(batch.dropFirst(completed))
-        if sequence-snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
     }
     func begin(_ group: CompleteTransaction) throws {
         guard let identity = group.gtid else {throw ApplyError("group lacks GTID")}

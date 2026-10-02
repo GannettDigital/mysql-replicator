@@ -48,6 +48,7 @@ the stack. Do not use the interactive demo commands to manage a benchmark stack.
 | `--timeout` | 300 | Separate load and catch-up deadlines; 10–3600 seconds each |
 | `--batch-transactions` | 32 | Maximum source groups per journal batch; 1–256 |
 | `--decoder-profile` | on | Detailed decoder function timings; `on` or `off` |
+| `--applier-profile` | on | Detailed applier timings; `on` or `off` (normal benchmark only) |
 | `--skip-build` | off | Reuse existing runtime and load-generator images |
 
 Rebuild after code changes. The workload hash is checked even with `--skip-build`;
@@ -116,6 +117,127 @@ For a rate sweep, keep workload, row size, client count, host, and storage fixed
 increase `--rate` between fresh runs. Watch whether backlog grows during load and
 how quickly it drains afterward. Repeat runs before drawing conclusions. Use
 `--rate 0` for a burst/catch-up experiment, not as a steady-state capacity claim.
+
+## Applier function profile
+
+The normal benchmark enables detailed applier profiling by default. In ordinary
+application runs, opt in with top-level `"applierProfiling": true` in the apply
+configuration; it defaults off. Counters stay in the applier worker's memory and
+are included in the existing final STOPPED/BLOCKED summary, with no per-call
+logging or SQLite counter writes. A process crash can lose these diagnostic
+counters. This does not change durable replication progress or write ordering.
+
+```sh
+make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile off'
+```
+
+`applier-profile.tsv` sorts both detailed and existing coarse applier stages by
+self time; the console prints the ten largest entries. Columns are call count,
+failures, inclusive/self milliseconds, inclusive mean microseconds per call, and
+maximum inclusive microseconds. All stages also appear in `stage-timings.json`.
+The report excludes other workers and queue waits. Stages include startup and
+shutdown, and counts are invocations rather than transactions or network packets.
+
+The following names have the prefix `apply.detail.`:
+
+| Stage | Work measured |
+| --- | --- |
+| `relay.base64`, `.metadata`, `.frame`, `.write` | Original-byte decoding, sorted JSON metadata, frame assembly, file write |
+| `journal.prepare_batch`, `.complete_batch` | Durable pending-intent preparation and acknowledged-prefix completion |
+| `journal.gtid`, `.timestamp`, `.schema`, `.snapshot` | GTID updates in batches, timestamp formatting, schema cache/check/insert, progress snapshot |
+| `sqlite.prepare`, `.bind`, `.step`, `.finalize` | Every journal query, including direct SELECTs and transaction commands; step includes result extraction and commit I/O |
+| `dml.plan` | Complete-group DML validation and mutation construction |
+| `target.discover`, `.read_schema`, `.sql_plan` | Table-map compatibility checks, schema cache misses, validated SQL-plan lookup |
+| `target.bind`, `.decode_result` | Write-value conversion and returned before-image conversion |
+| `sql.prepared`, `.text` | Synchronous MySQL calls by protocol, including client work, server execution, transport and waiting |
+
+Use **self** time to rank costs; do not add inclusive parents to their children.
+For example, `sqlite.commit` includes `sqlite.step`, and `target.sql` includes
+`sql.prepared`/`sql.text`. A cached prepared call may include a prepare on a cache
+miss, so it is not a network-roundtrip counter. Use the existing target server
+work counters alongside these timers to examine SQL operations. These are elapsed
+durations, not CPU samples; profiling overhead appears in enclosing self times.
+The on/off pair is a rough overhead check, not a controlled statistical estimate.
+Existing coarse timers remain active when detailed profiling is off.
+
+### First 10K applier profile, 2026-10-02
+
+After committing download/cache/blackhole work as `2b0c8f3`, the instrumented
+release runtime ran 10,000 single-row inserts, one source client, unlimited rate,
+100-byte payloads, TCP/TLS target transport, and the default 32-group/25-ms batch
+limits. Decoder profiling was disabled. This is the shared ARM Docker host with
+an x86_64 applier, so the results rank work on this fixture, not production capacity.
+
+| Applier stage | Calls | Self seconds |
+| --- | ---: | ---: |
+| Relay metadata JSON encoding | 50,064 | 16.180 |
+| Prepared MySQL calls, including wait | 10,055 | 11.616 |
+| Batch GTID updates | 20,000 | 5.297 |
+| SQLite step/result extraction, including commits | 66,106 | 3.736 |
+| Table-map compatibility checks | 10,000 | 3.083 |
+| Timestamp formatting | 2,022 | 2.564 |
+| DML plan validation/construction | 10,000 | 2.028 |
+| SQLite statement preparation | 66,106 | 1.730 |
+| Relay file writes | 50,064 | 1.478 |
+| Text-protocol MySQL calls, including wait | 2,006 | 1.285 |
+
+Relay metadata encoding dominates actual file writes. The code invokes sorted
+`JSONSerialization` for every record; preserving the frame format with a cheaper
+encoder is the first candidate to measure. GTID inclusion currently formats and
+reparses the complete set for each addition, twice per group across preparation
+and completion; direct interval updates could preserve the same prefix rules.
+Timestamp formatting creates an `ISO8601DateFormatter` each time; reusing one on
+the applier worker is another candidate.
+
+Repeated table-map checks are local work: only one `target.read_schema` call was
+recorded, and server counters show cached schema SELECTs executing once during
+the measured workload. Caching parsed column types/validated wire signatures is
+a later candidate, with invalidation at ordered DDL. Target bind conversion and
+SQL-plan lookup together took only 0.179 s. None of these optimizations is part of
+this instrumentation change.
+
+There were 999 DML batches for the workload (about ten transactions per batch),
+and 1,002 lock/unlock pairs including setup. The 25-ms flush limit means the
+configured maximum of 32 is not the observed average. Reducing per-event work
+may also allow fuller batches. Target server counters report 10,000 INSERT
+executions, no workload-table fetches, and seven prepares in the measurement
+window. Client SQL timings cover startup/stop too, so their call counts differ.
+
+The profiled run passed exact comparison of all 10,000 final rows and stopped
+cleanly at the source boundary. Observed completion was 60.667 s; `apply.consume`
+recorded 56.554 s inclusive, and progress output used 0.605 s. Inclusive parent
+stages overlap the table above and must not be added again.
+
+Profiled evidence:
+`artifacts/performance/20261002T212516Z-3020789c/20261002T212517Z-a628a719-auto-autocommit-myisam/`
+contains `applier-profile.tsv`, `stage-timings.json`, `server-work-delta.json`,
+`verification.json`, runtime image identity and run configuration in `result.json`.
+
+The same image with applier profiling disabled passed the same 10K comparison
+and source-boundary check. It emitted no `apply.detail.*` stages or applier TSV.
+
+| Measurement | Profiling on | Profiling off |
+| --- | ---: | ---: |
+| Observed replication completion | 60.667 s | 55.723 s |
+| Inclusive `apply.consume` | 56.554 s | 53.604 s |
+| Source load duration | 15.183 s | 14.435 s |
+
+The consumer elapsed difference is about 5.5%; this single pair includes workload
+and scheduling variation. Five-second polling also quantizes completion times,
+so the approximately five-second wall difference is not a precise overhead
+measurement. Both runs used runtime image
+`sha256:2d16daf1e1d3ca156438d4e21782404c50e317bb59d185b6807344ae62869705`.
+Unprofiled evidence:
+`artifacts/performance/20261002T212855Z-d3965152/20261002T212855Z-a88e7893-auto-autocommit-myisam/`.
+
+Validation: 212 Swift tests passed, including profiling on/off relay-byte
+equivalence, stage counts/failures, batch intent-before-write ordering, two-commit
+completion, and injected preparation/completion failures without write retries.
+A separate profiled mixed run (60 transactions, two source clients, three rows per
+statement) passed source/native/target comparison, exercising 180 writes and 120
+before-image reads/result conversions. Its evidence is under
+`artifacts/performance/20261002T213134Z-5eeda276/20261002T213134Z-323ff509-auto-autocommit-myisam/`.
 
 ## Decoder function profile
 

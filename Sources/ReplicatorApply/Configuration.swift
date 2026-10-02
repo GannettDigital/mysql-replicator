@@ -135,6 +135,8 @@ public struct TargetConfiguration: Decodable {
     }
 }
 public struct ApplyConfiguration: Decodable {
+    /// Detailed worker-local applier timings, disabled unless explicitly enabled.
+    public let applierProfiling: Bool?
     public let version: Int
     public let source: CaptureConfiguration
     public let target: TargetConfiguration

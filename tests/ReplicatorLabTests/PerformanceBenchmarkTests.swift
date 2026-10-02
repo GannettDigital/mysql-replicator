@@ -13,6 +13,17 @@ final class PerformanceBenchmarkTests: XCTestCase {
         XCTAssertEqual(lines[2],"decode.parent\t2\t0\t10.000\t1.000\t5000.000\t7000.000")
     }
 
+    func testApplierReportExcludesOtherWorkersAndSortsBySelfTime() throws {
+        let sample: [String:Any] = ["count":2,"failures":1,"seconds":0.004,"selfSeconds":0.003,"maximumSeconds":0.003]
+        let report = try PerformanceBenchmark.applierProfile([
+            "apply.detail.relay.metadata":sample,"target.sql":sample,"decode.parent":sample,
+            "download.pack":sample,"capture.decode":sample,"pipeline.enqueue":sample])
+        let lines=report.split(separator:"\n")
+        XCTAssertEqual(lines.count,3)
+        XCTAssertEqual(lines[1],"apply.detail.relay.metadata\t2\t1\t4.000\t3.000\t2000.000\t3000.000")
+        XCTAssertTrue(lines[2].hasPrefix("target.sql\t"))
+    }
+
     let sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     func testServerCounterDeltasRejectResetsMissingCountersAndThreadChanges() throws {
@@ -78,6 +89,11 @@ final class PerformanceBenchmarkTests: XCTestCase {
         XCTAssertFalse(options.build)
         XCTAssertEqual(options.targetTransport,"tcp-tls")
         XCTAssertEqual(options.batchTransactions,32)
+        XCTAssertTrue(options.applierProfiling)
+        XCTAssertFalse(try PerformanceOptions(arguments:["--applier-profile","off"]).applierProfiling)
+        XCTAssertTrue(try PerformanceOptions(arguments:["--applier-profile","on"]).applierProfiling)
+        XCTAssertThrowsError(try PerformanceOptions(arguments:["--applier-profile","yes"]))
+        XCTAssertThrowsError(try PerformanceOptions(arguments:["--applier-profile"]))
         XCTAssertTrue(options.decoderProfiling)
         XCTAssertFalse(try PerformanceOptions(arguments:["--decoder-profile","off"]).decoderProfiling)
         XCTAssertTrue(try PerformanceOptions(arguments:["--decoder-profile","on"]).decoderProfiling)

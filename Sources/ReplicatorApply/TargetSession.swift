@@ -26,6 +26,10 @@ final class TargetSession {
         } catch { try? group.syncShutdownGracefully(); throw error }
     }
     deinit { try? connection.close().wait(); try? group.syncShutdownGracefully() }
+    func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
+        if config.applierProfiling != true { return try body() }
+        return try timings.measure("apply.detail." + stage,body)
+    }
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
     func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10) throws -> ([MySQLRow],UInt64?) {
@@ -34,7 +38,9 @@ final class TargetSession {
         var affected: UInt64?
         do {
             let rows = try timings.measure("target.sql") {
-                try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
+                try profile(textProtocol ? "sql.text" : "sql.prepared") {
+                    try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
+                }
             }
             return (rows,affected)
         } catch let e as MySQLError {
@@ -88,45 +94,49 @@ final class TargetSession {
     // A new connection starts empty; ordered DDL clears these before and after.
     private var validatedPlans: [String:DMLSQLPlan] = [:]
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
-        guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
-        let identity = database + "\0" + name
-        if let held = lockEpoch.table, held.identity != identity { try unlock() }
-        let table: ApplyTable
-        if let cached = discovered[identity] { table = cached }
-        else {
-            try require(discovered.count < 64,"discovered schema limit reached")
-            table=try readSchema(database:database,name:name)
-        }
-        try require(wire.count == table.columns.count,"source/target column count differs")
-        for (w,c) in zip(wire,table.columns) {
-            let type = try DMLColumnType(c.type)
-            try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
-            if c.interpretation == .utf8 {
-                try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
+        try profile("target.discover") {
+            guard let database = event.database, let name = event.table, let wire = event.wireColumns else {throw ApplyError("missing table-map metadata")}
+            let identity = database + "\0" + name
+            if let held = lockEpoch.table, held.identity != identity { try unlock() }
+            let table: ApplyTable
+            if let cached = discovered[identity] { table = cached }
+            else {
+                try require(discovered.count < 64,"discovered schema limit reached")
+                table=try readSchema(database:database,name:name)
             }
-            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
+            try require(wire.count == table.columns.count,"source/target column count differs")
+            for (w,c) in zip(wire,table.columns) {
+                let type = try DMLColumnType(c.type)
+                try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
+                if c.interpretation == .utf8 {
+                    try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
+                }
+                if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
+            }
+            discovered[identity] = table
+            return table
         }
-        discovered[identity] = table
-        return table
     }
     func readSchema(database: String,name: String) throws -> ApplyTable {
-        let binds = [MySQLData(string:database),MySQLData(string:name)]
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
-        let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
-        try require(keys.count == 1,"discovered target requires a single primary-key column")
-        var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
-            guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
-            var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
-            column.characterSet=row.column("CHARACTER_SET_NAME")?.string
-            column.defaultValue=row.column("COLUMN_DEFAULT")?.string
-            column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
-            return column
-        },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
-        let encoding=try tableEncoding(TableName(database:database,table:name))
-        table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
-        table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKey)
-        try table.validate(); try verifySchema(table)
-        return table
+        try profile("target.read_schema") {
+            let binds = [MySQLData(string:database),MySQLData(string:name)]
+            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+            let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
+            try require(keys.count == 1,"discovered target requires a single primary-key column")
+            var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
+                guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
+                var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+                column.characterSet=row.column("CHARACTER_SET_NAME")?.string
+                column.defaultValue=row.column("COLUMN_DEFAULT")?.string
+                column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
+                return column
+            },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
+            let encoding=try tableEncoding(TableName(database:database,table:name))
+            table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
+            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKey)
+            try table.validate(); try verifySchema(table)
+            return table
+        }
     }
     private func normalizeType(_ type: String) -> String {
         type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
@@ -241,18 +251,20 @@ final class TargetSession {
         let rows = try query(plan.select,[try bind(key)]).0
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
         guard let row = rows.first else { return nil }
-        return try t.columns.map { c in
-            guard let value = row.column(c.name) else { throw ApplyError("missing target column") }
-            if value.buffer == nil { return .null }
-            switch c.interpretation {
-            case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
-            case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
-            case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)
-            case .binary: return .binary(Data(value.buffer!.readableBytesView))
-            case .decimal:
-                guard let s=value.string else {throw ApplyError("invalid target decimal")}; let result=DecodedValue.decimal(s); try c.validate(result); return result
-            case .temporal:
-                guard let s=value.string else {throw ApplyError("invalid target temporal value")}; return .temporal(try DMLColumnType(c.type).canonicalTemporal(s))
+        return try profile("target.decode_result") {
+            try t.columns.map { c in
+                guard let value = row.column(c.name) else { throw ApplyError("missing target column") }
+                if value.buffer == nil { return .null }
+                switch c.interpretation {
+                case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
+                case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
+                case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)
+                case .binary: return .binary(Data(value.buffer!.readableBytesView))
+                case .decimal:
+                    guard let s=value.string else {throw ApplyError("invalid target decimal")}; let result=DecodedValue.decimal(s); try c.validate(result); return result
+                case .temporal:
+                    guard let s=value.string else {throw ApplyError("invalid target temporal value")}; return .temporal(try DMLColumnType(c.type).canonicalTemporal(s))
+                }
             }
         }
     }
@@ -278,7 +290,8 @@ final class TargetSession {
         case "delete": sql = plan.delete; values = [oldKey]
         default: throw ApplyError("unsupported mutation")
         }
-        let result = try query(sql,try values.map(bind))
+        let binds = try profile("target.bind") { try values.map(bind) }
+        let result = try query(sql,binds)
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
         // A successful statement with the expected affected-row count is the
@@ -286,9 +299,11 @@ final class TargetSession {
         // remain enforced; independent qualification compares resulting values.
     }
     private func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {
-        guard let plan = validatedPlans[table.identity], plan.table == table else {
-            throw ApplyError("missing validated target SQL plan")
+        try profile("target.sql_plan") {
+            guard let plan = validatedPlans[table.identity], plan.table == table else {
+                throw ApplyError("missing validated target SQL plan")
+            }
+            return plan
         }
-        return plan
     }
 }

@@ -108,7 +108,7 @@ public enum ApplyRun {
                     return
                 }
                 let mutations: [Mutation]
-                do { mutations = try DMLPlan.make(group,tables:Array(target.discovered.values)) }
+                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:Array(target.discovered.values)) } }
                 catch {
                     try batch.flush()
                     try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.

@@ -5,6 +5,30 @@ import CSQLite
 @testable import ReplicatorCodec
 
 extension ApplyTests {
+    func testApplierProfileCountsFailuresAndPreservesRelayBytes() throws {
+        XCTAssertNil(try config().applierProfiling)
+        var relay: [Data] = []
+        for enabled in [false,true] {
+            try withBatchFixture(profiling:enabled) { store,batch in
+                relay.append(try Data(contentsOf:store.directory.appendingPathComponent("relay.frames")))
+                try store.beginBatch(batch)
+                XCTAssertThrowsError(try store.finishBatch(acknowledgedRows:[]))
+                try store.finishBatch(acknowledgedRows:batch.map { $0.mutations.count })
+                let detail=store.timings.snapshot.filter { $0.key.hasPrefix("apply.detail.") }
+                if enabled {
+                    XCTAssertEqual(detail["apply.detail.journal.prepare_batch"]?.count,1)
+                    XCTAssertEqual(detail["apply.detail.journal.complete_batch"]?.count,2)
+                    XCTAssertEqual(detail["apply.detail.journal.complete_batch"]?.failures,1)
+                    XCTAssertEqual(detail["apply.detail.journal.gtid"]?.count,UInt64(batch.count*2))
+                    XCTAssertEqual(detail["apply.detail.relay.metadata"]?.count,UInt64(batch.reduce(0) { $0+$1.group.events.count }))
+                    XCTAssertEqual(detail["apply.detail.sqlite.prepare"]?.count,detail["apply.detail.sqlite.finalize"]?.count)
+                    XCTAssertGreaterThan(detail["apply.detail.sqlite.step"]?.count ?? 0,0)
+                } else { XCTAssertTrue(detail.isEmpty) }
+            }
+        }
+        XCTAssertEqual(relay[0],relay[1])
+    }
+
     private func batchFixture(_ store: StateStore) throws -> [PreparedDMLGroup] {
         try groups().map { group in
             try store.schema(tables()[0],event:group.events.first{$0.eventType == 19}!,coordinate:group.start)
@@ -14,77 +38,83 @@ extension ApplyTests {
             return PreparedDMLGroup(group:group,mutations:try DMLPlan.make(group,tables:tables()),relayEnd:store.relayLength)
         }
     }
-    private func withBatchFixture(_ body: (StateStore,[PreparedDMLGroup]) throws -> Void) throws {
+    private func withBatchFixture(profiling: Bool = false, _ body: (StateStore,[PreparedDMLGroup]) throws -> Void) throws {
         let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
         defer { try? FileManager.default.removeItem(at:parent) }
-        let store=try StateStore(configuration:config(parent.appendingPathComponent("state").path))
+        let store=try StateStore(configuration:config(parent.appendingPathComponent("state").path,applierProfiling:profiling))
         try body(store,batchFixture(store))
     }
     func testBatchPreparesEveryIntentBeforeWritesAndCompletesWithTwoCommits() throws {
-        try withBatchFixture { store,batch in
-            let path=store.directory.appendingPathComponent("state.sqlite")
-            let commits=store.timings.snapshot["sqlite.commit"]!.count
-            let syncs=store.timings.snapshot["relay.sync"]?.count ?? 0
-            var writes=0
-            try DMLBatch.execute(batch,state:store,cancellation:.init(),lock:{_ in},write:{_ in
-                XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'"),[["4"]])
-                XCTAssertEqual(store.transactions,0)
-                writes+=1
-            },completedGroup:{})
-            XCTAssertEqual(writes,4)
-            XCTAssertEqual(store.transactions,4)
-            XCTAssertEqual(store.rows,4)
-            XCTAssertEqual(store.applied,batch.last!.group.end)
-            XCTAssertNil(store.pendingGTID)
-            XCTAssertEqual(store.timings.snapshot["sqlite.commit"]!.count-commits,2)
-            XCTAssertEqual(store.timings.snapshot["relay.sync"]!.count-syncs,1)
-            XCTAssertEqual(try self.sqlite(path,"SELECT relay_end FROM groups ORDER BY sequence"),batch.map{[String($0.relayEnd)]})
-            XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM row_intents WHERE status='DONE'"),[["4"]])
+        for profiling in [false,true] {
+            try withBatchFixture(profiling:profiling) { store,batch in
+                let path=store.directory.appendingPathComponent("state.sqlite")
+                let commits=store.timings.snapshot["sqlite.commit"]!.count
+                let syncs=store.timings.snapshot["relay.sync"]?.count ?? 0
+                var writes=0
+                try DMLBatch.execute(batch,state:store,cancellation:.init(),lock:{_ in},write:{_ in
+                    XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'"),[["4"]])
+                    XCTAssertEqual(store.transactions,0)
+                    writes+=1
+                },completedGroup:{})
+                XCTAssertEqual(writes,4)
+                XCTAssertEqual(store.transactions,4)
+                XCTAssertEqual(store.rows,4)
+                XCTAssertEqual(store.applied,batch.last!.group.end)
+                XCTAssertNil(store.pendingGTID)
+                XCTAssertEqual(store.timings.snapshot["sqlite.commit"]!.count-commits,2)
+                XCTAssertEqual(store.timings.snapshot["relay.sync"]!.count-syncs,1)
+                XCTAssertEqual(try self.sqlite(path,"SELECT relay_end FROM groups ORDER BY sequence"),batch.map{[String($0.relayEnd)]})
+                XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM row_intents WHERE status='DONE'"),[["4"]])
+            }
         }
     }
     func testBatchFailurePreservesWholeGroupPrefixAndPartialRowEvidence() throws {
-        try withBatchFixture { store,input in
-            var batch=input
-            batch[1]=PreparedDMLGroup(group:input[1].group,mutations:input[1].mutations+input[1].mutations,relayEnd:input[1].relayEnd)
-            var writes=0
-            XCTAssertThrowsError(try DMLBatch.execute(batch,state:store,cancellation:.init(),lock:{_ in},write:{_ in
-                writes+=1
-                if writes == 3 { throw ApplyError("uncertain target failure") }
-            },completedGroup:{})) { XCTAssertTrue(String(describing:$0).contains("uncertain target failure")) }
-            XCTAssertEqual(writes,3)
-            XCTAssertEqual(store.transactions,1)
-            XCTAssertEqual(store.rows,1)
-            XCTAssertEqual(store.applied,batch[0].group.end)
-            XCTAssertEqual(store.pendingGTID,batch[1].id)
-            let path=store.directory.appendingPathComponent("state.sqlite")
-            XCTAssertEqual(try self.sqlite(path,"SELECT status FROM groups ORDER BY sequence"),[["APPLIED"],["PENDING"],["PENDING"],["PENDING"]])
-            XCTAssertEqual(try self.sqlite(path,"SELECT status FROM row_intents ORDER BY gtid,ordinal"),[["DONE"],["DONE"],["PENDING"],["PENDING"],["PENDING"]])
-            XCTAssertThrowsError(try store.stopped())
-            try store.block("uncertain target failure")
+        for profiling in [false,true] {
+            try withBatchFixture(profiling:profiling) { store,input in
+                var batch=input
+                batch[1]=PreparedDMLGroup(group:input[1].group,mutations:input[1].mutations+input[1].mutations,relayEnd:input[1].relayEnd)
+                var writes=0
+                XCTAssertThrowsError(try DMLBatch.execute(batch,state:store,cancellation:.init(),lock:{_ in},write:{_ in
+                    writes+=1
+                    if writes == 3 { throw ApplyError("uncertain target failure") }
+                },completedGroup:{})) { XCTAssertTrue(String(describing:$0).contains("uncertain target failure")) }
+                XCTAssertEqual(writes,3)
+                XCTAssertEqual(store.transactions,1)
+                XCTAssertEqual(store.rows,1)
+                XCTAssertEqual(store.applied,batch[0].group.end)
+                XCTAssertEqual(store.pendingGTID,batch[1].id)
+                let path=store.directory.appendingPathComponent("state.sqlite")
+                XCTAssertEqual(try self.sqlite(path,"SELECT status FROM groups ORDER BY sequence"),[["APPLIED"],["PENDING"],["PENDING"],["PENDING"]])
+                XCTAssertEqual(try self.sqlite(path,"SELECT status FROM row_intents ORDER BY gtid,ordinal"),[["DONE"],["DONE"],["PENDING"],["PENDING"],["PENDING"]])
+                XCTAssertThrowsError(try store.stopped())
+                try store.block("uncertain target failure")
+            }
         }
     }
     func testBatchJournalFailuresNeverRetryWritesOrAdvancePartialMetadata() throws {
-        for preparation in [true,false] {
-            try withBatchFixture { store,batch in
-                let path=store.directory.appendingPathComponent("state.sqlite")
-                var db: OpaquePointer?
-                XCTAssertEqual(sqlite3_open(path.path,&db),SQLITE_OK)
-                defer { sqlite3_close(db) }
-                let trigger=preparation
-                    ? "CREATE TRIGGER injected BEFORE INSERT ON row_intents WHEN NEW.gtid LIKE '%:12' BEGIN SELECT RAISE(ABORT,'prepare failure'); END"
-                    : "CREATE TRIGGER injected BEFORE UPDATE OF applied_sequence ON state BEGIN SELECT RAISE(ABORT,'complete failure'); END"
-                XCTAssertEqual(sqlite3_exec(db,trigger,nil,nil,nil),SQLITE_OK)
-                let commits=store.timings.snapshot["sqlite.commit"]!.count
-                var writes=0
-                XCTAssertThrowsError(try DMLBatch.execute(batch,state:store,cancellation:.init(),lock:{_ in},write:{_ in writes+=1},completedGroup:{}))
-                XCTAssertEqual(writes,preparation ? 0 : 4)
-                XCTAssertEqual(store.transactions,0)
-                XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM groups"),[[preparation ? "0" : "4"]])
-                XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM row_intents WHERE status='DONE'"),[["0"]])
-                // Preparation aborts before COMMIT; completion failure has one
-                // successful prepare commit and no second completion attempt.
-                XCTAssertEqual(store.timings.snapshot["sqlite.commit"]!.count-commits,preparation ? 0 : 1)
+        for profiling in [false,true] {
+            for preparation in [true,false] {
+                try withBatchFixture(profiling:profiling) { store,batch in
+                    let path=store.directory.appendingPathComponent("state.sqlite")
+                    var db: OpaquePointer?
+                    XCTAssertEqual(sqlite3_open(path.path,&db),SQLITE_OK)
+                    defer { sqlite3_close(db) }
+                    let trigger=preparation
+                        ? "CREATE TRIGGER injected BEFORE INSERT ON row_intents WHEN NEW.gtid LIKE '%:12' BEGIN SELECT RAISE(ABORT,'prepare failure'); END"
+                        : "CREATE TRIGGER injected BEFORE UPDATE OF applied_sequence ON state BEGIN SELECT RAISE(ABORT,'complete failure'); END"
+                    XCTAssertEqual(sqlite3_exec(db,trigger,nil,nil,nil),SQLITE_OK)
+                    let commits=store.timings.snapshot["sqlite.commit"]!.count
+                    var writes=0
+                    XCTAssertThrowsError(try DMLBatch.execute(batch,state:store,cancellation:.init(),lock:{_ in},write:{_ in writes+=1},completedGroup:{}))
+                    XCTAssertEqual(writes,preparation ? 0 : 4)
+                    XCTAssertEqual(store.transactions,0)
+                    XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM groups"),[[preparation ? "0" : "4"]])
+                    XCTAssertEqual(try self.sqlite(path,"SELECT COUNT(*) FROM row_intents WHERE status='DONE'"),[["0"]])
+                    // Preparation aborts before COMMIT; completion failure has one
+                    // successful prepare commit and no second completion attempt.
+                    XCTAssertEqual(store.timings.snapshot["sqlite.commit"]!.count-commits,preparation ? 0 : 1)
+                }
             }
         }
     }

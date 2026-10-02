@@ -19,7 +19,7 @@ func main() throws -> Int32 {
           benchmark-capture [--skip-build] [--events N] [--rate N] [--decoder-profile on|off]
           benchmark [--skip-build] [--events N] [--threads N] [--rate N]
                     [--target-transport tcp-tls|unix-tls|unix]
-                    [--batch-transactions N] [--decoder-profile on|off]
+                    [--batch-transactions N] [--decoder-profile on|off] [--applier-profile on|off]
                     [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
                     [--sample-seconds N] [--timeout N]
           ddl-catalog check
