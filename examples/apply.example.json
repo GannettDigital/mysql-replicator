@@ -26,6 +26,12 @@
     "nativeAutoStartDisabled": true,
     "explicitTableLocks": false
   },
+  "sourceReconnect": {
+    "enabled": true,
+    "initialDelaySeconds": 1,
+    "maximumDelaySeconds": 30,
+    "maximumAttempts": 0
+  },
   "storage": {
     "maximumSQLiteBytes": 268435456,
     "minimumFreeDiskBytes": 536870912,

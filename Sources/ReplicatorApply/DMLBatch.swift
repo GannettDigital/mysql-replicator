@@ -88,6 +88,11 @@ final class DMLBatch {
     func flushIfExpired() throws {
         if !groups.isEmpty && uptime()-started >= Double(policy.maximumDelayMilliseconds)/1000 { try flush(reason:"age") }
     }
+    /// Only unjournaled preparation is discarded. The coordinator joins any
+    /// active executor and checks durable pending intents before reconnecting.
+    func discard() {
+        groups=[]; rows=0; bytes=0; started=0
+    }
     func flush(reason: String = "explicit") throws {
         try require(!failed,"DML batch already failed; retry is forbidden")
         guard !groups.isEmpty else { return }

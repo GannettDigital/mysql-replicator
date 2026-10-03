@@ -223,6 +223,110 @@ public enum DMLQualification {
                 _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(after.file)',SOURCE_LOG_POS=\(after.position)")
                 report["dml_matrix"]="passed"
             }
+            if !ddl && selection.includes("reconnect") {
+                func waitProgress(_ name: String, _ predicate: ([String:Any]) -> Bool) throws {
+                    let deadline=Date().addingTimeInterval(45)
+                    while Date() < deadline {
+                        let logs=try docker(["logs",name])
+                        let records=logs.stdout.split(separator:10).compactMap { try? JSONSerialization.jsonObject(with:Data($0)) as? [String:Any] }
+                        if records.contains(where:predicate) { return }
+                        try require(docker(["inspect",name,"--format","{{.State.Running}}"]).text == "true","reconnect client stopped: "+String(decoding:logs.stderr,as:UTF8.self))
+                        Thread.sleep(forTimeInterval:0.1)
+                    }
+                    throw LabError("reconnect progress timeout")
+                }
+                func killReader() throws {
+                    let id=try h.sql("source","SELECT ID FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND COMMAND LIKE 'Binlog Dump%'")
+                    try require(Int(id) != nil,"missing unique source reader")
+                    _ = try h.sql("source","KILL CONNECTION "+id)
+                }
+                func reconnectConfig(_ label:String, count:Int) throws -> [String:Any] {
+                    var config=configuration(label,at:try h.boundary("source"),count:count)
+                    config["sourceReconnect"]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60]
+                    return config
+                }
+                for service in h.services {
+                    let engine=service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.reconnect_rows(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine); CREATE TABLE poc.reconnect_batch(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
+                }
+                let reconnect=try start(QualificationCase("source-reconnect","Continue one applier across disconnect, rotation, source shutdown and crash/restart"),reconnectConfig("source-reconnect",count:5))
+                try waitForReader(reconnect)
+                _ = try h.sql("source","INSERT INTO poc.reconnect_rows VALUES(1,10)")
+                try waitProgress(reconnect) { $0["transactionsApplied"] as? Int == 1 }
+                try killReader()
+                try waitProgress(reconnect) { $0["lifecycle"] as? String == "RECONNECTING" }
+                try waitForReader(reconnect)
+                _ = try h.sql("source","UPDATE poc.reconnect_rows SET v=v+1 WHERE id=1; FLUSH BINARY LOGS; INSERT INTO poc.reconnect_rows VALUES(2,20)")
+                try waitProgress(reconnect) { $0["transactionsApplied"] as? Int == 3 }
+                _ = try h.compose(["stop","-t","30","source"])
+                try waitProgress(reconnect) { ($0["sourceReconnectAttempts"] as? Int ?? 0) >= 2 }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","source"],timeout:150)
+                try waitForReader(reconnect)
+                _ = try h.sql("source","UPDATE poc.reconnect_rows SET v=v+100 WHERE id=1")
+                try waitProgress(reconnect) { $0["transactionsApplied"] as? Int == 4 }
+                let sourceContainer=try h.compose(["ps","-q","source"]).text
+                _ = try docker(["kill","--signal","KILL",sourceContainer])
+                try waitProgress(reconnect) { ($0["sourceReconnectAttempts"] as? Int ?? 0) >= 3 }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","source"],timeout:150)
+                try waitForReader(reconnect)
+                _ = try h.sql("source","INSERT INTO poc.reconnect_rows VALUES(3,30)")
+                let reconnected=try finish(reconnect,"source-reconnect",success:true)
+                try require((reconnected["sourceReconnectAttempts"] as? Int ?? 0) >= 3,"source interruptions did not reconnect")
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT id,v FROM poc.reconnect_rows ORDER BY id") == "1\t111\n2\t20\n3\t30","source reconnect duplicated or lost writes")
+                }
+                try require(state("source-reconnect","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|5|5","source reconnect reset the transaction limit or checkpoint")
+                try require(state("source-reconnect","SELECT COUNT(*) FROM groups WHERE status='APPLIED'") == "5","reconnect duplicated journal groups")
+                try cases.pass("source-reconnect")
+
+                var batchConfig=try reconnectConfig("source-reconnect-batch",count:2)
+                batchConfig["batch"]=["maximumInsertRows":4]
+                let batchClient=try start(QualificationCase("source-reconnect-batch","Finish an active target group after source loss, then reconnect without replaying it"),batchConfig)
+                try waitForReader(batchClient)
+                _ = try h.sql("source","INSERT INTO poc.reconnect_batch VALUES "+(1...8000).map { "(\($0),\($0))" }.joined(separator:","))
+                let writeDeadline=Date().addingTimeInterval(30)
+                while true {
+                    let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='reconnect_batch'")) ?? 0
+                    if (1..<8000).contains(writes) { break }
+                    try require(writes < 8000 && Date() < writeDeadline,"missed active target batch")
+                    Thread.sleep(forTimeInterval:0.02)
+                }
+                try killReader()
+                try waitProgress(batchClient) { $0["lifecycle"] as? String == "RECONNECTING" && $0["transactionsApplied"] as? Int == 1 }
+                try waitForReader(batchClient)
+                _ = try h.sql("source","UPDATE poc.reconnect_batch SET v=v+1 WHERE id=1")
+                _ = try finish(batchClient,"source-reconnect-batch",success:true)
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                for service in h.services { try require(h.sql(service,"SELECT COUNT(*),SUM(v) FROM poc.reconnect_batch") == "8000\t32004001","active batch reconnect differs") }
+                try require(state("source-reconnect-batch","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|2|8001","active batch checkpoint differs")
+                try require(state("source-reconnect-batch","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "0","reconnect left unresolved writes")
+                try cases.pass("source-reconnect-batch")
+
+                let waiting=try start(QualificationCase("source-reconnect-cancel","Stop cleanly during reconnect backoff"),reconnectConfig("source-reconnect-cancel",count:1))
+                try waitForReader(waiting)
+                _ = try h.compose(["stop","-t","30","source"])
+                try waitProgress(waiting) { $0["lifecycle"] as? String == "RECONNECTING" }
+                _ = try docker(["kill","--signal","TERM",waiting])
+                _ = try finish(waiting,"source-reconnect-cancel",success:true)
+                try require(state("source-reconnect-cancel","SELECT lifecycle||'|'||transactions_applied FROM state") == "STOPPED|0","backoff cancellation was not clean")
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","source"],timeout:150)
+                try cases.pass("source-reconnect-cancel")
+                let changed=try start(QualificationCase("source-reconnect-settings","Reject incompatible source settings on reconnect without advancing progress"),reconnectConfig("source-reconnect-settings",count:1))
+                try waitForReader(changed)
+                _ = try h.sql("source","SET GLOBAL binlog_row_image=MINIMAL")
+                try killReader()
+                let changedResult=try finish(changed,"source-reconnect-settings",success:false,reason:"source identity/settings differ")
+                _ = try h.sql("source","SET GLOBAL binlog_row_image=FULL")
+                try require(changedResult["progress"].flatMap { $0 as? [String:Any] }?["sourceReconnectAttempts"] as? Int == 1,"incompatible source settings were retried")
+                try require(state("source-reconnect-settings","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","changed source advanced progress")
+                try cases.pass("source-reconnect-settings")
+                report["source_reconnect"]="disconnect_rotation_shutdown_crash_active_batch_cancellation_and_settings_checks_passed"
+            }
             if ddl {
                 if selection.includes("filters") {
                     let test = DDLCoverageCases.wildcardFilter

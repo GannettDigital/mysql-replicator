@@ -25,7 +25,7 @@ public struct SuiteSelection {
             }
         }
         try require(["both", "gtid", "file-position"].contains(positioning), "invalid positioning: " + positioning)
-        let slices = ddl ? ["all", "basic", "modify-index", "database", "ordered", "filters"] : ["all", "basic", "matrix", "extended"]
+        let slices = ddl ? ["all", "basic", "modify-index", "database", "ordered", "filters"] : ["all", "basic", "matrix", "extended", "reconnect"]
         try require(slices.contains(slice), "unknown slice; choose " + slices.joined(separator: ", "))
         try require(slice != "extended" || positioning != "file-position", "extended DML fixtures require GTID positioning")
         if !caseIDs.isEmpty {
@@ -44,7 +44,7 @@ public struct SuiteSelection {
         ModifyIndexCases.cases.map(\.test) + ModifyIndexCases.failures.map(\.test) + [ModifyIndexCases.timeout, ModifyIndexCases.resume]
     }
     public func describe(ddl: Bool) {
-        print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters" : "all, basic, matrix, extended (GTID multirow, discovery, failure and recovery fixtures)"))
+        print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters" : "all, basic, matrix, extended (GTID multirow, discovery, failure and recovery fixtures), reconnect"))
         print("Every run includes the four-transaction basic DML check used by subsequent fixtures. --positioning gtid|file-position|both (default both).")
         if ddl { for test in Self.independent { print(test.description) } }
         else {

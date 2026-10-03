@@ -34,6 +34,7 @@ final class StreamProcessor {
     var announcementCount = 0
     var receivedBytes: UInt64 = 0
     var firstGroup = true
+    private var finished = false
     let resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?
     let emitEvent: (LiveRecord) throws -> Void
     let emitTransaction: (CompleteTransaction) throws -> Void
@@ -89,6 +90,7 @@ final class StreamProcessor {
         return a.0 == b.0 && a.1 > b.1
     }
     func consume(_ frame: Data) throws {
+        try check(!finished,"source event after stream completion")
         try check(frame.count >= 23 && frame.count <= Int(config.maximumEventBytes ?? 4*1024*1024), "live event size limit or short header")
         try check(Int(read(frame, 9, UInt32.self)) == frame.count, "live frame/header length mismatch")
         receivedBytes += UInt64(frame.count)
@@ -101,6 +103,18 @@ final class StreamProcessor {
             try check(target.position >= 4 && announced == nil, "duplicate/invalid rotation announcement")
             if let expected = rotatedTo {
                 try check(target == expected, "rotation announcement disagrees with physical rotation")
+            } else if let current = cursor, let assembler {
+                // MySQL's sender announces each next file even when shutdown
+                // or crash left no physical ROTATE in the previous file.
+                // Accept only the adjacent file at a complete group boundary.
+                func numbered(_ file:String) -> (String,UInt64)? {
+                    guard let dot=file.lastIndex(of:"."), let number=UInt64(file[file.index(after:dot)...]) else { return nil }
+                    return (String(file[..<dot]),number)
+                }
+                guard let old=numbered(current.file), let next=numbered(target.file) else { throw CaptureError("invalid implicit rotation filename") }
+                try check(target.position == 4 && old.0 == next.0 && old.1 < UInt64.max && next.1 == old.1+1,
+                          "implicit rotation must identify the adjacent binlog at position 4")
+                try assembler.finish() // Reject partial transactions, including after a crash.
             } else {
                 try check(cursor == nil && assembler == nil, "unexpected rotation announcement")
                 if config.mode == "file-position" {
@@ -214,5 +228,6 @@ final class StreamProcessor {
     func finish() throws {
         try check(announced == nil && assembler != nil, "dump ended before format context")
         try assembler!.finish()
+        finished = true
     }
 }

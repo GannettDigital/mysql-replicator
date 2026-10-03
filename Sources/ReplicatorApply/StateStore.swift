@@ -290,9 +290,9 @@ final class StateStore {
         completedGTIDs=next; applied=boundary; pendingGTID=nil; skipBoundary=nil; snapshotSequence=sequence
         return SkipSummary(skippedGTIDSet:try GTIDSet(id).canonical,resumeGTIDSet:next.canonical,resumePosition:boundary,stateDirectory:directory.path)
     }
-    func captureConfiguration(_ source: CaptureConfiguration) throws -> CaptureConfiguration {
+    func captureConfiguration(_ source: CaptureConfiguration, remainingTransactions: Int? = nil) throws -> CaptureConfiguration {
         let boundary = applied ?? baseline
-        let resumed = source.resuming(file:boundary?.file,position:boundary.map { UInt32($0.position) },executedGTIDs:gtids)
+        let resumed = source.resuming(file:boundary?.file,position:boundary.map { UInt32($0.position) },executedGTIDs:gtids,remainingTransactions:remainingTransactions)
         _ = try resumed.validate()
         return resumed
     }
@@ -613,6 +613,19 @@ final class StateStore {
         if sequence != snapshotSequence {try snapshot()}
         try execute("UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
         try checkpoint()
+    }
+    /// In-process source reconnect only. Never resolve uncertain target writes
+    /// or reopen crashed state here. Retain the journaled, fully applied prefix.
+    func discardUnappliedCapture() throws {
+        try require(pendingGTID == nil && pendingBatch.isEmpty,"cannot reconnect with pending target intents")
+        try require(try number("SELECT COUNT(*) FROM groups WHERE status='PENDING'") == 0
+                    && number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'") == 0,"cannot reconnect with unresolved journal entries")
+        try require(groupStart <= relayLength,"invalid applied relay boundary")
+        try relay!.truncate(atOffset:groupStart)
+        relayLength=groupStart
+        try relay!.seek(toOffset:groupStart)
+        try timings.measure("relay.sync") { try relay!.synchronize() }
+        try execute("UPDATE state SET durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
     }
     func block(_ reason: String) throws {
         try timings.measure("relay.sync") { try relay!.synchronize() }

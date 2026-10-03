@@ -184,6 +184,8 @@ public struct ApplyConfiguration: Decodable {
     var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
     public let batch: BatchPolicy?
+    public let sourceReconnect: SourceReconnectPolicy?
+    var reconnectPolicy: SourceReconnectPolicy { sourceReconnect ?? .init() }
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate() throws {
@@ -196,6 +198,7 @@ public struct ApplyConfiguration: Decodable {
         _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()
         try batchPolicy.validate()
+        try reconnectPolicy.validate()
     }
 }
 

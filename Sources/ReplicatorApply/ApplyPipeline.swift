@@ -30,9 +30,14 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     var snapshot: PipelineSnapshot {
         condition.lock(); defer { condition.unlock() }; return counters
     }
-    func checkFailure() throws {
+    func checkFailure(allowSourceReconnect: Bool = false) throws {
         condition.lock(); defer { condition.unlock() }
-        if let failure { throw failure }
+        if let failure {
+            // A source-only interruption cannot cancel already-journaled SQL.
+            // The consumer still receives the failure and discards queued work.
+            if allowSourceReconnect, let live = failure as? LiveInspectionError, live.isRetryableSourceFailure { return }
+            throw failure
+        }
     }
     func push(_ item: Element, bytes: Int, groups: Int = 0, cancellation: CaptureCancellation) throws {
         try require(bytes >= 0 && bytes <= byteLimit && (0...1).contains(groups),"decoded queue item exceeds capacity")
@@ -56,7 +61,10 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     func finish(_ result: Result<Void,Error>) {
         condition.lock(); defer { condition.unlock() }
         ended = true
-        if case .failure(let error) = result, failure == nil {
+        if case .failure(let error) = result,
+           failure == nil || ((failure as? LiveInspectionError)?.isRetryableSourceFailure == true
+                             && (error as? LiveInspectionError)?.isRetryableSourceFailure != true) {
+            // A fatal consumer failure supersedes a recoverable source outage.
             failure = error; items = []; head = 0
             counters.queuedItems = 0; counters.queuedBytes = 0; counters.queuedGroups = 0
         }
@@ -131,7 +139,8 @@ final class ApplyPipeline {
             }
         } catch {
             queue.finish(.failure(error)); stop.cancel()
-            try queue.checkFailure() // Preserve the first failure from either side.
+            // A concurrent source failure must not mask a target/journal error.
+            throw error
         }
     }
 }

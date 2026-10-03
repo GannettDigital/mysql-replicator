@@ -7,7 +7,9 @@ initial prototype rewrites. Broader coverage follows the [DDL completeness plan]
 Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.json`
 can exclude the single captured failed group before any target write intent;
 see [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
-Automatic reconnect and recovery of interrupted or uncertain writes remain unimplemented.
+Source-only transport interruptions reconnect automatically from the durable applied
+checkpoint; see [source reconnect](SOURCE_RECONNECT.md). Recovery of interrupted
+processes or uncertain target writes remains unimplemented.
 Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 
@@ -74,8 +76,10 @@ runs. Otherwise the command follows the source until stopped or an error occurs.
 Stdout contains a progress JSON record after each completed DML batch or standalone group; stderr
 contains the final summary or a structured error. SIGINT/SIGTERM at a complete
 capture/apply boundary persist STOPPED and exit zero; a partial capture/apply
-interruption remains BLOCKED. A known transport or apply failure is not converted
-to success by a concurrent stop. A clean STOPPED state can then be resumed
+interruption remains BLOCKED. Source reconnect discards unapplied capture only
+after the active target batch finishes and its acknowledgments are journaled;
+cancellation during reconnect backoff can then stop cleanly. Target, journal and
+nonretryable capture failures remain errors. A clean STOPPED state can be resumed
 explicitly; uncertain writes are never retried.
 On clean capture cancellation, buffered groups with no prepared intents can be
 discarded and read again from the saved applied boundary. A finite capture limit
@@ -95,11 +99,11 @@ The FIFO allows at most 4,096 items, 64 complete groups and 64 MiB of retained-d
 accounting. These are independent limits, not an RSS promise: the socket queue,
 current bounded assembler group and current apply batch also retain data. Full
 queues pause the producer rather than dropping events. Normal finite completion
-drains the queue and flushes the final batch. Failure discards queued work,
-interrupts the other worker and joins the producer before reporting final state;
-SQL is not retried and acknowledged partial groups retain the existing journal
-semantics. Cancellation is clean only with neither a partial captured/consumed
-group nor a pending write intent; uncertain interruption remains BLOCKED.
+drains the queue and flushes the final batch. Failure discards queued work and
+joins the producer. A retryable source failure lets already-journaled target work
+finish; other failures interrupt execution. SQL is not retried and acknowledged
+partial groups retain the existing journal semantics. Uncertain target outcomes
+remain BLOCKED, including when source and target fail concurrently.
 
 Final summaries include queue high-water marks and enqueued/dequeued group counts
 in `pipeline`. These counters reset per run and are diagnostic, not recovery state.

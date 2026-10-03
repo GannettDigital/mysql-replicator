@@ -50,6 +50,12 @@ The current unit run passes 197 Swift and 5 Rust tests; this run does not extend
 the earlier sanitizer qualification. See [scope and validation](DML_APPLY.md)
 for the DML compatibility matrix and integration evidence.
 
+Source reconnect update: the running applier retries transient source-only
+transport failures from its durable applied checkpoint, preserving the target
+connection and refusing uncertain target outcomes. This supersedes the earlier
+deferral of source reconnect; process-crash and target recovery remain separate.
+See [source reconnect policy and qualification](SOURCE_RECONNECT.md).
+
 Implemented and validated:
 
 - Independent repository, approved architecture and accepted native-reference contract.

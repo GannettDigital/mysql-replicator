@@ -171,12 +171,12 @@ final class CaptureTests: XCTestCase {
     func testBadSequenceOversizeAndTruncatedPacketsFail() throws {
         for bytes in [packet(Data([1]),sequence:2), ByteBuffer(bytes:le(UInt32(101)|(1<<24)))] {
             let channel = EmbeddedChannel(handler:ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes:100)))
-            XCTAssertThrowsError(try channel.writeInbound(bytes)); _ = try? channel.finish()
+            XCTAssertThrowsError(try channel.writeInbound(bytes)) { XCTAssertFalse($0 is SourceTransportError) }; _ = try? channel.finish()
         }
         for prefix in [Data([5,0]),Data([5,0,0,1,9])] {
             let channel = EmbeddedChannel(handler:ByteToMessageHandler(DumpPacketDecoder(maximumMessageBytes:100)))
             _ = try channel.writeInbound(ByteBuffer(bytes:prefix))
-            XCTAssertThrowsError(try channel.finish())
+            XCTAssertThrowsError(try channel.finish()) { XCTAssertTrue($0 is SourceTransportError) }
         }
     }
     func testDumpMarkersEOFAndServerErrors() throws {
@@ -252,6 +252,24 @@ final class CaptureTests: XCTestCase {
         try p.consume(announce("binlog.000004",4)); try p.consume(fde(4)); try p.finish()
         XCTAssertEqual(p.lastCompleteBoundary,BinlogCoordinate(file:"binlog.000004",position:127))
         XCTAssertThrowsError(try p.consume(announce("binlog.000005",4)))
+    }
+    func testRestartFileTransitionWithoutPhysicalRotateRequiresCompleteAdjacentFile() throws {
+        for stopped in [false,true] {
+            let p=try processor(); try begin(p)
+            for (at,event) in try recorded() where at >= 1589 && at < 1885 { try p.consume(event) }
+            if stopped { try p.consume(frame(3,body:Data(),next:1908)) }
+            let applied=p.completeGTIDs
+            try p.consume(announce("binlog.000004",4)); try p.consume(fde(4)); try p.finish()
+            XCTAssertEqual(p.completeGTIDs,applied)
+            XCTAssertEqual(p.transactionCount,1)
+        }
+        for (file,position) in [("binlog.000005",UInt64(4)),("other.000004",4),("binlog.000004",100)] {
+            let p=try processor(); try begin(p)
+            XCTAssertThrowsError(try p.consume(announce(file,position)))
+        }
+        let partial=try processor(); try begin(partial)
+        try partial.consume(recorded().first { $0.0 == 1589 }!.1)
+        XCTAssertThrowsError(try partial.consume(announce("binlog.000004",4)))
     }
     func testGTIDCoverageRequiresWholeIntervalsAndMatchingSIDs() throws {
         let set=try GTIDSet(sid+":1-10:12-20")

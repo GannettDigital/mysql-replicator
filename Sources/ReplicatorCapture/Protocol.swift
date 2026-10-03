@@ -195,7 +195,7 @@ struct DumpPacketDecoder: ByteToMessageDecoder {
     mutating func decodeLast(context: ChannelHandlerContext, buffer: inout ByteBuffer, seenEOF: Bool) throws -> DecodingState {
         let state = try decode(context: context, buffer: &buffer)
         if state == .needMoreData && (buffer.readableBytes != 0 || pending != nil) {
-            throw CaptureError("truncated dump packet at disconnect")
+            throw SourceTransportError("truncated dump packet at disconnect")
         }
         return state
     }
@@ -216,7 +216,9 @@ final class DumpCommand: MySQLCommand {
     private func handleResponse(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
         if packet.isError {
             let e = try packet.decode(MySQLProtocol.ERR_Packet.self, capabilities: capabilities)
-            throw CaptureError("source dump error \(e.errorCode): \(e.sqlState ?? "") \(e.errorMessage)")
+            let reason = "source dump error \(e.errorCode): \(e.sqlState ?? "") \(e.errorMessage)"
+            if e.errorCode == 1053 { throw SourceTransportError(reason) }
+            throw CaptureError(reason)
         }
         if packet.isEOF && packet.payload.readableBytes < 9 { return .init(done: true) }
         guard packet.payload.readInteger(as: UInt8.self) == 0, packet.payload.readableBytes >= 19 else {

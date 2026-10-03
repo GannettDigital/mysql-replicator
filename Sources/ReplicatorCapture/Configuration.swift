@@ -37,12 +37,12 @@ public struct CaptureConfiguration: Decodable {
     public let downloadCacheBytes: Int?
 
     /// Keep connection/protocol options, replacing only the authoritative boundary.
-    public func resuming(file: String?, position: UInt32?, executedGTIDs: String) -> CaptureConfiguration {
+    public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil) -> CaptureConfiguration {
         CaptureConfiguration(version:version,host:host,port:port,username:username,
             passwordEnvironment:passwordEnvironment,serverHostname:serverHostname,caFile:caFile,
             serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
-            nonBlocking:nonBlocking,stopAfterTransactions:stopAfterTransactions,
+            nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
             idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
     }
 
