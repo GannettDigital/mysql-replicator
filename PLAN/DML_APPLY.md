@@ -125,11 +125,14 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
 - ASCII SQL identifiers (quoted, never interpolated unescaped); a primary key with 1–16 full,
   nonnullable supported scalar columns, including DATE/integer composite keys. Named ordinary/unique BTREE secondary indexes
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
-  row identity still uses the primary key. No triggers, generated
-  columns or partitioned targets. Prepared targets may use an integer primary-key
+  row identity still uses the primary key. Target triggers are rejected. The
+  [DDL compatibility increment](DDL_COMPATIBILITY.md) adds bounded generated
+  columns and partitioned targets. Prepared targets may use an integer primary-key
   AUTO_INCREMENT, literal defaults and temporal CURRENT_TIMESTAMP defaults/on-update
   attributes. All row values, including generated IDs and source-evaluated temporal
-  values, are supplied explicitly; the target does not generate replacement values.
+  values, are supplied explicitly. Generated-expression columns are the exception:
+  the target computes them and the applier compares them with the FULL source image
+  before completing the write intent.
   Discovery obtains ordered column names, types, defaults, EXTRA attributes, nullability and text collation
   from the target and validates source wire metadata against that description.
   Validated schema is cached for the session and invalidated around source DDL.
@@ -151,9 +154,9 @@ MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
 `.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
 This is not complete 5.7 support: FLOAT/DOUBLE, BIT, JSON,
 spatial types and multi-statement transactions
-remain outside this increment. Broader type support here is for preprovisioned
-tables. The source DDL grammar adds composite keys, DATE, CHAR and BINARY, but
-still rejects other definitions (including ENUM/SET) accepted by prepared-table DML.
+remain outside this increment. The source DDL grammar now accepts these DML types,
+including ENUM/SET, together with bounded defaults and schema operations described
+in [DDL compatibility](DDL_COMPATIBILITY.md).
 
 The DML matrix (`make dml-suite ARGS="--slice matrix"`) checks multi-value INSERT,
 multi-row UPDATE/DELETE, upsert, REPLACE, IGNORE, INSERT…SELECT, single-target

@@ -169,7 +169,7 @@ public enum ApplyRun {
                         try progress(); return
                     }
                     let statement=try DDLStatement.from(group)
-                    let plan=try target.prepareDDL(statement,query:query)
+                    let plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try checkSourceFailure()

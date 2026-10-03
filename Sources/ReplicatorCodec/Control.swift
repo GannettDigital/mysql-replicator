@@ -65,6 +65,9 @@ public struct QuerySessionContext {
     public let serverCollation: UInt32
     public let databaseCollation: UInt32?
     public let defaultUTF8MB4Collation: UInt32
+    public let timeZone: String?
+    public let microseconds: UInt32
+    public let explicitDefaultsForTimestamp: Bool?
     public init(query: QueryControl) throws {
         var value=rc_query_context()
         let status=query.statusVariables.withUnsafeBytes {bytes in
@@ -78,5 +81,8 @@ public struct QuerySessionContext {
         connectionCollation=value.collation_connection;serverCollation=value.collation_server
         databaseCollation=value.present & (1<<8) != 0 ? value.collation_database : nil
         defaultUTF8MB4Collation=value.present & (1<<18) != 0 ? value.default_collation_utf8mb4 : 45
+        microseconds=value.microseconds
+        explicitDefaultsForTimestamp=value.present & (1<<16) != 0 ? value.explicit_defaults_timestamp != 0 : nil
+        timeZone=value.present & (1<<5) != 0 ? withUnsafeBytes(of:&value.time_zone) { String(decoding:$0.prefix(Int(value.time_zone_length)),as:UTF8.self) } : nil
     }
 }

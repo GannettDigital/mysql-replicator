@@ -30,7 +30,7 @@ final class SchemaChangeTests: XCTestCase {
         XCTAssertEqual(try parse("ALTER TABLE t RENAME KEY ix TO other"),.indexes(TableName(database:"poc",table:"t"),.rename("ix","other")))
     }
     func testUnsupportedOptionsCannotFallThroughToSQL() throws {
-        for sql in ["CREATE INDEX ix ON t(name DESC)","CREATE FULLTEXT INDEX ix ON t(name)","CREATE INDEX ix ON t((id+1))","ALTER TABLE t ADD INDEX (name)","ALTER TABLE t ADD KEY ix(name), ADD KEY iy(id)","ALTER TABLE t MODIFY name VARCHAR(120), ADD KEY ix(name)","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))","ALTER TABLE t MODIFY name VARCHAR(10) DEFAULT 'x'"] {XCTAssertThrowsError(try parse(sql),sql)}
+        for sql in ["CREATE INDEX ix ON t(name DESC)","CREATE FULLTEXT INDEX ix ON t(name)","CREATE INDEX ix ON t((id+1))","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))"] {XCTAssertThrowsError(try parse(sql),sql)}
     }
     func testIndexModelRejectsUnsupportedShapeAndPreservesPrimaryRowIdentity() throws {
         let key=ApplyIndex(name:"ix",unique:false,parts:[ApplyIndexPart(column:"name",prefix:10)])

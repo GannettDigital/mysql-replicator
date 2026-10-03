@@ -126,6 +126,7 @@ public enum DMLQualification {
             _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
             if ddl {_ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON otherdb.* TO 'apply_fixture'@'%'")}
             if ddl {
+                _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX,CREATE VIEW,SHOW VIEW,CREATE ROUTINE,ALTER ROUTINE,EXECUTE ON ddlcompat.* TO 'apply_fixture'@'%'")
                 _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'%'")
                 for database in Set(DatabaseCreationCases.cases.map(\.database)) {
                     _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON \(database).* TO 'apply_fixture'@'%'")
@@ -516,7 +517,7 @@ public enum DMLQualification {
                     let rejectedTest = DDLCoverageCases.wildcardRejection
                     var rejectionConfig = configuration(rejectedTest.id,at:try h.boundary("source"),count:2); rejectionConfig["replicateWildIgnoreTable"] = patterns
                     let rejected = try start(rejectedTest,rejectionConfig); try waitForReader(rejected)
-                    _ = try h.sql("source","CREATE TABLE poc.filter_included(id INT PRIMARY KEY,d DECIMAL(10,2)); INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
+                    _ = try h.sql("source","CREATE TABLE poc.filter_included(id INT PRIMARY KEY,d JSON); INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
                     _ = try finish(rejected,rejectedTest.id,success:false,reason:"unsupported DDL column type")
                     try require(state(rejectedTest.id,"SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0" && state(rejectedTest.id,"SELECT COUNT(*) FROM ddl_intents") == "0","included DDL bypassed fail-stop policy")
                     try require(h.sql("target57","SELECT COUNT(*) FROM poc.items WHERE id=92") == "0","included DDL failure did not stop following row")
@@ -526,6 +527,111 @@ public enum DMLQualification {
                     // Restore the shared basic fixture without adding source events.
                     for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; UPDATE poc.items SET value='" + Fixture.final[0][1] + "' WHERE id=1") }
                 }
+
+                if selection.includes("compatibility") {
+                    let session = "SET NAMES utf8mb4 COLLATE utf8mb4_bin; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'; "
+                    func resetCompatibility(_ nativeInnoDB: Bool = false) throws {
+                        for service in h.services {
+                            let engine = service == "source" || (service == "native" && nativeInnoDB) ? "InnoDB" : "MyISAM"
+                            _ = try h.sql(service,"SET SESSION sql_log_bin=0; SET GLOBAL default_storage_engine=\(engine); DROP DATABASE IF EXISTS ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+                        }
+                    }
+                    func compatibilityBarrier(_ client: String,_ count: Int) throws {
+                        try waitProgress(client) { ($0["transactionsApplied"] as? Int ?? 0) >= count }
+                        try ModifyIndexCases.waitNative(h,h.boundary("source"))
+                    }
+                    if mode == "file-position" { stage("ENUM/SET type fixture runs only in the GTID/FULL-metadata profile") }
+                    for test in DDLCompatibilityCases.cases where selection.selects(test.test.id) && !(mode == "file-position" && test.test.id == "ddl-compat-types") {
+                        try resetCompatibility(test.nativeInnoDB)
+                        let boundary=try h.boundary("source"),label=test.test.id
+                        let count=test.steps.reduce(0){$0+$1.transactions}
+                        let client=try start(test.test,configuration(label,at:boundary,count:count)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        var applied=0,observations:[[String:Any]]=[]
+                        for step in test.steps {
+                            // DELIMITER is a mysql CLI directive, never binlog SQL.
+                            _ = try h.sql("source",session+"\n"+step.sql)
+                            applied += step.transactions
+                            try compatibilityBarrier(client,applied)
+                            var checks:[[String:Any]]=[]
+                            for check in step.checks {
+                                var result:[String:String]=[:]
+                                for service in h.services {
+                                    let actual=try h.sql(service,session+check.sql)
+                                    try require(actual==check.expected,"\(label) \(service): \(check.sql) returned \(actual), expected \(check.expected)")
+                                    result[service]=actual
+                                }
+                                checks.append(["query":check.sql,"expected":check.expected,"results":result])
+                            }
+                            observations.append(["sql":step.sql,"checks":checks,"transactions":applied])
+                        }
+                        let result=try finish(client,label,success:true),end=try h.boundary("source")
+                        _ = try h.sql("native","STOP REPLICA")
+                        try require(result["transactionsApplied"] as? Int == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'")=="0","unfinished compatibility DDL intent")
+                        if label == "ddl-compat-database" {
+                            try require(state(label,"SELECT COUNT(*) FROM schemas WHERE current=1")=="1","DROP DATABASE retained stale current table schemas")
+                        }
+                        try writeJSON(["steps":observations,"summary":result],to:output.appendingPathComponent(label+"-observations.json"))
+                        try cases.pass(label)
+                    }
+                    for (test,sql,reason) in [
+                        (DDLCompatibilityCases.trigger,"CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers"),
+                        (DDLCompatibilityCases.event,"CREATE EVENT ddlcompat.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO ddlcompat.t VALUES(99,99)","DDL policy rejects events")
+                    ] where selection.selects(test.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        let before=try h.boundary("source"),label=test.id
+                        let client=try start(test,configuration(label,at:before,count:2)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source",session+sql+"; INSERT INTO ddlcompat.t VALUES(1,1)")
+                        _ = try finish(client,label,success:false,reason:reason)
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(state(label,"SELECT transactions_applied FROM state")=="0" && state(label,"SELECT COUNT(*) FROM ddl_intents")=="0","rejected policy DDL advanced progress or issued SQL")
+                        try require(h.sql("target57","SELECT COUNT(*) FROM ddlcompat.t")=="0","policy rejection applied following DML")
+                        try cases.pass(label)
+                    }
+                    if selection.selects(DDLCompatibilityCases.sourceTrigger.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        _ = try h.sql("source","SET SESSION sql_log_bin=0; CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=NEW.n+10")
+                        let test=DDLCompatibilityCases.sourceTrigger,before=try h.boundary("source")
+                        let client=try start(test,configuration(test.id,at:before,count:1)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source","INSERT INTO ddlcompat.t VALUES(1,7)")
+                        _ = try finish(client,test.id,success:true); try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        for service in h.services { try require(h.sql(service,"SELECT n FROM ddlcompat.t")=="17","source trigger effect differs") }
+                        try cases.pass(test.id)
+                    }
+                    if selection.selects(DDLCompatibilityCases.generatedMismatch.id) {
+                        try resetCompatibility()
+                        for service in h.services {
+                            let multiplier=service == "target57" ? 3 : 2
+                            _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT,g INT AS (n*\(multiplier)) STORED)")
+                        }
+                        let test=DDLCompatibilityCases.generatedMismatch,before=try h.boundary("source")
+                        let client=try start(test,configuration(test.id,at:before,count:1)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA"); _ = try h.sql("source","INSERT INTO ddlcompat.t(id,n) VALUES(1,7)")
+                        _ = try finish(client,test.id,success:false,reason:"target generated-column values differ")
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(state(test.id,"SELECT transactions_applied FROM state")=="0" && state(test.id,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'")=="1","generated mismatch was completed or lost its uncertain row intent")
+                        try cases.pass(test.id)
+                    }
+                    if selection.selects(DDLCompatibilityCases.targetTrigger.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        _ = try h.sql("target57","SET SESSION sql_log_bin=0; CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=NEW.n+10")
+                        let test=DDLCompatibilityCases.targetTrigger,before=try h.boundary("source")
+                        let client=try start(test,configuration(test.id,at:before,count:1)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA"); _ = try h.sql("source","INSERT INTO ddlcompat.t VALUES(1,7)")
+                        _ = try finish(client,test.id,success:false,reason:"target triggers are unsupported")
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(h.sql("target57","SELECT COUNT(*) FROM ddlcompat.t")=="0","target trigger executed")
+                        try cases.pass(test.id)
+                    }
+                    try resetCompatibility()
+                }
+
                 if selection.includes("modify-index") {
                 for test in ModifyIndexCases.failures where selection.selects(test.test.id) {
                     let label=test.test.id
@@ -567,7 +673,10 @@ public enum DMLQualification {
                         try require(Date()<lockDeadline,"test table lock was not acquired");Thread.sleep(forTimeInterval:0.1)
                     }
                     _ = try h.sql("source",test.sql+"; INSERT INTO demo.mi VALUES(99,'blocked marker',9,NULL)")
-                    let result=try finish(applying,label,success:false,reason:"uncertain")
+                    let result=try finish(applying,label,success:false)
+                    let failureProgress=result["progress"] as? [String:Any]
+                    let failureTrace=(failureProgress?["targetFailure"] as? [String:Any])?["statement"] as? [String:Any]
+                    try require(failureTrace?["phase"] as? String == "possiblyExecuted","DDL timeout did not retain uncertain statement phase")
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0" && state(label,"SELECT status FROM ddl_intents")=="PENDING","DDL timeout lost uncertain intent")
                     let id=try state(label,"SELECT active_gtid FROM state")
                     let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".json"],checked:false)
@@ -870,7 +979,7 @@ public enum DMLQualification {
                 let missing=try start(DDLCoverageCases.missingTemplate,configuration("ddl-like-missing-template",at:missingStart,count:2));try waitForReader(missing)
                 _ = try h.sql("native","START REPLICA")
                 _ = try h.sql("source","CREATE TABLE poc.failed_like LIKE poc.only_source; CREATE TABLE poc.after_failed_like(id INT PRIMARY KEY)")
-                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"single primary-key")
+                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"requires a primary key with 1 to 16 columns")
                 let failureDeadline=Date().addingTimeInterval(20)
                 var nativeFailure=try h.status()
                 while nativeFailure["Last_SQL_Errno"] == "0" && Date()<failureDeadline {
@@ -895,7 +1004,7 @@ public enum DMLQualification {
                 }
                 // A valid source DDL outside the grammar stops before mutation.
                 let unsupported=try start(DDLCoverageCases.unsupported,configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
-                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DECIMAL(10,2) NULL")
+                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported JSON NULL")
                 _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
                 try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
                 try require(state("ddl-unsupported","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","unsupported DDL advanced checkpoint")

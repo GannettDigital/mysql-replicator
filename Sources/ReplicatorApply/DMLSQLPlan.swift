@@ -13,6 +13,8 @@ struct DMLSQLPlan {
     func insertSQL(rows: Int) -> String {
         insertPrefix + Array(repeating:insertTuple,count:rows).joined(separator:",")
     }
+    let writeIndexes: [Int]
+    let generatedIndexes: [Int]
     let update: String
     let delete: String
 
@@ -21,7 +23,10 @@ struct DMLSQLPlan {
         columnTypes = try DMLTablePlan(table).columnTypes
         keyIndexes = table.keyIndexes
         let names = try table.columns.map { try quoted($0.name) }
-        let columns = names.joined(separator:",")
+        writeIndexes = table.columns.indices.filter { !table.columns[$0].isGenerated }
+        generatedIndexes = table.columns.indices.filter { table.columns[$0].isGenerated }
+        let writes = writeIndexes.map { names[$0] }
+        let columns = writes.joined(separator:",")
         let sqlName = try table.sqlName
         let predicate = try table.primaryKeyColumns.map { try quoted($0) + "=?" }.joined(separator:" AND ")
         let reads = zip(columnTypes,names).map { type,name in
@@ -30,9 +35,9 @@ struct DMLSQLPlan {
         }.joined(separator:",")
         select = "SELECT \(reads) FROM \(sqlName) WHERE \(predicate)"
         insertPrefix = "INSERT INTO \(sqlName) (\(columns)) VALUES "
-        insertTuple = "(\(Array(repeating:"?",count:names.count).joined(separator:",")))"
+        insertTuple = "(\(Array(repeating:"?",count:writes.count).joined(separator:",")))"
         insert = insertPrefix + insertTuple
-        update = "UPDATE \(sqlName) SET \(names.map { $0 + "=?" }.joined(separator:",")) WHERE \(predicate)"
+        update = "UPDATE \(sqlName) SET \(writes.map { $0 + "=?" }.joined(separator:",")) WHERE \(predicate)"
         delete = "DELETE FROM \(sqlName) WHERE \(predicate)"
     }
 }

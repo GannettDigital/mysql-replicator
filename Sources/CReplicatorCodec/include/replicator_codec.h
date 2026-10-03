@@ -48,6 +48,8 @@ typedef struct {
     uint64_t sql_mode;
     uint32_t present, flags2, charset_client, collation_connection, collation_server,
         collation_database, default_collation_utf8mb4;
+    uint32_t microseconds, explicit_defaults_timestamp, time_zone_length;
+    uint8_t time_zone[64];
 } rc_query_context;
 int32_t rc_query_context_decode(const uint8_t *bytes, uint64_t length, rc_query_context *out);
 uint32_t replicator_codec_abi_version(void);

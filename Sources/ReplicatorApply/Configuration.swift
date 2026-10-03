@@ -17,13 +17,15 @@ func quoted(_ name: String) throws -> String {
     return "`" + name.replacingOccurrences(of:"`",with:"``") + "`"
 }
 public struct ApplyColumn: Codable, Equatable {
-    public let name: String
+    public var name: String
     public let type: String
-    public let nullable: Bool
+    public var nullable: Bool
     public let collation: String?
     public var characterSet: String? = nil
     public var defaultValue: String? = nil
     public var extra: String? = nil
+    public var generationExpression: String? = nil
+    var isGenerated: Bool { generationExpression != nil }
     var interpretation: ColumnInterpretation { (try? DMLColumnType(type).interpretation) ?? .signed }
     var width: Int? {
         guard let parsed=try? DMLColumnType(type) else { return nil }
@@ -33,7 +35,12 @@ public struct ApplyColumn: Codable, Equatable {
     func validate() throws {
         _ = try quoted(name)
         let parsed = try DMLColumnType(type)
-        try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
+        if let expression = generationExpression {
+            try require(["VIRTUAL GENERATED","STORED GENERATED"].contains(extra ?? "") && defaultValue == nil,"invalid generated column metadata")
+            _ = try DDLExpression.canonical(expression)
+        } else {
+            try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
+        }
         if extra == "auto_increment" { try require(parsed.integerBits != nil && !nullable,"invalid auto-increment column") }
         if parsed.isText {
             try require(characterSet == nil || characterSet == "utf8mb4", "unsupported discovered character set; no charset conversion is performed")
@@ -66,24 +73,28 @@ public struct ApplyTable: Codable, Equatable {
     public var defaultCharacterSet: String? = nil
     public var defaultCollation: String? = nil
     public var secondaryIndexes: [ApplyIndex] = []
+    public var partitions: [ApplyPartition] = []
     var identity: String { database + "\0" + table }
     var keyIndexes: [Int] { primaryKeyColumns.map { name in columns.firstIndex { $0.name == name }! } }
     var keyIndex: Int { keyIndexes[0] }
     init(database: String, table: String, columns: [ApplyColumn], primaryKey: String,
-         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = []) {
+         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = []) {
         self.init(database:database,table:table,columns:columns,primaryKeyColumns:[primaryKey],
-                  defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes)
+                  defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions)
     }
     init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String],
-         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = []) {
+         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = []) {
         self.database=database; self.table=table; self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
         self.defaultCharacterSet=defaultCharacterSet; self.defaultCollation=defaultCollation; self.secondaryIndexes=secondaryIndexes
+        self.partitions=partitions
     }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
     func validate() throws {
         _ = try sqlName
         try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map(\.name)).count == columns.count,"invalid column manifest")
         for c in columns { try c.validate() }
+        try require(partitions.count <= 8192 && Set(partitions.map(\.name)).count == partitions.count,"invalid partition manifest")
+        for partition in partitions { try partition.validate() }
         try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map{$0.name.lowercased()}).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
         for key in secondaryIndexes {
             _ = try quoted(key.name)
@@ -99,12 +110,12 @@ public struct ApplyTable: Codable, Equatable {
         for name in primaryKeyColumns {
             guard let key = columns.first(where:{$0.name == name}) else { throw ApplyError("missing primary key column") }
             let type = try DMLColumnType(key.type)
-            try require(!key.nullable && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob"),"primary key requires full nonnullable supported scalar columns")
+            try require(!key.nullable && !key.isGenerated && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob"),"primary key requires full nonnullable supported base scalar columns")
         }
     }
 }
 extension ApplyTable {
-    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,defaultCharacterSet,defaultCollation,secondaryIndexes }
+    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions }
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
@@ -116,6 +127,7 @@ extension ApplyTable {
         defaultCharacterSet=try c.decodeIfPresent(String.self,forKey:.defaultCharacterSet)
         defaultCollation=try c.decodeIfPresent(String.self,forKey:.defaultCollation)
         secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
+        partitions=try c.decodeIfPresent([ApplyPartition].self,forKey:.partitions) ?? []
     }
     public func encode(to encoder: Encoder) throws {
         var c=encoder.container(keyedBy:CodingKeys.self)
@@ -125,11 +137,12 @@ extension ApplyTable {
         try c.encodeIfPresent(defaultCharacterSet,forKey:.defaultCharacterSet)
         try c.encodeIfPresent(defaultCollation,forKey:.defaultCollation)
         try c.encode(secondaryIndexes,forKey:.secondaryIndexes)
+        try c.encode(partitions,forKey:.partitions)
     }
-    func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil) -> ApplyTable {
-        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKeyColumns,
+    func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil, partitions: [ApplyPartition]? = nil) -> ApplyTable {
+        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKey ?? primaryKeyColumns,
             defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
-            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()})
+            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()},partitions:partitions ?? self.partitions)
     }
 }
 public struct TargetConfiguration: Decodable {
@@ -181,6 +194,7 @@ public struct ApplyConfiguration: Decodable {
     public let maximumRelayBytes: UInt64?
     public let replicateWildIgnoreTable: [String]?
     public let ddlTimeoutSeconds: Int?
+    public let ddlPolicy: DDLPolicy?
     var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
     public let batch: BatchPolicy?
@@ -197,6 +211,7 @@ public struct ApplyConfiguration: Decodable {
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
+        try (ddlPolicy ?? DDLPolicy()).validate()
         _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()
         try batchPolicy.validate()

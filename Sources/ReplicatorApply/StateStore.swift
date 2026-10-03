@@ -443,6 +443,9 @@ final class StateStore {
     func ddlIntent(_ plan: PreparedDDL,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
         try require(pendingGTID != nil,"DDL intent without pending group")
         if let before=plan.before {try schema(before,event:event,coordinate:coordinate)}
+        for change in plan.additional {
+            if let before=change.before {try schema(before,event:event,coordinate:coordinate)}
+        }
         let beforeID=plan.statement.name.flatMap{schemas[$0.identity]?.0}
         let databaseJSON=try plan.database.map{String(decoding:try JSONEncoder().encode($0),as:UTF8.self)}
         try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,databaseJSON,timestamp()])
@@ -573,6 +576,7 @@ final class StateStore {
             try require(group.outcome == .statement && (try number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'")) == 1,"DDL completion without a pending intent")
         }
         var newSchemaID: Int64?
+        var additionalIDs: [String:Int64] = [:]
         var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
         let time=timestamp()
         try atomic {
@@ -586,6 +590,12 @@ final class StateStore {
             try require(Int(done ?? "") == rowCount,"cannot complete group with unfinished row intents")
 
             if let ddl {
+                for change in ddl.additional where change.before != change.after {
+                    if let before=change.before,let old=schemas[before.identity] {
+                        try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
+                    }
+                    if let after=change.after {additionalIDs[after.identity]=try insertSchema(after,event:group.events[1],coordinate:group.end)}
+                }
                 if ddl.preservesSchema {newSchemaID=ddl.statement.name.flatMap{schemas[$0.identity]?.0}}
                 else {
                     if let name=ddl.statement.name,let old=schemas[name.identity] {
@@ -599,6 +609,10 @@ final class StateStore {
             try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,ddl_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),String(rows+rowCount),String(ddlApplied+(ddl == nil ? 0 : 1)),time,time])
         }
         if let ddl {
+            for change in ddl.additional where change.before != change.after {
+                if let before=change.before {schemas.removeValue(forKey:before.identity)}
+                if let after=change.after,let id=additionalIDs[after.identity] {schemas[after.identity]=(id,after)}
+            }
             if let name=ddl.statement.name {schemas.removeValue(forKey:name.identity)}
             if let after=ddl.after,let newSchemaID {schemas[after.identity]=(newSchemaID,after)}
             ddlApplied+=1

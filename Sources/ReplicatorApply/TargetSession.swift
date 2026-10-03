@@ -102,6 +102,7 @@ final class TargetSession {
 
     }
     func resetDMLSession() throws {
+        _ = try query("SET SESSION timestamp=DEFAULT")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
@@ -140,7 +141,7 @@ final class TargetSession {
     func readSchema(database: String,name: String) throws -> ApplyTable {
         try profile("target.read_schema") {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
-            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
             let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
             try require((1...16).contains(keys.count),"discovered target requires a primary key with 1 to 16 columns")
             var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
@@ -149,11 +150,13 @@ final class TargetSession {
                 column.characterSet=row.column("CHARACTER_SET_NAME")?.string
                 column.defaultValue=row.column("COLUMN_DEFAULT")?.string
                 column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
+                column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }
                 return column
             },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
             let encoding=try tableEncoding(TableName(database:database,table:name))
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
             table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKeyColumns)
+            table.partitions=try readPartitions(database:database,name:name)
             try table.validate(); try verifySchema(table)
             return table
         }
@@ -199,15 +202,15 @@ final class TargetSession {
         // A collation uniquely determines its charset; discovery/DDL resolution
         // already validates that mapping when constructing the ApplyTable.
         try require(metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,"target table defaults differ from historical schema")
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue,"target schema differs from historical manifest")
+            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue && (try r.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }) == c.generationExpression,"target schema differs from historical manifest")
         }
         try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
         try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
-        try require(try query("SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL",binds).0.isEmpty,"partitioned target tables are unsupported")
+        try require(try readPartitions(database:t.database,name:t.table) == t.partitions,"target partition layout differs from historical schema")
     }
     private func verifyTriggerVisibility(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
@@ -316,8 +319,8 @@ final class TargetSession {
         }
         let sql: String, values: [DecodedValue]
         switch row.operation {
-        case "insert": sql = plan.insert; values = row.after!
-        case "update": sql = plan.update; values = row.after! + oldKey
+        case "insert": sql = plan.insert; values = plan.generatedIndexes.isEmpty ? row.after! : plan.writeIndexes.map { row.after![$0] }
+        case "update": sql = plan.update; values = (plan.generatedIndexes.isEmpty ? row.after! : plan.writeIndexes.map { row.after![$0] }) + oldKey
         case "delete": sql = plan.delete; values = oldKey
         default: throw ApplyError("unsupported mutation")
         }
@@ -325,6 +328,7 @@ final class TargetSession {
         let result = try query(sql,binds,mutation:true)
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
+        if let after=row.after { try verifyGeneratedValues(t,after:after,plan:plan) }
         // A successful statement with the expected affected-row count is the
         // completion signal. Pre-write images, strict SQL mode and schema checks
         // remain enforced; independent qualification compares resulting values.
@@ -337,9 +341,24 @@ final class TargetSession {
             }, "incompatible INSERT chunk")
             try require(mutations.reduce(0) { $0+DMLExecution.insertBytes($1) } <= insertByteLimit,"INSERT chunk exceeds packet budget")
             let plan = try sqlPlan(first.table)
-            let binds = try profile("target.bind") { try mutations.flatMap { try $0.row.after!.map(bind) } }
+            let binds = try profile("target.bind") { try mutations.flatMap { mutation in try plan.writeIndexes.map { try bind(mutation.row.after![$0]) } } }
             let result = try query(plan.insertSQL(rows:mutations.count),binds,mutation:true)
             try require(result.1 == UInt64(mutations.count),"unexpected multi-row INSERT affected-row count")
+            if !plan.generatedIndexes.isEmpty {
+                for mutation in mutations { try verifyGeneratedValues(first.table,after:mutation.row.after!,plan:plan) }
+            }
+        }
+    }
+    /// Generated values are computed by the target, not bound by us. Compare
+    /// those fields to the FULL source image before completing the intent. This
+    /// also catches mismatched expressions in an externally prepared snapshot;
+    /// TABLE_MAP contains types but does not describe generated expressions.
+    private func verifyGeneratedValues(_ table: ApplyTable,after: [DecodedValue],plan: DMLSQLPlan) throws {
+        let generated=plan.generatedIndexes
+        guard !generated.isEmpty else { return }
+        try profile("target.generated_check") {
+            guard let actual=try read(table,key:plan.keyIndexes.map{after[$0]}) else {throw ApplyError("generated-column result row is missing")}
+            try require(exactImage(generated.map{actual[$0]},generated.map{after[$0]}),"target generated-column values differ from source image")
         }
     }
     private func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {

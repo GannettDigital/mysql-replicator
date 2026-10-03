@@ -30,7 +30,7 @@ enum DDLCoverageCases {
     static let positive = QualificationCase("positive", "Replicate INSERT, UPDATE and DELETE; compare rows, binlogs and SQLite checkpoints")
     static let group = QualificationCase("ddl", "Apply ordered DDL and DML; verify schema history, unchanged SQL and binlog order")
     static let missingTemplate = QualificationCase("ddl-like-missing-template", "Stop on a missing replica LIKE template before applying DDL or following events")
-    static let unsupported = QualificationCase("ddl-unsupported", "Reject unsupported DECIMAL column before target mutation or checkpoint advance")
+    static let unsupported = QualificationCase("ddl-unsupported", "Reject unsupported JSON column before target mutation or checkpoint advance")
     static let denied = QualificationCase("ddl-denied", "Keep a pending DDL intent and stop when target CREATE permission is denied")
 
     static let changes: [DDLChange] = [
@@ -161,8 +161,9 @@ enum DDLCoverageCases {
         var key: String { suite + "/" + test.id }
     }
     static var registry: [Entry] {
-        let top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test} + ModifyIndexCases.cases.map{$0.test} + ModifyIndexCases.failures.map{$0.test} + [ModifyIndexCases.timeout,ModifyIndexCases.resume,wildcardFilter,wildcardResume,wildcardRejection]
-        var entries = top.map { Entry(suite: "ddl-suite", test: $0, profiles: swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
+        var top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test} + ModifyIndexCases.cases.map{$0.test} + ModifyIndexCases.failures.map{$0.test} + [ModifyIndexCases.timeout,ModifyIndexCases.resume,wildcardFilter,wildcardResume,wildcardRejection]
+        top += DDLCompatibilityCases.declarations
+        var entries = top.map { Entry(suite: "ddl-suite", test: $0, profiles: $0.id == "ddl-compat-types" ? ["swift.gtid.metadata-full"] : swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
         entries += changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
         entries += NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }
         entries += (DatabaseCreationCases.cases.map{$0.native} + [DatabaseCreationCases.nativeDuplicate]).map { Entry(suite:"native-ddl-suite",test:$0,profiles:nativeProfiles,parent:nil,isGroup:false) }

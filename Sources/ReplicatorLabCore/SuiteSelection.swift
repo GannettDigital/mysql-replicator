@@ -25,14 +25,19 @@ public struct SuiteSelection {
             }
         }
         try require(["both", "gtid", "file-position"].contains(positioning), "invalid positioning: " + positioning)
-        let slices = ddl ? ["all", "basic", "modify-index", "database", "ordered", "filters"] : ["all", "basic", "matrix", "extended", "reconnect", "target-reconnect"]
+        let slices = ddl ? ["all", "basic", "modify-index", "database", "ordered", "filters", "compatibility"] : ["all", "basic", "matrix", "extended", "reconnect", "target-reconnect"]
         try require(slices.contains(slice), "unknown slice; choose " + slices.joined(separator: ", "))
         try require(slice != "extended" || positioning != "file-position", "extended DML fixtures require GTID positioning")
         if !caseIDs.isEmpty {
-            try require(ddl ? ["all", "modify-index"].contains(slice) : ["all","matrix"].contains(slice), "--case selects independent fixtures; use --slice for dependent workloads")
+            try require(ddl ? ["all", "modify-index", "compatibility"].contains(slice) : ["all","matrix"].contains(slice), "--case selects independent fixtures; use --slice for dependent workloads")
             let known = ddl ? Set(Self.independent.map(\.id)) : Set(DMLCompatibilityCases.cases.map{"matrix-"+$0.id} + DMLCompatibilityCases.rejections.map{"matrix-reject-"+$0.id})
+            try require(!(ddl && positioning == "file-position" && caseIDs.contains("ddl-compat-types")),"ddl-compat-types requires the GTID/FULL-metadata fixture for ENUM/SET labels")
             try require(caseIDs.isSubset(of: known), "unknown case IDs: " + caseIDs.subtracting(known).sorted().joined(separator: ", "))
-            slice = ddl ? "modify-index" : "matrix"
+            if ddl {
+                let compatibility = Set(DDLCompatibilityCases.declarations.map(\.id))
+                try require(caseIDs.isSubset(of:compatibility) || caseIDs.isDisjoint(with:compatibility),"cannot mix compatibility and modify-index cases")
+                slice = caseIDs.isSubset(of:compatibility) ? "compatibility" : "modify-index"
+            } else { slice = "matrix" }
         }
     }
     var modes: [String] { positioning == "both" ? ["file-position", "gtid"] : [positioning] }
@@ -41,10 +46,10 @@ public struct SuiteSelection {
         caseIDs.isEmpty || caseIDs.contains(id) || (id == "ddl-index-create" && caseIDs.contains("ddl-index-resume"))
     }
     static var independent: [QualificationCase] {
-        ModifyIndexCases.cases.map(\.test) + ModifyIndexCases.failures.map(\.test) + [ModifyIndexCases.timeout, ModifyIndexCases.resume]
+        DDLCompatibilityCases.declarations + ModifyIndexCases.cases.map(\.test) + ModifyIndexCases.failures.map(\.test) + [ModifyIndexCases.timeout, ModifyIndexCases.resume]
     }
     public func describe(ddl: Bool) {
-        print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters" : "all, basic, matrix, extended (GTID multirow, discovery, failure and recovery fixtures), reconnect, target-reconnect"))
+        print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters, compatibility" : "all, basic, matrix, extended (GTID multirow, discovery, failure and recovery fixtures), reconnect, target-reconnect"))
         print("Every run includes the four-transaction basic DML check used by subsequent fixtures. --positioning gtid|file-position|both (default both).")
         if ddl { for test in Self.independent { print(test.description) } }
         else {

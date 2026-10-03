@@ -58,5 +58,9 @@
     "maximumDelayMilliseconds": 25
   },
   "ddlTimeoutSeconds": 300,
-  "replicateWildIgnoreTable": []
+  "replicateWildIgnoreTable": [],
+  "ddlPolicy": {
+    "triggers": "reject",
+    "events": "reject"
+  }
 }

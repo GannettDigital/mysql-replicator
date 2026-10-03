@@ -103,6 +103,9 @@ target provisioning are outside this project's scope. The CLI also supports
 [offline binlog inspection](PLAN/OFFLINE_INSPECT.md) and
 [live source inspection](PLAN/LIVE_INSPECTION.md).
 
+See [DDL compatibility](PLAN/DDL_COMPATIBILITY.md) for supported schema changes,
+generated columns, partitions, views and routines, and the trigger/event rejection policy.
+
 Treat the target as a dedicated replica: application writes and schema changes
 must come through replication, with local administrative changes made while stopped.
 
