@@ -2,15 +2,16 @@
 
 The applier automatically reconnects after a transient source transport failure.
 The existing target connection and SQLite writer remain owned by the running
-process. This does not implement process-crash recovery, target reconnect, failover
-to a different source UUID, or replay of uncertain MyISAM writes.
+process. Safe target reconnect is covered separately in [TARGET_RECONNECT.md](TARGET_RECONNECT.md).
+Neither path implements process-crash recovery, failover to a different source
+UUID, or replay of uncertain MyISAM writes.
 
 ## Restart boundary and ordering
 
 1. Stop and join the old capture/download workers; discard their queued work.
 2. Allow an already-journaled target batch to finish. Record only acknowledged
    writes through the normal SQLite completion path. If execution, unlock or
-   journaling fails, stop with BLOCKED. A concurrent source disconnect must not
+   journaling fails, apply the target reconnect rules or stop with BLOCKED. A concurrent source disconnect must not
    hide a target failure.
 3. Require no pending target intents. Discard unjournaled preparation and truncate
    the unapplied relay tail to the last completed group's relay boundary. Keep
@@ -53,7 +54,7 @@ reset connections, connection refusal/timeouts, unresolved source host, dump idl
 timeout, truncated packets at disconnect, blocking-stream EOF and MySQL's server
 shutdown response. Authentication/TLS verification errors, missing/purged history,
 source identity/settings mismatch, malformed protocol/events, unsupported data,
-target errors and local storage failures are not retried. An unknown error fails
+local storage failures and unsafe target errors are not retried by either path. An unknown error fails
 closed. Nonblocking EOF retains its existing bounded-inspection behavior.
 
 Progress emits `lifecycle: "RECONNECTING"`, `sourceReconnectEnabled`,

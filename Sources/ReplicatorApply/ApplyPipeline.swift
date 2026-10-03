@@ -30,9 +30,10 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     var snapshot: PipelineSnapshot {
         condition.lock(); defer { condition.unlock() }; return counters
     }
-    func checkFailure(allowSourceReconnect: Bool = false) throws {
+    func checkFailure(allowSourceReconnect: Bool = false, allowDrain: Bool = false) throws {
         condition.lock(); defer { condition.unlock() }
         if let failure {
+            if allowDrain && failure is ApplyDrainRequested { return }
             // A source-only interruption cannot cancel already-journaled SQL.
             // The consumer still receives the failure and discards queued work.
             if allowSourceReconnect, let live = failure as? LiveInspectionError, live.isRetryableSourceFailure { return }

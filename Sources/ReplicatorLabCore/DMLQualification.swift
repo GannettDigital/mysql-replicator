@@ -74,6 +74,17 @@ public enum DMLQualification {
             }
             throw LabError("applier did not start capture")
         }
+        func waitProgress(_ name: String, _ predicate: ([String:Any]) -> Bool) throws {
+            let deadline=Date().addingTimeInterval(45)
+            while Date() < deadline {
+                let logs=try docker(["logs",name])
+                let records=logs.stdout.split(separator:10).compactMap { try? JSONSerialization.jsonObject(with:Data($0)) as? [String:Any] }
+                if records.contains(where:predicate) { return }
+                try require(docker(["inspect",name,"--format","{{.State.Running}}"]).text == "true","reconnect client stopped: "+String(decoding:logs.stderr,as:UTF8.self))
+                Thread.sleep(forTimeInterval:0.1)
+            }
+            throw LabError("reconnect progress timeout")
+        }
         func state(_ label: String,_ sql: String) throws -> String {
             // Called only after the writer exits. Never share live SQLite WAL
             // files or locks between the host and Docker's VM.
@@ -223,18 +234,129 @@ public enum DMLQualification {
                 _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(after.file)',SOURCE_LOG_POS=\(after.position)")
                 report["dml_matrix"]="passed"
             }
-            if !ddl && selection.includes("reconnect") {
-                func waitProgress(_ name: String, _ predicate: ([String:Any]) -> Bool) throws {
-                    let deadline=Date().addingTimeInterval(45)
-                    while Date() < deadline {
-                        let logs=try docker(["logs",name])
-                        let records=logs.stdout.split(separator:10).compactMap { try? JSONSerialization.jsonObject(with:Data($0)) as? [String:Any] }
-                        if records.contains(where:predicate) { return }
-                        try require(docker(["inspect",name,"--format","{{.State.Running}}"]).text == "true","reconnect client stopped: "+String(decoding:logs.stderr,as:UTF8.self))
-                        Thread.sleep(forTimeInterval:0.1)
-                    }
-                    throw LabError("reconnect progress timeout")
+            if !ddl && selection.includes("target-reconnect") {
+                func targetConfig(_ label: String, count: Int) throws -> [String:Any] {
+                    var config=configuration(label,at:try h.boundary("source"),count:count)
+                    config["targetReconnect"]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60]
+                    return config
                 }
+                func killWriter() throws {
+                    let id=try h.sql("target57","SELECT ID FROM information_schema.PROCESSLIST WHERE USER='apply_fixture'")
+                    try require(Int(id) != nil,"missing unique target writer")
+                    _ = try h.sql("target57","KILL CONNECTION "+id)
+                }
+                func waitPartial(_ table: String) throws {
+                    let deadline=Date().addingTimeInterval(30)
+                    while true {
+                        let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='\(table)'")) ?? 0
+                        if (1..<8000).contains(writes) { return }
+                        try require(writes < 8000 && Date() < deadline,"missed active target group")
+                        Thread.sleep(forTimeInterval:0.02)
+                    }
+                }
+                for service in h.services {
+                    let engine=service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.target_reconnect(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine); CREATE TABLE poc.target_drain(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine); CREATE TABLE poc.target_uncertain(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
+                }
+                let safe=try start(QualificationCase("target-reconnect","Reconnect after idle socket loss and target restart without replaying acknowledged writes"),targetConfig("target-reconnect",count:3))
+                try waitForReader(safe)
+                _ = try h.sql("source","INSERT INTO poc.target_reconnect VALUES(1,10)")
+                try waitProgress(safe) { $0["transactionsApplied"] as? Int == 1 }
+                try killWriter()
+                try waitProgress(safe) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                try waitForReader(safe)
+                _ = try h.sql("source","UPDATE poc.target_reconnect SET v=11 WHERE id=1")
+                try waitProgress(safe) { $0["transactionsApplied"] as? Int == 2 }
+                _ = try h.compose(["stop","-t","30","target57"])
+                try waitProgress(safe) { ($0["targetReconnectAttempts"] as? Int ?? 0) >= 2 }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","target57"],timeout:150)
+                try waitForReader(safe)
+                _ = try h.sql("source","INSERT INTO poc.target_reconnect VALUES(2,20)")
+                let safeResult=try finish(safe,"target-reconnect",success:true)
+                try require((safeResult["targetReconnectAttempts"] as? Int ?? 0) >= 2,"target reconnect not exercised")
+                try require(h.sql("target57","SELECT id,v FROM poc.target_reconnect ORDER BY id") == "1\t11\n2\t20","target reconnect rows differ")
+                try require(state("target-reconnect","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|3|3","target reconnect checkpoint differs")
+                try cases.pass("target-reconnect")
+
+                // Planned maintenance drains the already-journaled group, then
+                // a separate invocation resumes after mysqld has restarted.
+                var drainConfig=try targetConfig("target-drain",count:2)
+                drainConfig["batch"]=["maximumInsertRows":4]
+                let draining=try start(QualificationCase("target-drain","SIGUSR1 finishes active writes and saves a resumable STOPPED checkpoint"),drainConfig)
+                try waitForReader(draining)
+                _ = try h.sql("source","INSERT INTO poc.target_drain VALUES "+(1...8000).map { "(\($0),\($0))" }.joined(separator:","))
+                try waitPartial("target_drain")
+                _ = try docker(["kill","--signal","USR1",draining])
+                let drained=try finish(draining,"target-drain",success:true)
+                try require(drained["drainRequested"] as? Bool == true,"drain was not reported")
+                try require(state("target-drain","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|1|8000","drain did not finish the active group")
+                try require(state("target-drain","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "0","drain left pending writes")
+                try cases.pass("target-drain")
+                _ = try h.compose(["stop","-t","30","target57"])
+                // Resume while target is still down: initial connection attempts
+                // must retry without changing the saved applied checkpoint.
+                var resumedConfig=drainConfig
+                var resumedSource=resumedConfig["source"] as! [String:Any]; resumedSource["stopAfterTransactions"]=1; resumedConfig["source"]=resumedSource
+                let resumed=try start(QualificationCase("target-drain-resume","Wait for target startup and resume a drained checkpoint"),resumedConfig,initialize:false)
+                try waitProgress(resumed) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","target57"],timeout:150)
+                try waitForReader(resumed)
+                _ = try h.sql("source","UPDATE poc.target_drain SET v=v+1 WHERE id=1")
+                _ = try finish(resumed,"target-drain-resume",success:true)
+                try require(h.sql("target57","SELECT COUNT(*),SUM(v) FROM poc.target_drain") == "8000\t32004001","drained resume duplicated or lost rows")
+                try cases.pass("target-drain-resume")
+
+                let waiting=try start(QualificationCase("target-backoff-drain","Drain exits cleanly while the target is unavailable"),targetConfig("target-backoff-drain",count:1))
+                try waitProgress(waiting) { $0["lifecycle"] as? String == "RUNNING" }
+                try waitForReader(waiting)
+                _ = try h.compose(["stop","-t","30","target57"])
+                try waitProgress(waiting) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                _ = try docker(["kill","--signal","USR1",waiting])
+                _ = try finish(waiting,"target-backoff-drain",success:true)
+                try require(state("target-backoff-drain","SELECT lifecycle||'|'||transactions_applied FROM state") == "STOPPED|0","target backoff drain was not clean")
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","target57"],timeout:150)
+                try cases.pass("target-backoff-drain")
+
+                // Discover first, then hold a table lock until the applier has
+                // submitted INSERT. Kill that socket while its result is unknown.
+                var uncertainConfig=try targetConfig("target-uncertain",count:2)
+                uncertainConfig["batch"]=["maximumInsertRows":4]
+                let uncertain=try start(QualificationCase("target-uncertain","Lost mutation reply blocks and preserves statement/row evidence without replay"),uncertainConfig)
+                try waitForReader(uncertain)
+                _ = try h.sql("source","INSERT INTO poc.target_uncertain VALUES(0,0)")
+                try waitProgress(uncertain) { $0["transactionsApplied"] as? Int == 1 }
+                _ = try h.compose(["exec","-d","-e","MYSQL_PWD=fixture-root-only","target57","mysql","--no-defaults","-uroot","-e","LOCK TABLES poc.target_uncertain WRITE; DO SLEEP(30); UNLOCK TABLES"])
+                let lockDeadline=Date().addingTimeInterval(15)
+                while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(30)'") != "1" {
+                    try require(Date() < lockDeadline,"target blocker failed to start"); Thread.sleep(forTimeInterval:0.05)
+                }
+                _ = try h.sql("source","INSERT INTO poc.target_uncertain VALUES(1,1),(2,2),(3,3),(4,4)")
+                let queryDeadline=Date().addingTimeInterval(15)
+                while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO LIKE 'INSERT INTO%'") != "1" {
+                    try require(Date() < queryDeadline,"target mutation was not submitted"); Thread.sleep(forTimeInterval:0.05)
+                }
+                try killWriter()
+                _ = try finish(uncertain,"target-uncertain",success:false,reason:"target connection")
+                let blocker=try h.sql("target57","SELECT ID FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(30)'")
+                if Int(blocker) != nil { _ = try h.sql("target57","KILL CONNECTION "+blocker) }
+                try require(state("target-uncertain","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|1","uncertain target advanced checkpoint")
+                let diagnostic=try state("target-uncertain","SELECT diagnostic_json FROM target_failure")
+                try require(diagnostic.contains("possiblyExecuted") && diagnostic.contains("target_uncertain"),"missing target statement evidence")
+                try require(h.sql("target57","SELECT COUNT(*) FROM poc.target_uncertain") == "1","uncertain write was retried")
+                try cases.pass("target-uncertain")
+                _ = try finish(start(QualificationCase("target-uncertain-resume","Ordinary resume refuses uncertain target writes"),uncertainConfig,initialize:false),"target-uncertain-resume",success:false,reason:"cleanly STOPPED")
+                try cases.pass("target-uncertain-resume")
+                let changed=try start(QualificationCase("target-reconnect-settings","Reject incompatible target settings on reconnect"),targetConfig("target-reconnect-settings",count:1))
+                try waitProgress(changed) { $0["lifecycle"] as? String == "RUNNING" }
+                _ = try h.sql("target57","SET GLOBAL binlog_row_image=MINIMAL")
+                try killWriter()
+                _ = try finish(changed,"target-reconnect-settings",success:false,reason:"target binary logging differs")
+                _ = try h.sql("target57","SET GLOBAL binlog_row_image=FULL")
+                try require(state("target-reconnect-settings","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","changed target settings advanced progress")
+                try cases.pass("target-reconnect-settings")
+                report["target_reconnect"]="safe_disconnect_restart_drain_resume_backoff_and_uncertain_reply_passed"
+            }
+            if !ddl && selection.includes("reconnect") {
                 func killReader() throws {
                     let id=try h.sql("source","SELECT ID FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND COMMAND LIKE 'Binlog Dump%'")
                     try require(Int(id) != nil,"missing unique source reader")

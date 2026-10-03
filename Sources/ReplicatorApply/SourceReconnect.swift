@@ -17,9 +17,9 @@ public struct SourceReconnectPolicy: Decodable {
         maximumDelaySeconds = try c.decodeIfPresent(Int.self,forKey:.maximumDelaySeconds) ?? maximumDelaySeconds
         maximumAttempts = try c.decodeIfPresent(Int.self,forKey:.maximumAttempts) ?? maximumAttempts
     }
-    func validate() throws {
+    func validate(endpoint: String = "source") throws {
         try require((1...300).contains(initialDelaySeconds) && (initialDelaySeconds...300).contains(maximumDelaySeconds)
-                    && (0...10000).contains(maximumAttempts),"invalid source reconnect policy")
+                    && (0...10000).contains(maximumAttempts),"invalid \(endpoint) reconnect policy")
     }
 }
 
@@ -38,9 +38,9 @@ struct SourceRetryState {
         delay = min(policy.maximumDelaySeconds,delay*2)
         return result
     }
-    static func wait(seconds: Int, cancellation: CaptureCancellation) {
+    static func wait(seconds: Int, cancellation: CaptureCancellation, drain: CaptureCancellation? = nil) {
         let deadline = ProcessInfo.processInfo.systemUptime+Double(seconds)
-        while !cancellation.isCancelled {
+        while !cancellation.isCancelled && drain?.isCancelled != true {
             let remaining = deadline-ProcessInfo.processInfo.systemUptime
             if remaining <= 0 { return }
             Thread.sleep(forTimeInterval:min(0.05,remaining))

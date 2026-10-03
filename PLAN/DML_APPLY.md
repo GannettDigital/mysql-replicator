@@ -7,8 +7,9 @@ initial prototype rewrites. Broader coverage follows the [DDL completeness plan]
 Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.json`
 can exclude the single captured failed group before any target write intent;
 see [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
-Source-only transport interruptions reconnect automatically from the durable applied
-checkpoint; see [source reconnect](SOURCE_RECONNECT.md). Recovery of interrupted
+Source transport interruptions and safe target disconnects reconnect from the durable
+applied checkpoint; see [source reconnect](SOURCE_RECONNECT.md) and
+[target reconnect and drain](TARGET_RECONNECT.md). Recovery of interrupted
 processes or uncertain target writes remains unimplemented.
 Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
@@ -165,7 +166,8 @@ Target preflight checks every native channel and performance_schema worker/recei
 state, failing on missing privileges or indeterminate results. This initial version
 rejects even retained stopped channels; explicit stopped-channel adoption is later
 work. It acquires one server-wide advisory writer lock on the single target
-connection, which never reconnects or releases that lock during the run.
+connection. Safe target reconnect destroys that session and reacquires ownership
+on a fresh connection before applying; see [target reconnect](TARGET_RECONNECT.md).
 Ownership/channel checks also run at DDL barriers, but not for every DML group.
 The target is a dedicated replica: DBAs must exclude target-local writes, DDL,
 grant changes and administrative native starts during application. Native
@@ -276,8 +278,8 @@ Baseline GTIDs are externally asserted coverage; initialization does not count t
 as work performed by this process or claim a locally verified applied position.
 Received relay bytes, a pending group and completed target writes are distinct.
 If a later row fails, earlier MyISAM mutations remain; only fully acknowledged
-groups advance the checkpoint, and the journal records partial work. Failures set
-BLOCKED where storage is writable and exit nonzero. An uncertain SQL outcome closes
+groups advance the checkpoint, and the journal records partial work. Safe source/target
+transport failures reconnect; other failures set BLOCKED where storage is writable and exit nonzero. An uncertain SQL outcome closes
 its connection and is never automatically retried. A target/host crash can lose
 MyISAM data despite durable local metadata; there is no crash-safe recovery claim.
 DBA reconciliation must use a consistent source snapshot and matching GTID boundary,

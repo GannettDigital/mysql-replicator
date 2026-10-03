@@ -26,6 +26,12 @@
     "nativeAutoStartDisabled": true,
     "explicitTableLocks": false
   },
+  "targetReconnect": {
+    "enabled": true,
+    "initialDelaySeconds": 1,
+    "maximumDelaySeconds": 30,
+    "maximumAttempts": 0
+  },
   "sourceReconnect": {
     "enabled": true,
     "initialDelaySeconds": 1,

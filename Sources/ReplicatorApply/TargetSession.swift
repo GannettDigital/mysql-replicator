@@ -9,6 +9,7 @@ final class TargetSession {
     let group: MultiThreadedEventLoopGroup
     let connection: MySQLConnection
     let timings: StageTimings
+    var statementTrace = TargetStatementTrace()
     var lockEpoch = TableLockEpoch()
     let config: ApplyConfiguration
     init(configuration: ApplyConfiguration,password: String, timings: StageTimings = .init()) throws {
@@ -23,26 +24,39 @@ final class TargetSession {
             let address = try c.unixSocket.map { try SocketAddress(unixDomainSocketPath:$0) }
                 ?? SocketAddress.makeAddressResolvingHost(c.host!,port:c.port!)
             connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.requireTLS ? tls : nil,serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
-        } catch { try? group.syncShutdownGracefully(); throw error }
+        } catch {
+            try? group.syncShutdownGracefully()
+            let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT
+            if isTargetTransportFailure(error) || missingSocket { throw TargetConnectionFailure(description:"target connection unavailable") }
+            throw error
+        }
     }
     deinit { try? connection.close().wait(); try? group.syncShutdownGracefully() }
     func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
         if config.applierProfiling != true { return try body() }
         return try timings.measure("apply.detail." + stage,body)
     }
+    func checkConnection() throws {
+        if connection.isClosed { throw TargetConnectionFailure(description:"target connection closed") }
+    }
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
-    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10) throws -> ([MySQLRow],UInt64?) {
+    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false) throws -> ([MySQLRow],UInt64?) {
+        try checkConnection()
         let timer = connection.eventLoop.scheduleTask(in:.seconds(Int64(timeoutSeconds))) { _ = self.connection.close() }
         defer { timer.cancel() }
         var affected: UInt64?
+        if mutation { statementTrace = TargetStatementTrace(phase:.possiblyExecuted,sql:sql) }
         do {
             let rows = try timings.measure("target.sql") {
                 try profile(textProtocol ? "sql.text" : "sql.prepared") {
                     try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
                 }
             }
+            if mutation { statementTrace.phase = .acknowledged }
             return (rows,affected)
+        } catch let e where isTargetTransportFailure(e) {
+            throw TargetConnectionFailure(description:"target connection interrupted")
         } catch let e as MySQLError {
             switch e {
             case .duplicateEntry: throw ApplyError("target SQL error 1062 (duplicate key)")
@@ -76,7 +90,9 @@ final class TargetSession {
         guard let packet = Int(try scalar("SELECT @@max_allowed_packet AS v") ?? ""), packet >= 4096 else { throw ApplyError("invalid target packet limit") }
         insertByteLimit = min(config.batchPolicy.maximumInsertBytes,packet/2)
         try nativeExclusion()
-        try require(try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v") == "1","target already has a Swift writer")
+        let ownership=try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v")
+        if ownership == "0" { throw TargetConnectionFailure(description:"waiting for target writer ownership") }
+        try require(ownership == "1","target writer ownership is indeterminate")
         try nativeExclusion()
         _ = try query("SET @@SESSION.GTID_NEXT = 'AUTOMATIC'")
         _ = try query("SET SESSION autocommit=1")
@@ -211,7 +227,7 @@ final class TargetSession {
     }
     func lock(_ table: ApplyTable) throws {
         // GET_LOCK belongs to this connection until explicit release or session
-        // death. This session never releases it or reconnects after an error.
+        // death. Reconnect creates a new session and must acquire ownership again.
         if !config.target.explicitTableLocks {
             if validatedPlans[table.identity]?.table != table { try verifySchema(table) }
             return
@@ -306,7 +322,7 @@ final class TargetSession {
         default: throw ApplyError("unsupported mutation")
         }
         let binds = try profile("target.bind") { try values.map(bind) }
-        let result = try query(sql,binds)
+        let result = try query(sql,binds,mutation:true)
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
         // A successful statement with the expected affected-row count is the
@@ -322,7 +338,7 @@ final class TargetSession {
             try require(mutations.reduce(0) { $0+DMLExecution.insertBytes($1) } <= insertByteLimit,"INSERT chunk exceeds packet budget")
             let plan = try sqlPlan(first.table)
             let binds = try profile("target.bind") { try mutations.flatMap { try $0.row.after!.map(bind) } }
-            let result = try query(plan.insertSQL(rows:mutations.count),binds)
+            let result = try query(plan.insertSQL(rows:mutations.count),binds,mutation:true)
             try require(result.1 == UInt64(mutations.count),"unexpected multi-row INSERT affected-row count")
         }
     }

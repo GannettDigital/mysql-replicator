@@ -31,7 +31,7 @@ final class StateStore {
     private var statements: SQLiteStatementCache?
     private var relay: FileHandle?
     private var writerLock: FileHandle?
-    private var targetUUID: String?
+    private(set) var targetUUID: String?
     private var baseline: BinlogCoordinate?
     var currentSchemas: [ApplyTable] { schemas.values.map { $0.1 } }
     private(set) var relayLength: UInt64 = 0
@@ -614,7 +614,7 @@ final class StateStore {
         try execute("UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
         try checkpoint()
     }
-    /// In-process source reconnect only. Never resolve uncertain target writes
+    /// In-process reconnect/drain only. Never resolve uncertain target writes
     /// or reopen crashed state here. Retain the journaled, fully applied prefix.
     func discardUnappliedCapture() throws {
         try require(pendingGTID == nil && pendingBatch.isEmpty,"cannot reconnect with pending target intents")
@@ -626,6 +626,25 @@ final class StateStore {
         try relay!.seek(toOffset:groupStart)
         try timings.measure("relay.sync") { try relay!.synchronize() }
         try execute("UPDATE state SET durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
+    }
+    /// Caller must prove no mutation was issued for any remaining group.
+    /// Never used on process restart, ambiguous SQL, or a partially applied group.
+    func discardUnwrittenPending() throws {
+        try require(try number("SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND gtid IN (SELECT gtid FROM groups WHERE status='PENDING')") == 0,
+                    "cannot discard a partially acknowledged group")
+        try atomic {
+            try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
+            try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
+            try execute("DELETE FROM groups WHERE status='PENDING'")
+            try execute("UPDATE state SET active_gtid=NULL,updated_at=? WHERE id=1",[timestamp()])
+        }
+        pendingGTID=nil; pendingBatch=[]
+    }
+    func recordTargetFailure(_ diagnostic: TargetFailureDiagnostic) throws {
+        let data=try JSONEncoder().encode(diagnostic)
+        // Failure-only evidence: no extra SQLite commits in the apply hot path.
+        try execute("CREATE TABLE IF NOT EXISTS target_failure (id INTEGER PRIMARY KEY CHECK(id=1),diagnostic_json TEXT NOT NULL,created_at TEXT NOT NULL)")
+        try execute("INSERT OR REPLACE INTO target_failure VALUES(1,?,?)",[String(decoding:data,as:UTF8.self),timestamp()])
     }
     func block(_ reason: String) throws {
         try timings.measure("relay.sync") { try relay!.synchronize() }

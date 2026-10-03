@@ -480,7 +480,7 @@ extension TargetSession {
         if let database=plan.database {
             guard let previous=try scalar("SELECT @@SESSION.collation_server AS v") else {throw ApplyError("missing target server collation")}
             if let collation=database.serverCollation {_ = try query("SET SESSION collation_server=?",[.init(string:collation)])}
-            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline)
+            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
             if database.serverCollation != nil {_ = try query("SET SESSION collation_server=?",[.init(string:previous)])}
             try resetDMLSession()
             try require(try databaseEncoding(database.name)==database.after,"DDL target database defaults mismatch")
@@ -488,7 +488,7 @@ extension TargetSession {
             return
         }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
-        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline)
+        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
         try resetDMLSession()
         if let after=plan.after {try require(try readSchema(database:after.database,name:after.table)==after,"DDL target after-schema mismatch")}
         if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}

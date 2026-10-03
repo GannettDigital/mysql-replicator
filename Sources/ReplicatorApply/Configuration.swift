@@ -184,6 +184,8 @@ public struct ApplyConfiguration: Decodable {
     var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
     public let batch: BatchPolicy?
+    public let targetReconnect: TargetReconnectPolicy?
+    var targetReconnectPolicy: TargetReconnectPolicy { targetReconnect ?? .init() }
     public let sourceReconnect: SourceReconnectPolicy?
     var reconnectPolicy: SourceReconnectPolicy { sourceReconnect ?? .init() }
     var batchPolicy: BatchPolicy { batch ?? .init() }
@@ -199,6 +201,7 @@ public struct ApplyConfiguration: Decodable {
         try policy.validate()
         try batchPolicy.validate()
         try reconnectPolicy.validate()
+        try targetReconnectPolicy.validate(endpoint:"target")
     }
 }
 

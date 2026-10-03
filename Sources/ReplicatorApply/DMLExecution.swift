@@ -8,8 +8,14 @@ struct DMLExecution {
     struct Outcome {
         let acknowledged: [Int]
         let failure: Error?
+        var diagnostic: TargetFailureDiagnostic? = nil
+        var discardUnwritten = false
         func record(in state: StateStore) throws {
-            do { try state.finishBatch(acknowledgedRows:acknowledged) }
+            do {
+                try state.finishBatch(acknowledgedRows:acknowledged)
+                if let diagnostic { try state.recordTargetFailure(diagnostic) }
+                if discardUnwritten { try state.discardUnwrittenPending() }
+            }
             catch {
                 if let failure { throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)") }
                 throw error
@@ -20,14 +26,17 @@ struct DMLExecution {
     static func run(_ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
                     maximumInsertRows: Int, maximumInsertBytes: Int,
                     lock: (ApplyTable) throws -> Void, write: (Mutation) throws -> Void,
-                    insert: ([Mutation]) throws -> Void, completedGroup: () throws -> Void) -> Outcome {
+                    insert: ([Mutation]) throws -> Void, completedGroup: () throws -> Void,
+                    resetTrace: () -> Void = {}, trace: () -> TargetStatementTrace = { .init(phase:.possiblyExecuted) }) -> Outcome {
         var acknowledged = Array(repeating:0,count:groups.count)
         // Each reference retains its original group and row ordinal. Chunking
         // never changes row order or moves work across a table/operation boundary.
         let rows = groups.enumerated().flatMap { index,group in group.mutations.map { (index,$0) } }
-        var cursor = 0
+        var cursor = 0, attemptedEnd = 0
         do {
             while cursor < rows.count {
+                resetTrace()
+                attemptedEnd = cursor
                 try require(!cancellation.isCancelled,"apply cancelled")
                 let first = rows[cursor].1
                 var end = cursor+1, bytes = insertBytes(first)
@@ -47,6 +56,7 @@ struct DMLExecution {
                     while size*2 <= end-cursor { size *= 2 }
                     end = cursor+size
                 }
+                attemptedEnd = end
                 if acknowledged[rows[cursor].0] == 0 { try lock(first.table) }
                 if end-cursor == 1 { try write(first) }
                 else { try insert(rows[cursor..<end].map { $0.1 }) }
@@ -62,7 +72,35 @@ struct DMLExecution {
                 cursor = end
             }
             return Outcome(acknowledged:acknowledged,failure:nil)
-        } catch { return Outcome(acknowledged:acknowledged,failure:error) }
+        } catch {
+            let statement = trace()
+            var spans: [TargetFailureDiagnostic.Rows] = []
+            for (groupIndex, group) in groups.enumerated() {
+                var ordinal = 0
+                while ordinal < group.mutations.count {
+                    let absolute = groups.prefix(groupIndex).reduce(0) { $0 + $1.mutations.count } + ordinal
+                    let disposition: String
+                    let end: Int
+                    if ordinal < acknowledged[groupIndex] {
+                        disposition = "acknowledged"; end = acknowledged[groupIndex]
+                    } else if absolute >= cursor && absolute < attemptedEnd && statement.phase != .notIssued {
+                        disposition = "possiblyExecuted"; end = min(group.mutations.count, ordinal + attemptedEnd-absolute)
+                    } else {
+                        disposition = "notIssued"; end = group.mutations.count
+                    }
+                    let table = group.mutations[ordinal].table
+                    spans.append(.init(gtid:group.id,database:table.database,table:table.table,
+                                       firstOrdinal:ordinal,count:end-ordinal,disposition:disposition))
+                    ordinal = end
+                }
+            }
+            // Only whole, entirely unissued groups can be downloaded again.
+            // A partially acknowledged group remains blocked, even on read failure.
+            let wholeGroups = zip(groups,acknowledged).allSatisfy { $1 == 0 || $1 == $0.mutations.count }
+            return Outcome(acknowledged:acknowledged,failure:error,
+                diagnostic:.init(reason:String(describing:error),statement:statement,rows:spans,ddlGTID:nil,ddlSQL:nil),
+                discardUnwritten:error is TargetConnectionFailure && statement.phase == .notIssued && wholeGroups)
+        }
     }
 
     /// Conservative bound for both prepare SQL and execute parameters. Count

@@ -34,7 +34,8 @@ func main() throws {
         run applies qualified DML/DDL; --initialize creates new state from the configured baseline.
         Without --initialize, run resumes clean STOPPED state from SQLite.
         skip excludes the captured failed GTID only when no target write intents exist; leaves STOPPED.
-        Automatic reconnect and recovery of interrupted/uncertain writes are not implemented.
+        Source and safe target reconnect are automatic; uncertain writes remain blocked.
+        Send SIGUSR1 to run to drain its active batch and exit STOPPED before target maintenance.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
         return
@@ -78,15 +79,15 @@ func main() throws {
         let config = try JSONDecoder().decode(ApplyConfiguration.self,from:readBounded(URL(fileURLWithPath:args[2])))
         guard let sourcePassword = ProcessInfo.processInfo.environment[config.source.passwordEnvironment],
               let targetPassword = ProcessInfo.processInfo.environment[config.target.passwordEnvironment] else { throw ApplyError("source or target password environment variable is unset") }
-        let cancellation = CaptureCancellation()
-        signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN)
-        let signals = [SIGINT,SIGTERM].map { number -> DispatchSourceSignal in
+        let cancellation = CaptureCancellation(), drain = CaptureCancellation()
+        signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGUSR1,SIG_IGN)
+        let signals = [SIGINT,SIGTERM,SIGUSR1].map { number -> DispatchSourceSignal in
             let source = DispatchSource.makeSignalSource(signal:number,queue:.global())
-            source.setEventHandler { cancellation.cancel() }; source.resume(); return source
+            source.setEventHandler { if number == SIGUSR1 { drain.cancel() } else { cancellation.cancel() } }; source.resume(); return source
         }
         defer { signals.forEach { $0.cancel() } }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
-        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,
+        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,
             emitProgress: { try FileHandle.standardOutput.write(contentsOf:encoder.encode($0) + Data([10])) })
         try FileHandle.standardError.write(contentsOf:encoder.encode(summary) + Data([10]))
         return

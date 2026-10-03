@@ -76,3 +76,10 @@ Remaining Phase 1 gates:
 - Complete the remaining per-pair workload inventory and publish the Phase 1 exit report. This increment is not Phase 1 completion.
 
 Source settings remain ON/ON; both targets remain OFF_PERMISSIVE/WARN. The positive native MyISAM case now passes with both positioning modes. The native multi-statement error-1837 case is an accepted expected-negative reference, so it is not necessary to make native MySQL succeed before proceeding. The initial DML subset and local BLOCKED/checkpoint journal are now implemented; full apply/storage/recovery qualification remains open.
+
+## Target reconnect and planned maintenance
+
+Safe target reconnect, SIGUSR1 drain, and failure-only execution diagnostics are
+implemented; see [TARGET_RECONNECT.md](TARGET_RECONNECT.md). This supersedes older
+blanket statements that target disconnects always block. Uncertain writes,
+partially acknowledged groups, and process-crash recovery remain fail-stop.
