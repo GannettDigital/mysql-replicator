@@ -35,7 +35,7 @@ use profiling::{Profile, ProfileOutput};
 
 const MAX_COLUMNS: usize = 256;
 const MAX_ROWS: usize = 4096;
-const MAX_TABLES: usize = 64;
+const MAX_TABLES: usize = 1024;
 const MAX_TABLE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_VALUE: usize = 1024 * 1024;
 const MAX_OUTPUT: usize = 16 * 1024 * 1024;
@@ -96,6 +96,7 @@ pub struct ColumnView {
     name: Bytes,
     metadata: Bytes,
     unsigned_flag: u32,
+    labels: Bytes,
 }
 struct MapColumn {
     kind: u32,
@@ -107,6 +108,7 @@ struct MapColumn {
     name: Vec<u8>,
     metadata: Vec<u8>,
     unsigned_flag: u32,
+    labels: Vec<u8>,
 }
 #[repr(C)]
 pub struct ValueView {
@@ -295,6 +297,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING | MYSQL_TYPE_BLOB => {
             kind == 4 || kind == 5
         }
+        MYSQL_TYPE_ENUM | MYSQL_TYPE_SET => kind == 3,
         MYSQL_TYPE_NEWDECIMAL => kind == 6,
         MYSQL_TYPE_DATE
         | MYSQL_TYPE_NEWDATE
@@ -319,6 +322,16 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING => {
             ensure(meta.len() == 2, MALFORMED, "invalid string metadata")?
         }
+        MYSQL_TYPE_ENUM | MYSQL_TYPE_SET => ensure(
+            meta.len() == 2
+                && if ty == MYSQL_TYPE_ENUM {
+                    matches!(meta[1], 1 | 2)
+                } else {
+                    (1..=8).contains(&meta[1])
+                },
+            MALFORMED,
+            "invalid ENUM/SET metadata",
+        )?,
         MYSQL_TYPE_BLOB => ensure(
             meta.len() == 1 && (1..=4).contains(&meta[0]),
             MALFORMED,
@@ -379,6 +392,15 @@ fn image<'a>(
         let kind = table.kinds[index];
         let ty = check_column(&table.event, index, kind)?;
         let meta = table.event.get_column_metadata(index).unwrap_or(&[]);
+        if ty == ColumnType::MYSQL_TYPE_ENUM || ty == ColumnType::MYSQL_TYPE_SET {
+            let raw = take(&mut buf.0, meta[1] as usize)?;
+            let mut value = 0u64;
+            for (shift, byte) in raw.iter().enumerate() {
+                value |= u64::from(*byte) << (shift * 8);
+            }
+            values.push(Cell::Unsigned(value));
+            continue;
+        }
         if kind == 6 || kind == 7 {
             let cell = scalars::decode(ty, meta, kind, buf)?;
             let size = match &cell {
@@ -425,8 +447,35 @@ fn image<'a>(
                         MALFORMED,
                         "invalid UTF-8 for historical text column",
                     )?;
+                    let mut v = v;
+                    // CHAR storage pads spaces; match the target session's
+                    // normal (non-PAD_CHAR_TO_FULL_LENGTH) CHAR read semantics.
+                    if ty == ColumnType::MYSQL_TYPE_STRING {
+                        while v.last() == Some(&b' ') {
+                            v.pop();
+                        }
+                    }
                     Cell::Text(v)
                 } else {
+                    let mut v = v;
+                    if ty == ColumnType::MYSQL_TYPE_STRING {
+                        // Field_string::pack can omit BINARY's trailing zero
+                        // padding. Restore the declared width as MySQL unpack does.
+                        let width =
+                            usize::from(meta[1]) | (usize::from((meta[0] & 0x30) ^ 0x30) << 4);
+                        ensure(
+                            v.len() <= width,
+                            MALFORMED,
+                            "fixed binary exceeds declared width",
+                        )?;
+                        *budget += width - v.len();
+                        ensure(
+                            *budget <= MAX_OUTPUT,
+                            LIMIT,
+                            "decoded output limit exceeded",
+                        )?;
+                        v.resize(width, 0);
+                    }
                     Cell::Binary(v)
                 }
             }
@@ -675,6 +724,9 @@ impl Decoder {
                     let mut seen = std::collections::HashSet::new();
                     let mut charset = false;
                     let mut primary = false;
+                    let mut enum_charset = false;
+                    let mut enum_labels: Vec<Vec<u8>> = Vec::new();
+                    let mut set_labels: Vec<Vec<u8>> = Vec::new();
                     for field in table.iter_optional_meta() {
                         let field = parsed(field)?;
                         ensure(
@@ -688,6 +740,49 @@ impl Decoder {
                                 ensure(!charset, MALFORMED, "conflicting charset metadata")?;
                                 charset = true;
                             }
+                            OptionalMetadataField::EnumAndSetDefaultCharset(_)
+                            | OptionalMetadataField::EnumAndSetColumnCharset(_) => {
+                                ensure(
+                                    !enum_charset,
+                                    MALFORMED,
+                                    "conflicting ENUM/SET charset metadata",
+                                )?;
+                                enum_charset = true;
+                            }
+                            OptionalMetadataField::EnumStrValue(ref values) => {
+                                for column in values.iter_values() {
+                                    let column = parsed(column)?;
+                                    ensure(
+                                        (1..=65535).contains(&column.num_variants()),
+                                        LIMIT,
+                                        "ENUM label count exceeded",
+                                    )?;
+                                    let mut packed = Vec::new();
+                                    for label in column.values() {
+                                        let raw = label.value_raw();
+                                        packed.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+                                        packed.extend_from_slice(raw);
+                                    }
+                                    enum_labels.push(packed);
+                                }
+                            }
+                            OptionalMetadataField::SetStrValue(ref values) => {
+                                for column in values.iter_values() {
+                                    let column = parsed(column)?;
+                                    ensure(
+                                        (1..=64).contains(&column.num_variants()),
+                                        LIMIT,
+                                        "SET label count exceeded",
+                                    )?;
+                                    let mut packed = Vec::new();
+                                    for label in column.values() {
+                                        let raw = label.value_raw();
+                                        packed.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+                                        packed.extend_from_slice(raw);
+                                    }
+                                    set_labels.push(packed);
+                                }
+                            }
                             OptionalMetadataField::SimplePrimaryKey(_)
                             | OptionalMetadataField::PrimaryKeyWithPrefix(_) => {
                                 ensure(!primary, MALFORMED, "conflicting primary key metadata")?;
@@ -699,6 +794,11 @@ impl Decoder {
                     let optional = parsed(OptionalMetaExtractor::new(table.iter_optional_meta()))?;
                     let mut signedness = optional.iter_signedness();
                     let mut charsets = optional.iter_charset();
+                    let mut enum_charsets = optional.iter_enum_and_set_charset();
+                    let has_enum_labels = !enum_labels.is_empty();
+                    let has_set_labels = !set_labels.is_empty();
+                    let mut enum_labels = enum_labels.into_iter();
+                    let mut set_labels = set_labels.into_iter();
                     let names = optional
                         .iter_column_name()
                         .take(n + 1)
@@ -726,6 +826,7 @@ impl Decoder {
                             .ok_or((MALFORMED, "missing column type"))?;
                         let numeric = ty.is_numeric_type();
                         let scalar_kind = match ty as u8 {
+                            247 | 248 => 3,
                             246 => 6,
                             10 | 14 | 13 | 17 | 18 | 19 => 7,
                             _ => {
@@ -742,7 +843,23 @@ impl Decoder {
                         let mut kind = if scalar_kind >= 6 { scalar_kind } else { 0 };
                         let mut unsigned_flag = 0;
                         let mut collation = 0;
-                        if numeric {
+                        let is_enum = ty as u8 == 247;
+                        let is_set = ty as u8 == 248;
+                        let mut labels = Vec::new();
+                        if is_enum || is_set {
+                            kind = 3;
+                            if let Some(charset) = enum_charsets.next() {
+                                collation = parsed(charset)? as u32;
+                            }
+                            let (has_labels, next) = if is_enum {
+                                (has_enum_labels, enum_labels.next())
+                            } else {
+                                (has_set_labels, set_labels.next())
+                            };
+                            if has_labels {
+                                labels = next.ok_or((MALFORMED, "missing ENUM/SET labels"))?;
+                            }
+                        } else if numeric {
                             if let Some(unsigned) = signedness.next() {
                                 unsigned_flag = if unsigned { 2 } else { 1 };
                                 if scalar_kind < 6 {
@@ -767,8 +884,10 @@ impl Decoder {
                             }
                         }
                         let meta = table.get_column_metadata(i).unwrap_or(&[]);
-                        let maximum_bytes = if ty as u8 == 15 && meta.len() == 2 {
+                        let maximum_bytes = if matches!(ty as u8, 15 | 253) && meta.len() == 2 {
                             u16::from_le_bytes([meta[0], meta[1]]) as u32
+                        } else if ty as u8 == 254 && meta.len() == 2 {
+                            u32::from(meta[1]) | (u32::from((meta[0] & 0x30) ^ 0x30) << 4)
                         } else {
                             0
                         };
@@ -782,8 +901,15 @@ impl Decoder {
                             name: names.get(i).cloned().unwrap_or_default(),
                             metadata: meta.to_vec(),
                             unsigned_flag,
+                            labels,
                         });
                     }
+                    ensure(
+                        enum_labels.next().is_none() && set_labels.next().is_none(),
+                        MALFORMED,
+                        "excess ENUM/SET labels",
+                    )?;
+                    drop(enum_charsets);
                     drop(signedness);
                     drop(charsets);
                     drop(optional);
@@ -903,7 +1029,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    5
+    6
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
@@ -1119,6 +1245,7 @@ pub unsafe extern "C" fn rc_result_column(
             name: Bytes::new(&c.name),
             metadata: Bytes::new(&c.metadata),
             unsigned_flag: c.unsigned_flag,
+            labels: Bytes::new(&c.labels),
         };
     }
     0

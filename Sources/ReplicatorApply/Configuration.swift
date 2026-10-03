@@ -2,6 +2,9 @@ import Foundation
 import ReplicatorCapture
 import ReplicatorCodec
 
+// Keep discovery, DDL and durable schema reload bounded by the same limit.
+let maximumCachedTables = 1024
+
 public struct ApplyError: Error, CustomStringConvertible {
     public let description: String
     public init(_ message: String) { description = message }
@@ -32,7 +35,7 @@ public struct ApplyColumn: Codable, Equatable {
         let parsed = try DMLColumnType(type)
         try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
         if extra == "auto_increment" { try require(parsed.integerBits != nil && !nullable,"invalid auto-increment column") }
-        if interpretation == .utf8 {
+        if parsed.isText {
             try require(characterSet == nil || characterSet == "utf8mb4", "unsupported discovered character set; no charset conversion is performed")
             try require(["utf8mb4_bin","utf8mb4_unicode_ci","utf8mb4_general_ci"].contains(collation ?? ""), "unsupported varchar collation")
         } else { try require(collation == nil && characterSet == nil, "encoding on non-text column") }
@@ -57,12 +60,25 @@ public struct ApplyTable: Codable, Equatable {
     public let database: String
     public let table: String
     public let columns: [ApplyColumn]
-    public let primaryKey: String
+    public let primaryKeyColumns: [String]
+    /// Legacy single-key convenience for callers constructing a one-column schema.
+    public var primaryKey: String { primaryKeyColumns[0] }
     public var defaultCharacterSet: String? = nil
     public var defaultCollation: String? = nil
     public var secondaryIndexes: [ApplyIndex] = []
     var identity: String { database + "\0" + table }
-    var keyIndex: Int { columns.firstIndex { $0.name == primaryKey }! }
+    var keyIndexes: [Int] { primaryKeyColumns.map { name in columns.firstIndex { $0.name == name }! } }
+    var keyIndex: Int { keyIndexes[0] }
+    init(database: String, table: String, columns: [ApplyColumn], primaryKey: String,
+         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = []) {
+        self.init(database:database,table:table,columns:columns,primaryKeyColumns:[primaryKey],
+                  defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes)
+    }
+    init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String],
+         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = []) {
+        self.database=database; self.table=table; self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
+        self.defaultCharacterSet=defaultCharacterSet; self.defaultCollation=defaultCollation; self.secondaryIndexes=secondaryIndexes
+    }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
     func validate() throws {
         _ = try sqlName
@@ -78,23 +94,40 @@ public struct ApplyTable: Codable, Equatable {
                 if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
             }
         }
-        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{$0.name == primaryKey},"auto-increment requires the primary key")
-        guard let key = columns.first(where:{$0.name == primaryKey}) else { throw ApplyError("missing primary key column") }
-        try require(!key.nullable && [.signed,.unsigned].contains(key.interpretation),"initial applier requires one nonnullable integer primary key")
+        try require((1...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns).count == primaryKeyColumns.count,"invalid primary-key columns")
+        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{primaryKeyColumns.contains($0.name)},"auto-increment requires a primary-key column")
+        for name in primaryKeyColumns {
+            guard let key = columns.first(where:{$0.name == name}) else { throw ApplyError("missing primary key column") }
+            let type = try DMLColumnType(key.type)
+            try require(!key.nullable && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob"),"primary key requires full nonnullable supported scalar columns")
+        }
     }
 }
 extension ApplyTable {
-    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,defaultCharacterSet,defaultCollation,secondaryIndexes }
+    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,defaultCharacterSet,defaultCollation,secondaryIndexes }
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
-        columns=try c.decode([ApplyColumn].self,forKey:.columns); primaryKey=try c.decode(String.self,forKey:.primaryKey)
+        columns=try c.decode([ApplyColumn].self,forKey:.columns)
+        if let names = try c.decodeIfPresent([String].self,forKey:.primaryKeyColumns) {
+            try require(!c.contains(.primaryKey),"ambiguous primary-key schema")
+            primaryKeyColumns=names
+        } else { primaryKeyColumns=[try c.decode(String.self,forKey:.primaryKey)] }
         defaultCharacterSet=try c.decodeIfPresent(String.self,forKey:.defaultCharacterSet)
         defaultCollation=try c.decodeIfPresent(String.self,forKey:.defaultCollation)
         secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
     }
+    public func encode(to encoder: Encoder) throws {
+        var c=encoder.container(keyedBy:CodingKeys.self)
+        try c.encode(database,forKey:.database); try c.encode(table,forKey:.table); try c.encode(columns,forKey:.columns)
+        if primaryKeyColumns.count == 1 { try c.encode(primaryKey,forKey:.primaryKey) }
+        else { try c.encode(primaryKeyColumns,forKey:.primaryKeyColumns) }
+        try c.encodeIfPresent(defaultCharacterSet,forKey:.defaultCharacterSet)
+        try c.encodeIfPresent(defaultCollation,forKey:.defaultCollation)
+        try c.encode(secondaryIndexes,forKey:.secondaryIndexes)
+    }
     func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil) -> ApplyTable {
-        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKey:primaryKey,
+        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKeyColumns,
             defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
             secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()})
     }

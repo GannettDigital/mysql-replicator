@@ -103,7 +103,7 @@ final class TargetSession {
             let table: ApplyTable
             if let cached = discovered[identity] { table = cached }
             else {
-                try require(discovered.count < 64,"discovered schema limit reached")
+                try require(discovered.count < maximumCachedTables,"discovered schema limit reached")
                 // Discovery is a drained barrier. Release any prior table lock
                 // before querying metadata for a previously unseen table.
                 try unlock()
@@ -126,7 +126,7 @@ final class TargetSession {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
             let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
             let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
-            try require(keys.count == 1,"discovered target requires a single primary-key column")
+            try require((1...16).contains(keys.count),"discovered target requires a primary key with 1 to 16 columns")
             var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
                 guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
                 var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
@@ -134,10 +134,10 @@ final class TargetSession {
                 column.defaultValue=row.column("COLUMN_DEFAULT")?.string
                 column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
                 return column
-            },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
+            },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
             let encoding=try tableEncoding(TableName(database:database,table:name))
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
-            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKey)
+            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKeyColumns)
             try table.validate(); try verifySchema(table)
             return table
         }
@@ -145,7 +145,7 @@ final class TargetSession {
     private func normalizeType(_ type: String) -> String {
         type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
-    func readIndexes(database:String,name:String,primaryKey:String) throws -> [ApplyIndex] {
+    func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
         let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
         var indexes:[ApplyIndex]=[], primary=0
         for row in rows {
@@ -155,7 +155,7 @@ final class TargetSession {
             let prefix=row.column("SUB_PART")?.int
             if name == "PRIMARY" {
                 primary += 1
-                try require(primary == 1 && column == primaryKey && ordinal == 1 && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
+                try require(primary <= primaryKey.count && column == primaryKey[primary-1] && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
             } else {
                 let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction)
                 if let previous=indexes.last, previous.name == name {
@@ -167,13 +167,13 @@ final class TargetSession {
                 }
             }
         }
-        try require(primary == 1,"missing primary-key index")
+        try require(primary == primaryKey.count,"missing primary-key index")
         return indexes.sorted{$0.name.lowercased() < $1.name.lowercased()}
     }
     func verifySchema(_ t: ApplyTable) throws {
         validatedPlans.removeValue(forKey:t.identity)
         try timings.measure("target.schema") { try verifyTargetSchema(t) }
-        try require(validatedPlans.count < 64,"validated schema limit reached")
+        try require(validatedPlans.count < maximumCachedTables,"validated schema limit reached")
         validatedPlans[t.identity] = try DMLSQLPlan(t)
     }
     private func verifyTargetSchema(_ t: ApplyTable) throws {
@@ -188,7 +188,7 @@ final class TargetSession {
         for (r,c) in zip(columns,t.columns) {
             try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue,"target schema differs from historical manifest")
         }
-        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKey) == t.secondaryIndexes,"target indexes differ from historical schema")
+        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
         try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
         try require(try query("SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL",binds).0.isEmpty,"partitioned target tables are unsupported")
@@ -253,12 +253,12 @@ final class TargetSession {
         case .absent: throw ApplyError("absent full row value")
         }
     }
-    func read(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
+    func read(_ t: ApplyTable, key: [DecodedValue]) throws -> [DecodedValue]? {
         try timings.measure("target.read") { try readRow(t,key:key) }
     }
-    private func readRow(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
+    private func readRow(_ t: ApplyTable, key: [DecodedValue]) throws -> [DecodedValue]? {
         let plan = try sqlPlan(t)
-        let rows = try query(plan.select,[try bind(key)]).0
+        let rows = try query(plan.select,try key.map(bind)).0
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
         guard let row = rows.first else { return nil }
         return try profile("target.decode_result") {
@@ -284,21 +284,25 @@ final class TargetSession {
     }
     private func applyRow(_ m: Mutation) throws {
         let t = m.table, row = m.row, plan = try sqlPlan(t)
-        let keyIndex = plan.keyIndex
-        let oldKey = (row.before ?? row.after!)[keyIndex]
+        let oldImage = row.before ?? row.after!
+        let oldKey = plan.keyIndexes.map { oldImage[$0] }
         // Plain INSERT enforces primary and secondary unique keys atomically.
         // No IGNORE/REPLACE/upsert: duplicate keys still block the pending group.
         if row.operation != "insert" {
             try require(exactImage(try read(t,key:oldKey),row.before),"target before-image mismatch or missing row")
         }
-        if let before = row.before, let after = row.after, before[keyIndex] != after[keyIndex] {
-            try require(try read(t,key:after[keyIndex]) == nil,"updated primary key already exists")
+        if let before = row.before, let after = row.after {
+            let newKey = plan.keyIndexes.map { after[$0] }
+            if !exactImage(oldKey,newKey), let existing = try read(t,key:newKey) {
+                // A case/padding-equivalent text key may resolve to the same row.
+                try require(exactImage(existing,before),"updated primary key already exists")
+            }
         }
         let sql: String, values: [DecodedValue]
         switch row.operation {
         case "insert": sql = plan.insert; values = row.after!
-        case "update": sql = plan.update; values = row.after! + [oldKey]
-        case "delete": sql = plan.delete; values = [oldKey]
+        case "update": sql = plan.update; values = row.after! + oldKey
+        case "delete": sql = plan.delete; values = oldKey
         default: throw ApplyError("unsupported mutation")
         }
         let binds = try profile("target.bind") { try values.map(bind) }

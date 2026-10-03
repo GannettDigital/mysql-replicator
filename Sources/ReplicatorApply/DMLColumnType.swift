@@ -7,7 +7,18 @@ struct DMLColumnType {
     let arguments: [Int]
     let unsigned: Bool
     let integerBits: Int?
+    let labels: [Data]
+    var isChoice: Bool { base == "enum" || base == "set" }
+    var isText: Bool { base == "char" || base == "varchar" || base.hasSuffix("text") || isChoice }
     init(_ definition: String) throws {
+        if definition.hasPrefix("enum(") || definition.hasPrefix("set(") {
+            base = definition.hasPrefix("enum(") ? "enum" : "set"
+            unsigned = false; integerBits = nil; arguments = []
+            labels = try Self.parseLabels(definition,base:base)
+            try require((1...(base == "enum" ? 65535 : 64)).contains(labels.count),"invalid ENUM/SET label count")
+            return
+        }
+        labels = []
         unsigned = definition.hasSuffix(" unsigned")
         let type = unsigned ? String(definition.dropLast(9)) : definition
         let parts = type.split(separator:"(",omittingEmptySubsequences:false)
@@ -23,6 +34,7 @@ struct DMLColumnType {
         if integerBits != nil { try require(arguments.isEmpty,"integer display width must be normalized"); return }
         try require(!unsigned || base == "decimal","unsupported unsigned column type")
         switch base {
+        case "char","binary": try require(arguments.count == 1 && (0...255).contains(arguments[0]),"unsupported fixed column width")
         case "varchar","varbinary": try require(arguments.count == 1 && (1...16383).contains(arguments[0]),"unsupported declared column type")
         case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year":
             try require(arguments.isEmpty,"unsupported column type arguments")
@@ -31,17 +43,44 @@ struct DMLColumnType {
         default: throw ApplyError("unsupported declared column type for MySQL 5.7 apply: " + definition)
         }
     }
+    private static func parseLabels(_ definition: String, base: String) throws -> [Data] {
+        let bytes=Array(definition.utf8); var index=base.utf8.count+1, result:[Data]=[]
+        while index < bytes.count {
+            try require(bytes[index] == 39,"invalid ENUM/SET label")
+            index += 1; var value=Data(), closed=false
+            while index < bytes.count {
+                let byte=bytes[index]; index += 1
+                if byte == 39 {
+                    if index < bytes.count && bytes[index] == 39 { value.append(39); index += 1 }
+                    else { closed=true; break }
+                } else if byte == 92 {
+                    try require(index < bytes.count,"truncated ENUM/SET escape")
+                    let escaped=bytes[index]; index += 1
+                    guard let decoded:[UInt8] = [48:[0],110:[10],114:[13],92:[92]][escaped] else { throw ApplyError("unsupported ENUM/SET metadata escape") }
+                    value.append(contentsOf:decoded)
+                } else { value.append(byte) }
+            }
+            try require(closed,"unterminated ENUM/SET label")
+            result.append(value)
+            try require(index < bytes.count,"unterminated ENUM/SET definition")
+            let separator=bytes[index]; index += 1
+            if separator == 41 { try require(index == bytes.count,"trailing ENUM/SET definition"); return result }
+            try require(separator == 44,"invalid ENUM/SET separator")
+        }
+        throw ApplyError("unterminated ENUM/SET definition")
+    }
     var interpretation: ColumnInterpretation {
+        if isChoice { return .unsigned }
         if integerBits != nil { return unsigned ? .unsigned : .signed }
         if base == "decimal" { return .decimal }
-        if base == "varchar" || base.hasSuffix("text") { return .utf8 }
-        if base == "varbinary" || base.hasSuffix("blob") { return .binary }
+        if base == "char" || base == "varchar" || base.hasSuffix("text") { return .utf8 }
+        if base == "binary" || base == "varbinary" || base.hasSuffix("blob") { return .binary }
         return .temporal
     }
     var maximumBytes: Int? {
         switch base {
-        case "varchar": return arguments[0]*4
-        case "varbinary": return arguments[0]
+        case "char","varchar": return arguments[0]*4
+        case "binary","varbinary": return arguments[0]
         case "tinytext","tinyblob": return 255
         case "text","blob": return 65535
         case "mediumtext","mediumblob": return 16777215
@@ -56,7 +95,10 @@ struct DMLColumnType {
             return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && wire.interpretation == interpretation
         }
         switch base {
-        case "varchar","varbinary": return code == 15 && wire.interpretation == interpretation && wire.maximumBytes == UInt32(maximumBytes!)
+        case "enum","set":
+            return code == (base == "enum" ? 247 : 248) && wire.interpretation == .unsigned && meta.count == 2 && Int(meta[1]) == (base == "enum" ? (labels.count < 256 ? 1 : 2) : (labels.count+7)/8)
+        case "char","binary": return code == 254 && wire.interpretation == interpretation && wire.maximumBytes == UInt32(maximumBytes!)
+        case "varchar","varbinary": return (code == 15 || code == 253) && wire.interpretation == interpretation && wire.maximumBytes == UInt32(maximumBytes!)
         case "tinytext","tinyblob","text","blob","mediumtext","mediumblob","longtext","longblob":
             let bytes: UInt8 = base.hasPrefix("tiny") ? 1 : base.hasPrefix("medium") ? 3 : base.hasPrefix("long") ? 4 : 2
             return code == 252 && wire.interpretation == interpretation && meta == [bytes]
@@ -68,6 +110,11 @@ struct DMLColumnType {
         }
     }
     func validate(_ value: DecodedValue) throws {
+        if isChoice {
+            guard case .unsigned(let n) = value else { throw ApplyError("ENUM/SET requires an ordinal or bitmask") }
+            try require(base == "enum" ? (n > 0 && n <= UInt64(labels.count)) : (labels.count == 64 || n < (UInt64(1) << labels.count)),"ENUM/SET value out of range")
+            return
+        }
         switch (interpretation,value) {
         case (.signed,.signed(let n)):
             let bits=integerBits!
@@ -76,8 +123,8 @@ struct DMLColumnType {
             if integerBits! < 64 { try require(n < UInt64(1) << integerBits!,"unsigned value out of range") }
         case (.utf8,.text(let s)):
             try require(s.utf8.count <= maximumBytes!,"text value exceeds declared length")
-            if base == "varchar" { try require(s.unicodeScalars.count <= arguments[0],"varchar value exceeds declared length") }
-        case (.binary,.binary(let data)): try require(data.count <= maximumBytes!,"binary value exceeds declared length")
+            if base == "varchar" || base == "char" { try require(s.unicodeScalars.count <= arguments[0],"varchar value exceeds declared length") }
+        case (.binary,.binary(let data)): try require(base == "binary" ? data.count == maximumBytes! : data.count <= maximumBytes!,"binary value differs from declared length")
         case (.decimal,.decimal(let s)):
             try require(s.range(of:#"^-?[0-9]+(?:\.[0-9]+)?$"#,options:.regularExpression) != nil,"invalid exact decimal")
             let digits=s.hasPrefix("-") ? String(s.dropFirst()) : s

@@ -164,7 +164,9 @@ public enum DMLQualification {
             report["positive"] = positive
             if !ddl && selection.includes("matrix") {
                 let session = "USE poc; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'; "
+                let originalMetadata = try h.sql("source","SELECT @@GLOBAL.binlog_row_metadata")
                 for test in DMLCompatibilityCases.cases where selection.selects("matrix-"+test.id) {
+                    _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? originalMetadata))
                     let table="poc.matrix_"+test.id
                     for service in h.services {
                         let engine=service == "source" ? "InnoDB" : "MyISAM"
@@ -172,7 +174,7 @@ public enum DMLQualification {
                     }
                     let columns=try h.sql("source","SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_\(test.id)' ORDER BY ORDINAL_POSITION").split(separator:"\n")
                     let expressions=columns.map { "IFNULL(HEX(CAST(`"+$0.replacingOccurrences(of:"`",with:"``")+"` AS BINARY)),'<NULL>')" }.joined(separator:",")
-                    let observation="SELECT \(expressions) FROM \(table) ORDER BY id"
+                    let observation="SELECT \(expressions) FROM \(table) ORDER BY \(test.orderBy)"
                     for (ordinal,phase) in test.phases.enumerated() {
                         let label="matrix-\(test.id)-\(ordinal+1)"
                         let before=try h.boundary("source")
@@ -207,8 +209,10 @@ public enum DMLQualification {
                         let engine=service == "source" ? "InnoDB" : "MyISAM"
                         _ = try h.sql(service,session+"SET SESSION sql_log_bin=0; CREATE TABLE \(table)(\(definition)) ENGINE=\(engine)")
                     }
+                    _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+test.rowMetadata)
                     let before=try h.boundary("source")
-                    _ = try h.sql("source",session+"INSERT INTO \(table) VALUES"+test.values)
+                    _ = try h.sql("source",session+test.sourceSession+"INSERT INTO \(table) VALUES"+test.values)
+                    _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+originalMetadata)
                     let client=try start(QualificationCase(label,"Reject incompatible or unqualified MySQL 5.7 target schema: "+test.id),configuration(label,at:before,count:1))
                     _ = try finish(client,label,success:false,reason:test.reason)
                     try require(h.sql("target57","SELECT COUNT(*) FROM \(table)") == "0" && state(label,"SELECT transactions_applied FROM state") == "0","rejected matrix case changed target or checkpoint")
@@ -762,6 +766,60 @@ public enum DMLQualification {
                 _ = try h.sql("native","STOP REPLICA")
                 try cases.pass("discovery")
                 report["automatic_discovery"]="multiple_tables_nonleading_keys_MINIMAL_and_FULL"
+                // The sampled fleet exceeds the former 64-table ceiling.
+                for service in h.services {
+                    let engine = service == "source" ? "InnoDB" : "MyISAM"
+                    let creates = (0..<160).map { "CREATE TABLE poc.capacity_\($0)(id INT PRIMARY KEY,v INT) ENGINE=\(engine)" }.joined(separator:";")
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; "+creates)
+                }
+                let capacity = try start(QualificationCase("table-capacity", "Discover and apply 160 tables in one session"),configuration("table-capacity",at:try h.boundary("source"),count:160))
+                try waitForReader(capacity)
+                _ = try h.sql("source",(0..<160).map { "INSERT INTO poc.capacity_\($0) VALUES(1,\($0))" }.joined(separator:";"))
+                _ = try finish(capacity,"table-capacity",success:true)
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                let capacityRows = (0..<160).map { "SELECT id,v FROM poc.capacity_\($0)" }.joined(separator:" UNION ALL ")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT COUNT(*),SUM(v) FROM ("+capacityRows+") t") == "160\t12720","many-table rows differ")
+                }
+                try require(state("table-capacity","SELECT COUNT(*) FROM schemas") == "160","many-table schemas were lost")
+                try cases.pass("table-capacity")
+
+                for service in ["native","target57"] {
+                    _ = try h.sql(service,"SET GLOBAL default_storage_engine=MyISAM")
+                }
+                var resumeConfig = configuration("composite-resume",at:try h.boundary("source"),count:2)
+                let initial = try start(QualificationCase("composite-resume-initial", "Create and persist a composite primary key at a clean stop"),resumeConfig)
+                try waitForReader(initial)
+                _ = try h.sql("source","CREATE TABLE poc.composite_resume(id INT,report_date DATE,payload CHAR(4),PRIMARY KEY(report_date,id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; INSERT INTO poc.composite_resume VALUES(7,'2026-01-01','one'),(7,'2026-01-02','two')")
+                _ = try finish(initial,"composite-resume-initial",success:true)
+                try cases.pass("composite-resume-initial")
+                _ = try h.sql("source","ALTER TABLE poc.composite_resume ADD COLUMN score INT NULL; RENAME TABLE poc.composite_resume TO poc.composite_renamed; UPDATE poc.composite_renamed SET report_date='2026-01-03',payload='new' WHERE report_date='2026-01-01' AND id=7; DELETE FROM poc.composite_renamed WHERE report_date='2026-01-02' AND id=7")
+                var resumeSource = resumeConfig["source"] as! [String:Any]
+                resumeSource["stopAfterTransactions"] = 4; resumeConfig["source"] = resumeSource
+                let resumedComposite = try start(QualificationCase("composite-resume", "Resume a composite key through ADD, RENAME and key-changing DML"),resumeConfig,initialize:false)
+                _ = try finish(resumedComposite,"composite-resume",success:true)
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT id,report_date,payload,score FROM poc.composite_renamed") == "7\t2026-01-03\tnew\tNULL","composite resume data differs")
+                }
+                try require(state("composite-resume","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|6|4","composite resume checkpoint differs")
+                try cases.pass("composite-resume")
+                for service in ["source","target57"] {
+                    let engine = service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.composite_collision(id INT,report_date DATE,v INT,PRIMARY KEY(report_date,id)) ENGINE=\(engine); INSERT INTO poc.composite_collision VALUES(7,'2026-01-01',1)")
+                }
+                _ = try h.sql("target57","INSERT INTO poc.composite_collision VALUES(7,'2026-01-02',2)")
+                let collisionStart = try h.boundary("source")
+                _ = try h.sql("source","UPDATE poc.composite_collision SET report_date='2026-01-02' WHERE report_date='2026-01-01' AND id=7")
+                let collision = try start(QualificationCase("composite-collision", "Reject a changed composite key occupied by another target row"),configuration("composite-collision",at:collisionStart,count:1))
+                _ = try finish(collision,"composite-collision",success:false,reason:"updated primary key already exists")
+                try require(h.sql("target57","SELECT report_date,v FROM poc.composite_collision ORDER BY report_date") == "2026-01-01\t1\n2026-01-02\t2","composite collision changed target rows")
+                try require(state("composite-collision","SELECT transactions_applied FROM state") == "0","composite collision advanced checkpoint")
+                try cases.pass("composite-collision")
                 // A dedicated replica retains validated schema across idle lock
                 // releases. Local schema changes during apply are unsupported.
                 for service in ["source","target57"] {
@@ -807,7 +865,7 @@ public enum DMLQualification {
                     }
                     let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
                     _ = try h.sql("source","INSERT INTO poc.\(table) VALUES(1)")
-                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "single primary-key" : "signedness")
+                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "requires a primary key" : "signedness")
                     try require(state(label,"SELECT transactions_applied FROM state") == "0","invalid schema advanced checkpoint")
                     try cases.pass(label)
                 }

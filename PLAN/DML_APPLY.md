@@ -117,8 +117,8 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   table. Multi-row events/statements and primary-key changes are supported within
   this subset. Multi-statement groups are rejected before any target mutation,
   consistent with the accepted native MyISAM expected-negative reference.
-- ASCII SQL identifiers (quoted, never interpolated unescaped); a single full,
-  nonnullable integer primary key. Named ordinary/unique BTREE secondary indexes
+- ASCII SQL identifiers (quoted, never interpolated unescaped); a primary key with 1–16 full,
+  nonnullable supported scalar columns, including DATE/integer composite keys. Named ordinary/unique BTREE secondary indexes
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
   row identity still uses the primary key. No triggers, generated
   columns or partitioned targets. Prepared targets may use an integer primary-key
@@ -131,21 +131,24 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
 - Prepared-table DML types: signed/unsigned TINYINT, SMALLINT, MEDIUMINT, INT and
   BIGINT; DECIMAL(p,s) including unsigned (precision 1–65, scale 0–30 and no greater
   than precision); DATE, YEAR, TIME/DATETIME/TIMESTAMP with fractional precision
-  0–6; VARCHAR(n), VARBINARY(n), and TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
+  0–6; CHAR(n), BINARY(n), VARCHAR(n), VARBINARY(n), ENUM, SET, and
+  TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
   Text requires utf8mb4_bin, utf8mb4_unicode_ci or utf8mb4_general_ci, matching
   source and target. A source 8.4-only collation fails rather than being substituted.
-  VARCHAR/VARBINARY lengths remain 1–16383. The decoder's 1 MiB individual-value
+  CHAR/BINARY lengths are 0–255; VARCHAR/VARBINARY lengths remain 1–16383.
+  ENUM/SET require FULL source metadata with exactly matching ordered labels.
+  ENUM error ordinal zero is rejected; a declared empty label is supported. The decoder's 1 MiB individual-value
   and event/group resource limits apply even to MEDIUM/LONG types.
   NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
   Scope/type/shape validation covers the whole source group before writing.
 
 MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
 `.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
-This is not complete 5.7 support: FLOAT/DOUBLE, BIT, CHAR/BINARY, ENUM/SET, JSON,
-spatial types, composite/noninteger primary keys and multi-statement transactions
+This is not complete 5.7 support: FLOAT/DOUBLE, BIT, JSON,
+spatial types and multi-statement transactions
 remain outside this increment. Broader type support here is for preprovisioned
-tables; the source DDL grammar is unchanged and can still reject definitions that
-would be accepted by prepared-table DML.
+tables. The source DDL grammar adds composite keys, DATE, CHAR and BINARY, but
+still rejects other definitions (including ENUM/SET) accepted by prepared-table DML.
 
 The DML matrix (`make dml-suite ARGS="--slice matrix"`) checks multi-value INSERT,
 multi-row UPDATE/DELETE, upsert, REPLACE, IGNORE, INSERT…SELECT, single-target
@@ -201,7 +204,7 @@ The source GTID remains local replication identity, never a target SQL GTID. The
 is no target transaction pretending to make MyISAM rows atomic.
 
 The applier validates schema on discovery, on clean resume and around ordered
-source DDL. Its session cache holds at most 64 validated schemas and their SQL
+source DDL. Its session cache holds at most 1,024 validated schemas and their SQL
 templates; releasing a table lock does not invalidate them. DDL clears both this
 cache and prepared statements, and following DML validates the new version.
 `target.explicitTableLocks` defaults to `false`: the applier sends no client
@@ -224,7 +227,7 @@ Ordered DDL replaces this cache after execution drains. The SQL worker owns
 separate immutable column descriptors for exact target result decoding.
 A successful SQL response with the expected count acknowledges the row; there is
 no post-write SELECT. This acknowledges MyISAM's write acceptance, not a guarantee
-of crash durability or atomicity with SQLite. Integer primary keys identify rows. Text comparisons
+of crash durability or atomicity with SQLite. Full primary-key tuples identify rows. Text comparisons
 use stored UTF-8 bytes, not collation or Swift's canonical Unicode equivalence;
 binary values and full unsigned 64-bit values remain exact. Plain INSERT relies
 on MySQL to reject duplicate primary/unique keys, without an existence SELECT;
@@ -361,3 +364,6 @@ The harness reads copied SQLite snapshots only after the writer exits. During
 a run it waits on JSON progress. The live relay/SQLite files remain inside Docker
 until copied, so the VM and host never share live WAL locks/mmap. This is harness
 coordination, not recovery qualification.
+
+See [fleet compatibility work](FLEET_COMPATIBILITY.md) for composite-key behavior,
+ENUM/SET metadata requirements and the sanitized inventory request.

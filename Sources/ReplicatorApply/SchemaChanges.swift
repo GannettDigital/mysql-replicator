@@ -29,7 +29,7 @@ extension ApplyTable {
         }
         try require(family(columns[old]) == family(column),"cross-family MODIFY is unsupported")
         var replacement=column
-        if column.name == primaryKey {
+        if primaryKeyColumns.contains(column.name) {
             replacement=ApplyColumn(name:column.name,type:column.type,nullable:false,collation:column.collation,characterSet:column.characterSet)
         }
         var next=columns;next.remove(at:old)

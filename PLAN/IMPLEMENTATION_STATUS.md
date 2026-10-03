@@ -9,7 +9,7 @@ fixtures. General DDL/type/charset coverage and recovery are still open. The ear
 prototype validation below remains tied to that checkpoint.
 
 Reviewed DML checkpoint: `d188f58`. The current follow-up implements automatic
-schema discovery (version 2 configuration), ABI 5/event JSON 4 metadata and bounded
+schema discovery (version 2 configuration), ABI 6/event JSON 4 metadata and bounded
 SQLite history. Cleanup removes covered completed records older than the minimum
 age only when storage approaches its limit. See [the implementation and storage
 policy](SCHEMA_DISCOVERY_AND_RETENTION.md). That work is committed as `e8c0e77`.

@@ -139,7 +139,8 @@ private struct DDLParser {
         let name=try identifier();let type: String
         if take("INT") || take("INTEGER") {type="int"+(take("UNSIGNED") ? " unsigned" : "")}
         else if take("BIGINT") {type="bigint"+(take("UNSIGNED") ? " unsigned" : "")}
-        else if isNext("VARCHAR") || isNext("VARBINARY") {
+        else if take("DATE") {type="date"}
+        else if isNext("VARCHAR") || isNext("VARBINARY") || isNext("CHAR") || isNext("BINARY") {
             let base=tokens[index].text.lowercased();index+=1
             try expect("(");let length=try identifier();try expect(")")
             try require(Int(length) != nil,"invalid DDL column width");type=base+"("+length+")"
@@ -162,7 +163,7 @@ private struct DDLParser {
         var column=ApplyColumn(name:name,type:type,nullable:nullable,collation:collation)
         column.characterSet=charset
         // VARCHAR defaults are resolved against the historical target schema later.
-        if !type.hasPrefix("varchar(") {try require(charset==nil,"charset on non-text column");try column.validate()}
+        if !type.hasPrefix("varchar(") && !type.hasPrefix("char(") {try require(charset==nil,"charset on non-text column");try column.validate()}
         return (column,primary)
     }
     mutating func placement() throws -> ColumnPlacement? {
@@ -227,15 +228,17 @@ private struct DDLParser {
                     result = .createLike(table,try name(),ifNotExists:conditional)
                 } else {
                     try expect("(")
-                    var columns=[ApplyColumn](),key: String?
+                    var columns=[ApplyColumn](),key: [String]?
                     repeat {
                         if take("PRIMARY") {
-                            try expect("KEY");try expect("(");let name=try identifier();try expect(")")
-                            try require(key==nil,"multiple DDL primary keys");key=name
+                            try expect("KEY");try expect("(");var names=[String]()
+                            repeat { names.append(try identifier()); try require(names.count<=16,"primary-key column limit exceeded") } while take(",")
+                            try expect(")")
+                            try require(key==nil && Set(names).count == names.count,"multiple or duplicate DDL primary keys");key=names
                         } else {
                             let (column,primary)=try column();columns.append(column)
                             try require(columns.count<=256,"DDL column limit exceeded")
-                            if primary {try require(key==nil,"multiple DDL primary keys");key=column.name}
+                            if primary {try require(key==nil,"multiple DDL primary keys");key=[column.name]}
                         }
                     } while take(",")
                     try expect(")")
@@ -259,10 +262,10 @@ private struct DDLParser {
                     }
                     guard let key else {throw ApplyError("DDL CREATE requires a primary key")}
                     columns=columns.map { c in
-                        if c.name != key {return c}
+                        if !key.contains(c.name) {return c}
                         var keyColumn=ApplyColumn(name:c.name,type:c.type,nullable:false,collation:c.collation);keyColumn.characterSet=c.characterSet;return keyColumn
                     }
-                    var schema=ApplyTable(database:table.database,table:table.table,columns:columns,primaryKey:key)
+                    var schema=ApplyTable(database:table.database,table:table.table,columns:columns,primaryKeyColumns:key)
                     schema.defaultCharacterSet=tableCharset;schema.defaultCollation=tableCollation
                     result = conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
                 }
@@ -349,7 +352,7 @@ extension TargetSession {
     }
     func resolveColumn(_ column:ApplyColumn,parent:DDLEncoding,context:QuerySessionContext) throws -> ApplyColumn {
         var result=column
-        if column.type.hasPrefix("varchar(") {
+        if column.type.hasPrefix("varchar(") || column.type.hasPrefix("char(") {
             let encoding=try resolveEncoding(charset:column.characterSet,collation:column.collation,parent:parent,context:context)
             result.characterSet=encoding.characterSet
             result=ApplyColumn(name:column.name,type:column.type,nullable:column.nullable,collation:encoding.collation,characterSet:encoding.characterSet)
@@ -405,12 +408,12 @@ extension TargetSession {
             }
             let parent=try databaseEncoding(name.database)
             let encoding=try resolveEncoding(charset:table.defaultCharacterSet,collation:table.defaultCollation,parent:parent,context:context)
-            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context)},primaryKey:table.primaryKey,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation)
+            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context)},primaryKeyColumns:table.primaryKeyColumns,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation)
         case .createLike:
             if let before {after=before}
             else {
                 let template=template!
-                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKey:template.primaryKey,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation,secondaryIndexes:template.secondaryIndexes)
+                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKeyColumns:template.primaryKeyColumns,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation,secondaryIndexes:template.secondaryIndexes)
             }
         case .add(_,let column,let placement):
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
@@ -432,17 +435,17 @@ extension TargetSession {
         case .indexes(_,let change):
             after=try change.applying(to:before!)
         case .dropColumn(_,let column):
-            try require(column != before!.primaryKey && before!.columns.contains(where:{$0.name==column}),"DDL DROP requires an existing non-key column")
+            try require(!before!.primaryKeyColumns.contains(column) && before!.columns.contains(where:{$0.name==column}),"DDL DROP requires an existing non-key column")
             try require(!before!.secondaryIndexes.contains{$0.parts.contains{$0.column == column}},"DROP of an indexed column is outside this slice")
             after=before!.replacing(columns:before!.columns.filter{$0.name != column})
         case .rename(_,let destination):
             try require(!(try tableExists(destination)),"DDL RENAME destination exists")
-            after=ApplyTable(database:destination.database,table:destination.table,columns:before!.columns,primaryKey:before!.primaryKey,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation,secondaryIndexes:before!.secondaryIndexes)
+            after=ApplyTable(database:destination.database,table:destination.table,columns:before!.columns,primaryKeyColumns:before!.primaryKeyColumns,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation,secondaryIndexes:before!.secondaryIndexes)
         case .drop,.dropIfPresent: after=nil
         case .truncate: after=before
         }
         try after?.validate()
-        try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= 64,"discovered schema limit reached")
+        try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= maximumCachedTables,"discovered schema limit reached")
         // No SQL rewriting: execute precisely the single parsed source statement.
         let sql=String(decoding:source.sql,as:UTF8.self)
         _ = try self.query("SET SESSION sql_mode=\(context.sqlMode)")

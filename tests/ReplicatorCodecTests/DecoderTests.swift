@@ -158,14 +158,48 @@ final class DecoderTests: XCTestCase, BinlogFixtures {
             XCTAssertEqual(rows.map(\.after), kind == .signed ? [[.signed(.min)], [.signed(-1)]] : [[.unsigned(0x8000000000000000)], [.unsigned(.max)]])
         }
     }
+    func testFixedStringMetadataAndPadding() throws {
+        let fde=frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
+        let at=UInt64(fde.count+4), decoder=try BinlogDecoder()
+        _ = try decoder.decode(fde,at:4)
+        let body=Data([123,0,0,0,0,0,0,0,3])+Data("poc".utf8)+Data([0,1,120,0,2,254,254,4,206,252,254,8,3])
+        let frame=event(19,body,at:at), map=try decoder.decode(frame,at:at)
+        XCTAssertEqual(map.wireColumns?.map(\.maximumBytes),[1020,8])
+        try decoder.reset(); _ = try decoder.decode(fde,at:4)
+        _ = try decoder.decode(frame,at:at,schema:TableSchema(offset:at,eventSHA256:map.sha256,database:"poc",table:"x",tableID:"123",columns:[.utf8,.binary]))
+        let rowAt=at+UInt64(frame.count)
+        let row=Data([123,0,0,0,0,0,1,0,2,0,2,3,0,3,0,120,32,32,2,0,255])
+        XCTAssertEqual(try decoder.decode(event(30,row,at:rowAt),at:rowAt).rows.first?.after,[.text("x"),.binary(Data([0,255,0,0,0,0,0,0]))])
+    }
+    func testChoiceOrdinalsAndFullLabelsCrossTheABI() throws {
+        let fde=frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
+        let at=UInt64(fde.count+4)
+        // STRING's real types are ENUM(2 bytes) and SET(8 bytes).
+        let base=Data([123,0,0,0,0,0,0,0,3])+Data("poc".utf8)+Data([0,1,120,0,2,254,254,4,247,2,248,8,3])
+        let decoder=try BinlogDecoder(); _ = try decoder.decode(fde,at:4)
+        let frame=event(19,base,at:at), map=try decoder.decode(frame,at:at)
+        XCTAssertEqual(map.wireColumns?.map(\.interpretation),[.unsigned,.unsigned])
+        try decoder.reset(); _ = try decoder.decode(fde,at:4)
+        _ = try decoder.decode(frame,at:at,schema:TableSchema(offset:at,eventSHA256:map.sha256,database:"poc",table:"x",tableID:"123",columns:[.unsigned,.unsigned]))
+        let rowAt=at+UInt64(frame.count)
+        let row=Data([123,0,0,0,0,0,1,0,2,0,2,3,0,0,1])+Data(repeating:255,count:8)
+        XCTAssertEqual(try decoder.decode(event(30,row,at:rowAt),at:rowAt).rows.first?.after,[.unsigned(256),.unsigned(.max)])
+        // Metadata fields 6 ENUM labels, 5 SET labels, 10 enum/set charset.
+        try decoder.reset(); _ = try decoder.decode(fde,at:4)
+        let full=base+Data([6,5,2,1,97,1,98,5,3,1,1,120,10,1,46])
+        let typed=try decoder.decode(event(19,full,at:at),at:at)
+        XCTAssertEqual(typed.wireColumns?[0].labels,[Data([97]),Data([98])])
+        XCTAssertEqual(typed.wireColumns?[1].labels,[Data([120])])
+        XCTAssertEqual(typed.wireColumns?.map(\.collation),[46,46])
+    }
     func testTableMapCacheIsBounded() throws {
         let input = frames(try Data(contentsOf: directory.appendingPathComponent("Synthetic/typed.binlog")))
         let decoder = try BinlogDecoder(); _ = try decoder.decode(input[0].1, at: 4)
         var offset = input[1].0
-        for id in 1...65 {
-            var payload = Data(input[1].1.dropFirst(19).dropLast(4)); payload[0] = UInt8(id)
+        for id in 1...1025 {
+            var payload = Data(input[1].1.dropFirst(19).dropLast(4)); payload[0] = UInt8(id & 255); payload[1] = UInt8(id >> 8)
             let frame = event(19, payload, at: offset)
-            if id == 65 { failure(5) { _ = try decoder.decode(frame, at: offset) } }
+            if id == 1025 { failure(5) { _ = try decoder.decode(frame, at: offset) } }
             else { _ = try decoder.decode(frame, at: offset) }
             offset += UInt64(frame.count)
         }

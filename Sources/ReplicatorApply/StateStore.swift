@@ -230,7 +230,7 @@ final class StateStore {
             guard let id=Int64(row[0] ?? ""), let json=row[2] else { throw ApplyError("invalid saved schema") }
             let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
             let identity=String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self)
-            try require(row[1] == identity && schemas[table.identity] == nil && schemas.count < 64,"invalid saved schema identity/cache")
+            try require(row[1] == identity && schemas[table.identity] == nil && schemas.count < maximumCachedTables,"invalid saved schema identity/cache")
             schemas[table.identity]=(id,table)
         }
         // Resume from the applied boundary, never from received-but-unapplied bytes.
@@ -436,7 +436,7 @@ final class StateStore {
     func schema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
         try profile("journal.schema") {
             if let old=schemas[table.identity] {try require(old.1==table,"schema changed without ordered DDL");return}
-            try require(schemas.count<64,"schema cache limit reached")
+            try require(schemas.count<maximumCachedTables,"schema cache limit reached")
             schemas[table.identity]=(try insertSchema(table,event:event,coordinate:coordinate),table)
         }
     }

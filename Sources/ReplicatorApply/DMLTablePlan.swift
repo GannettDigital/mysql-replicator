@@ -25,10 +25,14 @@ struct DMLTablePlan {
         for index in wire.indices {
             let w = wire[index], c = table.columns[index], type = columnTypes[index]
             try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
-            if type.interpretation == .utf8 {
+            if type.isChoice {
+                try require(w.labels != nil,"ENUM/SET requires source binlog_row_metadata=FULL to validate ordered labels")
+                try require(w.labels == type.labels,"source/target ENUM/SET labels or order differ")
+            }
+            if type.isText {
                 try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
             }
-            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
+            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == table.primaryKeyColumns.contains(c.name),"source/target column name or primary key differs") }
         }
     }
 }

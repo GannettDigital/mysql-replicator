@@ -5,7 +5,7 @@ import Foundation
 struct DMLSQLPlan {
     let table: ApplyTable
     let columnTypes: [DMLColumnType]
-    let keyIndex: Int
+    let keyIndexes: [Int]
     let select: String
     let insert: String
     private let insertPrefix: String
@@ -19,12 +19,13 @@ struct DMLSQLPlan {
     init(_ table: ApplyTable) throws {
         self.table = table
         columnTypes = try DMLTablePlan(table).columnTypes
-        keyIndex = table.keyIndex
+        keyIndexes = table.keyIndexes
         let names = try table.columns.map { try quoted($0.name) }
         let columns = names.joined(separator:",")
         let sqlName = try table.sqlName
-        let predicate = try quoted(table.primaryKey) + "=?"
+        let predicate = try table.primaryKeyColumns.map { try quoted($0) + "=?" }.joined(separator:" AND ")
         let reads = zip(columnTypes,names).map { type,name in
+            if type.isChoice { return "CAST(\(name) AS UNSIGNED) AS \(name)" }
             return [.decimal,.temporal].contains(type.interpretation) ? "CAST(\(name) AS CHAR) AS \(name)" : name
         }.joined(separator:",")
         select = "SELECT \(reads) FROM \(sqlName) WHERE \(predicate)"

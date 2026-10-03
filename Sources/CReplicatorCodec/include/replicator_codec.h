@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 5. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 6. Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -37,8 +37,10 @@ typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; r
  * collation=0 means unavailable/not applicable; name may be empty in MINIMAL.
  * maximum_bytes is populated for VARCHAR/VARBINARY (wire type 15).
  * metadata contains the raw per-column TABLE_MAP metadata bytes.
- * unsigned_flag: 0 unavailable/not applicable, 1 signed, 2 unsigned. */
-typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name, metadata; uint32_t unsigned_flag; } rc_column;
+ * unsigned_flag: 0 unavailable/not applicable, 1 signed, 2 unsigned.
+ * labels: ordered ENUM/SET strings, each UInt32 LE byte length followed by bytes;
+ * empty buffer means absent metadata. Owned by result, like name/metadata. */
+typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name, metadata; uint32_t unsigned_flag; rc_bytes labels; } rc_column;
 int32_t rc_result_column(const rc_result *result, uint32_t column, rc_column *out);
 /* Query-context API. present uses MySQL Q_* status tag bits.
  * No pointers in output. Unknown, truncated or duplicate status fields fail. */
