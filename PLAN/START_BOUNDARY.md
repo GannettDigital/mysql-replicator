@@ -35,13 +35,13 @@ The exact export/import versions and 8.4-to-5.7 MyISAM load compatibility need s
 
 DDL native-default behavior and broader coverage are implemented under
 [DDL completeness](DDL_COMPLETENESS.md). Explicit clean-stop resume is now
-implemented: `run --config APPLY.json` reopens STOPPED SQLite state, starts from
+implemented: `run --config APPLY.yaml` reopens STOPPED SQLite state, starts from
 its applied GTID/position or its saved baseline when no work was applied, and
 restores counters/schema history. `--initialize` remains exclusive new-state
 creation. Local writer locking, target identity/schema checks and native exclusion
-are repeated on resume. Changed JSON start coordinates cannot override SQLite.
+are repeated on resume. Changed YAML start coordinates cannot override SQLite.
 
-A narrow explicit skip is implemented: `skip '<GTID-set>' --config APPLY.json`
+A narrow explicit skip is implemented: `skip '<GTID-set>' --config APPLY.yaml`
 requires BLOCKED state and a set equal to the single captured pending GTID, with
 no row/DDL write intents. Under the writer lock it atomically deletes that pending
 group, snapshots existing coverage plus the exclusion, advances to its captured

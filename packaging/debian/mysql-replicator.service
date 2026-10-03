@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/mysql-replicator run --config /etc/mysql-replicator/apply.json
+ExecStart=/usr/bin/mysql-replicator run --config /etc/mysql-replicator/apply.yaml
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=65536

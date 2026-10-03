@@ -27,6 +27,7 @@ COPY Sources Sources
 COPY rust rust
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target,sharing=locked --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked --mount=type=cache,target=/workspace/.build,sharing=locked make -f packaging/Makefile build
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS runtime
+COPY LICENSE NOTICE /usr/share/doc/mysql-replicator/
 COPY --from=build /out/packaging-probe /usr/local/bin/packaging-probe
 COPY --from=build /out/mysql-replicator /usr/local/bin/mysql-replicator
 COPY --from=build /out/evidence /opt/packaging-evidence
@@ -43,6 +44,7 @@ COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 # Build and verify Debian package (.deb)
 FROM build AS deb
 ARG VERSION=0.1.0
+COPY LICENSE NOTICE ./
 RUN make -f packaging/Makefile deb VERSION=${VERSION}
 
 # Verify .deb installation in clean Ubuntu 16.04
@@ -51,10 +53,9 @@ COPY --from=deb /out/deb/ /tmp/deb/
 RUN dpkg -i /tmp/deb/*.deb \
     && /usr/bin/mysql-replicator --version \
     && test -f /lib/systemd/system/mysql-replicator.service \
-    && test -f /etc/mysql-replicator/apply.example.json \
+    && test -f /etc/mysql-replicator/apply.example.yaml \
     && test -d /var/lib/mysql-replicator
 
 # Scratch export target for Docker BuildKit --output
 FROM scratch AS deb-export
 COPY --from=deb /out/deb/ /
-

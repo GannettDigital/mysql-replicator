@@ -16,7 +16,8 @@ public struct CaptureConfiguration: Decodable {
     public let host: String
     public let port: Int
     public let username: String
-    public let passwordEnvironment: String
+    public let passwordEnvironment: String?
+    public let password: String?
     public let serverHostname: String
     public let caFile: String?
     public let serverID: UInt32
@@ -39,7 +40,7 @@ public struct CaptureConfiguration: Decodable {
     /// Keep connection/protocol options, replacing only the authoritative boundary.
     public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil) -> CaptureConfiguration {
         CaptureConfiguration(version:version,host:host,port:port,username:username,
-            passwordEnvironment:passwordEnvironment,serverHostname:serverHostname,caFile:caFile,
+            passwordEnvironment:passwordEnvironment,password:password,serverHostname:serverHostname,caFile:caFile,
             serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
@@ -47,7 +48,8 @@ public struct CaptureConfiguration: Decodable {
     }
 
     public func validate() throws -> DumpStart {
-        guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty, !passwordEnvironment.isEmpty,
+        try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source")
+        guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
               !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
               (1...300).contains(idleTimeoutSeconds ?? 15),

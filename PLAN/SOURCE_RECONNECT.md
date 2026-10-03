@@ -33,15 +33,14 @@ transaction or skipped file is rejected.
 
 ## Retry policy
 
-The optional top-level `sourceReconnect` object defaults to:
+The optional top-level `sourceReconnect` setting in `apply.yaml` defaults to:
 
-```json
-{
-  "enabled": true,
-  "initialDelaySeconds": 1,
-  "maximumDelaySeconds": 30,
-  "maximumAttempts": 0
-}
+```yaml
+sourceReconnect:
+  enabled: true
+  initialDelaySeconds: 1
+  maximumDelaySeconds: 30
+  maximumAttempts: 0
 ```
 
 The delay doubles up to the cap. Zero maximum attempts means retry indefinitely;

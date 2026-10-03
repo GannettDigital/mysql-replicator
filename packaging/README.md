@@ -70,8 +70,12 @@ swift run replicator-lab package-deb [--version VERSION] [--output DIR] [--skip-
 ### Package structure
 - `/usr/bin/mysql-replicator` (statically linked x86_64 musl binary, mode `0755`)
 - `/lib/systemd/system/mysql-replicator.service` (systemd service unit, mode `0644`)
-- `/etc/mysql-replicator/apply.example.json` (configuration template, marked as Debian conffile)
+- `/etc/mysql-replicator/apply.example.yaml` (configuration template, marked as Debian conffile)
 - `/var/lib/mysql-replicator/` (state directory, mode `0750`)
+
+The service reads `/etc/mysql-replicator/apply.yaml`. Copy and edit the commented
+template before starting it. Existing JSON configurations must be converted to
+YAML; the service no longer reads `apply.json`.
 
 The packaging pipeline:
 1. Compiles the static x86_64 musl binary inside the Docker builder using the pinned Swift Static Linux SDK and Rust toolchain.

@@ -117,9 +117,9 @@ public enum CaptureBenchmark {
                 "passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem",
                 "serverID":9200,"sourceUUID":uuid,"mode":"gtid","start":["file":baseline.file,"position":baseline.position,"executedGTIDs":baseline.gtids],
                 "nonBlocking":true,"idleTimeoutSeconds":30,"decoderProfiling":options.decoderProfiling]
-            try writeJSON(sourceConfig,to:output!.appendingPathComponent("blackhole-source.json"))
-            _ = try session.docker(["cp",output!.appendingPathComponent("blackhole-source.json").path,session.applier+":/evidence/blackhole-source.json"])
-            let blackhole=try session.docker(["exec",session.applier,"mysql-replicator","blackhole","--source-config","/evidence/blackhole-source.json"],checked:false,timeout:Double(options.timeoutSeconds))
+            try writeYAML(sourceConfig,to:output!.appendingPathComponent("blackhole-source.yaml"))
+            _ = try session.docker(["cp",output!.appendingPathComponent("blackhole-source.yaml").path,session.applier+":/evidence/blackhole-source.yaml"])
+            let blackhole=try session.docker(["exec",session.applier,"mysql-replicator","blackhole","--source-config","/evidence/blackhole-source.yaml"],checked:false,timeout:Double(options.timeoutSeconds))
             try blackhole.stdout.write(to:output!.appendingPathComponent("blackhole.json"))
             try blackhole.stderr.write(to:output!.appendingPathComponent("blackhole.stderr"))
             try require(blackhole.status == 0,"blackhole capture failed; inspect blackhole.stderr")

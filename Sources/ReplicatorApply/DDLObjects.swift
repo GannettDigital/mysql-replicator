@@ -2,6 +2,29 @@ import Foundation
 import ReplicatorCodec
 
 extension DDLParser {
+    /// Validate only the source-accepted trigger header. The body is retained
+    /// for audit, never submitted to the target or interpreted as other DDL.
+    mutating func triggerToSkip() throws -> TableName? {
+        guard take("CREATE") || take("DROP") else { return nil }
+        let create = tokens[0].keyword == "CREATE"
+        if create && take("DEFINER") {
+            try expect("=")
+            if take("CURRENT_USER") { if take("(") { try expect(")") } }
+            else { try accountPart(); try expect("@"); try accountPart() }
+        }
+        guard take("TRIGGER") else { return nil }
+        if take("IF") { if create { try expect("NOT") }; try expect("EXISTS") }
+        let trigger = try name()
+        if !create { try end(); return trigger }
+        try require(take("BEFORE") || take("AFTER"),"invalid trigger timing")
+        try require(take("INSERT") || take("UPDATE") || take("DELETE"),"invalid trigger event")
+        try expect("ON"); let table = try name()
+        try require(trigger.database == table.database,"trigger and table databases differ")
+        try expect("FOR"); try expect("EACH"); try expect("ROW")
+        if take("FOLLOWS") || take("PRECEDES") { _ = try identifier() }
+        try require(index < tokens.count && tokens[index].keyword != ";","missing trigger body")
+        return trigger
+    }
     /// Only the header is interpreted here. MySQL parses the complete view or
     /// stored-program definition; its body is never executed during creation.
     mutating func objectStatement() throws -> DDLStatement? {

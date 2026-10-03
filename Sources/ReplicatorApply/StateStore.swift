@@ -115,12 +115,13 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=6")
+            try execute("PRAGMA user_version=7")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
             try execute("CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,database_json TEXT,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try execute("CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
+            try createDDLSkips()
             try execute("CREATE INDEX groups_retention ON groups(status,completed_at)")
             try execute("CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))")
             try execute("CREATE TABLE snapshots(id INTEGER PRIMARY KEY,covered_sequence INTEGER NOT NULL,gtids TEXT NOT NULL,source_file TEXT,source_position TEXT,created_at TEXT NOT NULL)")
@@ -150,7 +151,7 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5,6].contains(version),"unsupported saved state version")
+        try require([4,5,6,7].contains(version),"unsupported saved state version")
         try require(version != 4 || skipGTIDs == nil,"format-4 BLOCKED state requires resolution with its original runtime before upgrading")
         try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")
         let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
@@ -261,9 +262,13 @@ final class StateStore {
         }
         // Preserve every existing relay byte and offset. New frames carry their
         // own binary version; inspection supports legacy JSON and mixed files.
-        // Older runtimes reject version 6 before opening it for appends.
-        if version < 6 { try atomic { try execute("PRAGMA user_version=6") } }
+        // Version 7 adds skipped-DDL history, pruned with its completed groups.
+        // Older runtimes reject it rather than leave orphan audit records.
+        if version < 7 { try atomic { try createDDLSkips(); try execute("PRAGMA user_version=7") } }
         ready=true
+    }
+    private func createDDLSkips() throws {
+        try execute("CREATE TABLE ddl_skips(gtid TEXT PRIMARY KEY,database_name TEXT NOT NULL,object_name TEXT NOT NULL,source_sql TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL)")
     }
     private func singleton(_ text: String) throws -> (sid:String,sequence:String) {
         let parts=text.split(separator:":",omittingEmptySubsequences:false)
@@ -398,6 +403,7 @@ final class StateStore {
                     removed = try number("SELECT COUNT(*) FROM prune_groups")
                     try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
+                    try execute("DELETE FROM ddl_skips WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM groups WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM snapshots WHERE covered_sequence<? AND created_at<?",[String(snapshotSequence),cutoff])
                     try execute("DELETE FROM schemas WHERE current=0 AND retired_at<? AND NOT EXISTS(SELECT 1 FROM row_intents WHERE schema_id=schemas.id) AND NOT EXISTS(SELECT 1 FROM ddl_intents WHERE before_schema_id=schemas.id OR after_schema_id=schemas.id)",[cutoff])
@@ -562,9 +568,15 @@ final class StateStore {
         try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[pendingGTID,String(ordinal),mutation.eventOffset,String(mutation.rowIndex),String(schema.0),timestamp()])
     }
     func rowDone(_ ordinal: Int) throws {try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",[timestamp(),pendingGTID,String(ordinal)])}
-    func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false, finalRow: Int? = nil) throws {
+    func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false, finalRow: Int? = nil, skippedDDL: SkippedDDL? = nil) throws {
         try require(pendingBatch.isEmpty,"batched DML requires batch completion")
         guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.sid+":"+identity.sequence,(rowCount>0 && ddl==nil && !filtered) || (rowCount==0 && ddl != nil && !filtered) || (filtered && rowCount==0 && ddl==nil) else {throw ApplyError("completion without matching pending group")}
+        if let skippedDDL {
+            try require(filtered && group.outcome == .statement && group.events.count == 2,"invalid skipped DDL completion")
+            guard case .query(let query) = group.events[1].control else { throw ApplyError("missing skipped DDL query") }
+            let expected = try DDLPolicy().skippedTrigger(query)
+            try require(expected?.sql == skippedDDL.sql && expected?.name == skippedDDL.name && expected?.reason == skippedDDL.reason,"skipped DDL differs from source query")
+        }
         if filtered {
             try require(try query("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[pendingGTID]) == [["0"]] && query("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[pendingGTID]) == [["0"]],"filtered completion has target write intents")
         }
@@ -580,6 +592,9 @@ final class StateStore {
         var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
         let time=timestamp()
         try atomic {
+            if let skippedDDL {
+                try execute("INSERT INTO ddl_skips VALUES(?,?,?,?,?,?)",[pendingGTID,skippedDDL.name.database,skippedDDL.name.table,skippedDDL.sql,skippedDDL.reason,time])
+            }
             // Only the last, already acknowledged row is folded into this commit.
             // Its previously committed PENDING intent survives any failure here.
             if let finalRow {

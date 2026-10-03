@@ -97,14 +97,17 @@ make demo-down
 ## Use your own databases
 
 Start with an externally prepared target and a known source position or GTID set.
-Adapt [the example configuration](examples/apply.example.json), then follow the
-[setup and supported-behavior guide](PLAN/DML_APPLY.md). Initial data copying and
-target provisioning are outside this project's scope. The CLI also supports
+Copy [the commented YAML example](examples/apply.example.yaml) to `apply.yaml`,
+edit it, then follow the [setup and supported-behavior guide](PLAN/DML_APPLY.md).
+Configuration files use `.yaml` or `.yml`; each connection accepts either
+`password: 'literal password'` or `passwordEnvironment: VARIABLE_NAME`.
+Initial data copying and target provisioning are outside this project's scope.
+The CLI also supports
 [offline binlog inspection](PLAN/OFFLINE_INSPECT.md) and
 [live source inspection](PLAN/LIVE_INSPECTION.md).
 
 See [DDL compatibility](PLAN/DDL_COMPATIBILITY.md) for supported schema changes,
-generated columns, partitions, views and routines, and the trigger/event rejection policy.
+generated columns, partitions, views and routines, and the trigger-skip/event-rejection policy.
 
 Treat the target as a dedicated replica: application writes and schema changes
 must come through replication, with local administrative changes made while stopped.

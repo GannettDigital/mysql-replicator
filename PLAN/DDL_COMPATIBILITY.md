@@ -63,15 +63,37 @@ contract; omitted ENGINE permits each server's configured local engine.
 
 The optional configuration is explicit and defaults to:
 
-```json
-"ddlPolicy": { "triggers": "reject", "events": "reject" }
+```yaml
+ddlPolicy:
+  triggers: skip
+  events: reject
 ```
 
-Other policy values are rejected. CREATE/ALTER/DROP trigger/event statements
-block before target execution, including statements containing DEFINER and even
-when table exclusions are configured. They are not silently ignored. Target
-tables with existing triggers remain rejected, with TRIGGER privilege required
-to prove metadata visibility.
+`triggers=skip` consumes source-accepted CREATE/DROP TRIGGER statements, including
+DEFINER, compound bodies and conditional creation/drop, without executing them
+on the target. SQLite `ddl_skips` records the GTID, object database/name, original
+SQL and policy reason atomically with the completed group and applied checkpoint.
+`transactionsApplied` includes these groups; `ddlApplied` counts only executed
+DDL. Skip history follows the same bounded retention as completed groups.
+Table exclusions do not suppress this audit. Unsupported or ambiguous headers
+still block; skipping does not bypass the existing SQL size/encoding limits.
+
+`triggers=reject` retains the old behavior: stop at trigger DDL without advancing
+its checkpoint. Event CREATE/ALTER/DROP always blocks; `events=reject` remains
+the only event policy. Other policy values are rejected. Target tables with
+existing triggers remain rejected under either trigger policy, with TRIGGER
+privilege required to prove metadata visibility.
+
+Native ROW replication copies trigger definitions but does not fire them while
+applying row events. Our ordinary SQL connections would fire target triggers,
+so skipping definitions preserves supported row effects without duplicating
+them. The target intentionally lacks these definitions and needs separate
+provisioning if promoted for application writes. Trigger effects that write
+multiple included tables remain outside the current DML-group contract.
+
+State format 7 adds `ddl_skips`. Supported older state is upgraded on a validated
+reopen; older runtimes reject format 7. A clean stop/restart resumes after skipped
+DDL. This does not enable automatic crash recovery or relax pending-write checks.
 
 This policy does not prove that the source has no preexisting triggers: row
 events do not identify their origin. A preexisting source-only BEFORE trigger
@@ -126,6 +148,10 @@ The new cases are registered as bounded compatibility regressions in the
 coverage catalog. Passing them does not mark the broader generated-column,
 stored-program, partition, or DDL-family completeness obligations as qualified.
 
+Configuration now uses YAML (`.yaml` or `.yml`) with inline comments. The
+commented example covers both active and optional settings. Legacy JSON config
+files must be converted; JSON diagnostic output and journal formats are unchanged.
+
 ### Validation recorded 2026-10-03
 
 - 276 Swift unit tests and 7 Rust unit tests passed; catalog structure and
@@ -146,3 +172,34 @@ stored-program, partition, or DDL-family completeness obligations as qualified.
   is not a claim of an uninterrupted full-suite pass. The timeout fixture's
   obsolete error-text assertion was also replaced with a check of structured
   `possiblyExecuted` state.
+
+### Trigger-skip follow-up validation, 2026-10-03
+
+- 282 Swift tests and 7 Rust tests passed, including atomic audit/checkpoint
+  rollback, restart without replay, format-6 upgrade, skip-history pruning and
+  decoding the annotated JSON example. Catalog and whitespace checks passed.
+- The full compatibility slice passed in both modes: 15 file-position cases
+  and 16 GTID cases. Evidence under `artifacts/ddl-suite/`:
+  `20261003T173916Z-5d2f7c31-position-autocommit-myisam` and
+  `20261003T174236Z-af8748bd-auto-autocommit-myisam`.
+- `ddl-compat-skip-trigger` verifies native trigger creation, absence of the
+  trigger on 5.7, compound source-trigger row effects applied exactly once,
+  continued DML after CREATE/DROP, five audit records and complete GTID coverage.
+  Explicit rejection and existing-target-trigger rejection also passed.
+
+### YAML configuration follow-up validation, 2026-10-03
+
+- 288 Swift tests passed, including commented YAML, malformed/duplicate keys,
+  direct and environment-selected passwords, resume, and secret-free parser errors.
+- The GTID `ddl-compat-skip-trigger` slice passed with the common DML prerequisite;
+  the prerequisite used literal passwords for both source and target. Evidence:
+  `artifacts/ddl-suite/20261003T180501Z-f93c425d-auto-autocommit-myisam`.
+- `make demo-suite` passed startup, idle heartbeats, DDL/DML comparison, fail-stop,
+  explicit skip, SIGINT/SIGTERM, and saved-state resume with YAML configuration.
+  Main evidence: `artifacts/demo-suite/20261003T181158Z-81933295-auto-autocommit-myisam`.
+- The demo exposed a client-encoding lookup mismatch: MySQL 8.4 client charset
+  ID 255 identifies utf8mb4 bytes, which MySQL 5.7 can read via ID 45. The lookup
+  now recognizes that encoding; the separate expression-collation check remains
+  unchanged and rejects unsupported collations.
+- `make deb` built the final code and verified package installation, the YAML
+  example, and the executable in a clean Ubuntu 16.04 container.

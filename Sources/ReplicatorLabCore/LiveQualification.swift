@@ -1,7 +1,7 @@
 import Foundation
 
 /// Real MySQL wire qualification using the shipped static Ubuntu CLI. The lab
-/// intentionally depends only on Foundation; mysqlbinlog is its row oracle.
+/// uses mysqlbinlog as its row oracle and YAML for runtime configuration.
 public enum LiveQualification {
     public static func run(root: URL, build: Bool = true) throws {
         var native = NativeCase(); native.transaction = false
@@ -23,11 +23,11 @@ public enum LiveQualification {
         }
         func docker(_ args: [String]) throws -> CommandResult { try runner.run(["docker"] + args) }
         func startClient(_ label: String, _ config: [String: Any]) throws -> String {
-            try writeJSON(config, to: output.appendingPathComponent(label + ".json"))
+            try writeYAML(config, to: output.appendingPathComponent(label + ".yaml"))
             let name = h.project + "-" + label; clients.append(name)
             _ = try docker(["run", "-d", "--name", name, "--platform", "linux/amd64", "--network", h.project + "_fixture",
                 "--mount", "type=bind,src=\(output.path),dst=/evidence,readonly", "-e", "LIVE_PASSWORD=fixture-capture-only",
-                "--entrypoint", "/usr/local/bin/mysql-replicator", image, "inspect", "--source-config", "/evidence/\(label).json", "--transactions"])
+                "--entrypoint", "/usr/local/bin/mysql-replicator", image, "inspect", "--source-config", "/evidence/\(label).yaml", "--transactions"])
             return name
         }
         func finishClient(_ name: String, _ label: String, success: Bool) throws -> (Data, [String: Any]) {

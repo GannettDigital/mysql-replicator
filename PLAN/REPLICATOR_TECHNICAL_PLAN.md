@@ -152,7 +152,7 @@ Persist coherent status/statistics/diagnostic snapshots in SQLite for external r
 Provide a read-only `inspect` subcommand using the same Swift transport and Rust C-ABI codec as replication, rendering their typed records to JSON in Swift. The initial file-only command is now `mysql-replicator inspect FILE --schema HISTORY.json`; see [offline inspection](OFFLINE_INSPECT.md). The following broader interfaces remain proposed Phase 2 interfaces, not current CLI syntax:
 
 ```sh
-mysql-replicator inspect --source-config source.toml --start-position mysql-bin.000123:456 --format ndjson
+mysql-replicator inspect --source-config source.yaml --start-position mysql-bin.000123:456 --format ndjson
 mysql-replicator inspect --binlog-file captured.binlog --format ndjson
 mysql-replicator inspect --state replica.sqlite --event-id EVENT_ID --format ndjson
 ```

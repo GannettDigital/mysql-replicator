@@ -6,10 +6,14 @@ repair MyISAM tables.
 
 ## Reconnect contract
 
-`targetReconnect` is optional and defaults to:
+The top-level `targetReconnect` setting in `apply.yaml` is optional and defaults to:
 
-```json
-{"enabled":true,"initialDelaySeconds":1,"maximumDelaySeconds":30,"maximumAttempts":0}
+```yaml
+targetReconnect:
+  enabled: true
+  initialDelaySeconds: 1
+  maximumDelaySeconds: 30
+  maximumAttempts: 0
 ```
 
 The policy has an independent target retry budget. Zero attempts means unlimited
@@ -67,7 +71,7 @@ After MySQL restarts, use the same configuration and state directory, without
 `--initialize`:
 
 ```sh
-mysql-replicator run --config APPLY.json
+mysql-replicator run --config APPLY.yaml
 ```
 
 This command may be started while MySQL is still unavailable; it waits and retries.

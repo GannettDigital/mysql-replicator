@@ -131,8 +131,8 @@ public enum DemoSession {
             let config: [String: Any] = ["version": 2, "applierProfiling": applierProfiling, "stateDirectory": "/evidence/state", "source": ["version": 2, "host": "source", "port": 3306, "username": "capture_fixture", "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "caFile": "/evidence/tls/ca.pem", "serverID": 9100, "sourceUUID": uuid, "mode": "gtid", "start": ["executedGTIDs": boundary.gtids], "idleTimeoutSeconds": 30, "decoderProfiling": decoderProfiling], "target": target]
             var batchedConfig=config
             batchedConfig["batch"] = ["maximumTransactions":batchTransactions,"maximumInsertRows":insertRows,"overlapPreparation":overlapPreparation,"flushOnTableChange":flushOnTableChange]
-            try writeJSON(batchedConfig, to: h.output.appendingPathComponent("apply.json"))
-            _ = try docker(["cp", h.output.appendingPathComponent("apply.json").path, helper + ":/evidence/apply.json"])
+            try writeYAML(batchedConfig, to: h.output.appendingPathComponent("apply.yaml"))
+            _ = try docker(["cp", h.output.appendingPathComponent("apply.yaml").path, helper + ":/evidence/apply.yaml"])
             // Mount the same trusted CA used by the existing source/target overlay.
             let nativeID = try h.compose(["ps", "-q", "native"]).text
             _ = try docker(["cp", tls.appendingPathComponent("ca.pem").path, nativeID + ":/tmp/demo-ca.pem"])
@@ -159,17 +159,17 @@ public enum DemoSession {
         func instructions() -> String {
             """
             Ready: three MySQL servers and applier container running; mysql-replicator NOT_STARTED.
-            Config: \(h.output.path)/apply.json (already installed as /evidence/apply.json)
+            Config: \(h.output.path)/apply.yaml (already installed as /evidence/apply.yaml)
             Source baseline: \(h.output.path)/baseline.json
             Login: docker exec -it \(applier) /bin/bash
-            Inside applier: mysql-replicator run --config /evidence/apply.json --initialize
+            Inside applier: mysql-replicator run --config /evidence/apply.yaml --initialize
             Or start detached from host: make demo-start
             Detached logs: docker exec \(applier) tail -f /evidence/applier.ndjson /evidence/applier.stderr
             Successful SQL: make demo-sql FILE=examples/demo/01-success.sql
             Compare: make demo-compare
             Controlled failure: make demo-fail
-            In applier shell: mysql-replicator skip '<pendingGTID from failure>' --config /evidence/apply.json
-            Resume: mysql-replicator run --config /evidence/apply.json
+            In applier shell: mysql-replicator skip '<pendingGTID from failure>' --config /evidence/apply.yaml
+            Resume: mysql-replicator run --config /evidence/apply.yaml
             Following insert: make demo-sql FILE=examples/demo/03-after-skip.sql
             Separate longer validation: make ddl-suite
             Inspect: make demo-status
@@ -215,7 +215,7 @@ public enum DemoSession {
             try require(!replicatorRunning(), "mysql-replicator already started")
             let initialize = try !hasState()
             if !initialize { try require(state("SELECT lifecycle FROM state") == "STOPPED", "saved state is not STOPPED; unresolved failures require explicit recovery") }
-            let command = "exec /usr/local/bin/mysql-replicator run --config /evidence/apply.json" + (initialize ? " --initialize" : "") + " > /evidence/applier.ndjson 2> /evidence/applier.stderr"
+            let command = "exec /usr/local/bin/mysql-replicator run --config /evidence/apply.yaml" + (initialize ? " --initialize" : "") + " > /evidence/applier.ndjson 2> /evidence/applier.stderr"
             _ = try docker(["exec", "-d", applier, "/bin/sh", "-c", command])
             try waitForCapture()
             print("docker exec " + applier + " tail -f /evidence/applier.ndjson /evidence/applier.stderr")
@@ -382,14 +382,14 @@ public enum DemoSession {
     }
 
     private static func configureStart(_ session: Session, mode: String, boundary: Boundary) throws {
-        let file = session.h.output.appendingPathComponent("apply.json")
-        var config = try JSONSerialization.jsonObject(with:Data(contentsOf:file)) as! [String:Any]
+        let file = session.h.output.appendingPathComponent("apply.yaml")
+        var config = try readYAML(file)
         var source = config["source"] as! [String:Any]
         source["mode"] = mode
         source["start"] = ["file":boundary.file,"position":boundary.position,"executedGTIDs":boundary.gtids]
         config["source"] = source
-        try writeJSON(config,to:file)
-        _ = try session.docker(["cp",file.path,session.helper+":/evidence/apply.json"])
+        try writeYAML(config,to:file)
+        _ = try session.docker(["cp",file.path,session.helper+":/evidence/apply.yaml"])
     }
 
     private static func qualify(root: URL, build: Bool) throws {
@@ -402,14 +402,14 @@ public enum DemoSession {
             reporter = QualificationReporter(output: output!, log: session.log)
             try reporter!.run(QualificationCase("demo-prepared", "Compose starts a shell-accessible idle applier without starting mysql-replicator; repeated setup is refused")) {
                 try require(session.applierStatus() == "running" && !session.replicatorRunning() && !session.hasState(), "stack was not independently prepared")
-                try require(session.docker(["exec", session.applier, "/bin/bash", "-c", "test -r /evidence/apply.json && test -n \"$SOURCE_PASSWORD\" && test -n \"$TARGET_PASSWORD\" && mysql-replicator --version"]).text.contains("mysql-replicator"), "manual shell is not ready")
+                try require(session.docker(["exec", session.applier, "/bin/bash", "-c", "test -r /evidence/apply.yaml && test -n \"$SOURCE_PASSWORD\" && test -n \"$TARGET_PASSWORD\" && mysql-replicator --version"]).text.contains("mysql-replicator"), "manual shell is not ready")
                 var refused = false
                 do { try session.up(build: false) } catch { refused = String(describing: error).contains("already exists") }
                 try require(refused, "repeated up did not refuse")
             }
             try reporter!.run(QualificationCase("demo-start-idle", "Manually launch the CLI inside the running container; heartbeats keep the stream alive")) {
                 // Same binary, arguments, shell, and inherited environment as the workbook.
-                _ = try session.docker(["exec", "-d", session.applier, "/bin/bash", "-c", "exec mysql-replicator run --config /evidence/apply.json --initialize"])
+                _ = try session.docker(["exec", "-d", session.applier, "/bin/bash", "-c", "exec mysql-replicator run --config /evidence/apply.yaml --initialize"])
                 try session.waitForCapture()
                 var refused = false
                 do { try session.start() } catch { refused = String(describing: error).contains("already started") }
@@ -426,18 +426,18 @@ public enum DemoSession {
             try reporter!.run(QualificationCase("demo-fail-stop", "Prepared failure stops both appliers before the following marker; SQLite checkpoint stays fixed")) {
                 try session.fail(); try session.status()
                 let before = try session.state("SELECT diagnostic FROM state")
-                let refused = try session.docker(["exec", session.applier, "mysql-replicator", "run", "--config", "/evidence/apply.json"], checked: false)
+                let refused = try session.docker(["exec", session.applier, "mysql-replicator", "run", "--config", "/evidence/apply.yaml"], checked: false)
                 try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("cleanly STOPPED"), "BLOCKED state was resumed")
                 try require(session.state("SELECT diagnostic FROM state") == before, "resume refusal overwrote original diagnostic")
             }
             try reporter!.run(QualificationCase("demo-skip-and-resume", "CLI skips rejected DDL atomically, resumes queued and fresh INSERTs, and preserves progress across another restart")) {
                 let id=try session.state("SELECT active_gtid FROM state")
                 let checkpoint=try session.state("SELECT applied_file||'|'||applied_position||'|'||transactions_applied FROM state")
-                let refused=try session.docker(["exec",session.applier,"mysql-replicator","skip",id + "-999999","--config","/evidence/apply.json"],checked:false)
+                let refused=try session.docker(["exec",session.applier,"mysql-replicator","skip",id + "-999999","--config","/evidence/apply.yaml"],checked:false)
                 try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("skip_failed"),"broader skip was accepted or lacked a diagnostic")
                 try require(session.state("SELECT applied_file||'|'||applied_position||'|'||transactions_applied FROM state") == checkpoint,"refused skip changed checkpoint")
                 let end=try session.state("SELECT source_file||'|'||end_position FROM groups WHERE status='PENDING'")
-                let skipped=try session.docker(["exec",session.applier,"mysql-replicator","skip",id,"--config","/evidence/apply.json"])
+                let skipped=try session.docker(["exec",session.applier,"mysql-replicator","skip",id,"--config","/evidence/apply.yaml"])
                 try skipped.stdout.write(to:session.h.output.appendingPathComponent("skip.json"))
                 let summary=try JSONSerialization.jsonObject(with:skipped.stdout) as? [String:Any]
                 try require(summary?["skippedGTIDSet"] as? String == id && summary?["lifecycle"] as? String == "STOPPED","skip summary differs")
@@ -496,7 +496,7 @@ public enum DemoSession {
                 do {
                     try reporter.run(test) {
                         if idle {
-                            _ = try detached.docker(["exec", "-d", detached.applier, "/bin/bash", "-c", "mysql-replicator run --config /evidence/apply.json --initialize > /evidence/applier.ndjson 2> /evidence/applier.stderr; echo $? > /evidence/applier.exit"])
+                            _ = try detached.docker(["exec", "-d", detached.applier, "/bin/bash", "-c", "mysql-replicator run --config /evidence/apply.yaml --initialize > /evidence/applier.ndjson 2> /evidence/applier.stderr; echo $? > /evidence/applier.exit"])
                             try detached.waitForCapture()
                         } else {
                             // Qualify the positional protocol as well as the default GTID protocol.
@@ -520,16 +520,16 @@ public enum DemoSession {
                             try require(detached.docker(["exec", detached.helper, "cat", "/evidence/applier.exit"]).text == "0", "idle SIGINT exited unsuccessfully")
                         }
                         try reporter.run(QualificationCase(idle ? "demo-resume-baseline-gtid" : "demo-resume-applied-position", idle
-                            ? "Resume from the saved GTID baseline despite changed JSON start coordinates; apply queued DDL/DML once"
+                            ? "Resume from the saved GTID baseline despite changed YAML start coordinates; apply queued DDL/DML once"
                             : "Resume from the applied file position; preserve schema/counters and apply queued DDL/DML once")) {
-                            let refused = try detached.docker(["exec", detached.applier, "mysql-replicator", "run", "--config", "/evidence/apply.json", "--initialize"], checked:false)
+                            let refused = try detached.docker(["exec", detached.applier, "mysql-replicator", "run", "--config", "/evidence/apply.yaml", "--initialize"], checked:false)
                             try require(refused.status != 0 && String(decoding:refused.stderr,as:UTF8.self).contains("must be new"), "initialization overwrote saved state")
                             if idle {
                                 try detached.executeSQL(file:root.appendingPathComponent("examples/demo/01-success.sql"))
                             } else {
                                 _ = try detached.h.sql("source", "ALTER TABLE demo.items ADD COLUMN resumed INT NULL; UPDATE demo.items SET quantity=12,resumed=7 WHERE id=1; INSERT INTO demo.items VALUES(4,'after resume',40,'queued',9); DELETE FROM demo.items WHERE id=3")
                             }
-                            // JSON now points past the queued workload. Only SQLite may choose the restart boundary.
+                            // YAML now points past the queued workload. Only SQLite may choose the restart boundary.
                             try configureStart(detached,mode:idle ? "gtid" : "file-position",boundary:detached.h.boundary("source"))
                             try detached.start(); try detached.compare()
                             let expected = idle ? "8|3|6" : "12|4|9"
@@ -537,7 +537,7 @@ public enum DemoSession {
                             if !idle {
                                 try require(detached.h.sql("target57","SELECT id,resumed FROM demo.items ORDER BY id") == "1\t7\n4\t9","DML after resumed DDL differs")
                             }
-                            let duplicate = try detached.docker(["exec", detached.applier, "mysql-replicator", "run", "--config", "/evidence/apply.json"], checked:false)
+                            let duplicate = try detached.docker(["exec", detached.applier, "mysql-replicator", "run", "--config", "/evidence/apply.yaml"], checked:false)
                             try require(duplicate.status != 0 && String(decoding:duplicate.stderr,as:UTF8.self).contains("active writer"), "concurrent CLI writer was not refused")
                             try detached.stopWriter()
                             // A second restart exercises the saved applied GTID set too, with no new events to replay.

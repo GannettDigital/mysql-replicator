@@ -57,15 +57,17 @@ deb:
 	rm -rf /out/deb-staging
 	mkdir -p /out/deb-staging/DEBIAN
 	mkdir -p /out/deb-staging/usr/bin
+	mkdir -p /out/deb-staging/usr/share/doc/mysql-replicator
 	mkdir -p /out/deb-staging/lib/systemd/system
 	mkdir -p /out/deb-staging/etc/mysql-replicator
 	mkdir -p /out/deb-staging/var/lib/mysql-replicator
 	cp /out/mysql-replicator /out/deb-staging/usr/bin/mysql-replicator
 	chmod 0755 /out/deb-staging/usr/bin/mysql-replicator
+	cp LICENSE NOTICE /out/deb-staging/usr/share/doc/mysql-replicator/
 	cp packaging/debian/mysql-replicator.service /out/deb-staging/lib/systemd/system/mysql-replicator.service
 	chmod 0644 /out/deb-staging/lib/systemd/system/mysql-replicator.service
-	cp examples/apply.example.json /out/deb-staging/etc/mysql-replicator/apply.example.json
-	chmod 0644 /out/deb-staging/etc/mysql-replicator/apply.example.json
+	cp examples/apply.example.yaml /out/deb-staging/etc/mysql-replicator/apply.example.yaml
+	chmod 0644 /out/deb-staging/etc/mysql-replicator/apply.example.yaml
 	sed "s/@VERSION@/$(VERSION)/g" packaging/debian/control.in > /out/deb-staging/DEBIAN/control
 	chmod 0644 /out/deb-staging/DEBIAN/control
 	cp packaging/debian/conffiles /out/deb-staging/DEBIAN/conffiles

@@ -164,6 +164,10 @@ public enum ApplyRun {
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
                     guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
+                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedTrigger(query) {
+                        try state.complete(group,rowCount:0,filtered:true,skippedDDL:skipped)
+                        try progress(); return
+                    }
                     if try filter.ignores(query) {
                         try state.complete(group,rowCount:0,filtered:true)
                         try progress(); return

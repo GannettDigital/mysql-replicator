@@ -13,7 +13,7 @@ namespace and connects to `127.0.0.1`, with TLS hostname verification for target
 `demo-up` prepares the servers, starts native reference replication, and starts
 an idle Ubuntu applier container with `sleep infinity`. **It does not launch
 mysql-replicator.** Log into the container and launch that process manually. It writes an actual source UUID,
-GTID baseline and TLS paths into a ready-to-run `apply.json`; there are no replacement
+GTID baseline and TLS paths into a ready-to-run `apply.yaml`; there are no replacement
 placeholders and no table schema in configuration. Demo fixture provisioning is
 lab automation, not a production dump/load feature.
 
@@ -55,8 +55,8 @@ docker exec -it <applier-name> /bin/bash
 Then, **inside the container**:
 
 ```sh
-cat /evidence/apply.json
-mysql-replicator run --config /evidence/apply.json --initialize
+cat /evidence/apply.yaml
+mysql-replicator run --config /evidence/apply.yaml --initialize
 ```
 
 The config, TLS files, volume, and password environment variables are already
@@ -84,7 +84,7 @@ from Docker exec sessions. Manual foreground output stays in that terminal;
 detached output goes to the two files above. `demo-status` reads SQLite diagnostics
 for either launch method and shows captured logs when those files exist.
 
-The host copy of `apply.json` documents the installed config; editing that host copy
+The host copy of `apply.yaml` documents the installed config; editing that host copy
 does not change the copy in the Docker volume. The ready config is intended for
 this container/network, not direct execution on the Mac host.
 
@@ -206,7 +206,7 @@ only after applying a transaction, so silence while waiting for source changes i
 normal; `make demo-status` shows the live process and SQLite lifecycle.
 
 A clean stop can be resumed using the existing SQLite checkpoint. After the deliberate
-failure, use `mysql-replicator skip '<pendingGTID>' --config /evidence/apply.json`
+failure, use `mysql-replicator skip '<pendingGTID>' --config /evidence/apply.yaml`
 inside the applier container, then resume without `--initialize`. This excludes
 only the captured failed group with no write intents. It advances GTID/position
 coverage atomically and preserves applied counters; it does not execute the SQL
@@ -239,7 +239,7 @@ and a fresh INSERT, verifies the native replica remains blocked, then restarts
 again without replay. Separate cases check idle SIGINT with
 exit code zero and SIGTERM after the successful workload, asserting STOPPED, no
 diagnostic, and unchanged checkpoints/counters. Resume cases queue source DDL/DML
-while stopped, deliberately change JSON start coordinates, then verify GTID-baseline
+while stopped, deliberately change YAML start coordinates, then verify GTID-baseline
 fallback and applied file-position restart. A repeated restart must not replay work
 or reset counters. BLOCKED state, reinitialization, and concurrent CLI writers are
 refused. Each session archives evidence
@@ -276,7 +276,7 @@ still blocks explicit-engine DDL without advancing past the failure.
 
 Clean-stop resume validation, 2026-09-30: 46 focused Swift tests and all eight Docker
 rehearsal cases passed. The [GTID baseline/repeated-resume case](../artifacts/demo-suite-idle-stop/20261001T035414Z-4a26d80f-auto-autocommit-myisam/result.json)
-applied queued DDL/DML exactly once despite JSON pointing ahead of the saved
+applied queued DDL/DML exactly once despite YAML pointing ahead of the saved
 baseline. The [applied file-position case](../artifacts/demo-suite-detached/20261001T035554Z-8888b00c-auto-autocommit-myisam/result.json)
 resumed after eight transactions, applied another DDL and three DML statements,
 and retained cumulative counters (12 transactions, 4 DDL, 9 rows). Both exercised

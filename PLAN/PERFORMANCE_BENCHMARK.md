@@ -142,7 +142,7 @@ how quickly it drains afterward. Repeat runs before drawing conclusions. Use
 ## Applier function profile
 
 The normal benchmark enables detailed applier profiling by default. In ordinary
-application runs, opt in with top-level `"applierProfiling": true` in the apply
+application runs, opt in with top-level `applierProfiling: true` in the YAML apply
 configuration; it defaults off. Counters stay in the applier worker's memory and
 are included in the existing final STOPPED/BLOCKED summary, with no per-call
 logging or SQLite counter writes. A process crash can lose these diagnostic
@@ -748,7 +748,7 @@ GTID/file-position resume and repeated restart without replay. Evidence:
 ## Decoder function profile
 
 Detailed decoder profiling is enabled by default in the benchmark. Ordinary
-capture/application leaves it off; enable it with `"decoderProfiling": true`
+capture/application leaves it off; enable it with `decoderProfiling: true`
 inside the `source` configuration. Counters stay in worker-local memory and are
 exported in the existing final timing summary, with no per-call logging or SQLite
 writes. Resetting a decoder does not reset its run's counters.
@@ -951,7 +951,7 @@ Every run forces a physical binlog rotation, checks exact source GTID counts,
 decoded transaction/row counts, downloaded versus decoded byte counts, final
 decoded file/position, complete EOF, and absence of applied state. Blackhole
 does not compare target rows or claim that any write was applied. Its CLI is
-`mysql-replicator blackhole --source-config SOURCE.json`, requires
+`mysql-replicator blackhole --source-config SOURCE.yaml`, requires
 `nonBlocking: true` without `stopAfterTransactions`, and accepts no apply config
 or state directory. It writes one JSON summary and fails on unsupported or
 malformed events. Keep source writes stopped for a repeatable fixed backlog.
@@ -1772,3 +1772,42 @@ Evidence, in table-column order:
 - `artifacts/performance/20261002T235113Z-5490d59d/20261002T235113Z-4c6e380a-auto-autocommit-myisam`
 - `artifacts/performance/20261002T225258Z-c3293542/20261002T225258Z-295f3aea-auto-autocommit-myisam`
 - `artifacts/performance/20261002T234912Z-cc430679/20261002T234912Z-3e565d0a-auto-autocommit-myisam`
+
+### Compatibility and YAML regression check, 2026-10-03
+
+Reran both 10K cases with the current uncommitted code, including compatibility,
+reconnect, trigger-policy, and YAML/password changes. The first command rebuilt
+the runtime; the second reused that exact image. Runs were sequential:
+
+```sh
+make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
+```
+
+Both passed exact comparison of all 10,000 rows, applied transaction/row counts,
+and cleanup. The eight-table case compared 1,250 rows per table.
+
+| Seconds | One table previous | One table current | Eight tables previous | Eight tables current |
+| --- | ---: | ---: | ---: | ---: |
+| Source load | 15.107 | 16.611 | 15.661 | 15.772 |
+| Observed native completion | 20.652 | 20.691 | 20.721 | 20.592 |
+| Observed custom completion | 20.652 | 20.691 | 25.682 | 25.599 |
+| Apply consumer elapsed | 7.029 | 7.836 | 21.052 | 20.541 |
+| Target SQL elapsed | 3.291 | 3.659 | 15.301 | 14.992 |
+| Metadata validation | 0.141 | 0.158 | 0.120 | 0.118 |
+| DML planning | 0.288 | 0.376 | 0.240 | 0.290 |
+
+No meaningful completion-time regression was observed. One-table native/custom
+completion remains in the same polling window; eight-table custom completion
+remains about 24% later than native. Individual stage times vary, including an
+increase in one-table apply time. These are single runs on shared ARM hardware
+with emulated amd64 containers and five-second polling, not a statistical
+regression bound or proof of equal native throughput. Background containers were
+left running; no other qualification workload was launched during these runs.
+
+Runtime image: `sha256:e9510f49626767207e15d7170f8d0416df45799259313ad40e74bf22c5f742bb`.
+Each evidence directory includes `result.json`, `verification.json`, stage timings,
+server-work counters, input hashes, and captured state:
+
+- One table: `artifacts/performance/20261003T182321Z-236aecfc/20261003T182322Z-b2f61522-auto-autocommit-myisam`.
+- Eight tables: `artifacts/performance/20261003T182526Z-c1a0f2e8/20261003T182526Z-9a67f59e-auto-autocommit-myisam`.

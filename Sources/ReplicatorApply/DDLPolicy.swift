@@ -14,19 +14,27 @@ enum ProhibitedDDL: Error, CustomStringConvertible {
 /// External SQL would fire target triggers and enable scheduled events. These
 /// policies intentionally offer no unsafe "execute anyway" alternative.
 public struct DDLPolicy: Decodable {
-    public var triggers: String = "reject"
+    public var triggers: String = "skip"
     public var events: String = "reject"
     public init() {}
     enum CodingKeys: String, CodingKey { case triggers, events }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy:CodingKeys.self)
-        triggers = try c.decodeIfPresent(String.self,forKey:.triggers) ?? "reject"
+        triggers = try c.decodeIfPresent(String.self,forKey:.triggers) ?? "skip"
         events = try c.decodeIfPresent(String.self,forKey:.events) ?? "reject"
         try validate()
     }
     func validate() throws {
-        try require(triggers == "reject", "ddlPolicy.triggers must be reject: ordinary target SQL fires triggers")
+        try require(["skip","reject"].contains(triggers), "ddlPolicy.triggers must be skip or reject: ordinary target SQL fires triggers")
         try require(events == "reject", "ddlPolicy.events must be reject: scheduled target writes are unsupported")
+    }
+    func skippedTrigger(_ query: QueryControl) throws -> SkippedDDL? {
+        guard triggers == "skip" else { return nil }
+        let mode = try query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode
+        var parser = try DDLParser(query.sql,database:query.database,sqlMode:mode)
+        guard let name = try parser.triggerToSkip() else { return nil }
+        try require(query.errorCode == 0,"cannot skip failed source trigger DDL")
+        return SkippedDDL(name:name,sql:String(decoding:query.sql,as:UTF8.self),reason:"ddlPolicy.triggers=skip")
     }
     /// Rejection does not require executing SQL or accepting its session
     /// metadata. In particular, trigger Query events may carry context outside
@@ -39,6 +47,12 @@ public struct DDLPolicy: Decodable {
         } catch let policy as ProhibitedDDL { throw policy }
         catch { }
     }
+}
+
+struct SkippedDDL {
+    let name: TableName
+    let sql: String
+    let reason: String
 }
 
 public struct ApplyPartition: Codable, Equatable {

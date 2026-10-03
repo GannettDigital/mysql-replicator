@@ -8,7 +8,12 @@ extension TargetSession {
         _ = try query("SET SESSION time_zone=?",[.init(string:context.timeZone ?? "+00:00")])
         try require(context.explicitDefaultsForTimestamp != false,"legacy implicit TIMESTAMP defaults are unsupported")
         _ = try query("SET SESSION explicit_defaults_for_timestamp=1")
-        let charset = try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(context.clientCharset))]).0.first
+        // Q_CHARSET identifies character_set_client by a collation ID. Source
+        // ID 255 (8.x's utf8mb4 default) still means utf8mb4 bytes on 5.7, where
+        // ID 45 identifies that encoding. This does not substitute the separate
+        // connection collation used for expressions, checked below.
+        let clientEncodingID = context.clientCharset == 255 ? 45 : context.clientCharset
+        let charset = try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(clientEncodingID))]).0.first
         guard let client = charset?.column("CHARACTER_SET_NAME")?.string else {throw ApplyError("unsupported DDL client charset")}
         _ = try query("SET SESSION character_set_client=?",[.init(string:client)])
         if let collation = try scalar("SELECT COLLATION_NAME AS v FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(context.connectionCollation))]) {

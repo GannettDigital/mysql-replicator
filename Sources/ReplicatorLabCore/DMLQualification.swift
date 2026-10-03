@@ -46,12 +46,12 @@ public enum DMLQualification {
         func start(_ test: QualificationCase,_ config: [String:Any], initialize: Bool = true) throws -> String {
             try cases.begin(test)
             let label = test.id
-            try writeJSON(config,to:output.appendingPathComponent(label + ".json"))
-            _ = try docker(["cp",output.appendingPathComponent(label + ".json").path,evidenceHelper + ":/evidence/" + label + ".json"])
+            try writeYAML(config,to:output.appendingPathComponent(label + ".yaml"))
+            _ = try docker(["cp",output.appendingPathComponent(label + ".yaml").path,evidenceHelper + ":/evidence/" + label + ".yaml"])
             let name = h.project + "-" + label; clients.append(name)
             _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project + "_fixture",
                 "--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only",
-                "--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).json"] + (initialize ? ["--initialize"] : []))
+                "--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).yaml"] + (initialize ? ["--initialize"] : []))
             return name
         }
         func finish(_ name: String,_ label: String,success: Bool,reason: String? = nil) throws -> [String:Any] {
@@ -149,7 +149,13 @@ public enum DMLQualification {
                 let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem","serverID":9100,"sourceUUID":uuid,"mode":mode,"start":start,"stopAfterTransactions":count]
                 return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],"stateDirectory":"/evidence/state-" + label]
             }
-            let positiveConfig = configuration("positive",at:sourceStart,count:4)
+            var positiveConfig = configuration("positive",at:sourceStart,count:4)
+            // Exercise direct YAML credentials; subsequent fixtures use environment variables.
+            for (endpoint,password) in [("source","fixture-capture-only"),("target","fixture-apply-only")] {
+                var connection=positiveConfig[endpoint] as! [String:Any]
+                connection.removeValue(forKey:"passwordEnvironment"); connection["password"]=password
+                positiveConfig[endpoint]=connection
+            }
             let client = try start(DDLCoverageCases.positive,positiveConfig); try waitForReader(client)
             stage("running INSERT/UPDATE/DELETE workload")
             _ = try h.sql("source",Fixture.sql(transaction:false))
@@ -582,7 +588,9 @@ public enum DMLQualification {
                         try resetCompatibility()
                         for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
                         let before=try h.boundary("source"),label=test.id
-                        let client=try start(test,configuration(label,at:before,count:2)); try waitForReader(client)
+                        var config=configuration(label,at:before,count:2)
+                        config["ddlPolicy"]=["triggers":"reject","events":"reject"]
+                        let client=try start(test,config); try waitForReader(client)
                         _ = try h.sql("native","START REPLICA")
                         _ = try h.sql("source",session+sql+"; INSERT INTO ddlcompat.t VALUES(1,1)")
                         _ = try finish(client,label,success:false,reason:reason)
@@ -590,6 +598,27 @@ public enum DMLQualification {
                         try require(state(label,"SELECT transactions_applied FROM state")=="0" && state(label,"SELECT COUNT(*) FROM ddl_intents")=="0","rejected policy DDL advanced progress or issued SQL")
                         try require(h.sql("target57","SELECT COUNT(*) FROM ddlcompat.t")=="0","policy rejection applied following DML")
                         try cases.pass(label)
+                    }
+                    if selection.selects(DDLCompatibilityCases.skipTrigger.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        let test=DDLCompatibilityCases.skipTrigger,before=try h.boundary("source")
+                        // No ddlPolicy override: exercise the default skip policy.
+                        let client=try start(test,configuration(test.id,at:before,count:8)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source",session+"\nDELIMITER $$\nCREATE DEFINER=CURRENT_USER TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW BEGIN SET NEW.n=NEW.n+10; SET NEW.n=NEW.n+1; END$$\nDELIMITER ;")
+                        try compatibilityBarrier(client,1)
+                        try require(h.sql("native","SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='ddlcompat'")=="1","native did not create the trigger")
+                        try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='ddlcompat'")=="0","skip created a target trigger")
+                        _ = try h.sql("source","INSERT INTO ddlcompat.t VALUES(1,7),(2,8); DROP TRIGGER ddlcompat.tr; DROP TRIGGER IF EXISTS ddlcompat.tr; INSERT INTO ddlcompat.t VALUES(3,9); CREATE TRIGGER ddlcompat.tr BEFORE UPDATE ON ddlcompat.t FOR EACH ROW SET NEW.n=NEW.n+10; UPDATE ddlcompat.t SET n=20 WHERE id=1; DROP TRIGGER ddlcompat.tr")
+                        let result=try finish(client,test.id,success:true),end=try h.boundary("source")
+                        try ModifyIndexCases.waitNative(h,end); _ = try h.sql("native","STOP REPLICA")
+                        for service in h.services { try require(h.sql(service,"SELECT id,n FROM ddlcompat.t ORDER BY id")=="1\t30\n2\t19\n3\t9","trigger effect was lost or applied twice") }
+                        try require(result["appliedGTIDSet"] as? String == end.gtids,"skipped trigger GTIDs were not checkpointed")
+                        try require(state(test.id,"SELECT COUNT(*) FROM ddl_skips WHERE reason='ddlPolicy.triggers=skip' AND database_name='ddlcompat' AND object_name='tr'")=="5","missing trigger skip audit")
+                        try require(state(test.id,"SELECT COUNT(*) FROM ddl_intents")=="0" && state(test.id,"SELECT COUNT(*) FROM groups WHERE status='APPLIED'")=="8","skipped DDL became a write intent or failed to complete")
+                        try require(state(test.id,"SELECT transactions_applied||'|'||rows_applied||'|'||ddl_applied FROM state")=="8|4|0","skip counters differ")
+                        try cases.pass(test.id)
                     }
                     if selection.selects(DDLCompatibilityCases.sourceTrigger.id) {
                         try resetCompatibility()
@@ -679,7 +708,7 @@ public enum DMLQualification {
                     try require(failureTrace?["phase"] as? String == "possiblyExecuted","DDL timeout did not retain uncertain statement phase")
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0" && state(label,"SELECT status FROM ddl_intents")=="PENDING","DDL timeout lost uncertain intent")
                     let id=try state(label,"SELECT active_gtid FROM state")
-                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".json"],checked:false)
+                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".yaml"],checked:false)
                     try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target write intents"),"uncertain DDL was eligible for skip")
                     let deadline=Date().addingTimeInterval(20)
                     while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' OR INFO='DO SLEEP(8)'") != "0" {
@@ -776,10 +805,10 @@ public enum DMLQualification {
                     if label == "ddl-index-create" && selection.selects(ModifyIndexCases.resume.id) {
                         try cases.run(ModifyIndexCases.resume) {
                             let config=configuration(label,at:end,count:1)
-                            try writeJSON(config,to:output.appendingPathComponent(label+"-resume.json"))
-                            _ = try docker(["cp",output.appendingPathComponent(label+"-resume.json").path,evidenceHelper+":/evidence/"+label+"-resume.json"])
+                            try writeYAML(config,to:output.appendingPathComponent(label+"-resume.yaml"))
+                            _ = try docker(["cp",output.appendingPathComponent(label+"-resume.yaml").path,evidenceHelper+":/evidence/"+label+"-resume.yaml"])
                             let name=h.project+"-indexed-resume";clients.append(name)
-                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.json"])
+                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"])
                             try waitForReader(name)
                             _ = try h.sql("source","INSERT INTO demo.mi VALUES(4,'resumed',4,NULL)")
                             let resumed=try finish(name,label+"-resume",success:true)
@@ -787,7 +816,7 @@ public enum DMLQualification {
                             try require(ModifyIndexCases.rows(h,"target57",test.table)==test.retained+"\n4\t726573756D6564\t4\tNULL","indexed resume row differs")
                             _ = try h.sql("native","START REPLICA");try ModifyIndexCases.waitNative(h,h.boundary("source"));_ = try h.sql("native","STOP REPLICA")
                             _ = try h.sql("target57","CREATE INDEX external_drift ON demo.mi(n)")
-                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.json"],checked:false)
+                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"],checked:false)
                             try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target schema differs from saved checkpoint"),"external index drift was accepted")
                             // The original saved intent/schema evidence above remains
                             // the first run's snapshot; retain the resumed diagnostics separately.

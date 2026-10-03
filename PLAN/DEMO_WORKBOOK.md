@@ -7,7 +7,8 @@ finish it with `make demo-down` (archives evidence and removes that disposable
 stack), then run `make demo-up` to build a fresh rehearsal with `skip` support.
 Rebuilding an image alone does not replace an already-running container.
 Run the setup block below in each host terminal. It reads the current session, so container names
-stay correct after rebuilding the demo.
+stay correct after rebuilding the demo. `current.json` stores the demo session
+identifier; the replicator configuration is `/evidence/apply.yaml`.
 
 ```sh
 cd /path/to/mysql-replicator
@@ -30,8 +31,8 @@ docker exec -it "${DEMO_STACK}-applier" /bin/bash
 **Inside that container**, inspect the config and start the replicator:
 
 ```sh
-cat /evidence/apply.json
-mysql-replicator run --config /evidence/apply.json --initialize
+cat /evidence/apply.yaml
+mysql-replicator run --config /evidence/apply.yaml --initialize
 ```
 
 The password environment variables are already set. Leave this command running
@@ -56,7 +57,7 @@ diagnostic. Interrupting a partial transaction or apply still leaves `BLOCKED`.
 After STOPPED, resume in the same shell without the initialization flag:
 
 ```sh
-mysql-replicator run --config /evidence/apply.json
+mysql-replicator run --config /evidence/apply.yaml
 ```
 
 This uses saved applied GTID/position, falling back to the saved baseline when no
@@ -172,12 +173,12 @@ sqlite3 -readonly /evidence/state/state.sqlite 'SELECT active_gtid FROM state WH
 Replace `<FAILED_GTID>` with that value, then run inside the applier container:
 
 ```sh
-mysql-replicator skip '<FAILED_GTID>' --config /evidence/apply.json
-mysql-replicator run --config /evidence/apply.json
+mysql-replicator skip '<FAILED_GTID>' --config /evidence/apply.yaml
+mysql-replicator run --config /evidence/apply.yaml
 ```
 
 For example, if the failure reports `2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18`,
-the first command is `mysql-replicator skip '2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18' --config /evidence/apply.json`.
+the first command is `mysql-replicator skip '2d7c9265-bd4d-11f1-ad69-6e5c8a8d99ba:18' --config /evidence/apply.yaml`.
 Use your own run's GTID, not this example. Do not use `--initialize` when resuming.
 
 `skip` prints a `skip_summary` with `lifecycle: STOPPED`, `skippedGTIDSet`,
@@ -285,7 +286,8 @@ They do not certify the omitted cases. Add `--skip-build` only when source/test
 inputs have not changed since the last image build. See [incremental checks](INCREMENTAL_CHECKS.md).
 
 To exclude a scratch schema in your own apply config, add
-`"replicateWildIgnoreTable": ["temp.%"]` before starting the replicator.
+`replicateWildIgnoreTable: ['temp.%']` in `/evidence/apply.yaml` before starting
+the replicator.
 Stop cleanly before changing the config; exclusions affect subsequent events and
 advance the checkpoint. Removing the rule later does not backfill earlier data.
 See [filter semantics and limits](WILDCARD_FILTERS.md).

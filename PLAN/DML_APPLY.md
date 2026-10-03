@@ -4,7 +4,7 @@ This increment connects the existing live reader/decoder/transaction assembler t
 MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
 The [native engine/charset DDL foundation](DDL_NATIVE_DEFAULTS.md) replaces the
 initial prototype rewrites. Broader coverage follows the [DDL completeness plan](DDL_COMPLETENESS.md).
-Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.json`
+Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.yaml`
 can exclude the single captured failed group before any target write intent;
 see [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
 Source transport interruptions and safe target disconnects reconnect from the durable
@@ -30,15 +30,19 @@ mounts. Closed state is copied back for SQLite assertions; all evidence is copie
 back before cleanup removes that volume.
 
 For a separately prepared target, start with the checked-in
-[configuration template](../examples/apply.example.json). **Replace its placeholders
+[configuration template](../examples/apply.example.yaml). **Replace its placeholders
 with the connection identities and external starting boundary before running.**
 Target UUID is discovered through the verified target connection and saved in
-SQLite; remove `targetUUID` from old configs. The template is not a ready-to-run fixture. Set the two named password environment
-variables, then run:
+SQLite; remove `targetUUID` from old configs. Configuration files must use YAML
+with a `.yaml` or `.yml` extension; legacy JSON configs must be converted.
+For each connection, set either `passwordEnvironment` (the variable's name) or
+`password` (the literal value), never both. Quote literal passwords containing
+YAML punctuation. The template is not a ready-to-run fixture. Replace its values
+and set any chosen password environment variables, then run:
 
 ```sh
 make build
-.build/debug/mysql-replicator run --config apply.json --initialize
+.build/debug/mysql-replicator run --config apply.yaml --initialize
 ```
 
 For `--initialize`, the state directory's parent must already exist and the state
@@ -47,7 +51,7 @@ permissions and records the configured external baseline. To restart after a cle
 stop, omit the flag:
 
 ```sh
-.build/debug/mysql-replicator run --config apply.json
+.build/debug/mysql-replicator run --config apply.yaml
 ```
 
 SQLite is authoritative on restart: use the saved fully applied position and GTID

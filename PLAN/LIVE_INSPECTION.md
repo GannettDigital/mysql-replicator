@@ -10,37 +10,38 @@ an applied or durable checkpoint. Phase 1 remains in progress.
 Build with `make build`, then run:
 
 ```sh
-.build/debug/mysql-replicator inspect --source-config source.json --transactions
+.build/debug/mysql-replicator inspect --source-config source.yaml --transactions
 ```
 
-Set the password through the environment variable named by `passwordEnvironment`.
-The JSON configuration below is illustrative: replace the UUID, binlog boundary,
+Set the password through the environment variable named by `passwordEnvironment`,
+or replace that setting with `password: 'literal password'`. Specify exactly one.
+The YAML configuration below is illustrative: replace the UUID, binlog boundary,
 GTID set and column interpretations with metadata from the **same verified seed
 boundary**. The tool does not establish that seed or validate its snapshot. Dump/load management remains entirely external; see [the production start-boundary contract](START_BOUNDARY.md). The current inspector requires both positional context and a GTID set even in GTID mode; the planned production interface will accept either known start form.
 
-```json
-{
-  "version": 1,
-  "host": "source.example.internal",
-  "port": 3306,
-  "username": "capture",
-  "passwordEnvironment": "REPLICATOR_SOURCE_PASSWORD",
-  "serverHostname": "source.example.internal",
-  "caFile": "/absolute/path/source-ca.pem",
-  "serverID": 9001,
-  "sourceUUID": "00000000-0000-0000-0000-000000000001",
-  "mode": "file-position",
-  "start": {
-    "file": "binlog.000003",
-    "position": 1589,
-    "executedGTIDs": "00000000-0000-0000-0000-000000000001:1-10"
-  },
-  "tables": [{"database": "poc", "table": "items", "columns": ["signed", "utf8", "unsigned"]}],
-  "idleTimeoutSeconds": 15,
-  "maximumEventBytes": 4194304,
-  "nonBlocking": false,
-  "stopAfterTransactions": 4
-}
+```yaml
+version: 1
+host: source.example.internal
+port: 3306
+username: capture
+passwordEnvironment: REPLICATOR_SOURCE_PASSWORD
+serverHostname: source.example.internal
+caFile: /absolute/path/source-ca.pem
+serverID: 9001
+sourceUUID: 00000000-0000-0000-0000-000000000001
+mode: file-position
+start:
+  file: binlog.000003
+  position: 1589
+  executedGTIDs: '00000000-0000-0000-0000-000000000001:1-10'
+tables:
+  - database: poc
+    table: items
+    columns: [signed, utf8, unsigned]
+idleTimeoutSeconds: 15
+maximumEventBytes: 4194304
+nonBlocking: false
+stopAfterTransactions: 4
 ```
 
 `mode: "gtid"` sends COM_BINLOG_DUMP_GTID with the supplied executed set. The source

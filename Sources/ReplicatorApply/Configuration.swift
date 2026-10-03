@@ -151,27 +151,31 @@ public struct TargetConfiguration: Decodable {
     public let unixSocket: String?
     public let requireTLS: Bool
     public let username: String
-    public let passwordEnvironment: String
+    public let passwordEnvironment: String?
+    public let password: String?
     public let serverHostname: String?
     public let caFile: String?
     /// Optional client LOCK/UNLOCK TABLES; internal MyISAM locking still applies.
     public let explicitTableLocks: Bool
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
+    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
         host=try c.decodeIfPresent(String.self,forKey:.host); port=try c.decodeIfPresent(Int.self,forKey:.port)
         unixSocket=try c.decodeIfPresent(String.self,forKey:.unixSocket)
         requireTLS=try c.decodeIfPresent(Bool.self,forKey:.requireTLS) ?? true
-        username=try c.decode(String.self,forKey:.username); passwordEnvironment=try c.decode(String.self,forKey:.passwordEnvironment)
+        username=try c.decode(String.self,forKey:.username)
+        passwordEnvironment=try c.decodeIfPresent(String.self,forKey:.passwordEnvironment)
+        password=try c.decodeIfPresent(String.self,forKey:.password)
         serverHostname=try c.decodeIfPresent(String.self,forKey:.serverHostname); caFile=try c.decodeIfPresent(String.self,forKey:.caFile)
         explicitTableLocks=try c.decodeIfPresent(Bool.self,forKey:.explicitTableLocks) ?? false
         nativeAutoStartDisabled=try c.decode(Bool.self,forKey:.nativeAutoStartDisabled)
     }
     func validate() throws {
-        try require(!username.isEmpty && !passwordEnvironment.isEmpty,"invalid target credentials")
+        try require(!username.isEmpty,"invalid target credentials")
+        try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"target")
         if let path = unixSocket {
             try require(host == nil && port == nil,"choose target unixSocket or host/port, not both")
             try require(path.hasPrefix("/") && !path.utf8.contains(0) && path.utf8.count <= 103,"target unixSocket must be an absolute path of at most 103 UTF-8 bytes without NUL")

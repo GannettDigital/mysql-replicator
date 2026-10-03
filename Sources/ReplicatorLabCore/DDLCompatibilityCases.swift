@@ -105,8 +105,9 @@ enum DDLCompatibilityCases {
     ]
     static let trigger = QualificationCase("ddl-compat-reject-trigger","Reject source trigger DDL before target mutation and checkpoint advance")
     static let event = QualificationCase("ddl-compat-reject-event","Reject source event DDL even when disabled on the source")
+    static let skipTrigger = QualificationCase("ddl-compat-skip-trigger","Skip CREATE/DROP trigger definitions, audit checkpoints and match native final row effects")
     static let sourceTrigger = QualificationCase("ddl-compat-source-trigger","A preexisting source-only BEFORE trigger produces final row values without target re-firing")
     static let targetTrigger = QualificationCase("ddl-compat-target-trigger","Reject preexisting target triggers before DML")
     static let generatedMismatch = QualificationCase("ddl-compat-generated-mismatch","Block when target-generated values differ from the FULL source row image")
-    static var declarations: [QualificationCase] {cases.map(\.test)+[trigger,event,sourceTrigger,targetTrigger,generatedMismatch]}
+    static var declarations: [QualificationCase] {cases.map(\.test)+[trigger,event,skipTrigger,sourceTrigger,targetTrigger,generatedMismatch]}
 }

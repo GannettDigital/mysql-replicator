@@ -4,7 +4,8 @@ Phase 1 is in progress.
 
 Current DDL additions are described in [DDL compatibility](DDL_COMPATIBILITY.md):
 broader types/defaults and ALTER, database lifecycle, generated columns,
-partition lifecycle, views and routine creation, with trigger/event rejection.
+partition lifecycle, views and routine creation, with audited trigger skipping
+(or explicit rejection) and event rejection.
 The checkpoint descriptions below retain their historical scope.
 
 Current follow-up after `3618fd4`: [native engine/charset defaults](DDL_NATIVE_DEFAULTS.md)
