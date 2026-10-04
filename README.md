@@ -108,6 +108,8 @@ The CLI also supports
 
 See [DDL compatibility](PLAN/DDL_COMPATIBILITY.md) for supported schema changes,
 generated columns, partitions, views and routines, and the trigger-skip/event-rejection policy.
+It also documents opt-in 8.4-to-5.7 collation mapping for applications that inherit
+source defaults, including its comparison and unique-key tradeoffs.
 
 Treat the target as a dedicated replica: application writes and schema changes
 must come through replication, with local administrative changes made while stopped.

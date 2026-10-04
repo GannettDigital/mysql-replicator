@@ -37,6 +37,16 @@ final class ConfigurationFileTests: XCTestCase {
             XCTAssertTrue(String(describing:$0).contains("convert legacy JSON"))
         }
     }
+    func testCollationMappingYAMLIsOptInAndValidated() throws {
+        let strict = try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(example().utf8))
+        XCTAssertTrue(strict.compatibilityPolicy.collations.isEmpty)
+        let text = try example()+"\ncompatibility:\n  collations:\n    utf8mb4_0900_ai_ci: utf8mb4_unicode_ci # changes comparisons, not bytes\n"
+        let mapped = try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(text.utf8))
+        try mapped.validate()
+        XCTAssertEqual(mapped.compatibilityPolicy.targetID(255),224)
+        let invalid = text.replacingOccurrences(of:"utf8mb4_unicode_ci #",with:"latin1_bin #")
+        XCTAssertThrowsError(try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(invalid.utf8)).validate())
+    }
     func testMalformedDuplicateAndMultipleDocumentConfigurationsAreRejected() throws {
         for text in [try example()+"\nversion: 2\n", try example()+"\n---\nversion: 2\n",
                      try example().replacingOccurrences(of:"enabled: true",with:"enabled: [broken"),

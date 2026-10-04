@@ -6,6 +6,9 @@ struct DDLParser {
     var tokens: [DDLToken]
     var index = 0
     let database: String?
+    var compatibility = CompatibilityPolicy()
+    var defaultUTF8MB4Collation: UInt32 = 255
+    var edits: [DDLSQLEdit] = []
     init(_ data: Data, database: String?, sqlMode: UInt64 = 0) throws {
         self.database = database; tokens = try DDLTokens.lex(data,sqlMode:sqlMode)
     }
@@ -84,6 +87,7 @@ struct DDLParser {
         do { parsed = try DMLColumnType(type) }
         catch { throw ApplyError("unsupported DDL column type: \(type)") }
         var column = ApplyColumn(name:name,type:type,nullable:true,collation:nil)
+        var charsetEnd: Int?
         var primary = false, seen: Set<String> = []
         while index < tokens.count {
             let attribute: String
@@ -93,8 +97,8 @@ struct DDLParser {
             else if take("DEFAULT") { column.defaultValue = try defaultValue(); attribute = "default" }
             else if take("AUTO_INCREMENT") { column.extra = "auto_increment"; column.nullable = false; attribute = "extra" }
             else if take("ON") { try expect("UPDATE"); guard let value = try defaultValue(), value.hasPrefix("CURRENT_TIMESTAMP") else { throw ApplyError("unsupported ON UPDATE expression") }; column.extra = "on update "+value; attribute = "extra" }
-            else if take("CHARACTER") { try expect("SET"); column.characterSet = try identifier().lowercased(); attribute = "charset" }
-            else if take("COLLATE") { column = withCollation(column,try identifier().lowercased()); attribute = "collation" }
+            else if take("CHARACTER") { try expect("SET"); column.characterSet = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; attribute = "charset" }
+            else if take("COLLATE") { column = withCollation(column,try collationName()); attribute = "collation" }
             else if isNext("GENERATED") || isNext("AS") {
                 if take("GENERATED") { _ = take("ALWAYS") }; try expect("AS")
                 column.generationExpression = try DDLExpression.canonical(parenthesized())
@@ -102,6 +106,7 @@ struct DDLParser {
             } else { break }
             try require(seen.insert(attribute).inserted,"duplicate DDL column attribute")
         }
+        if let collation = charsetDefault(column.characterSet,collation:column.collation,at:charsetEnd) { column = withCollation(column,collation) }
         if primary { column.nullable = false }
         try require(!seen.contains("default") || column.defaultValue != nil || column.nullable,"DEFAULT NULL on nonnullable DDL column")
         try require(!column.isGenerated || !seen.contains("default"),"generated columns cannot have defaults")
@@ -136,15 +141,17 @@ struct DDLParser {
         return ApplyIndex(name:explicitName ?? parts[0].column,unique:unique,parts:parts)
     }
     mutating func databaseDefinition(conditional: Bool = false) throws -> CreateDatabase {
+        var charsetEnd: Int?
         let name = try identifier(); var charset: String?, collation: String?, seen: Set<String> = []
         while index < tokens.count && !isNext(";") {
             _ = take("DEFAULT"); let option: String
-            if take("CHARACTER") { try expect("SET"); _ = take("="); charset = try identifier().lowercased(); option = "charset" }
-            else if take("CHARSET") { _ = take("="); charset = try identifier().lowercased(); option = "charset" }
-            else if take("COLLATE") { _ = take("="); collation = try identifier().lowercased(); option = "collation" }
+            if take("CHARACTER") { try expect("SET"); _ = take("="); charset = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; option = "charset" }
+            else if take("CHARSET") { _ = take("="); charset = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; option = "charset" }
+            else if take("COLLATE") { _ = take("="); collation = try collationName(); option = "collation" }
             else { throw ApplyError("unsupported DATABASE option") }
             try require(seen.insert(option).inserted,"duplicate DATABASE option")
         }
+        collation = charsetDefault(charset,collation:collation,at:charsetEnd)
         return CreateDatabase(name:name,ifNotExists:conditional,characterSet:charset,collation:collation)
     }
     mutating func parse() throws -> DDLStatement {
@@ -182,9 +189,14 @@ struct DDLParser {
                 result = Self.statement(table,actions)
             }
         } else if take("RENAME") {
-            try expect("TABLE"); let from = try name(); try expect("TO"); let to = try name()
-            try require(from.database == to.database && from != to,"DDL rename requires distinct names in one database")
-            result = .rename(from,to)
+            try expect("TABLE"); var renames: [TableRename] = []
+            repeat {
+                let from = try name(); try expect("TO"); let to = try name()
+                try require(from.database == to.database && from != to && (renames.first?.from.database ?? from.database) == from.database,"DDL rename requires distinct names in one database")
+                renames.append(TableRename(from:from,to:to))
+                try require(renames.count <= 64,"DDL rename pair limit exceeded")
+            } while take(",")
+            result = renames.count == 1 ? .rename(renames[0].from,renames[0].to) : .renameMany(renames)
         } else if take("DROP") {
             if take("DATABASE") || take("SCHEMA") {
                 let conditional = take("IF"); if conditional { try expect("EXISTS") }
@@ -227,6 +239,7 @@ struct DDLParser {
             }
         } while take(",")
         try expect(")")
+        var charsetEnd: Int?
         var charset: String?, collation: String?, options: Set<String> = [], engine = DDLEngine.omitted
         while index < tokens.count && !isNext(";") && !isNext("PARTITION") {
             let option: String
@@ -239,13 +252,14 @@ struct DDLParser {
             } else if take("AUTO_INCREMENT") { _ = take("="); _ = try number(); option = "auto_increment" }
             else {
                 _ = take("DEFAULT")
-                if take("CHARACTER") { try expect("SET"); _ = take("="); charset = try identifier().lowercased(); option = "charset" }
-                else if take("CHARSET") { _ = take("="); charset = try identifier().lowercased(); option = "charset" }
-                else if take("COLLATE") { _ = take("="); collation = try identifier().lowercased(); option = "collation" }
+                if take("CHARACTER") { try expect("SET"); _ = take("="); charset = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; option = "charset" }
+                else if take("CHARSET") { _ = take("="); charset = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; option = "charset" }
+                else if take("COLLATE") { _ = take("="); collation = try collationName(); option = "collation" }
                 else { throw ApplyError("unsupported CREATE TABLE option") }
             }
             try require(options.insert(option).inserted,"duplicate CREATE TABLE option")
         }
+        collation = charsetDefault(charset,collation:collation,at:charsetEnd)
         guard let key else { throw ApplyError("DDL CREATE requires a primary key") }
         for i in columns.indices where key.contains(columns[i].name) { columns[i].nullable = false }
         var schema = ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:key,defaultCharacterSet:charset,defaultCollation:collation,secondaryIndexes:indexes.sorted{$0.name.lowercased() < $1.name.lowercased()})

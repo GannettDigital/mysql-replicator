@@ -70,14 +70,14 @@ final class SchemaChangeTests: XCTestCase {
             try state.bindTargetIdentity(f.target);try state.running()
             try f.apply(f.helper.groups()[0],to:state);try state.stopped()
         }
-        try f.write(path,"DROP TABLE ddl_skips; UPDATE schemas SET schema_json=json_remove(schema_json,'$.secondaryIndexes'); PRAGMA user_version=4")
+        try f.write(path,"DROP TABLE ddl_details; DROP TABLE compatibility; DROP TABLE ddl_skips; UPDATE schemas SET schema_json=json_remove(schema_json,'$.secondaryIndexes'); PRAGMA user_version=4")
         let db=path.appendingPathComponent("state.sqlite")
         let before=try f.helper.sqlite(db,"SELECT * FROM state")
         let history=try f.helper.sqlite(db,"SELECT * FROM schemas")
         let groups=try f.helper.sqlite(db,"SELECT * FROM groups")
         let intents=try f.helper.sqlite(db,"SELECT * FROM row_intents")
         do {let state=try StateStore(configuration:c,initialize:false);XCTAssertEqual(state.transactions,1)}
-        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["7"]])
+        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["8"]])
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM state"),before)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM schemas"),history)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM groups"),groups)

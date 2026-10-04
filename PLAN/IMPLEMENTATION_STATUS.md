@@ -6,6 +6,9 @@ Current DDL additions are described in [DDL compatibility](DDL_COMPATIBILITY.md)
 broader types/defaults and ALTER, database lifecycle, generated columns,
 partition lifecycle, views and routine creation, with audited trigger skipping
 (or explicit rejection) and event rejection.
+The latest addition is explicit collation mapping with durable policy/audit,
+plus same-database multi-table RENAME for dynamic table replacement; see the
+[compatibility policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
 The checkpoint descriptions below retain their historical scope.
 
 Current follow-up after `3618fd4`: [native engine/charset defaults](DDL_NATIVE_DEFAULTS.md)

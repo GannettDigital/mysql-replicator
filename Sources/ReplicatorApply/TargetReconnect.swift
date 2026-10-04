@@ -64,6 +64,7 @@ public struct TargetFailureDiagnostic: Codable {
     let rows: [Rows]
     let ddlGTID: String?
     let ddlSQL: String?
+    var ddlContext: DDLQueryContextDiagnostic? = nil
 }
 
 /// Separate from forced cancellation: journaled execution is allowed to drain.

@@ -96,7 +96,7 @@ public enum ApplyRun {
             func checkSourceFailure() throws {
                 try pipeline.queue.checkFailure(allowSourceReconnect:configuration.reconnectPolicy.enabled,allowDrain:true)
             }
-            var planningCache = try DMLPlanningCache(target.discovered)
+            var planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy)
             func finishExecution() throws {
                 guard executor.active else { return }
                 let outcome = timings.measure("apply.execution_wait") { executor.join()! }
@@ -178,15 +178,17 @@ public enum ApplyRun {
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try checkSourceFailure()
                     try target.applyDDL(plan)
-                    planningCache = try DMLPlanningCache(target.discovered)
+                    planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy)
                     try state.complete(group,rowCount:0,ddl:plan)
                     try progress()
                     return
                     } catch {
+                        let failedQuery=group.events.compactMap { event -> QueryControl? in
+                            if case .query(let query)=event.control { return query }; return nil
+                        }.first
                         let diagnostic=TargetFailureDiagnostic(reason:String(describing:error),statement:target.statementTrace,
-                            rows:[],ddlGTID:state.pendingGTID,ddlSQL:group.events.compactMap { event -> String? in
-                                if case .query(let q)=event.control { return String(decoding:q.sql,as:UTF8.self) }; return nil
-                            }.first)
+                            rows:[],ddlGTID:state.pendingGTID,ddlSQL:failedQuery.map { String(decoding:$0.sql,as:UTF8.self) },
+                            ddlContext:failedQuery.flatMap { DDLQueryContextDiagnostic(query:$0) })
                         targetFailure=diagnostic; try state.recordTargetFailure(diagnostic)
                         if error is TargetConnectionFailure && target.statementTrace.phase == .notIssued {
                             try state.discardUnwrittenPending()

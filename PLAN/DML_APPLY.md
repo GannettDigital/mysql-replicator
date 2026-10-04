@@ -146,7 +146,8 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   0–6; CHAR(n), BINARY(n), VARCHAR(n), VARBINARY(n), ENUM, SET, and
   TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
   Text requires utf8mb4_bin, utf8mb4_unicode_ci or utf8mb4_general_ci, matching
-  source and target. A source 8.4-only collation fails rather than being substituted.
+  source and target. A source 8.4-only collation fails unless covered by the explicit
+  [collation mapping policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
   CHAR/BINARY lengths are 0–255; VARCHAR/VARBINARY lengths remain 1–16383.
   ENUM/SET require FULL source metadata with exactly matching ordered labels.
   ENUM error ordinal zero is rejected; a declared empty label is supported. The decoder's 1 MiB individual-value

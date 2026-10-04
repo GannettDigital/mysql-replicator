@@ -208,6 +208,7 @@ final class DDLTests: XCTestCase {
         now.addTimeInterval(120);free=c.policy.minimumFreeDiskBytes+c.policy.maximumSQLiteBytes*3/2
         try store.ensureCapacity()
         XCTAssertEqual(try helpers.sqlite(db,"SELECT status FROM ddl_intents"),[["PENDING"]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM ddl_details"),[["1"]])
         XCTAssertEqual(try helpers.sqlite(db,"SELECT current FROM schemas"),[["1"]])
         XCTAssertEqual(try store.durableAppliedGTIDs(),helpers.sid+":1-13")
         XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM row_intents"),[["0"]])

@@ -5,6 +5,13 @@
 version: 2                          # Config format; schema/table allowlists are obsolete.
 stateDirectory: ./replica-state      # New with --initialize; reuse after a clean stop.
 
+# Optional comparison-semantics translation; omitted means strict matching.
+# Enable BEFORE initializing state and use the same mapping for snapshot schemas.
+# utf8mb4 bytes are preserved, but sorting/equality and unique keys can differ.
+# compatibility:
+#   collations:
+#     utf8mb4_0900_ai_ci: utf8mb4_unicode_ci  # Also permits utf8mb4_general_ci or utf8mb4_bin.
+
 source:
   version: 2
   host: REPLACE_SOURCE_HOST          # MySQL 8.4 source with ROW/FULL binlogging.

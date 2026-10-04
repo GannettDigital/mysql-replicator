@@ -67,6 +67,7 @@ final class StateStore {
     let applierProfiling: Bool
     let timings: StageTimings
     let policy: StoragePolicy
+    let compatibility: CompatibilityPolicy
     // Reserve enough of the total SQLite budget for a transaction touching every
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
@@ -78,6 +79,7 @@ final class StateStore {
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
+        compatibility = c.compatibilityPolicy; try compatibility.validate()
         self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
         try require(skipGTIDs == nil || !initialize,"skip requires existing state")
@@ -115,13 +117,14 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=7")
+            try execute("PRAGMA user_version=8")
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
             try execute("CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,database_json TEXT,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try execute("CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
             try createDDLSkips()
+            try createCompatibilityJournal()
             try execute("CREATE INDEX groups_retention ON groups(status,completed_at)")
             try execute("CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))")
             try execute("CREATE TABLE snapshots(id INTEGER PRIMARY KEY,covered_sequence INTEGER NOT NULL,gtids TEXT NOT NULL,source_file TEXT,source_position TEXT,created_at TEXT NOT NULL)")
@@ -151,7 +154,15 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5,6,7].contains(version),"unsupported saved state version")
+        try require([4,5,6,7,8].contains(version),"unsupported saved state version")
+        if version >= 8 {
+            let saved = try query("SELECT policy_json FROM compatibility WHERE id=1")
+            guard saved.count == 1, let json = saved[0][0] else { throw ApplyError("missing saved compatibility policy") }
+            let policy = try JSONDecoder().decode(CompatibilityPolicy.self,from:Data(json.utf8))
+            try require(policy == compatibility,"compatibility.collations differs from saved state; restore the original mapping or initialize a newly prepared baseline")
+        } else {
+            try require(compatibility.collations.isEmpty,"legacy state uses strict collation semantics; enabling compatibility.collations requires a newly prepared baseline")
+        }
         try require(version != 4 || skipGTIDs == nil,"format-4 BLOCKED state requires resolution with its original runtime before upgrading")
         try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")
         let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
@@ -263,9 +274,21 @@ final class StateStore {
         // Preserve every existing relay byte and offset. New frames carry their
         // own binary version; inspection supports legacy JSON and mixed files.
         // Version 7 adds skipped-DDL history, pruned with its completed groups.
-        // Older runtimes reject it rather than leave orphan audit records.
-        if version < 7 { try atomic { try createDDLSkips(); try execute("PRAGMA user_version=7") } }
+        // Version 8 pins collation policy and adds original SQL/schema audit.
+        // Older runtimes reject newer state rather than orphan audit records.
+        if version < 8 {
+            try atomic {
+                if version < 7 { try createDDLSkips() }
+                try createCompatibilityJournal()
+                try execute("PRAGMA user_version=8")
+            }
+        }
         ready=true
+    }
+    private func createCompatibilityJournal() throws {
+        try execute("CREATE TABLE compatibility(id INTEGER PRIMARY KEY CHECK(id=1),policy_json TEXT NOT NULL)")
+        try execute("INSERT INTO compatibility VALUES(1,?)",[String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)])
+        try execute("CREATE TABLE ddl_details(gtid TEXT PRIMARY KEY,source_sql TEXT NOT NULL,context_json TEXT,policy_json TEXT NOT NULL,transitions_json TEXT NOT NULL)")
     }
     private func createDDLSkips() throws {
         try execute("CREATE TABLE ddl_skips(gtid TEXT PRIMARY KEY,database_name TEXT NOT NULL,object_name TEXT NOT NULL,source_sql TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL)")
@@ -404,6 +427,7 @@ final class StateStore {
                     try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM ddl_skips WHERE gtid IN (SELECT gtid FROM prune_groups)")
+                    try execute("DELETE FROM ddl_details WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM groups WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM snapshots WHERE covered_sequence<? AND created_at<?",[String(snapshotSequence),cutoff])
                     try execute("DELETE FROM schemas WHERE current=0 AND retired_at<? AND NOT EXISTS(SELECT 1 FROM row_intents WHERE schema_id=schemas.id) AND NOT EXISTS(SELECT 1 FROM ddl_intents WHERE before_schema_id=schemas.id OR after_schema_id=schemas.id)",[cutoff])
@@ -454,7 +478,15 @@ final class StateStore {
         }
         let beforeID=plan.statement.name.flatMap{schemas[$0.identity]?.0}
         let databaseJSON=try plan.database.map{String(decoding:try JSONEncoder().encode($0),as:UTF8.self)}
-        try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,databaseJSON,timestamp()])
+        guard case .query(let source) = event.control else { throw ApplyError("DDL intent lacks source query") }
+        let contextJSON = try DDLQueryContextDiagnostic(query:source).map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
+        let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after)] : [])
+        let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)
+        let transitionsJSON = String(decoding:try JSONEncoder().encode(transitions),as:UTF8.self)
+        try atomic {
+            try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,databaseJSON,timestamp()])
+            try execute("INSERT INTO ddl_details VALUES(?,?,?,?,?)",[pendingGTID,String(decoding:source.sql,as:UTF8.self),contextJSON,policyJSON,transitionsJSON])
+        }
     }
     func append(_ record: LiveRecord) throws {
         let bytes: Data = try profile("relay.base64") {
@@ -609,7 +641,6 @@ final class StateStore {
                     if let before=change.before,let old=schemas[before.identity] {
                         try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
                     }
-                    if let after=change.after {additionalIDs[after.identity]=try insertSchema(after,event:group.events[1],coordinate:group.end)}
                 }
                 if ddl.preservesSchema {newSchemaID=ddl.statement.name.flatMap{schemas[$0.identity]?.0}}
                 else {
@@ -617,6 +648,11 @@ final class StateStore {
                         try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
                     }
                     if let after=ddl.after {newSchemaID=try insertSchema(after,event:group.events[1],coordinate:group.end)}
+                }
+                // Retire all old names before inserting any new names: an
+                // atomic multi-table rename can replace or swap current entries.
+                for change in ddl.additional where change.before != change.after {
+                    if let after=change.after {additionalIDs[after.identity]=try insertSchema(after,event:group.events[1],coordinate:group.end)}
                 }
                 try execute("UPDATE ddl_intents SET status='DONE',completed_at=?,after_schema_id=? WHERE gtid=?",[time,newSchemaID.map(String.init),pendingGTID])
             }
@@ -626,6 +662,8 @@ final class StateStore {
         if let ddl {
             for change in ddl.additional where change.before != change.after {
                 if let before=change.before {schemas.removeValue(forKey:before.identity)}
+            }
+            for change in ddl.additional where change.before != change.after {
                 if let after=change.after,let id=additionalIDs[after.identity] {schemas[after.identity]=(id,after)}
             }
             if let name=ddl.statement.name {schemas.removeValue(forKey:name.identity)}
@@ -664,6 +702,7 @@ final class StateStore {
         try atomic {
             try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
             try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
+            try execute("DELETE FROM ddl_details WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
             try execute("DELETE FROM groups WHERE status='PENDING'")
             try execute("UPDATE state SET active_gtid=NULL,updated_at=? WHERE id=1",[timestamp()])
         }

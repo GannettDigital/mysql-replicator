@@ -581,6 +581,101 @@ public enum DMLQualification {
                         try writeJSON(["steps":observations,"summary":result],to:output.appendingPathComponent(label+"-observations.json"))
                         try cases.pass(label)
                     }
+                    if selection.selects(DDLCompatibilityCases.collationCleanup.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; DROP DATABASE ddlcompat") }
+                        let test = DDLCompatibilityCases.collationCleanup, label = test.id
+                        let mapping = ["collations":["utf8mb4_0900_ai_ci":"utf8mb4_unicode_ci"]]
+                        let logged = "SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci; SET SESSION collation_server=utf8mb4_0900_ai_ci; SET SESSION default_collation_for_utf8mb4=utf8mb4_0900_ai_ci; "
+                        var config = configuration(label,at:try h.boundary("source"),count:9)
+                        config["compatibility"] = mapping
+                        let initialTest = QualificationCase(label+"-initial","Persist mapped schemas after the dynamic cleanup workflow")
+                        let initial = try start(initialTest,config); try waitForReader(initial)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source",logged+"""
+                        CREATE DATABASE ddlcompat;
+                        CREATE TABLE ddlcompat.foo(id INT PRIMARY KEY,v VARCHAR(80));
+                        INSERT INTO ddlcompat.foo VALUES(1,'keep'),(2,'drop'),(3,CONVERT(0xC3A9F09F9880 USING utf8mb4));
+                        CREATE TABLE ddlcompat.foo_temp LIKE ddlcompat.foo;
+                        INSERT INTO ddlcompat.foo_temp SELECT * FROM ddlcompat.foo WHERE id<>2;
+                        ALTER TABLE ddlcompat.foo_temp ADD extra VARCHAR(40) CHARACTER SET utf8mb4 DEFAULT 'utf8mb4_0900_ai_ci';
+                        RENAME TABLE ddlcompat.foo TO ddlcompat.foo_old, ddlcompat.foo_temp TO ddlcompat.foo;
+                        CREATE TABLE ddlcompat.explicit_table(id INT PRIMARY KEY,v VARCHAR(40) COLLATE utf8mb4_0900_ai_ci) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+                        CREATE TABLE ddlcompat.charset_only(id INT PRIMARY KEY,v VARCHAR(40)) DEFAULT CHARSET=utf8mb4;
+                        """)
+                        _ = try finish(initial,initialTest.id,success:true)
+                        try ModifyIndexCases.waitNative(h,h.boundary("source"))
+                        try cases.pass(initialTest.id)
+                        // Changing a durable mapping must fail before any target SQL.
+                        for (suffix,policy) in [("changed",["collations":["utf8mb4_0900_ai_ci":"utf8mb4_bin"]]),("removed",["collations":[:]])] {
+                            var changed = config; changed["compatibility"] = policy
+                            let rejectedTest = QualificationCase(label+"-"+suffix,"Refuse a changed saved collation policy")
+                            let rejected = try start(rejectedTest,changed,initialize:false)
+                            _ = try finish(rejected,rejectedTest.id,success:false,reason:"differs from saved state")
+                            try cases.pass(rejectedTest.id)
+                        }
+                        // Use saved schemas after restart, including the replacement
+                        // table's extra column and the old name's original schema.
+                        var capture = config["source"] as! [String:Any]
+                        capture["stopAfterTransactions"] = 7; config["source"] = capture
+                        let resumed = try start(test,config,initialize:false); try waitForReader(resumed)
+                        _ = try h.sql("source",logged+"""
+                        UPDATE ddlcompat.foo SET v='resumed',extra='new' WHERE id=1;
+                        INSERT INTO ddlcompat.explicit_table VALUES(1,CONVERT(0xC3A9F09F9880 USING utf8mb4));
+                        INSERT INTO ddlcompat.charset_only VALUES(1,'bytes');
+                        CREATE TABLE ddlcompat.foo_temp LIKE ddlcompat.foo;
+                        INSERT INTO ddlcompat.foo_temp SELECT * FROM ddlcompat.foo WHERE id=1;
+                        RENAME TABLE ddlcompat.foo TO ddlcompat.spare, ddlcompat.foo_temp TO ddlcompat.foo, ddlcompat.spare TO ddlcompat.foo_temp;
+                        INSERT INTO ddlcompat.foo VALUES(4,'after-swap','four');
+                        """)
+                        let result = try finish(resumed,label,success:true)
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        for (query,expected) in [
+                            ("SELECT id,v,extra FROM ddlcompat.foo ORDER BY id","1\tresumed\tnew\n4\tafter-swap\tfour"),
+                            ("SELECT id,HEX(v) FROM ddlcompat.foo_temp ORDER BY id","1\t726573756D6564\n3\tC3A9F09F9880"),
+                            ("SELECT COUNT(*) FROM ddlcompat.foo_old","3"),
+                            ("SELECT HEX(v) FROM ddlcompat.explicit_table","C3A9F09F9880"),
+                            ("SELECT v FROM ddlcompat.charset_only","bytes")
+                        ] {
+                            for service in h.services {
+                                let actual = try h.sql(service,query)
+                                try require(actual == expected,"collation cleanup row mismatch: \(service) \(query): \(actual), expected \(expected)")
+                            }
+                        }
+                        for service in h.services {
+                            let collation = service == "target57" ? "utf8mb4_unicode_ci" : "utf8mb4_0900_ai_ci"
+                            try require(h.sql(service,"SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='ddlcompat'") == collation,"mapped database default differs")
+                            try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_COLLATION<>'\(collation)'") == "0","mapped table default differs")
+                            try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND COLLATION_NAME IS NOT NULL AND COLLATION_NAME<>'\(collation)'") == "0","mapped column encoding differs")
+                        }
+                        try require(result["transactionsApplied"] as? Int == 16 && result["ddlApplied"] as? Int == 9,"mapped cleanup counters differ")
+                        try require(state(label,"SELECT COUNT(*) FROM schemas WHERE current=1") == "5","rename left stale schemas")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE'") == "9","mapped DDL audit missing")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql<>target_sql") == "3","encoding rewrite audit differs")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_details WHERE json_extract(policy_json,'$.collations.utf8mb4_0900_ai_ci')='utf8mb4_unicode_ci'") == "9","mapping policy missing from audit")
+                        try cases.pass(label)
+                    }
+                    if selection.selects(DDLCompatibilityCases.collationCollision.id) {
+                        try resetCompatibility()
+                        let test = DDLCompatibilityCases.collationCollision, label = test.id
+                        var config = configuration(label,at:try h.boundary("source"),count:5)
+                        config["compatibility"] = ["collations":["utf8mb4_0900_ai_ci":"utf8mb4_unicode_ci"]]
+                        let client = try start(test,config); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source","SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE TABLE ddlcompat.collision(id INT PRIMARY KEY,v VARCHAR(20),UNIQUE KEY value_key(v)) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci; INSERT INTO ddlcompat.collision VALUES(1,'a')")
+                        try compatibilityBarrier(client,2)
+                        let prefix = try h.boundary("source")
+                        _ = try h.sql("source","INSERT INTO ddlcompat.collision VALUES(2,'a '); INSERT INTO ddlcompat.collision VALUES(3,'must-not-apply')")
+                        let failure = try finish(client,label,success:false,reason:"1062")
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(h.sql("target57","SELECT id,HEX(v) FROM ddlcompat.collision") == "1\t61","unique collision was ignored or changed rows")
+                        for service in ["source","native"] { try require(h.sql(service,"SELECT COUNT(*) FROM ddlcompat.collision") == "3","NO PAD source/native fixture did not accept both keys") }
+                        try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|2","collision advanced the checkpoint")
+                        let progress = failure["progress"] as? [String:Any]
+                        try require(progress?["appliedGTIDSet"] as? String == prefix.gtids,"collision GTID was acknowledged")
+                        try require(state(label,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") != "0","collision lost pending row intent")
+                        try cases.pass(label)
+                    }
                     for (test,sql,reason) in [
                         (DDLCompatibilityCases.trigger,"CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers"),
                         (DDLCompatibilityCases.event,"CREATE EVENT ddlcompat.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO ddlcompat.t VALUES(99,99)","DDL policy rejects events")
@@ -885,6 +980,18 @@ public enum DMLQualification {
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied||'|'||COALESCE(applied_position,'NULL') FROM state")=="BLOCKED|0|NULL","failed database CREATE advanced checkpoint")
                     let pending=test.id==DatabaseCreationCases.denied.id ? "1" : "0"
                     try require(state(label,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND status='PENDING'")==pending,"database failure lost or invented a pending intent")
+                    let failureJSON=try state(label,"SELECT diagnostic_json FROM target_failure")
+                    guard let failure=try JSONSerialization.jsonObject(with:Data(failureJSON.utf8)) as? [String:Any],
+                          let statement=failure["statement"] as? [String:Any],
+                          let context=failure["ddlContext"] as? [String:Any] else {throw LabError("missing persisted DDL failure context")}
+                    try require(failure["ddlSQL"] as? String == sql && failure["ddlGTID"] as? String != nil,"persisted failure lost SQL/GTID")
+                    if test.id==DatabaseCreationCases.unsupportedDefault.id {
+                        try require(context["serverCollationID"] as? Int == 255 && context["serverCollationName"] as? String == "utf8mb4_0900_ai_ci","persisted failure lost source server collation")
+                        try require(context["database"] as? String == "created_bad_default" && statement["phase"] as? String == "notIssued","wrong database failure context/phase")
+                        try require((failure["reason"] as? String ?? "").contains("ID 255 (utf8mb4_0900_ai_ci)"),"failure reason lacks collation identity")
+                    } else if test.id==DatabaseCreationCases.unsupported.id {
+                        try require((failure["reason"] as? String ?? "").contains("collation=utf8mb4_0900_ai_ci"),"failure reason lacks explicit collation")
+                    }
                     let database=sql.split(separator:" ")[2]
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'")=="0","rejected database was created")
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='after_"+label.replacingOccurrences(of:"-",with:"_")+"'")=="0","database failure did not block following DDL")

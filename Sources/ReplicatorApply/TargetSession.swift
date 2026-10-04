@@ -126,16 +126,16 @@ final class TargetSession {
                 try unlock()
                 table=try readSchema(database:database,name:name)
             }
-            try Self.validateTableMap(event, table:table)
+            try Self.validateTableMap(event, table:table,compatibility:config.compatibilityPolicy)
             discovered[identity] = table
             return table
         }
     }
     /// Pure source/target compatibility validation; safe with an immutable table
     /// snapshot while the target connection executes an earlier batch.
-    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable) throws {
+    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable,compatibility: CompatibilityPolicy = .init()) throws {
         guard let wire = event.wireColumns else { throw ApplyError("missing table-map metadata") }
-        try DMLTablePlan(table).validate(wire:wire)
+        try DMLTablePlan(table,compatibility:compatibility).validate(wire:wire)
     }
 
     func readSchema(database: String,name: String) throws -> ApplyTable {

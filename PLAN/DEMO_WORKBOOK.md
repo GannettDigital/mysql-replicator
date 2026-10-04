@@ -43,6 +43,10 @@ New demo setups grant the applier full privileges on the disposable 5.7 target,
 including databases other than `demo`. Use explicit 5.7-compatible collations
 when creating databases, such as `CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`.
 An existing demo keeps its old grants; recreate it to pick up setup changes.
+For experiments with inherited 8.4 defaults, add the optional
+[`compatibility.collations` mapping](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement)
+to `/evidence/apply.yaml` before the first `--initialize`. A mapping cannot be
+changed on saved state; use a fresh demo/baseline for that experiment.
 
 The applier shares MySQL 5.7's network namespace and connects to `127.0.0.1`.
 Its container starts with `sleep infinity`; starting or restarting the container

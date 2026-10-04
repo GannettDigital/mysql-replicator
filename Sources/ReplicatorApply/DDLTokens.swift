@@ -6,6 +6,10 @@ struct DDLToken: Equatable {
     let text: String
     var identifier = false
     var literal: String? = nil
+    var range: Range<Int>? = nil
+    static func == (lhs: Self,rhs: Self) -> Bool {
+        lhs.text == rhs.text && lhs.identifier == rhs.identifier && lhs.literal == rhs.literal
+    }
     var keyword: String { identifier || literal != nil ? "" : text.uppercased() }
 }
 
@@ -37,6 +41,7 @@ enum DDLTokens {
             if c == 35 || (c == 45 && i+2 < b.count && b[i+1] == 45 && b[i+2] <= 32) {
                 while i < b.count && b[i] != 10 { i += 1 }; continue
             }
+            let start = i
             if c == 96 || c == 39 || c == 34 {
                 let isIdentifier = c == 96 || (c == 34 && sqlMode & 4 != 0)
                 i += 1; var value: [UInt8] = []; var closed = false
@@ -67,6 +72,7 @@ enum DDLTokens {
                 }
                 result.append(DDLToken(text:text))
             }
+            result[result.count-1].range = start..<i
             try require(result.count <= 16384, "DDL token limit exceeded")
         }
         return result

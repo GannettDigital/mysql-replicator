@@ -36,12 +36,13 @@ enum DDLStatement: Equatable {
     case indexes(TableName,IndexChange)
     case dropColumn(TableName,String)
     case rename(TableName,TableName)
+    case renameMany([TableRename])
     case drop(TableName)
     case dropIfPresent(TableName)
     case truncate(TableName)
     var name: TableName? {
         switch self {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object: return nil
+        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany: return nil
         case .alter(let t,_): return t
         case .create(let t,_),.createIfAbsent(let t,_): return TableName(database:t.database,table:t.table)
         case .modify(let t,_,_),.indexes(let t,_),.add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
@@ -63,7 +64,7 @@ struct PreparedDDL {
     let statement: DDLStatement
     let before: ApplyTable?
     let after: ApplyTable?
-    let sql: String
+    var sql: String
     var database:PreparedDatabaseDDL? = nil
     var additional: [SchemaTransition] = []
     var preservesSchema: Bool {
@@ -104,12 +105,12 @@ extension TargetSession {
             // 5.7 cannot set default_collation_for_utf8mb4. Preserve the SQL;
             // refuse a semantic mismatch instead of inserting a COLLATE rewrite.
             let actual=try scalar("SELECT DEFAULT_COLLATE_NAME AS v FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME='utf8mb4'")
-            try require(rows.first?.column("COLLATION_NAME")?.string==actual,"source default utf8mb4 collation is unsupported by target; no collation substitution")
+            try require(rows.first?.column("COLLATION_NAME")?.string==actual,"source default utf8mb4 collation is unsupported by target: default_collation_for_utf8mb4=\(DDLQueryContextDiagnostic.collation(context.defaultUTF8MB4Collation)), target default=\(actual ?? "unavailable"); no collation substitution")
         } else {
             rows=try query("SELECT CHARACTER_SET_NAME,DEFAULT_COLLATE_NAME AS COLLATION_NAME FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME=?",[.init(string:charset!)]).0
         }
-        guard let row=rows.first,let found=row.column("CHARACTER_SET_NAME")?.string,let name=row.column("COLLATION_NAME")?.string else {throw ApplyError("unsupported target charset/collation; no substitution")}
-        try require(charset==nil || charset==found,"DDL charset/collation mismatch")
+        guard let row=rows.first,let found=row.column("CHARACTER_SET_NAME")?.string,let name=row.column("COLLATION_NAME")?.string else {throw ApplyError("unsupported target charset/collation: characterSet=\(charset ?? "inferred"), collation=\(collation ?? "default"); no substitution")}
+        try require(charset==nil || charset==found,"DDL charset/collation mismatch: characterSet=\(charset ?? "inferred"), collation=\(name), collation characterSet=\(found)")
         return DDLEncoding(characterSet:found,collation:name)
     }
     func resolveColumn(_ column:ApplyColumn,parent:DDLEncoding,context:QuerySessionContext) throws -> ApplyColumn {
@@ -122,19 +123,32 @@ extension TargetSession {
         try result.validate();return result
     }
     func prepareDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64? = nil) throws -> PreparedDDL {
+        let policy = config.compatibilityPolicy
+        if policy.collations.isEmpty { return try prepareTargetDDL(statement,query:source,timestamp:timestamp) }
+        let context = try QuerySessionContext(query:source)
+        var parser = try DDLParser(source.sql,database:source.database,sqlMode:context.sqlMode)
+        parser.compatibility = policy; parser.defaultUTF8MB4Collation = context.defaultUTF8MB4Collation
+        let translated = try parser.parse()
+        var plan = try prepareTargetDDL(translated,query:source,timestamp:timestamp)
+        plan.sql = parser.translatedSQL(source.sql)
+        return plan
+    }
+    private func prepareTargetDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64?) throws -> PreparedDDL {
         try unlock()
         try invalidateStatements()
         try writerExclusion()
         let context=try QuerySessionContext(query:source)
         // Restore expression/literal semantics from the source query context.
         // DDL stays a drained, journaled barrier even for stored objects.
-        try require([8,33,45,46,83,192,224,255].contains(context.clientCharset),"unsupported DDL client charset")
+        try require([8,33,45,46,83,192,224,255].contains(context.clientCharset),"unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
         if let timestamp { _ = try query("SET SESSION timestamp=\(timestamp).\(String(format:"%06u",context.microseconds))") }
         switch statement {
         case .createDatabase(let definition),.alterDatabase(let definition):
             return try prepareDatabaseDDL(statement,definition:definition,source:source,context:context)
         case .dropDatabase(let name,let conditional):
             return try prepareDropDatabase(statement,name:name,conditional:conditional,source:source,context:context)
+        case .renameMany(let renames):
+            return try prepareRenames(renames,source:source,context:context)
         case .object(let object):
             return try prepareObjectDDL(statement,object:object,source:source,context:context)
         default: break
@@ -165,7 +179,7 @@ extension TargetSession {
         var after:ApplyTable?
         var additional: [SchemaTransition] = []
         switch statement {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object: throw ApplyError("non-table DDL reached table prediction")
+        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany: throw ApplyError("non-table DDL reached table prediction")
         case .alter(_,let actions):
             after=try altering(before!,actions:actions,context:context)
             for action in actions {
@@ -222,7 +236,7 @@ extension TargetSession {
         }
         try after?.validate()
         try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= maximumCachedTables,"discovered schema limit reached")
-        // No SQL rewriting: execute precisely the single parsed source statement.
+        // The outer preparation layer applies only authorized encoding edits.
         let sql=String(decoding:source.sql,as:UTF8.self)
         try setDDLSession(context,source:source)
         return PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional)
@@ -238,9 +252,9 @@ extension TargetSession {
         if altering {after=try resolveEncoding(charset:definition.characterSet,collation:definition.collation,parent:before,context:context)}
         else if let before {after=before}
         else if definition.characterSet==nil && definition.collation==nil {
-            guard let row=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(context.serverCollation))]).0.first,
+            guard let row=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(config.compatibilityPolicy.targetID(context.serverCollation)))]).0.first,
                   let charset=row.column("CHARACTER_SET_NAME")?.string,let collation=row.column("COLLATION_NAME")?.string else {
-                throw ApplyError("unsupported source server collation; no substitution")
+                throw ApplyError("unsupported source server collation: collation_server=\(DDLQueryContextDiagnostic.collation(context.serverCollation)), database=\(definition.name); unavailable on target; no substitution")
             }
             after=DDLEncoding(characterSet:charset,collation:collation);serverCollation=collation
         } else {
@@ -275,6 +289,7 @@ extension TargetSession {
             try require(try objectExists(object) == (object.operation != .drop),"DDL target object existence mismatch")
             return
         }
+        if case .renameMany = plan.statement { try applyRenames(plan); return }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
         _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
         try resetDMLSession()

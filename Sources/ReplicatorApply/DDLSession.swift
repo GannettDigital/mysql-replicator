@@ -14,15 +14,15 @@ extension TargetSession {
         // connection collation used for expressions, checked below.
         let clientEncodingID = context.clientCharset == 255 ? 45 : context.clientCharset
         let charset = try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(clientEncodingID))]).0.first
-        guard let client = charset?.column("CHARACTER_SET_NAME")?.string else {throw ApplyError("unsupported DDL client charset")}
+        guard let client = charset?.column("CHARACTER_SET_NAME")?.string else {throw ApplyError("unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")}
         _ = try query("SET SESSION character_set_client=?",[.init(string:client)])
-        if let collation = try scalar("SELECT COLLATION_NAME AS v FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(context.connectionCollation))]) {
+        if let collation = try scalar("SELECT COLLATION_NAME AS v FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(config.compatibilityPolicy.targetID(context.connectionCollation)))]) {
             _ = try query("SET SESSION collation_connection=?",[.init(string:collation)])
         } else {
             // Existing ASCII-only table DDL does not depend on expression
             // collation. Anything introducing literals/expressions must reject.
             let tokens = try DDLTokens.lex(source.sql,sqlMode:context.sqlMode)
-            try require(!DDLTokens.requiresConnectionCollation(tokens),"source expression collation is unavailable on MySQL 5.7")
+            try require(!DDLTokens.requiresConnectionCollation(tokens),"source expression collation is unavailable on MySQL 5.7: collation_connection=\(DDLQueryContextDiagnostic.collation(context.connectionCollation))")
         }
         if useDatabase, let db = source.database, !db.isEmpty { _ = try query("USE \(quoted(db))",textProtocol:true) }
     }

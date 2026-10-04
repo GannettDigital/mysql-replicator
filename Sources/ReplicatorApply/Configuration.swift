@@ -199,6 +199,8 @@ public struct ApplyConfiguration: Decodable {
     public let replicateWildIgnoreTable: [String]?
     public let ddlTimeoutSeconds: Int?
     public let ddlPolicy: DDLPolicy?
+    public let compatibility: CompatibilityPolicy?
+    var compatibilityPolicy: CompatibilityPolicy { compatibility ?? .init() }
     var ddlDeadline: Int { ddlTimeoutSeconds ?? 300 }
     public let storage: StoragePolicy?
     public let batch: BatchPolicy?
@@ -216,6 +218,7 @@ public struct ApplyConfiguration: Decodable {
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
         try (ddlPolicy ?? DDLPolicy()).validate()
+        try compatibilityPolicy.validate()
         _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()
         try batchPolicy.validate()

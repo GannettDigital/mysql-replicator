@@ -1811,3 +1811,58 @@ server-work counters, input hashes, and captured state:
 
 - One table: `artifacts/performance/20261003T182321Z-236aecfc/20261003T182322Z-b2f61522-auto-autocommit-myisam`.
 - Eight tables: `artifacts/performance/20261003T182526Z-c1a0f2e8/20261003T182526Z-9a67f59e-auto-autocommit-myisam`.
+
+### Collation translation and schema-journal regression check, 2026-10-04
+
+Rebuilt the release runtime with the current uncommitted collation-mapping,
+multi-table RENAME, state-format-8 audit and diagnostic changes. Repeated the
+same October 3 workloads sequentially:
+
+```sh
+make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
+```
+
+The eight-table command ran twice because its first internal apply/SQL timings
+were about 9% above the prior result. All three runs passed exact comparison of
+10,000 rows, transaction/row counts, clean stop and fixture cleanup. Each
+eight-table run compared 1,250 rows per table. The workload hash and benchmark
+options match the previous checks; no other qualification workload was launched
+during these runs.
+
+| Seconds unless indicated | One table previous | One table current | Eight tables previous | Eight tables current | Eight tables repeat |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Source load | 16.611 | 15.540 | 15.772 | 17.018 | 15.949 |
+| Observed native completion | 20.691 | 20.887 | 20.592 | 20.634 | 20.642 |
+| Observed custom completion | 20.691 | 20.887 | 25.599 | 25.693 | 25.923 |
+| Apply consumer elapsed | 7.836 | 7.746 | 20.541 | 22.337 | 21.401 |
+| Target SQL elapsed | 3.659 | 3.428 | 14.992 | 16.294 | 15.476 |
+| Metadata validation | 0.158 | 0.160 | 0.118 | 0.129 | 0.131 |
+| DML planning | 0.376 | 0.366 | 0.290 | 0.303 | 0.303 |
+| Capture/decode elapsed | 8.681 | 8.582 | 7.639 | 8.029 | 8.090 |
+| Target SQL calls | 1,406 | 1,403 | 10,348 | 10,348 | 10,348 |
+
+No substantial completion-time regression was observed. One-table native and
+custom completion remain in the same polling window. Eight-table custom
+completion was 0.4–1.3% later than the prior observation, and roughly 25% later
+than native in these runs. Internal eight-table apply time was 4–9% higher,
+mostly in prepared SQL execution; the repeat narrowed that difference without
+changing code or call counts. This is consistent with shared-host variability,
+but does not rule out a small regression: completion polling is every five
+seconds, and the old baseline is a single run, not a contemporaneous A/B sample.
+Stage durations include startup/stop and overlap across workers.
+
+These existing fixtures use compatible `utf8mb4_bin` schemas with collation
+mapping omitted. They check the common DML path in the new runtime; they do not
+measure throughput with active collation substitution or repeated DDL. Mapped
+DDL, restart and collision correctness are qualified separately in
+[DDL compatibility](DDL_COMPATIBILITY.md).
+
+Runtime image for all three runs:
+`sha256:9ea66395b30accba736c906effab800340279feda8c858cd470cbc35a2221f3f`.
+Evidence directories, including `result.json`, `verification.json`, stage
+timings, server counters, input hashes and saved state:
+
+- One table: `artifacts/performance/20261004T224655Z-249cfe1d/20261004T224655Z-c7881c40-auto-autocommit-myisam`.
+- Eight tables: `artifacts/performance/20261004T224957Z-3307b9a7/20261004T224957Z-49351f8d-auto-autocommit-myisam`.
+- Eight tables repeat: `artifacts/performance/20261004T225214Z-4cc7665d/20261004T225214Z-beb29268-auto-autocommit-myisam`.

@@ -67,7 +67,7 @@ public struct ApplyPartition: Codable, Equatable {
     }
 }
 
-struct SchemaTransition {
+struct SchemaTransition: Codable {
     let before: ApplyTable?
     let after: ApplyTable?
 }

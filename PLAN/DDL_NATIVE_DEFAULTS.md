@@ -1,5 +1,9 @@
 # DDL engine and charset foundation
 
+The foundation below describes strict behavior. The newer
+[optional collation mapping and multi-table RENAME](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement)
+extend it only when explicitly configured; engine policy remains unchanged.
+
 This is the first implementation slice of [DDL completeness](DDL_COMPLETENESS.md),
 after checkpoint `3618fd4`. It does not complete the broader DDL/type matrix or add
 restart/recovery. The original [prototype results](DDL_APPLY.md) remain historical.

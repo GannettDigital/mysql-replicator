@@ -1,8 +1,8 @@
 # MySQL 5.7 DDL compatibility
 
 This increment broadens ordered DDL application for an 8.4 ROW/FULL source and a
-5.7 MyISAM target. It preserves the original SQL, journals an intent before
-issuing it, validates resulting metadata, and advances the GTID only after the
+5.7 MyISAM target. It retains the original SQL, journals an intent before
+issuing target SQL, validates resulting metadata, and advances the GTID only after the
 operation succeeds. Disconnects or errors after submission remain uncertain
 and block; this does not introduce automatic DDL replay or crash recovery.
 
@@ -52,12 +52,89 @@ and block; this does not introduce automatic DDL replay or crash recovery.
 Generated expressions support arithmetic/comparison/boolean operators and a
 small explicit list of 5.7 built-ins in `DDLTokens.swift`. Arbitrary expressions,
 subqueries, stored-function calls and nondeterministic functions are not accepted.
-Subpartitions, arbitrary table options, multi-object DROP/RENAME, cross-schema
+Subpartitions, arbitrary table options, multi-object DROP, cross-schema
 RENAME, CREATE TABLE SELECT, functional/descending/invisible indexes and 8.x-only
 types/options and cross-family column conversions remain outside this increment.
-No engine or collation rewriting is performed. In particular, explicit source
+No engine rewriting is performed. Collation translation requires the explicit
+policy below; otherwise matching remains strict. In particular, explicit source
 ENGINE=InnoDB still fails the MyISAM
 contract; omitted ENGINE permits each server's configured local engine.
+
+## Optional collation translation and table replacement
+
+For applications that inherit MySQL 8.4's defaults, configure this **before the
+initial `--initialize`**:
+
+```yaml
+compatibility:
+  collations:
+    utf8mb4_0900_ai_ci: utf8mb4_unicode_ci
+```
+
+The only supported source mapping is `utf8mb4_0900_ai_ci` (ID 255). Its target
+may be `utf8mb4_unicode_ci` (224), `utf8mb4_general_ci` (45), or `utf8mb4_bin`
+(46). Omit the section for strict matching. This keeps UTF-8 bytes unchanged;
+it explicitly accepts different comparison semantics, not an equivalent collation.
+For example, 0900 uses NO PAD and the supported 5.7 collations use PAD SPACE:
+`'a'` and `'a '` can coexist in a source unique index but collide on the target.
+Other Unicode ordering/equality differences also exist. SQL errors block with
+pending intents; no conflicting row is ignored or replaced. MyISAM may retain
+earlier writes from a failed statement/group, so inspect the saved evidence.
+
+The policy covers logged connection/server defaults, charset-only utf8mb4
+declarations, and explicit COLLATE clauses in supported database/table/column
+DDL. Only parsed encoding clauses are rewritten; identifiers, string literals,
+comments, view queries and routine bodies are not textually replaced. The
+connection collation is mapped for supported DDL, including stored objects;
+unsupported explicit collations inside their bodies remain target errors.
+Inherited defaults come from the target database/table, and row-event metadata
+must match either its original compatible collation or the configured mapping.
+Externally copied baseline schemas must use the same target collation mapping.
+Other 8.x collations and character-set conversions remain unsupported.
+
+Ordinary table replacement is supported without application SQL changes:
+
+```sql
+CREATE TABLE foo_temp LIKE foo;
+INSERT INTO foo_temp SELECT * FROM foo WHERE keep_row = 1;
+RENAME TABLE foo TO foo_old, foo_temp TO foo;
+```
+
+CREATE LIKE copies the target's compatible schema and MyISAM engine. The source
+evaluates INSERT SELECT; its resulting row events are applied. RENAME supports
+up to 64 pairs in one database, including a three-step swap through a spare
+name. Pairs resolve left-to-right, the complete statement executes once, and
+all final schema records and the GTID advance in one SQLite transaction. Mixed
+included/excluded names remain rejected. This does not add MyISAM crash recovery
+or make its writes durable/atomic across a server crash.
+
+State format 8 records the initialized mapping in SQLite `compatibility` and
+rejects a changed or removed mapping on resume. Older formats upgrade only with
+strict semantics; enabling translation for existing state requires a newly
+prepared baseline. Each new DDL intent has a matching `ddl_details` row containing
+source SQL, logged charset/collation context, policy, and before/after table
+schemas. Join it to `ddl_intents` for executed SQL and PENDING/DONE status:
+
+```sql
+SELECT gtid, status, source_sql, target_sql, context_json, policy_json,
+       transitions_json
+FROM ddl_details JOIN ddl_intents USING (gtid);
+```
+
+Database defaults are in `ddl_intents.database_json`. DDL rejected before an
+intent is prepared is recorded in `target_failure` and the retained relay.
+Completed audit rows follow the configured history retention; the state-level
+mapping is retained. An unchanged policy resumes normally after a clean stop.
+
+Run the focused source/native/5.7 checks with:
+
+```sh
+make ddl-suite ARGS='--positioning both --case ddl-compat-collation-cleanup --case ddl-compat-collation-collision'
+```
+
+These exercise inherited/explicit/default encodings, CREATE LIKE, INSERT SELECT,
+multi-table replacement and swap, writes after restart, changed-policy refusal,
+and a deliberate trailing-space unique-key collision.
 
 ## Trigger and event policy
 
@@ -203,3 +280,26 @@ files must be converted; JSON diagnostic output and journal formats are unchange
   unchanged and rejects unsupported collations.
 - `make deb` built the final code and verified package installation, the YAML
   example, and the executable in a clean Ubuntu 16.04 container.
+
+### Collation translation and multi-table rename validation, 2026-10-04
+
+- 297 Swift tests passed, including parsed SQL edits, strict/mapped wire checks,
+  atomic schema-swap rollback, saved-policy enforcement, format-7 migration,
+  YAML configuration and audit retention. The catalog check passed.
+- Both positioning modes passed the cleanup, restart, changed/removed-policy
+  refusal and unique-key collision fixtures. Each run records six passing cases,
+  including its DML prerequisite. Source and native retained both NO PAD keys;
+  the 5.7 target blocked on error 1062 with one row, pending intents, and the
+  preceding checkpoint. UTF-8 bytes, final rows, database/table/column defaults,
+  rewritten SQL and nine DDL audit records were checked.
+- The strict database slice passed all ten cases in each mode with the same
+  applier code, before a fixture-only unique-index syntax correction. This
+  includes unsupported defaults/collations, conditional creation and denied DDL.
+  No performance or full-DDL-suite qualification is inferred from these runs.
+
+Evidence under `artifacts/ddl-suite/`:
+
+| Checks | File-position | GTID |
+| --- | --- | --- |
+| Mapped cleanup and collision | `20261004T224132Z-59999259-position-autocommit-myisam` | `20261004T224245Z-a7482bc8-auto-autocommit-myisam` |
+| Strict database regression | `20261004T223657Z-00f9cd7f-position-autocommit-myisam` | `20261004T223856Z-f10a9077-auto-autocommit-myisam` |

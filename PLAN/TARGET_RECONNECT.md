@@ -102,8 +102,35 @@ row ordinals, counts, and dispositions:
   coalesced into a multi-row INSERT;
 - `notIssued`: remaining work that was never submitted.
 
-DDL reports include the pending GTID and source SQL. Relay frames and existing
-row/DDL intents retain source positions, row images, and schema references.
+DDL reports include the pending GTID and source SQL. When the logged query
+context decodes successfully, `ddlContext` also records `database`,
+`clientCharsetID`, `connectionCollationID`, `serverCollationID`,
+`databaseCollationID` (when present), and `defaultUTF8MB4CollationID`.
+`serverCollationName` identifies the known MySQL 8.x default, ID 255
+(`utf8mb4_0900_ai_ci`); unfamiliar IDs remain numeric. These are the event's
+settings, not a later read of the source's current defaults.
+
+With collation mapping omitted, a bare `CREATE DATABASE foobar` inheriting
+collation 255 stops with
+`unsupported source server collation: collation_server=ID 255 (utf8mb4_0900_ai_ci), database=foobar; unavailable on target; no substitution`.
+The JSON output and `target_failure.diagnostic_json` retain the context; the
+readable reason is also saved in `state.diagnostic`. This strict default performs
+no substitution; see [optional collation mapping](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement)
+for the explicit compatibility policy.
+
+A preparation failure has `statement.phase: notIssued` and can leave
+`ddl_intents` empty: that table records prepared target execution intents.
+`schemas` records table definitions, not a database catalog. Inspect
+`target_failure` for the failed SQL and `groups` for its source coordinates:
+
+```sql
+SELECT diagnostic_json, created_at FROM target_failure;
+SELECT gtid, source_file, start_position, end_position, status
+FROM groups WHERE status = 'PENDING';
+```
+
+Relay frames and existing row/DDL intents retain source positions, row images,
+and schema references.
 The report is written only on failure; it adds no SQLite commit per statement.
 The most recent report is retained even after a safe reconnect, as incident
 history. On abrupt process death, there may be no report: pending journal entries
@@ -132,3 +159,9 @@ Linux/musl runtime build passed. All fixture stacks were cleaned up.
 - target / GTID: 8 cases, `artifacts/dml-suite/20261003T080614Z-27e553e8-auto-autocommit-myisam/`.
 - source reconnect: 5 cases, `artifacts/dml-suite/20261003T080439Z-13a7f21e-auto-autocommit-myisam/`.
 - extended safety: 20 cases, `artifacts/dml-suite/20261003T080420Z-d6167316-auto-autocommit-myisam/`.
+
+DDL diagnostic follow-up (2026-10-03): 290 Swift tests passed. The GTID database
+slice passed all 10 cases, including persisted collation-255 context, explicit
+unsupported collation names, unchanged checkpoints/no target creation after
+rejection, and the existing permission-failure intent checks. Evidence:
+`artifacts/ddl-suite/20261003T192335Z-1af60264-auto-autocommit-myisam/`.

@@ -9409,6 +9409,16 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-skip-trigger",
       "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup",
+      "reason": "Opt-in collation mapping and dynamic table replacement regression, including clean restart and policy pinning. Aggregate success does not qualify all charset or rename catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-collision",
+      "reason": "Opt-in collation mapping rejection regression: source NO PAD keys collide on the PAD SPACE target, which retains pending intent and the prior checkpoint."
     }
   ]
 }

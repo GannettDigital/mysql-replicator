@@ -124,12 +124,12 @@ extension ResumeTests {
         }
         let relay=path.appendingPathComponent("relay.frames")
         try legacy.write(to:relay)
-        try write(path,"DROP TABLE ddl_skips; PRAGMA user_version=5; UPDATE state SET durable_relay_length=\(legacy.count); UPDATE groups SET relay_start=0,relay_end=\(legacy.count)")
+        try write(path,"DROP TABLE ddl_details; DROP TABLE compatibility; DROP TABLE ddl_skips; PRAGMA user_version=5; UPDATE state SET durable_relay_length=\(legacy.count); UPDATE groups SET relay_start=0,relay_end=\(legacy.count)")
         let db=path.appendingPathComponent("state.sqlite")
         let before=try helper.sqlite(db,"SELECT * FROM state")
         do {
             let store=try StateStore(configuration:c,initialize:false)
-            XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["7"]])
+            XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["8"]])
             XCTAssertEqual(try helper.sqlite(db,"SELECT * FROM state"),before)
             XCTAssertEqual(try Data(contentsOf:relay),legacy)
             try store.running();try apply(groups[1],to:store);try store.stopped()
