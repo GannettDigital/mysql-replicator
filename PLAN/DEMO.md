@@ -17,6 +17,12 @@ GTID baseline and TLS paths into a ready-to-run `apply.yaml`; there are no repla
 placeholders and no table schema in configuration. Demo fixture provisioning is
 lab automation, not a production dump/load feature.
 
+The demo's `apply_fixture` accounts (`%` and `localhost`) have `ALL PRIVILEGES`
+on `*.*` on the disposable 5.7 target, so interactive experiments can create and
+use databases beyond `demo`. Source DDL still needs 5.7-compatible types and
+collations. These grants are installed during setup; existing demo containers
+retain their original grants until the demo is recreated.
+
 ## Prerequisites and setup
 
 Run commands from the repository root. Requirements are the existing SwiftPM host

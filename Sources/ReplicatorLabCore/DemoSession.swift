@@ -115,9 +115,11 @@ public enum DemoSession {
                 }
             }
             _ = try h.sql("source", "CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'capture_fixture'@'%'; CREATE USER 'native_fixture'@'%' IDENTIFIED BY 'fixture-native-only' REQUIRE SSL; GRANT REPLICATION SLAVE ON *.* TO 'native_fixture'@'%'; SET GLOBAL binlog_row_metadata=FULL")
-            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
+            // The interactive demo permits experiments in any database on its
+            // disposable target, including CREATE DATABASE outside demo.*.
+            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'")
             let localTLS = targetTransport == "unix" ? "NONE" : "SSL"
-            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'localhost' IDENTIFIED BY 'fixture-apply-only' REQUIRE \(localTLS); GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'localhost'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'localhost'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'localhost'")
+            _ = try h.sql("target57", "CREATE USER 'apply_fixture'@'localhost' IDENTIFIED BY 'fixture-apply-only' REQUIRE \(localTLS); GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'localhost'")
             let boundary = try h.boundary("source"), uuid = try h.sql("source", "SELECT @@server_uuid")
             try writeJSON(boundary.json, to: h.output.appendingPathComponent("baseline.json"))
             var target: [String:Any] = ["username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","nativeAutoStartDisabled":true,"explicitTableLocks":explicitTableLocks]

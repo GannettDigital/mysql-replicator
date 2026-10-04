@@ -39,6 +39,11 @@ The password environment variables are already set. Leave this command running
 in the foreground; progress and errors appear in this terminal. Continue with
 terminals 2–4. Do not run `make demo-start` as well.
 
+New demo setups grant the applier full privileges on the disposable 5.7 target,
+including databases other than `demo`. Use explicit 5.7-compatible collations
+when creating databases, such as `CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`.
+An existing demo keeps its old grants; recreate it to pick up setup changes.
+
 The applier shares MySQL 5.7's network namespace and connects to `127.0.0.1`.
 Its container starts with `sleep infinity`; starting or restarting the container
 never automatically starts replication. The binary runs only when you launch it.
