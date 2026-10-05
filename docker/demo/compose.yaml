@@ -19,6 +19,7 @@ services:
     environment:
       SOURCE_PASSWORD: fixture-capture-only
       TARGET_PASSWORD: fixture-apply-only
+      LLVM_PROFILE_FILE: "${REPLICATOR_DEMO_PROFILE_FILE:-}"
     volumes:
       - "dml-evidence:/evidence"
       - "target-socket:/target-socket:ro"

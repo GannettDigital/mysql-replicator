@@ -2,7 +2,6 @@ import Foundation
 import MySQLNIO
 import NIOCore
 import NIOSSL
-import ReplicatorCapture
 #if canImport(Musl)
 import Musl
 #elseif canImport(Glibc)

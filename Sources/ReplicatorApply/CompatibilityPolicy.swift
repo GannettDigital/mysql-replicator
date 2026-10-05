@@ -1,5 +1,4 @@
 import Foundation
-import ReplicatorCodec
 
 /// Explicit comparison-semantics changes; never a character-set conversion.
 public struct CompatibilityPolicy: Codable, Equatable {

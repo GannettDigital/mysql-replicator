@@ -8,6 +8,7 @@ public enum DemoSession {
         let identifier: String
         let image: String
         var ready: Bool
+        var codeCoverage: Bool? = nil
         func validate() throws {
             try require([1, 2].contains(version) && identifier.range(of: #"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\z"#, options: .regularExpression) != nil,
                         "invalid demo session identity")
@@ -16,14 +17,14 @@ public enum DemoSession {
     }
     public static func run(root: URL, command: String, arguments: [String]) throws {
         if command == "demo-suite" {
-            try require(arguments.isEmpty || arguments == ["--skip-build"], "demo-suite accepts only --skip-build")
-            try qualify(root: root, build: arguments.isEmpty); return
+            try require(Set(arguments).isSubset(of: ["--skip-build", "--coverage"]), "demo-suite accepts --skip-build and --coverage")
+            try qualify(root: root, build: !arguments.contains("--skip-build"), codeCoverage: arguments.contains("--coverage")); return
         }
         let session = Session(root: root, category: "demo")
         switch command {
         case "demo-up":
-            try require(arguments.isEmpty || arguments == ["--skip-build"], "demo-up accepts only --skip-build")
-            try session.up(build: arguments.isEmpty)
+            try require(Set(arguments).isSubset(of: ["--skip-build", "--coverage"]), "demo-up accepts --skip-build and --coverage")
+            try session.up(build: !arguments.contains("--skip-build"), codeCoverage: arguments.contains("--coverage"))
         case "demo-start": try noArguments(arguments); try session.start()
         case "demo-status": try noArguments(arguments); try session.status()
         case "demo-compare":
@@ -66,6 +67,10 @@ public enum DemoSession {
                 h.composeOverlays.append(root.appendingPathComponent("docker/demo/compose.yaml").path)
                 h.composeEnvironment["REPLICATOR_DEMO_IMAGE"] = m.image
                 h.composeEnvironment["REPLICATOR_DEMO_APPLIER"] = applier
+                if m.codeCoverage == true {
+                    // Also capture manual shell commands and short-lived CLI checks.
+                    h.composeEnvironment["REPLICATOR_DEMO_PROFILE_FILE"] = "/evidence/code-coverage/manual-%p/%h-%m.profraw"
+                }
             }
         }
         func load(ready: Bool = true) throws {
@@ -78,17 +83,20 @@ public enum DemoSession {
             try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
         }
-        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false, explicitTableLocks: Bool = false) throws {
+        func up(build: Bool, showInstructions: Bool = true, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false, explicitTableLocks: Bool = false, codeCoverage: Bool = false) throws {
             try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"invalid target transport")
             try require((1...256).contains(batchTransactions),"invalid DML batch size")
             try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a demo session already exists; use demo-status or demo-down (up never resets data)")
-            let id = runID(), runner = ProcessRunner(root: root), tag = "mysql-replicator-packaging:demo"
-            if build {
+            let id = runID(), runner = ProcessRunner(root: root), tag = codeCoverage ? CodeCoverage.image : "mysql-replicator-packaging:demo"
+            if build && codeCoverage {
+                try CodeCoverage.build(runner)
+            } else if build {
                 log("building the demo runtime with the existing Docker build caches")
                 _ = try runner.run(["docker", "build", "--progress=plain", "--platform", "linux/amd64", "--target", "demo", "-f", "docker/packaging/Dockerfile", "-t", tag, "."], timeout: 3600, onOutput: { FileHandle.standardError.write($0) })
             }
             let image = try runner.run(["docker", "image", "inspect", tag, "--format", "{{.Id}}"] ).text
-            try attach(Manifest(version: 2, identifier: id, image: image, ready: false)); try save()
+            try CodeCoverage.validate(runner, image: image, enabled: codeCoverage)
+            try attach(Manifest(version: 2, identifier: id, image: image, ready: false, codeCoverage: codeCoverage)); try save()
             let tls = h.output.appendingPathComponent("tls")
             try FileManager.default.createDirectory(at: tls, withIntermediateDirectories: true)
             log("artifacts: \(h.output.path); setup failures retain this stack for inspection")
@@ -218,7 +226,7 @@ public enum DemoSession {
             let initialize = try !hasState()
             if !initialize { try require(state("SELECT lifecycle FROM state") == "STOPPED", "saved state is not STOPPED; unresolved failures require explicit recovery") }
             let command = "exec /usr/local/bin/mysql-replicator run --config /evidence/apply.yaml" + (initialize ? " --initialize" : "") + " > /evidence/applier.ndjson 2> /evidence/applier.stderr"
-            _ = try docker(["exec", "-d", applier, "/bin/sh", "-c", command])
+            _ = try docker(["exec", "-d"] + CodeCoverage.environment(enabled: manifest?.codeCoverage == true, label: runID()) + [applier, "/bin/sh", "-c", command])
             try waitForCapture()
             print("docker exec " + applier + " tail -f /evidence/applier.ndjson /evidence/applier.stderr")
         }
@@ -369,6 +377,9 @@ public enum DemoSession {
                 try logs.stderr.write(to: h.output.appendingPathComponent("applier.stderr"))
             }
             if try docker(["inspect", helper], checked: false).status == 0 {
+                if manifest?.codeCoverage == true {
+                    try CodeCoverage.collect(h.runner, image: manifest!.image, volume: volume, label: h.project, allowEmpty: true)
+                }
                 // Writer has exited: only now copy SQLite/WAL and relay back to host.
                 let captured = h.output.appendingPathComponent("captured")
                 try FileManager.default.createDirectory(at: captured, withIntermediateDirectories: true)
@@ -394,13 +405,13 @@ public enum DemoSession {
         _ = try session.docker(["cp",file.path,session.helper+":/evidence/apply.yaml"])
     }
 
-    private static func qualify(root: URL, build: Bool) throws {
+    private static func qualify(root: URL, build: Bool, codeCoverage: Bool = false) throws {
         let session = Session(root: root, category: "demo-suite")
         var failure: Error?
         var output: URL?
         var reporter: QualificationReporter?
         do {
-            try session.up(build: build); output = session.h.output
+            try session.up(build: build, codeCoverage: codeCoverage); output = session.h.output
             reporter = QualificationReporter(output: output!, log: session.log)
             try reporter!.run(QualificationCase("demo-prepared", "Compose starts a shell-accessible idle applier without starting mysql-replicator; repeated setup is refused")) {
                 try require(session.applierStatus() == "running" && !session.replicatorRunning() && !session.hasState(), "stack was not independently prepared")
@@ -490,7 +501,7 @@ public enum DemoSession {
             let detached = Session(root: root, category: idle ? "demo-suite-idle-stop" : "demo-suite-detached")
             var detachedFailure: Error?
             do {
-                try detached.up(build: false)
+                try detached.up(build: false, codeCoverage: codeCoverage)
                 let reporter = QualificationReporter(output: detached.h.output, log: detached.log)
                 let test = QualificationCase(idle ? "demo-idle-sigint" : "demo-applied-sigterm", idle
                     ? "Ctrl-C while idle exits zero and persists STOPPED without advancing the checkpoint"

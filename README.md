@@ -61,6 +61,9 @@ and can take several minutes.
 
 For broader coverage, run `make dml-suite` and `make ddl-suite`. See
 [incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selecting individual cases.
+Use `make coverage-unit`, `make integration-smoke ARGS="--coverage"`, and
+`make periphery` for execution coverage and unused-code checks. See
+[developer checks](CONTRIBUTING.md#code-coverage) for combined reports and CI artifacts.
 
 To compare native and custom replication under source write load, run
 `make benchmark`; use `make benchmark-capture` to isolate download and decoding

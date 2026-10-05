@@ -2,6 +2,14 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class SuiteSelectionTests: XCTestCase {
+    func testCoverageIsOptInAndIndependentOfFixtureSelection() throws {
+        XCTAssertFalse(try SuiteSelection(arguments: [], ddl: true).codeCoverage)
+        let selection = try SuiteSelection(arguments: ["--coverage", "--skip-build", "--positioning", "gtid", "--slice", "basic"], ddl: false)
+        XCTAssertTrue(selection.codeCoverage)
+        XCTAssertFalse(selection.build)
+        XCTAssertEqual(selection.modes, ["gtid"])
+        XCTAssertEqual(selection.slice, "basic")
+    }
     func testDMLMatrixSelectsWholeDependentPhasesAndRejectsUnknownCases() throws {
         let selected=try SuiteSelection(arguments:["--case","matrix-decimal","--positioning","gtid"],ddl:false)
         XCTAssertEqual(selected.slice,"matrix")

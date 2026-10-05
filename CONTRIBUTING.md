@@ -37,6 +37,73 @@ For AddressSanitizer testing:
 make test-asan
 ```
 
+### Code coverage
+
+Use Python 3.9+ and the LLVM tools included with Swift (Xcode's command-line
+tools on macOS). Coverage is opt-in and uses separate build directories/images:
+
+```sh
+make coverage-unit
+make integration-smoke ARGS="--coverage"
+# Other selected or full DML/DDL suites accept the same flag:
+make dml-suite ARGS="--coverage --slice basic --positioning gtid"
+make ddl-suite ARGS="--coverage --slice compatibility --positioning gtid"
+make demo-suite ARGS="--coverage"
+```
+
+Unit reports appear under `artifacts/coverage/unit/`. Harness evidence contains
+`code-coverage/<invocation>/report/` and `code-coverage/combined/`; demo evidence
+places these inside `captured/`. Each contains `index.html`, `coverage.lcov`,
+`coverage.json` and a summary. Open `index.html` to see covered and uncovered
+source lines. The combined view identifies which invocations covered each line.
+The summary separates runtime coverage from harness coverage and lists each module.
+For interactive experiments use `make demo-up ARGS="--coverage"`, then the usual
+demo commands; `make demo-down` stops the writer and exports its coverage.
+
+Combine **explicitly selected** reports from the same source revision:
+
+```sh
+make coverage-report INPUTS="artifacts/coverage/unit artifacts/ddl-suite/RUN_ID/code-coverage/combined"
+```
+
+The result is `artifacts/coverage/combined/index.html` plus portable LCOV.
+Source hashes reject stale reports, including edits in a dirty checkout. Raw
+profiles are exported with the exact producing LLVM toolchain before merging;
+do not merge macOS and Linux `.profraw` files directly. Coverage unions executable
+lines across builds; function/branch coverage and platform-specific denominators
+are not treated as interchangeable. Hit counts are diagnostic, not performance
+measurements. Python report tests run with
+`python3 -m unittest discover -s tools -p 'test_*.py'`.
+
+The scope is **first-party Swift under `Sources/`**, including the harness.
+Rust unit tests still run, but Rust decoder internals and dependencies are not
+part of this percentage. Coverage shows execution, not the strength of assertions.
+The instrumented Linux image uses glibc and the Swift runtime; the separate normal
+packaging smoke test still exercises the shipped static musl build. Benchmarks
+continue to use the uninstrumented image. `--skip-build` selects the matching
+coverage image when combined with `--coverage`.
+
+Profiles flush on normal exit, including handled application failures. SIGKILL,
+aborts and forcibly terminated fixtures can lose their profiles; DML/DDL runs
+record these in `code-coverage/profile-status.json`. Missing profiles after a
+normal exit fail collection. Do not interpret absent crash coverage as an
+unexercised path. Failed suites retain the evidence available before cleanup.
+
+CI uploads unit, per-invocation integration, and combined HTML/LCOV artifacts,
+and posts the combined percentage in the job summary. Failed producing jobs
+mark the summary as partial. No external coverage account or token is required;
+there is no percentage gate until we establish a useful baseline.
+
+### Unused Swift code
+
+Install [Periphery 3.5.1](https://github.com/peripheryapp/periphery/releases/tag/3.5.1),
+then run `make periphery`. CI uses the same pinned, checksum-verified macOS release.
+The scan builds both executables and tests with a fresh index, reports first-party
+code, and fails on findings. There is no blanket public-API exemption or baseline.
+Codable properties are retained because serialized fields are an external contract;
+the CLI's top-level entry point has a narrow annotation for Periphery 3.5.1.
+Periphery analyzes Swift; it does not identify unused Rust code.
+
 ### 3. Targeted Qualification Suites
 
 Run incremental integration checks against local container fixtures:

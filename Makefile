@@ -9,6 +9,18 @@ build: codec
 test: codec
 	cargo test --manifest-path rust/Cargo.toml --locked
 	swift test
+
+.PHONY: coverage-unit coverage-report periphery
+coverage-unit:
+	python3 tools/code_coverage.py unit
+
+# Explicit inputs prevent old integration runs from inflating the report.
+coverage-report:
+	python3 tools/code_coverage.py merge $(INPUTS)
+
+periphery:
+	cargo build --manifest-path rust/Cargo.toml --locked
+	periphery scan --strict
 native-smoke:
 	swift run replicator-lab native-smoke $(ARGS)
 native-suite:

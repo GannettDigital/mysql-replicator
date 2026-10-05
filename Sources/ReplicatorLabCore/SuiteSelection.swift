@@ -3,6 +3,7 @@ import Foundation
 /// Select independent fixtures, never individual statements of a dependent workload.
 public struct SuiteSelection {
     public var build = true
+    public var codeCoverage = false
     public var positioning = "both"
     public var slice = "all"
     public var caseIDs: Set<String> = []
@@ -14,6 +15,7 @@ public struct SuiteSelection {
         while !args.isEmpty {
             let flag = args.removeFirst()
             if flag == "--skip-build" { build = false; continue }
+            if flag == "--coverage" { codeCoverage = true; continue }
             if flag == "--list" { list = true; continue }
             try require(!args.isEmpty, "missing value for " + flag)
             let value = args.removeFirst()
@@ -51,6 +53,7 @@ public struct SuiteSelection {
     public func describe(ddl: Bool) {
         print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters, compatibility" : "all, basic, matrix, extended (GTID multirow, discovery, failure and recovery fixtures), reconnect, target-reconnect"))
         print("Every run includes the four-transaction basic DML check used by subsequent fixtures. --positioning gtid|file-position|both (default both).")
+        print("--coverage uses an instrumented developer image and exports per-invocation Swift line coverage.")
         if ddl { for test in Self.independent { print(test.description) } }
         else {
             for test in DMLCompatibilityCases.cases { print("matrix-"+test.id) }

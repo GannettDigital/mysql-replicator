@@ -129,12 +129,10 @@ public final class BinlogDecoder {
     private let lock = NSLock()
     private var context: OpaquePointer?
     private var failed = false
-    public let maximumEventBytes: UInt32
     private let timings: StageTimings?
     /// When supplied, the collector and this decoder's lifetime belong to one worker.
     public init(maximumEventBytes: UInt32 = 4 * 1024 * 1024, timings: StageTimings? = nil) throws {
         self.timings = timings
-        self.maximumEventBytes = maximumEventBytes
         guard Codec.abiVersion == 6, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }

@@ -3,11 +3,13 @@ import Foundation
 public enum DMLQualification {
     public static func run(root: URL, build: Bool = true, ddl: Bool = false, selection: SuiteSelection = .init()) throws {
         let runner = ProcessRunner(root:root)
-        let image = "mysql-replicator-packaging:dml"
+        let image = selection.codeCoverage ? CodeCoverage.image : "mysql-replicator-packaging:dml"
         let coverageInputs = ddl ? try DDLCoverageEvidence.inputs(root: root) : nil
         let coverageContracts = ddl ? try DDLCoverageEvidence.hashes(root: root, paths: DDLCoverageEvidence.contractPaths) : nil
         let labels = try coverageInputs.map { ["--label", DDLCoverageEvidence.imageLabel + "=" + (try DDLCoverageEvidence.digest($0))] } ?? []
-        if build {
+        if build && selection.codeCoverage {
+            try CodeCoverage.build(runner, labels: labels)
+        } else if build {
             FileHandle.standardError.write(Data("\(ddl ? "DDL" : "DML") suite: building static Ubuntu image (live build output follows).\n".utf8))
             let result = try runner.run(["docker","build","--progress=plain","--platform","linux/amd64","--target","runtime","-f","docker/packaging/Dockerfile","-t",image] + labels + ["."],timeout:3600,checked:false,onOutput:{ FileHandle.standardError.write($0) })
             let log = root.appendingPathComponent("artifacts/dml-suite/build-" + runID() + ".log")
@@ -16,6 +18,7 @@ public enum DMLQualification {
             try require(result.status == 0,"DML image build failed; see \(log.path)")
         }
         let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
+        try CodeCoverage.validate(runner, image: qualifiedImage, enabled: selection.codeCoverage)
         for mode in selection.modes { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts,selection:selection) }
     }
     private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?,selection: SuiteSelection) throws {
@@ -29,8 +32,11 @@ public enum DMLQualification {
         var volumeCreated = false, helperCreated = false
         var copiedStates: Set<String> = []
         var clients: [String] = [], started = false, failure: Error?
+        var coverageLabels: [String: String] = [:]
+        var coverageInvocations: [[String: Any]] = []
         var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":ddl ? "qualified_subset" : "not_exercised"]
         report["selection"] = selection.fields
+        report["code_coverage"] = selection.codeCoverage
         func stage(_ text: String) { FileHandle.standardError.write(Data(("\(ddl ? "DDL" : "DML") \(mode): " + text + "\n").utf8)) }
         let cases = QualificationReporter(output: output, log: stage)
         let coverageProfile = mode == "gtid" ? "swift.gtid.metadata-full" : "swift.position.metadata-minimal"
@@ -49,9 +55,10 @@ public enum DMLQualification {
             try writeYAML(config,to:output.appendingPathComponent(label + ".yaml"))
             _ = try docker(["cp",output.appendingPathComponent(label + ".yaml").path,evidenceHelper + ":/evidence/" + label + ".yaml"])
             let name = h.project + "-" + label; clients.append(name)
+            coverageLabels[name] = label
             _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project + "_fixture",
                 "--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only",
-                "--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).yaml"] + (initialize ? ["--initialize"] : []))
+                ] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label) + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).yaml"] + (initialize ? ["--initialize"] : []))
             return name
         }
         func finish(_ name: String,_ label: String,success: Bool,reason: String? = nil) throws -> [String:Any] {
@@ -803,7 +810,8 @@ public enum DMLQualification {
                     try require(failureTrace?["phase"] as? String == "possiblyExecuted","DDL timeout did not retain uncertain statement phase")
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0" && state(label,"SELECT status FROM ddl_intents")=="PENDING","DDL timeout lost uncertain intent")
                     let id=try state(label,"SELECT active_gtid FROM state")
-                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".yaml"],checked:false)
+                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence"] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label + "-skip-refusal") + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".yaml"],checked:false)
+                    coverageInvocations.append(["label": label + "-skip-refusal", "exit_code": Int(refusal.status)])
                     try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target write intents"),"uncertain DDL was eligible for skip")
                     let deadline=Date().addingTimeInterval(20)
                     while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' OR INFO='DO SLEEP(8)'") != "0" {
@@ -903,7 +911,8 @@ public enum DMLQualification {
                             try writeYAML(config,to:output.appendingPathComponent(label+"-resume.yaml"))
                             _ = try docker(["cp",output.appendingPathComponent(label+"-resume.yaml").path,evidenceHelper+":/evidence/"+label+"-resume.yaml"])
                             let name=h.project+"-indexed-resume";clients.append(name)
-                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"])
+                            coverageLabels[name] = label + "-resume"
+                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only"] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label + "-resume") + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"])
                             try waitForReader(name)
                             _ = try h.sql("source","INSERT INTO demo.mi VALUES(4,'resumed',4,NULL)")
                             let resumed=try finish(name,label+"-resume",success:true)
@@ -911,7 +920,8 @@ public enum DMLQualification {
                             try require(ModifyIndexCases.rows(h,"target57",test.table)==test.retained+"\n4\t726573756D6564\t4\tNULL","indexed resume row differs")
                             _ = try h.sql("native","START REPLICA");try ModifyIndexCases.waitNative(h,h.boundary("source"));_ = try h.sql("native","STOP REPLICA")
                             _ = try h.sql("target57","CREATE INDEX external_drift ON demo.mi(n)")
-                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"],checked:false)
+                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only"] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label + "-drift-refusal") + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"],checked:false)
+                            coverageInvocations.append(["label": label + "-drift-refusal", "exit_code": Int(refusal.status)])
                             try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target schema differs from saved checkpoint"),"external index drift was accepted")
                             // The original saved intent/schema evidence above remains
                             // the first run's snapshot; retain the resumed diagnostics separately.
@@ -1441,10 +1451,27 @@ public enum DMLQualification {
         stage("cleaning up")
         var cleanup: [String] = []
         for client in clients {
+            if selection.codeCoverage {
+                do {
+                    // Give an interrupted fixture a chance to flush its profile.
+                    _ = try docker(["stop", "--time", "15", client])
+                    let exit = try docker(["inspect", client, "--format", "{{.State.ExitCode}}"] ).text
+                    coverageInvocations.append(["label": coverageLabels[client]!, "exit_code": Int(exit) ?? -1])
+                } catch { cleanup.append("coverage process exit: " + String(describing: error)) }
+            }
             if let logs = try? docker(["logs",client]) { try? (logs.stdout + logs.stderr).write(to:output.appendingPathComponent(client + ".log")) }
             do { _ = try docker(["rm","-f",client]) } catch { cleanup.append(String(describing:error)) }
         }
         if helperCreated {
+            if selection.codeCoverage {
+                do {
+                    let invocations = output.appendingPathComponent("code-coverage-invocations.json")
+                    try writeJSON(coverageInvocations, to: invocations)
+                    _ = try docker(["cp", invocations.path, evidenceHelper + ":/evidence/code-coverage-invocations.json"])
+                    try CodeCoverage.collect(runner, image: image, volume: evidenceVolume, label: h.project)
+                }
+                catch { cleanup.append("code coverage: " + String(describing: error)) }
+            }
             do { _ = try docker(["cp",evidenceHelper + ":/evidence/.",output.path]) } catch { cleanup.append("evidence copy: " + String(describing:error)) }
             do { _ = try docker(["rm","-f",evidenceHelper]) } catch { cleanup.append(String(describing:error)) }
         }

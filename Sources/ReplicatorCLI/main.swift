@@ -11,6 +11,8 @@ import Glibc
 import Darwin
 #endif
 
+// Periphery 3.5.1 does not follow this entry point's top-level invocation.
+// periphery:ignore
 func main() throws {
     var args = Array(CommandLine.arguments.dropFirst())
     if args == ["--version"] {
@@ -158,13 +160,6 @@ func main() throws {
             try FileHandle.standardOutput.write(contentsOf: encoder.encode(event) + Data([10]))
         }
     }
-}
-func readBounded(_ url: URL) throws -> Data {
-    let file = try FileHandle(forReadingFrom: url)
-    defer { try? file.close() }
-    let data = try file.read(upToCount: 1024*1024+1) ?? Data()
-    guard data.count <= 1024*1024 else { throw CaptureError("configuration exceeds 1 MiB") }
-    return data
 }
 do { try main() }
 catch {
