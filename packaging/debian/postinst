@@ -3,10 +3,15 @@ set -e
 
 case "$1" in
     configure)
+        if ! getent passwd mysql-replicator >/dev/null; then
+            adduser --system --group --home /var/lib/mysql-replicator --no-create-home mysql-replicator
+        fi
         mkdir -p /var/lib/mysql-replicator
+        chown mysql-replicator:mysql-replicator /var/lib/mysql-replicator
         chmod 0750 /var/lib/mysql-replicator
         mkdir -p /etc/mysql-replicator
-        chmod 0755 /etc/mysql-replicator
+        chown root:mysql-replicator /etc/mysql-replicator
+        chmod 0750 /etc/mysql-replicator
 
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true

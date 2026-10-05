@@ -1,4 +1,8 @@
-# Ubuntu 16.04 packaging spike
+# Linux packaging and qualification
+
+For downloading and running released binaries, see [installation](../docs/INSTALL.md).
+Contributors can build verified release assets with `make release-artifacts`
+(Docker and Python only). The commands below provide deeper qualification evidence.
 
 Run from the repository root:
 
@@ -61,8 +65,8 @@ Build the standalone Debian package locally or in CI:
 
 ```sh
 make deb
-# Custom version and output directory:
-make deb ARGS="--version 0.1.0 --output dist"
+# Custom output directory (version comes from VERSION):
+make deb ARGS="--output dist"
 # Equivalent:
 swift run replicator-lab package-deb [--version VERSION] [--output DIR] [--skip-build] [--skip-verification]
 ```
@@ -71,15 +75,18 @@ swift run replicator-lab package-deb [--version VERSION] [--output DIR] [--skip-
 - `/usr/bin/mysql-replicator` (statically linked x86_64 musl binary, mode `0755`)
 - `/lib/systemd/system/mysql-replicator.service` (systemd service unit, mode `0644`)
 - `/etc/mysql-replicator/apply.example.yaml` (configuration template, marked as Debian conffile)
-- `/var/lib/mysql-replicator/` (state directory, mode `0750`)
+- `/var/lib/mysql-replicator/` (service-owned state parent, mode `0750`; initialization creates its `state` child)
+- `/usr/share/doc/mysql-replicator/` (project license, notices and dependency license inventory)
 
 The service reads `/etc/mysql-replicator/apply.yaml`. Copy and edit the commented
 template before starting it. Existing JSON configurations must be converted to
-YAML; the service no longer reads `apply.json`.
+YAML; the service no longer reads `apply.json`. The service runs as
+`mysql-replicator`, resumes only previously initialized state and does not restart
+a failure automatically. See the install guide for first start and clean resume.
 
 The packaging pipeline:
 1. Compiles the static x86_64 musl binary inside the Docker builder using the pinned Swift Static Linux SDK and Rust toolchain.
-2. Stages the Debian directory structure and metadata (`DEBIAN/control`, `conffiles`, `postinst`, `prerm`), maintaining ownership `root:root` via `dpkg-deb --root-owner-group -Zxz`.
+2. Stages the Debian directory structure and metadata (`DEBIAN/control`, `conffiles`, `postinst`, `prerm`), using `dpkg-deb --root-owner-group -Zxz`; post-install assigns the private state parent to the service account.
 3. Automatically verifies package installation (`dpkg -i`) and checks executable/service presence in a clean Ubuntu 16.04 container.
 4. Exports the resulting `.deb` and `.deb.sha256` to the host (`artifacts/deb/` by default).
 

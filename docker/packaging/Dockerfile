@@ -19,7 +19,10 @@ COPY packaging/rust packaging/rust
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
 COPY packaging/debian packaging/debian
-COPY packaging/Makefile packaging/Makefile
+COPY packaging/Makefile packaging/collect_notices.py packaging/
+COPY packaging/licenses packaging/licenses
+COPY tools/release_version.py tools/
+COPY VERSION ./
 COPY examples examples
 COPY Vendor Vendor
 COPY Package.swift Package.resolved ./
@@ -43,14 +46,15 @@ COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 
 # Build and verify Debian package (.deb)
 FROM build AS deb
-ARG VERSION=0.1.0
+ARG VERSION
 COPY LICENSE NOTICE ./
-RUN make -f packaging/Makefile deb VERSION=${VERSION}
+RUN if [ -n "$VERSION" ]; then make -f packaging/Makefile deb VERSION="$VERSION"; else make -f packaging/Makefile deb; fi
 
 # Verify .deb installation in clean Ubuntu 16.04
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS deb-test
 COPY --from=deb /out/deb/ /tmp/deb/
-RUN dpkg -i /tmp/deb/*.deb \
+RUN cd /tmp/deb && sha256sum --check *.sha256 \
+    && dpkg -i /tmp/deb/*.deb \
     && /usr/bin/mysql-replicator --version \
     && test -f /lib/systemd/system/mysql-replicator.service \
     && test -f /etc/mysql-replicator/apply.example.yaml \
@@ -59,3 +63,15 @@ RUN dpkg -i /tmp/deb/*.deb \
 # Scratch export target for Docker BuildKit --output
 FROM scratch AS deb-export
 COPY --from=deb /out/deb/ /
+
+# Package both formats from the SAME compiled binary, then test before export.
+FROM deb AS release
+COPY docs/INSTALL.md docs/INSTALL.md
+RUN make -f packaging/Makefile release
+FROM deb-test AS release-test
+COPY --from=release /out/release /release
+COPY packaging/test-release.sh /test-release.sh
+RUN sh /test-release.sh && touch /release-verified
+FROM scratch AS release-export
+COPY --from=release /out/release/ /
+COPY --from=release-test /release-verified /release-verified

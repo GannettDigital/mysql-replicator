@@ -1,10 +1,11 @@
 import XCTest
+import ReplicatorConfiguration
 @testable import ReplicatorLabCore
 
 final class DebianPackagingTests: XCTestCase {
     func testDefaultPackagingOptions() throws {
         let options = try DebianPackagingOptions(arguments: [])
-        XCTAssertEqual(options.version, "0.1.0")
+        XCTAssertEqual(options.version, ReleaseVersion.debian)
         XCTAssertEqual(options.outputDirectory, "artifacts/deb")
         XCTAssertFalse(options.skipBuild)
         XCTAssertFalse(options.skipVerification)
@@ -33,7 +34,7 @@ final class DebianPackagingTests: XCTestCase {
     }
 
     func testValidDebianVersionsAreAccepted() throws {
-        for valid in ["0.1.0", "1.0.0", "2.1.0-1", "0.9.1+git20261001", "1.0~rc1"] {
+        for valid in ["0.1.0", "1.0.0", "2.1.0-1", "0.9.1+git20261001", "1.0~rc1", "0.1.0~beta.1-1"] {
             let opt = try DebianPackagingOptions(arguments: ["--version", valid])
             XCTAssertEqual(opt.version, valid)
         }

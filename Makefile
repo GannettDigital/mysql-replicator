@@ -88,3 +88,12 @@ demo-sql:
 .PHONY: benchmark-capture
 benchmark-capture:
 	swift run replicator-lab benchmark-capture $(ARGS)
+
+.PHONY: release-check release-artifacts
+release-check:
+	python3 tools/release_version.py
+	python3 -m unittest discover -s tools -p 'test_*.py'
+
+# Docker only: export is gated by installation and archive tests.
+release-artifacts: release-check
+	docker build --platform linux/amd64 --target release-export -f docker/packaging/Dockerfile --output type=local,dest=artifacts/release .

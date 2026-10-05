@@ -27,6 +27,9 @@ jobs:
         with:
           swift-version: '6.2.1'
 
+      - name: Check release version consistency
+        run: python3 tools/release_version.py
+
       - name: Run unit test suites
         run: make coverage-unit
 
@@ -56,16 +59,15 @@ jobs:
         with:
           swift-version: '6.2.1'
 
-      - name: Build and verify Debian package (.deb)
-        run: make deb ARGS="--version 0.1.0"
+      - name: Build and verify Linux release packages
+        run: make release-artifacts
 
-      - name: Upload Debian package artifact
+      - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mysql-replicator-deb
+          name: linux-release-packages
           path: |
-            artifacts/deb/*.deb
-            artifacts/deb/*.sha256
+            artifacts/release/
           if-no-files-found: error
 
       - name: Install integration test tools
@@ -88,6 +90,9 @@ jobs:
 
       - name: Run DML and DDL integration sample
         run: make integration-smoke
+
+      - name: Verify integration exercised the release binary
+        run: python3 tools/verify_release_binary.py
 
       - name: Measure applier coverage on DML and DDL sample
         run: make integration-smoke ARGS="--coverage"

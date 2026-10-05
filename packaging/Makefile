@@ -9,9 +9,11 @@ export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER := clang
 export CC_x86_64_unknown_linux_musl := clang
 export AR_x86_64_unknown_linux_musl := llvm-ar
 export CFLAGS_x86_64_unknown_linux_musl := $(PACKAGING_CFLAGS)
-VERSION ?= 0.1.0
+VERSION ?= $(shell python3 tools/release_version.py --debian)
+RELEASE_VERSION := $(shell cat VERSION)
 .PHONY: build
 build:
+	python3 tools/release_version.py
 	mkdir -p /out/native /out/evidence
 	clang $(PACKAGING_CFLAGS) -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c /opt/sqlite/sqlite3.c -o /out/native/sqlite3.o
 	llvm-ar rcs /out/native/libsqlite3.a /out/native/sqlite3.o
@@ -38,6 +40,7 @@ build:
 	cp Package.resolved /out/evidence/production-Package.resolved
 	cp rust/Cargo.lock /out/evidence/production-Cargo.lock
 	cp /root/.swiftpm/swift-sdks/swift-6.2.1-RELEASE_static-linux-0.0.1.artifactbundle/sbom.spdx.json /out/evidence/sdk-sbom.spdx.json
+	python3 packaging/collect_notices.py
 
 # Optional demo tooling: inspect the live WAL in Docker's own filesystem.
 .PHONY: demo-tools
@@ -49,6 +52,7 @@ demo-tools:
 # Build Debian package (.deb) from static musl binary
 .PHONY: deb
 deb:
+	test "$(VERSION)" = "$$(python3 tools/release_version.py --debian)"
 	@if [ ! -f /out/mysql-replicator ]; then \
 		echo "==> /out/mysql-replicator not found; building binary first..." >&2; \
 		$(MAKE) -f packaging/Makefile build; \
@@ -64,9 +68,10 @@ deb:
 	cp /out/mysql-replicator /out/deb-staging/usr/bin/mysql-replicator
 	chmod 0755 /out/deb-staging/usr/bin/mysql-replicator
 	cp LICENSE NOTICE /out/deb-staging/usr/share/doc/mysql-replicator/
+	cp -R /out/third-party /out/deb-staging/usr/share/doc/mysql-replicator/
 	cp packaging/debian/mysql-replicator.service /out/deb-staging/lib/systemd/system/mysql-replicator.service
 	chmod 0644 /out/deb-staging/lib/systemd/system/mysql-replicator.service
-	cp examples/apply.example.yaml /out/deb-staging/etc/mysql-replicator/apply.example.yaml
+	sed 's#stateDirectory: ./replica-state#stateDirectory: /var/lib/mysql-replicator/state#' examples/apply.example.yaml > /out/deb-staging/etc/mysql-replicator/apply.example.yaml
 	chmod 0644 /out/deb-staging/etc/mysql-replicator/apply.example.yaml
 	sed "s/@VERSION@/$(VERSION)/g" packaging/debian/control.in > /out/deb-staging/DEBIAN/control
 	chmod 0644 /out/deb-staging/DEBIAN/control
@@ -77,6 +82,19 @@ deb:
 	cp packaging/debian/prerm /out/deb-staging/DEBIAN/prerm
 	chmod 0755 /out/deb-staging/DEBIAN/prerm
 	dpkg-deb -Zxz --build --root-owner-group /out/deb-staging /out/deb/mysql-replicator_$(VERSION)_amd64.deb
-	sha256sum /out/deb/mysql-replicator_$(VERSION)_amd64.deb > /out/deb/mysql-replicator_$(VERSION)_amd64.deb.sha256
+	cd /out/deb && sha256sum mysql-replicator_$(VERSION)_amd64.deb > mysql-replicator_$(VERSION)_amd64.deb.sha256
 	dpkg-deb --info /out/deb/mysql-replicator_$(VERSION)_amd64.deb
 	dpkg-deb --contents /out/deb/mysql-replicator_$(VERSION)_amd64.deb
+
+.PHONY: release
+release: deb
+	mkdir -p /out/release /out/archive/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64
+	cp /out/mysql-replicator LICENSE NOTICE examples/apply.example.yaml docs/INSTALL.md /out/archive/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64/
+	cp -R /out/third-party /out/archive/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64/
+	tar -C /out/archive -czf /out/release/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64.tar.gz mysql-replicator-$(RELEASE_VERSION)-linux-x86_64
+	cp /out/deb/*.deb /out/release/
+	cp examples/apply.example.yaml LICENSE NOTICE /out/release/
+	cp -R /out/evidence /out/release/build-evidence
+	tar -C /out/release -czf /out/release/build-evidence.tar.gz build-evidence
+	rm -rf /out/release/build-evidence
+	cd /out/release && sha256sum *.deb *.tar.gz apply.example.yaml LICENSE NOTICE > SHA256SUMS

@@ -65,3 +65,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Binary distributions include a third-party/ directory containing original license
+and notice files collected from the locked Swift and Rust source dependencies,
+toolchain runtime notices, the musl copyright notice, and the Static Linux SDK's
+SPDX inventory. Its manifest.json records dependency revisions and declared
+licenses. This inventory may include build-time or otherwise unlinked components.

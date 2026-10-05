@@ -1,7 +1,8 @@
 import Foundation
+import ReplicatorConfiguration
 
 public struct DebianPackagingOptions {
-    public var version: String = "0.1.0"
+    public var version: String = ReleaseVersion.debian
     public var outputDirectory: String = "artifacts/deb"
     public var skipBuild: Bool = false
     public var skipVerification: Bool = false
@@ -38,6 +39,7 @@ public struct DebianPackagingOptions {
 public enum DebianPackaging {
     public static func run(root: URL, arguments: [String]) throws {
         let options = try DebianPackagingOptions(arguments: arguments)
+        try require(options.version == ReleaseVersion.debian, "package version must match VERSION (\(ReleaseVersion.debian)); update VERSION and run tools/release_version.py --write")
         let runner = ProcessRunner(root: root)
         let outDir = URL(fileURLWithPath: options.outputDirectory, relativeTo: root).standardizedFileURL
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -84,7 +86,7 @@ public enum DebianPackaging {
         }
 
         let debPath = outDir.appendingPathComponent(debName).path
-        print("\nPASS: Debian package created and verified successfully:")
+        print(options.skipVerification ? "\nCREATED (installation verification skipped):" : "\nPASS: Debian package created and verified successfully:")
         print("  Package:  \(debPath)")
         if let sha = try? String(contentsOf: outDir.appendingPathComponent("\(debName).sha256"), encoding: .utf8) {
             print("  Checksum: \(sha.trimmingCharacters(in: .whitespacesAndNewlines))")

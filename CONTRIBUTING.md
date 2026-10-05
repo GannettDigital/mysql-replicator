@@ -8,10 +8,12 @@ We are committed to providing a welcoming, inclusive, and harassment-free enviro
 
 ## Prerequisites
 
-- **Swift:** Swift 6.2 or later with Swift Package Manager
-- **Rust:** Rust 1.93 or later (`cargo`)
+- **Swift:** Swift 6.2.1 with Swift Package Manager
+- **Rust:** Rust 1.93.1 (`cargo`)
 - **Docker:** Docker engine with Docker Compose and Linux/amd64 support (for full qualification suites)
 - **Make:** GNU Make
+- **Native libraries:** SQLite headers/libraries (`libsqlite3-dev` on Ubuntu; macOS SDK supplies them)
+- **Python:** Python 3.9+ for release and coverage tooling
 
 ## Development Workflow
 
@@ -20,7 +22,10 @@ We are committed to providing a welcoming, inclusive, and harassment-free enviro
 Build the Rust codec and the Swift binaries:
 
 ```sh
+git clone https://github.com/GannettDigital/mysql-replicator.git
+cd mysql-replicator
 make build
+.build/debug/mysql-replicator --help
 ```
 
 ### 2. Running Unit Tests
@@ -145,3 +150,25 @@ make ddl-catalog-check
 3. **Licensing & Attribution:**
    - All contributions are made under the Apache License, Version 2.0.
    - Any external code must be appropriately attributed in the `NOTICE` file.
+
+## Release engineering
+
+`VERSION` is the application SemVer; generated Swift constants are committed so
+ordinary SwiftPM builds need no generator or version file at runtime. After a
+version change, run `python3 tools/release_version.py --write`. CI rejects drift.
+The Debian version maps the prerelease separator to `~` and appends revision `-1`.
+Do not change config/state/codec protocol versions to match the release number.
+
+```sh
+make release-check
+make release-artifacts
+```
+
+Docker builds Linux x86_64 once, verifies static linking, collects dependency
+notices, packages `.deb` and `.tar.gz`, tests their installed contents and exports
+checksummed assets to `artifacts/release/`. macOS/arm64 distribution is deferred.
+See [packaging](packaging/README.md) for qualification limits and
+[the beta release procedure](docs/RELEASING.md) for the PR stack and publication.
+
+For performance work use `make benchmark` or `make benchmark-capture`; see
+[the benchmark guide](PLAN/PERFORMANCE_BENCHMARK.md). These remain uninstrumented.

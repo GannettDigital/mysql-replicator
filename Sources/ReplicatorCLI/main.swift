@@ -16,12 +16,12 @@ import Darwin
 func main() throws {
     var args = Array(CommandLine.arguments.dropFirst())
     if args == ["--version"] {
-        print("mysql-replicator 0.1.0-dev (codec ABI \(Codec.abiVersion), capabilities \(Codec.capabilities))")
+        print("mysql-replicator \(ReleaseVersion.current) (codec ABI \(Codec.abiVersion), capabilities \(Codec.capabilities))")
         return
     }
     if args.isEmpty || args == ["--help"] {
         print("""
-        mysql-replicator — development binlog inspector and DML applier
+        mysql-replicator — cross-version binlog replication
         Usage: mysql-replicator inspect FILE [--schema HISTORY.json] [--include-raw]
                    [--transactions --binlog-file SOURCE_FILENAME]
                mysql-replicator inspect --source-config SOURCE.yaml [--transactions] [--include-raw]
