@@ -49,6 +49,10 @@ dml-suite:
 	swift run replicator-lab dml-suite $(ARGS)
 
 .PHONY: ddl-suite
+.PHONY: reverse-suite
+reverse-suite:
+	swift run replicator-lab reverse-suite $(ARGS)
+
 ddl-suite:
 	swift run replicator-lab ddl-suite $(ARGS)
 

@@ -3,6 +3,7 @@
 # Optional settings below show their defaults unless marked otherwise.
 
 version: 2                          # Config format; schema/table allowlists are obsolete.
+profile: mysql84-to-mysql57-myisam   # Default qualified profile; see docs/REVERSE_REPLICATION.md for the experimental reverse profile.
 stateDirectory: ./replica-state      # New with --initialize; reuse after a clean stop.
 
 # Optional comparison-semantics translation; omitted means strict matching.

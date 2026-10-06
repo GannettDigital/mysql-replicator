@@ -94,6 +94,11 @@ jobs:
       - name: Verify integration exercised the release binary
         run: python3 tools/verify_release_binary.py
 
+      - name: Test reverse InnoDB profile using the same executable
+        run: |
+          docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:reverse
+          make reverse-suite ARGS="--skip-build"
+
       - name: Measure applier coverage on DML and DDL sample
         run: make integration-smoke ARGS="--coverage"
 
@@ -113,6 +118,7 @@ jobs:
           path: |
             artifacts/ddl-suite/
             artifacts/dml-suite/build-*.log
+            artifacts/reverse-suite/
           if-no-files-found: ignore
 
   combined-coverage:

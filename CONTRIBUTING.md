@@ -42,6 +42,16 @@ For AddressSanitizer testing:
 make test-asan
 ```
 
+The experimental reverse-profile integration fixture uses a MySQL 5.7 source
+and an 8.4 InnoDB destination:
+
+```sh
+make reverse-suite
+```
+
+It retains evidence under `artifacts/reverse-suite/`. See
+[reverse replication](docs/REVERSE_REPLICATION.md) for the current scope.
+
 ### Code coverage
 
 Use Python 3.9+ and the LLVM tools included with Swift (Xcode's command-line

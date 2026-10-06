@@ -89,20 +89,21 @@ struct DMLColumnType {
         }
     }
     var fraction: Int { arguments.first ?? 0 }
-    func matches(_ wire: WireColumn) -> Bool {
+    func matches(_ wire: WireColumn, legacyMetadata: Bool = false) -> Bool {
         let code = wire.type, meta = Array(wire.metadata)
+        let matchingInterpretation = wire.interpretation == interpretation || (legacyMetadata && wire.interpretation == nil)
         if integerBits != nil {
-            return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && wire.interpretation == interpretation
+            return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && matchingInterpretation
         }
         switch base {
         case "enum","set":
             return code == (base == "enum" ? 247 : 248) && wire.interpretation == .unsigned && meta.count == 2 && Int(meta[1]) == (base == "enum" ? (labels.count < 256 ? 1 : 2) : (labels.count+7)/8)
-        case "char","binary": return code == 254 && wire.interpretation == interpretation && wire.maximumBytes == UInt32(maximumBytes!)
-        case "varchar","varbinary": return (code == 15 || code == 253) && wire.interpretation == interpretation && wire.maximumBytes == UInt32(maximumBytes!)
+        case "char","binary": return code == 254 && matchingInterpretation && wire.maximumBytes == UInt32(maximumBytes!)
+        case "varchar","varbinary": return (code == 15 || code == 253) && matchingInterpretation && wire.maximumBytes == UInt32(maximumBytes!)
         case "tinytext","tinyblob","text","blob","mediumtext","mediumblob","longtext","longblob":
             let bytes: UInt8 = base.hasPrefix("tiny") ? 1 : base.hasPrefix("medium") ? 3 : base.hasPrefix("long") ? 4 : 2
-            return code == 252 && wire.interpretation == interpretation && meta == [bytes]
-        case "decimal": return code == 246 && meta == arguments.map(UInt8.init) && wire.isUnsigned == unsigned
+            return code == 252 && matchingInterpretation && meta == [bytes]
+        case "decimal": return code == 246 && meta == arguments.map(UInt8.init) && (wire.isUnsigned == unsigned || (legacyMetadata && wire.isUnsigned == nil))
         case "date": return code == 10 || code == 14
         case "year": return code == 13
         case "time","datetime","timestamp": return code == ["time":19,"datetime":18,"timestamp":17][base] && meta == [UInt8(fraction)]

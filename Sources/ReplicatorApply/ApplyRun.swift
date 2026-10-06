@@ -43,6 +43,8 @@ public enum ApplyRun {
     public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
                            initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
         try configuration.validate()
+        let profile = configuration.replicationProfile
+        let legacyMetadata = profile.sourceContract.requiresHistoricalSchema
         let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
         let timings = StageTimings()
         let producerTimings = StageTimings()
@@ -96,7 +98,7 @@ public enum ApplyRun {
             func checkSourceFailure() throws {
                 try pipeline.queue.checkFailure(allowSourceReconnect:configuration.reconnectPolicy.enabled,allowDrain:true)
             }
-            var planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy)
+            var planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
             func finishExecution() throws {
                 guard executor.active else { return }
                 let outcome = timings.measure("apply.execution_wait") { executor.join()! }
@@ -115,13 +117,7 @@ public enum ApplyRun {
                 let byteLimit = target.insertByteLimit
                 executor.start {
                     targetTimings.measure("apply.batch.execute") {
-                        DMLExecution.run(groups,cancellation:executionStop,
-                            maximumInsertRows:configuration.batchPolicy.maximumInsertRows,maximumInsertBytes:byteLimit,
-                            lock:{ try checkSourceFailure(); try target.lock($0) },
-                            write:{ try checkSourceFailure(); try target.apply($0) },
-                            insert:{ try checkSourceFailure(); try target.applyInserts($0) },
-                            completedGroup:target.completedDMLGroup,
-                            resetTrace:{ target.statementTrace = .init() },trace:{ target.statementTrace })
+                        target.execute(groups,cancellation:executionStop,maximumInsertBytes:byteLimit,checkSourceFailure:checkSourceFailure)
                     }
                 }
                 if !configuration.batchPolicy.overlapPreparation { try finishExecution() }
@@ -172,13 +168,14 @@ public enum ApplyRun {
                         try state.complete(group,rowCount:0,filtered:true)
                         try progress(); return
                     }
+                    try require(target.contract.supportsDDL,"reverse InnoDB profile currently requires preloaded schemas; DDL must be reconciled explicitly")
                     let statement=try DDLStatement.from(group)
                     let plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try checkSourceFailure()
                     try target.applyDDL(plan)
-                    planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy)
+                    planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
                     try state.complete(group,rowCount:0,ddl:plan)
                     try progress()
                     return
@@ -197,7 +194,7 @@ public enum ApplyRun {
                     }
                 }
                 let mutations: [Mutation]
-                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:planningCache.tables) } }
+                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:planningCache.tables,transactional:profile.transactional) } }
                 catch {
                     try barrier()
                     try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
@@ -219,16 +216,34 @@ public enum ApplyRun {
               let capture = try state.captureConfiguration(configuration.source,remainingTransactions:remaining)
               do {
                 try pipeline.run(cancellation:cancellation,producerTimings:producerTimings,produce:{ stop, send in
+                    let resolver: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])? = legacyMetadata ? { event,_ in
+                        let request = ApplySchemaRequest(event)
+                        try send(.schema(request))
+                        return try request.wait(cancellation:stop)
+                    } : nil
                     _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:stop,
                         emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
+                        resolveSchema:resolver,
                         timings:producerTimings,onIdle:{ try send(.idle) },allowDDL:true,
-                        ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                        ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) },sourceContract:profile.sourceContract)
                 },consume:{ message in
                     if drain.isCancelled { throw ApplyDrainRequested() }
                     try timings.measure("apply.consume") {
                         switch message {
                         case .event(let record): try event(record)
                         case .transaction(let group): try transaction(group)
+                        case .schema(let request):
+                            do {
+                                guard let db=request.event.database,let name=request.event.table else { throw ApplyError("missing schema identity") }
+                                let identity = db + "\0" + name
+                                if planningCache.tables[identity] == nil {
+                                    try barrier("schema")
+                                    let table = try target.discover(request.event)
+                                    try planningCache.insert(table)
+                                }
+                                let table = try planningCache.validate(request.event)
+                                request.complete(.success(table.columns.map(\.interpretation)))
+                            } catch { request.complete(.failure(error)); throw error }
                         case .idle:
                             if !cancellation.isCancelled { try barrier("idle") }
                             else { try finishExecution() }

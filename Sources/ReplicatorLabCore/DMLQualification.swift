@@ -882,7 +882,7 @@ public enum DMLQualification {
                         let history=try state(label,"SELECT schema_json FROM schemas WHERE current=1")
                         let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
                         try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
-                        try require(state(label,"PRAGMA user_version")=="8","extended state lacks current version gate (8)")
+                        try require(state(label,"PRAGMA user_version")=="9","extended state lacks current version gate (9)")
                         return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
                     }
                     try cases.assertion("normalized-binlog",evidence:"assertions/"+label+"/normalized-binlog.json") {

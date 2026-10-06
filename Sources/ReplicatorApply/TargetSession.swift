@@ -11,6 +11,7 @@ final class TargetSession {
     let timings: StageTimings
     var statementTrace = TargetStatementTrace()
     var lockEpoch = TableLockEpoch()
+    var contract: TargetContract { config.replicationProfile.targetContract }
     let config: ApplyConfiguration
     init(configuration: ApplyConfiguration,password: String, timings: StageTimings = .init()) throws {
         self.timings = timings
@@ -68,7 +69,7 @@ final class TargetSession {
     }
     func scalar(_ sql: String, _ binds: [MySQLData] = []) throws -> String? { try query(sql,binds).0.first?.column("v")?.string }
     func nativeExclusion() throws {
-        try require(try query("SHOW SLAVE STATUS").0.isEmpty,"target has a native replication channel; stopped-channel adoption is not implemented")
+        try require(try query(contract.statusSQL).0.isEmpty,"target has a native replication channel; stopped-channel adoption is not implemented")
         let sql = ["replication_connection_status","replication_applier_status","replication_applier_status_by_worker","replication_applier_status_by_coordinator"]
             .map { "SELECT SERVICE_STATE FROM performance_schema." + $0 }.joined(separator:" UNION ALL ")
         let rows = try query(sql).0
@@ -78,11 +79,11 @@ final class TargetSession {
     private(set) var targetUUID: String?
     func preflight() throws {
         let r = try query("SELECT VERSION() AS version,@@server_uuid AS uuid,@@GLOBAL.gtid_mode AS mode,@@GLOBAL.enforce_gtid_consistency AS consistency,@@GLOBAL.log_bin AS log_bin,@@SESSION.sql_log_bin AS session_binlog,@@SESSION.binlog_format AS format,@@SESSION.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum").0.first
-        try require(r?.column("version")?.string?.hasPrefix("5.7.") == true,"wrong target version")
+        try require(r?.column("version")?.string?.hasPrefix(contract.versionPrefix) == true,"wrong target version for replication profile")
         guard let uuid=r?.column("uuid")?.string?.lowercased(),UUID(uuidString:uuid) != nil else {throw ApplyError("invalid discovered target UUID")}
         try require(uuid != config.source.sourceUUID.lowercased(),"source and target UUID must differ")
         targetUUID=uuid
-        try require(r?.column("mode")?.string == "OFF_PERMISSIVE" && r?.column("consistency")?.string == "WARN", "target must use OFF_PERMISSIVE/WARN")
+        try require(r?.column("mode")?.string == contract.gtidMode && r?.column("consistency")?.string == contract.gtidConsistency, "target GTID settings differ from replication profile")
         try require(r?.column("log_bin")?.int == 1 && r?.column("session_binlog")?.int == 1 && r?.column("format")?.string == "ROW" && r?.column("row_image")?.string == "FULL" && r?.column("checksum")?.string == "CRC32","target binary logging differs from contract")
         let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'").0
         let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
@@ -94,7 +95,7 @@ final class TargetSession {
         if ownership == "0" { throw TargetConnectionFailure(description:"waiting for target writer ownership") }
         try require(ownership == "1","target writer ownership is indeterminate")
         try nativeExclusion()
-        _ = try query("SET @@SESSION.GTID_NEXT = 'AUTOMATIC'")
+        try contract.configure(self)
         _ = try query("SET SESSION autocommit=1")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
@@ -126,16 +127,16 @@ final class TargetSession {
                 try unlock()
                 table=try readSchema(database:database,name:name)
             }
-            try Self.validateTableMap(event, table:table,compatibility:config.compatibilityPolicy)
+            try Self.validateTableMap(event, table:table,compatibility:config.compatibilityPolicy,legacyMetadata:config.replicationProfile.sourceContract.requiresHistoricalSchema)
             discovered[identity] = table
             return table
         }
     }
     /// Pure source/target compatibility validation; safe with an immutable table
     /// snapshot while the target connection executes an earlier batch.
-    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable,compatibility: CompatibilityPolicy = .init()) throws {
+    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable,compatibility: CompatibilityPolicy = .init(), legacyMetadata: Bool = false) throws {
         guard let wire = event.wireColumns else { throw ApplyError("missing table-map metadata") }
-        try DMLTablePlan(table,compatibility:compatibility).validate(wire:wire)
+        try DMLTablePlan(table,compatibility:compatibility).validate(wire:wire,legacyMetadata:legacyMetadata)
     }
 
     func readSchema(database: String,name: String) throws -> ApplyTable {
@@ -198,7 +199,8 @@ final class TargetSession {
     private func verifyTargetSchema(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         let metadata = try query("SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds).0.first
-        try require(metadata?.column("ENGINE")?.string == "MyISAM","target table is absent or not MyISAM")
+        try require(metadata?.column("ENGINE")?.string == contract.engine,"target table is absent or not \(contract.engine)")
+        try contract.validateTable(t,target:self)
         // A collation uniquely determines its charset; discovery/DDL resolution
         // already validates that mapping when constructing the ApplyTable.
         try require(metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,"target table defaults differ from historical schema")

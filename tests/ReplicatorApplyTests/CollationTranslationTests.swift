@@ -140,11 +140,11 @@ extension ResumeTests {
         }
         let legacy = try directory(),strict = try config(legacy.path)
         try seed(strict)
-        try write(legacy,"DROP TABLE ddl_details; DROP TABLE compatibility; PRAGMA user_version=7")
+        try write(legacy,"DROP TABLE replication_profile; DROP TABLE ddl_details; DROP TABLE compatibility; PRAGMA user_version=7")
         XCTAssertThrowsError(try StateStore(configuration:helper.config(legacy.path,collations:mapping),initialize:false))
         XCTAssertEqual(try helper.sqlite(legacy.appendingPathComponent("state.sqlite"),"PRAGMA user_version"),[["7"]])
         do { _ = try StateStore(configuration:strict,initialize:false) }
-        XCTAssertEqual(try helper.sqlite(legacy.appendingPathComponent("state.sqlite"),"PRAGMA user_version"),[["8"]])
+        XCTAssertEqual(try helper.sqlite(legacy.appendingPathComponent("state.sqlite"),"PRAGMA user_version"),[["9"]])
         XCTAssertEqual(try helper.sqlite(legacy.appendingPathComponent("state.sqlite"),"SELECT policy_json FROM compatibility"),[["{\"collations\":{}}"]])
     }
 }

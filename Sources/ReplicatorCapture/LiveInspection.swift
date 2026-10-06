@@ -133,7 +133,8 @@ public enum LiveInspection {
                            emitTransaction: @escaping (CompleteTransaction) throws -> Void,
                            resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
                            timings: StageTimings = .init(), onIdle: @escaping () throws -> Void = {},
-                           allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws -> LiveSummary {
+                           allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil,
+                           sourceContract: SourceContract = .mysql84) throws -> LiveSummary {
         let start = try config.validate()
         let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
         var download: DownloadSnapshot?
@@ -167,8 +168,8 @@ public enum LiveInspection {
                   row.column("server_id")?.string != String(config.serverID), row.column("gtid_mode")?.string == "ON",
                   row.column("gtid_consistency")?.string == "ON", row.column("binlog_format")?.string == "ROW",
                   row.column("row_image")?.string == "FULL", row.column("checksum")?.string == "CRC32",
-                  row.column("version")?.string?.hasPrefix("8.4.") == true else {
-                throw CaptureError("source identity/settings differ from the qualified MySQL 8.4 GTID-ON contract")
+                  row.column("version")?.string?.hasPrefix(sourceContract.rawValue) == true else {
+                throw CaptureError("source identity/settings differ from the qualified MySQL \(sourceContract.rawValue) GTID-ON contract")
             }
             if ignoreTable != nil {
                 let casing = try query("SELECT @@lower_case_table_names AS n")
@@ -179,7 +180,7 @@ public enum LiveInspection {
             let set = try GTIDSet(config.start.executedGTIDs)
             let covered = try query("SELECT GTID_SUBSET('\(set.canonical)',@@GLOBAL.gtid_executed) AS covered")
             guard covered.first?.column("covered")?.string == "1" else { throw CaptureError("bootstrap GTID set is not covered by this source") }
-            _ = try query("SET @source_binlog_checksum='CRC32',@source_heartbeat_period=1000000000")
+            _ = try query(sourceContract.dumpSessionSQL)
             if cancellation.isCancelled { throw CaptureCancelled() }
 
             let maximum = Int(config.maximumEventBytes ?? 4*1024*1024)

@@ -38,6 +38,7 @@ func main() throws -> Int32 {
           demo-suite [--skip-build]
           upstream-tests
           package-deb [--output DIR] [--skip-build] [--skip-verification]
+          reverse-suite [--skip-build] # 5.7 InnoDB → 8.4 InnoDB
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
@@ -68,6 +69,11 @@ func main() throws -> Int32 {
         let selection = try SuiteSelection(arguments: args, ddl: ddl)
         if selection.list { selection.describe(ddl: ddl); return 0 }
         try DMLQualification.run(root: root, build: selection.build, ddl: ddl, selection: selection)
+        return 0
+    }
+    if command == "reverse-suite" {
+        try require(args.isEmpty || args == ["--skip-build"],"reverse-suite accepts only --skip-build")
+        try ReverseQualification.run(root:root,build:args.isEmpty)
         return 0
     }
     if command == "live-suite" {

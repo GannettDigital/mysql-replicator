@@ -1,0 +1,13 @@
+# Reuse the existing 5.7 fixture as the source and the 8.4 service as target.
+# TLS material is generated per run and copied into the evidence volume.
+services:
+  source:
+    command: ["--server-id=8401", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-row-metadata=FULL", "--binlog-checksum=CRC32", "--gtid-mode=ON", "--enforce-gtid-consistency=ON", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--skip-replica-start", "--ssl-ca=/evidence/tls/ca.pem", "--ssl-cert=/evidence/tls/server.pem", "--ssl-key=/evidence/tls/server-key.pem", "--require-secure-transport=ON"]
+    volumes: ["reverse-evidence:/evidence:ro"]
+  target57:
+    command: ["--server-id=5701", "--log-bin=binlog", "--binlog-format=ROW", "--binlog-row-image=FULL", "--binlog-checksum=CRC32", "--gtid-mode=ON", "--enforce-gtid-consistency=ON", "--sync-binlog=1", "--innodb-flush-log-at-trx-commit=1", "--innodb-use-native-aio=0", "--explicit-defaults-for-timestamp=ON", "--skip-slave-start", "--ssl-ca=/evidence/tls/ca.pem", "--ssl-cert=/evidence/tls/server.pem", "--ssl-key=/evidence/tls/server-key.pem", "--require-secure-transport=ON"]
+    volumes: ["reverse-evidence:/evidence:ro"]
+volumes:
+  reverse-evidence:
+    external: true
+    name: "${REPLICATOR_REVERSE_EVIDENCE_VOLUME:?reverse evidence volume required}"

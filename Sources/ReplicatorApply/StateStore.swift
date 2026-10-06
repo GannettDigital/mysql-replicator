@@ -68,6 +68,7 @@ final class StateStore {
     let timings: StageTimings
     let policy: StoragePolicy
     let compatibility: CompatibilityPolicy
+    let replicationProfile: ReplicationProfile
     // Reserve enough of the total SQLite budget for a transaction touching every
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
@@ -80,6 +81,7 @@ final class StateStore {
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
         policy = c.policy; try policy.validate()
         compatibility = c.compatibilityPolicy; try compatibility.validate()
+        replicationProfile = c.replicationProfile
         self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
         try require(skipGTIDs == nil || !initialize,"skip requires existing state")
@@ -117,7 +119,8 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=8")
+            try execute("PRAGMA user_version=9")
+            try createProfileJournal()
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
@@ -154,7 +157,12 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5,6,7,8].contains(version),"unsupported saved state version")
+        try require([4,5,6,7,8,9].contains(version),"unsupported saved state version")
+        if version >= 9 {
+            try require(try query("SELECT profile FROM replication_profile WHERE id=1") == [[replicationProfile.rawValue]],"replication profile differs from saved state")
+        } else {
+            try require(replicationProfile == .mysql84To57MyISAM,"legacy state belongs to the MyISAM profile; reverse replication requires a new baseline")
+        }
         if version >= 8 {
             let saved = try query("SELECT policy_json FROM compatibility WHERE id=1")
             guard saved.count == 1, let json = saved[0][0] else { throw ApplyError("missing saved compatibility policy") }
@@ -275,15 +283,21 @@ final class StateStore {
         // own binary version; inspection supports legacy JSON and mixed files.
         // Version 7 adds skipped-DDL history, pruned with its completed groups.
         // Version 8 pins collation policy and adds original SQL/schema audit.
+        // Version 9 pins the source/target replication profile.
         // Older runtimes reject newer state rather than orphan audit records.
-        if version < 8 {
+        if version < 9 {
             try atomic {
                 if version < 7 { try createDDLSkips() }
-                try createCompatibilityJournal()
-                try execute("PRAGMA user_version=8")
+                if version < 8 { try createCompatibilityJournal() }
+                try createProfileJournal()
+                try execute("PRAGMA user_version=9")
             }
         }
         ready=true
+    }
+    private func createProfileJournal() throws {
+        try execute("CREATE TABLE replication_profile(id INTEGER PRIMARY KEY CHECK(id=1),profile TEXT NOT NULL)")
+        try execute("INSERT INTO replication_profile VALUES(1,?)",[replicationProfile.rawValue])
     }
     private func createCompatibilityJournal() throws {
         try execute("CREATE TABLE compatibility(id INTEGER PRIMARY KEY CHECK(id=1),policy_json TEXT NOT NULL)")
