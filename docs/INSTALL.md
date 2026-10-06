@@ -85,6 +85,33 @@ A machine reboot or process crash is not a clean stop. Safe connection failures
 can reconnect within the running process; `BLOCKED` or interrupted state requires
 operator investigation. See [target reconnect and drain](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.1/PLAN/TARGET_RECONNECT.md).
 
+## Optional bounded shutdown
+
+The default `TimeoutStopSec=infinity` favors completing an in-flight apply over
+forcing the process to exit. A hung process can therefore delay service restart
+or host shutdown indefinitely. For deployments that require a bounded stop, use
+`sudo systemctl edit mysql-replicator` to add a local override, for example:
+
+```ini
+[Service]
+TimeoutStopSec=30min
+```
+
+Then run `sudo systemctl daemon-reload`. Choose the limit for your workload:
+`target.ddlTimeoutSeconds` alone can be configured up to 24 hours, and draining
+may include several operations. Thirty minutes is an example, not a universal
+safe bound. For planned maintenance, drain and verify `STOPPED` before rebooting.
+
+Once a finite stop timeout expires, systemd can send SIGKILL. This bounds the wait
+for a normally killable process; it does not guarantee a clean replication stop
+or recover a process stuck in uninterruptible kernel I/O. Keep `Restart=no`.
+After a forced termination, preserve SQLite, relay files and target data. Startup
+refuses interrupted state even when the last applied checkpoint looks complete;
+pending write intents must not be replayed or marked done based on a timeout.
+Have a DBA inspect and reconcile affected target tables against the source before
+explicit recovery. Do not delete state, change its lifecycle to `STOPPED`, or run
+`--initialize` to bypass the refusal.
+
 ## Upgrade from a development checkout
 
 Stop the old writer cleanly and back up its configuration and entire state directory
