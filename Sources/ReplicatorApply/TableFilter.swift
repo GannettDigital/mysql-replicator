@@ -42,7 +42,22 @@ struct TableFilter {
         return previous[input.count]
     }
     func ignores(_ query: QueryControl) throws -> Bool {
+        try DDLPolicy.rejectProhibited(query)
+        // Stored-program bodies may contain semicolons. Classify their header
+        // before the scope-only table lexer; trigger/event policy is unconditional.
+        var objects = try DDLParser(query.sql,database:query.database,sqlMode:query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode)
+        if let statement = try objects.objectStatement(), case .object(let object) = statement {
+            return object.kind == .view ? ignores(database:object.name.database,table:object.name.table) : ignores(database:object.name.database)
+        }
         guard !patterns.isEmpty else { return false }
+        if objects.take("DROP"), objects.take("DATABASE") || objects.take("SCHEMA") {
+            if objects.take("IF") { try objects.expect("EXISTS") }
+            let database = try objects.identifier()
+            let partial = patterns.contains { pattern in
+                Self.matches(String(pattern.split(separator:".")[0]),database)
+            } && !ignores(database:database)
+            try require(!partial,"DROP DATABASE crosses included and excluded tables; explicit resolution required")
+        }
         try require(query.errorCode == 0, "filtered DDL source query reported an error")
         var scope = try FilterSQL(query)
         guard let targets = try scope.targets() else { return false }
@@ -156,7 +171,11 @@ private struct FilterSQL {
         }
         if verb == "ALTER" {
             while i < tokens.count {
-                if take("RENAME") {
+                if take("EXCHANGE") {
+                    try require(take("PARTITION"),"invalid EXCHANGE filter scope"); _ = try identifier()
+                    try require(take("WITH") && take("TABLE"),"invalid EXCHANGE filter scope"); names.append(try name())
+                }
+                else if take("RENAME") {
                     if take("INDEX") || take("KEY") || take("COLUMN") { continue }
                     _ = take("TO"); _ = take("AS"); names.append(try name())
                 } else { i += 1 }

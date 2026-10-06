@@ -142,7 +142,7 @@ how quickly it drains afterward. Repeat runs before drawing conclusions. Use
 ## Applier function profile
 
 The normal benchmark enables detailed applier profiling by default. In ordinary
-application runs, opt in with top-level `"applierProfiling": true` in the apply
+application runs, opt in with top-level `applierProfiling: true` in the YAML apply
 configuration; it defaults off. Counters stay in the applier worker's memory and
 are included in the existing final STOPPED/BLOCKED summary, with no per-call
 logging or SQLite counter writes. A process crash can lose these diagnostic
@@ -748,7 +748,7 @@ GTID/file-position resume and repeated restart without replay. Evidence:
 ## Decoder function profile
 
 Detailed decoder profiling is enabled by default in the benchmark. Ordinary
-capture/application leaves it off; enable it with `"decoderProfiling": true`
+capture/application leaves it off; enable it with `decoderProfiling: true`
 inside the `source` configuration. Counters stay in worker-local memory and are
 exported in the existing final timing summary, with no per-call logging or SQLite
 writes. Resetting a decoder does not reset its run's counters.
@@ -951,7 +951,7 @@ Every run forces a physical binlog rotation, checks exact source GTID counts,
 decoded transaction/row counts, downloaded versus decoded byte counts, final
 decoded file/position, complete EOF, and absence of applied state. Blackhole
 does not compare target rows or claim that any write was applied. Its CLI is
-`mysql-replicator blackhole --source-config SOURCE.json`, requires
+`mysql-replicator blackhole --source-config SOURCE.yaml`, requires
 `nonBlocking: true` without `stopAfterTransactions`, and accepts no apply config
 or state directory. It writes one JSON summary and fails on unsupported or
 malformed events. Keep source writes stopped for a repeatable fixed backlog.
@@ -1772,3 +1772,97 @@ Evidence, in table-column order:
 - `artifacts/performance/20261002T235113Z-5490d59d/20261002T235113Z-4c6e380a-auto-autocommit-myisam`
 - `artifacts/performance/20261002T225258Z-c3293542/20261002T225258Z-295f3aea-auto-autocommit-myisam`
 - `artifacts/performance/20261002T234912Z-cc430679/20261002T234912Z-3e565d0a-auto-autocommit-myisam`
+
+### Compatibility and YAML regression check, 2026-10-03
+
+Reran both 10K cases with the current uncommitted code, including compatibility,
+reconnect, trigger-policy, and YAML/password changes. The first command rebuilt
+the runtime; the second reused that exact image. Runs were sequential:
+
+```sh
+make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
+```
+
+Both passed exact comparison of all 10,000 rows, applied transaction/row counts,
+and cleanup. The eight-table case compared 1,250 rows per table.
+
+| Seconds | One table previous | One table current | Eight tables previous | Eight tables current |
+| --- | ---: | ---: | ---: | ---: |
+| Source load | 15.107 | 16.611 | 15.661 | 15.772 |
+| Observed native completion | 20.652 | 20.691 | 20.721 | 20.592 |
+| Observed custom completion | 20.652 | 20.691 | 25.682 | 25.599 |
+| Apply consumer elapsed | 7.029 | 7.836 | 21.052 | 20.541 |
+| Target SQL elapsed | 3.291 | 3.659 | 15.301 | 14.992 |
+| Metadata validation | 0.141 | 0.158 | 0.120 | 0.118 |
+| DML planning | 0.288 | 0.376 | 0.240 | 0.290 |
+
+No meaningful completion-time regression was observed. One-table native/custom
+completion remains in the same polling window; eight-table custom completion
+remains about 24% later than native. Individual stage times vary, including an
+increase in one-table apply time. These are single runs on shared ARM hardware
+with emulated amd64 containers and five-second polling, not a statistical
+regression bound or proof of equal native throughput. Background containers were
+left running; no other qualification workload was launched during these runs.
+
+Runtime image: `sha256:e9510f49626767207e15d7170f8d0416df45799259313ad40e74bf22c5f742bb`.
+Each evidence directory includes `result.json`, `verification.json`, stage timings,
+server-work counters, input hashes, and captured state:
+
+- One table: `artifacts/performance/20261003T182321Z-236aecfc/20261003T182322Z-b2f61522-auto-autocommit-myisam`.
+- Eight tables: `artifacts/performance/20261003T182526Z-c1a0f2e8/20261003T182526Z-9a67f59e-auto-autocommit-myisam`.
+
+### Collation translation and schema-journal regression check, 2026-10-04
+
+Rebuilt the release runtime with the current uncommitted collation-mapping,
+multi-table RENAME, state-format-8 audit and diagnostic changes. Repeated the
+same October 3 workloads sequentially:
+
+```sh
+make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
+```
+
+The eight-table command ran twice because its first internal apply/SQL timings
+were about 9% above the prior result. All three runs passed exact comparison of
+10,000 rows, transaction/row counts, clean stop and fixture cleanup. Each
+eight-table run compared 1,250 rows per table. The workload hash and benchmark
+options match the previous checks; no other qualification workload was launched
+during these runs.
+
+| Seconds unless indicated | One table previous | One table current | Eight tables previous | Eight tables current | Eight tables repeat |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Source load | 16.611 | 15.540 | 15.772 | 17.018 | 15.949 |
+| Observed native completion | 20.691 | 20.887 | 20.592 | 20.634 | 20.642 |
+| Observed custom completion | 20.691 | 20.887 | 25.599 | 25.693 | 25.923 |
+| Apply consumer elapsed | 7.836 | 7.746 | 20.541 | 22.337 | 21.401 |
+| Target SQL elapsed | 3.659 | 3.428 | 14.992 | 16.294 | 15.476 |
+| Metadata validation | 0.158 | 0.160 | 0.118 | 0.129 | 0.131 |
+| DML planning | 0.376 | 0.366 | 0.290 | 0.303 | 0.303 |
+| Capture/decode elapsed | 8.681 | 8.582 | 7.639 | 8.029 | 8.090 |
+| Target SQL calls | 1,406 | 1,403 | 10,348 | 10,348 | 10,348 |
+
+No substantial completion-time regression was observed. One-table native and
+custom completion remain in the same polling window. Eight-table custom
+completion was 0.4–1.3% later than the prior observation, and roughly 25% later
+than native in these runs. Internal eight-table apply time was 4–9% higher,
+mostly in prepared SQL execution; the repeat narrowed that difference without
+changing code or call counts. This is consistent with shared-host variability,
+but does not rule out a small regression: completion polling is every five
+seconds, and the old baseline is a single run, not a contemporaneous A/B sample.
+Stage durations include startup/stop and overlap across workers.
+
+These existing fixtures use compatible `utf8mb4_bin` schemas with collation
+mapping omitted. They check the common DML path in the new runtime; they do not
+measure throughput with active collation substitution or repeated DDL. Mapped
+DDL, restart and collision correctness are qualified separately in
+[DDL compatibility](DDL_COMPATIBILITY.md).
+
+Runtime image for all three runs:
+`sha256:9ea66395b30accba736c906effab800340279feda8c858cd470cbc35a2221f3f`.
+Evidence directories, including `result.json`, `verification.json`, stage
+timings, server counters, input hashes and saved state:
+
+- One table: `artifacts/performance/20261004T224655Z-249cfe1d/20261004T224655Z-c7881c40-auto-autocommit-myisam`.
+- Eight tables: `artifacts/performance/20261004T224957Z-3307b9a7/20261004T224957Z-49351f8d-auto-autocommit-myisam`.
+- Eight tables repeat: `artifacts/performance/20261004T225214Z-4cc7665d/20261004T225214Z-beb29268-auto-autocommit-myisam`.

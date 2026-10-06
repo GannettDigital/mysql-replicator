@@ -144,7 +144,7 @@ Currently, no `.github/workflows` exist. A recommended GitHub Actions setup:
    │       └── mysql-replicator (mode 0755)
    ├── etc/
    │   └── mysql-replicator/
-   │       └── apply.example.json (mode 0644)
+   │       └── apply.example.yaml (mode 0644)
    └── lib/
        └── systemd/
            └── system/

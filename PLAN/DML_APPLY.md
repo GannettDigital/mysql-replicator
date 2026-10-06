@@ -4,10 +4,13 @@ This increment connects the existing live reader/decoder/transaction assembler t
 MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
 The [native engine/charset DDL foundation](DDL_NATIVE_DEFAULTS.md) replaces the
 initial prototype rewrites. Broader coverage follows the [DDL completeness plan](DDL_COMPLETENESS.md).
-Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.json`
+Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.yaml`
 can exclude the single captured failed group before any target write intent;
 see [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
-Automatic reconnect and recovery of interrupted or uncertain writes remain unimplemented.
+Source transport interruptions and safe target disconnects reconnect from the durable
+applied checkpoint; see [source reconnect](SOURCE_RECONNECT.md) and
+[target reconnect and drain](TARGET_RECONNECT.md). Recovery of interrupted
+processes or uncertain target writes remains unimplemented.
 Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
 then crash/reconnect recovery. Dump/load and target provisioning remain external.
 
@@ -27,15 +30,19 @@ mounts. Closed state is copied back for SQLite assertions; all evidence is copie
 back before cleanup removes that volume.
 
 For a separately prepared target, start with the checked-in
-[configuration template](../examples/apply.example.json). **Replace its placeholders
+[configuration template](../examples/apply.example.yaml). **Replace its placeholders
 with the connection identities and external starting boundary before running.**
 Target UUID is discovered through the verified target connection and saved in
-SQLite; remove `targetUUID` from old configs. The template is not a ready-to-run fixture. Set the two named password environment
-variables, then run:
+SQLite; remove `targetUUID` from old configs. Configuration files must use YAML
+with a `.yaml` or `.yml` extension; legacy JSON configs must be converted.
+For each connection, set either `passwordEnvironment` (the variable's name) or
+`password` (the literal value), never both. Quote literal passwords containing
+YAML punctuation. The template is not a ready-to-run fixture. Replace its values
+and set any chosen password environment variables, then run:
 
 ```sh
 make build
-.build/debug/mysql-replicator run --config apply.json --initialize
+.build/debug/mysql-replicator run --config apply.yaml --initialize
 ```
 
 For `--initialize`, the state directory's parent must already exist and the state
@@ -44,7 +51,7 @@ permissions and records the configured external baseline. To restart after a cle
 stop, omit the flag:
 
 ```sh
-.build/debug/mysql-replicator run --config apply.json
+.build/debug/mysql-replicator run --config apply.yaml
 ```
 
 SQLite is authoritative on restart: use the saved fully applied position and GTID
@@ -74,8 +81,10 @@ runs. Otherwise the command follows the source until stopped or an error occurs.
 Stdout contains a progress JSON record after each completed DML batch or standalone group; stderr
 contains the final summary or a structured error. SIGINT/SIGTERM at a complete
 capture/apply boundary persist STOPPED and exit zero; a partial capture/apply
-interruption remains BLOCKED. A known transport or apply failure is not converted
-to success by a concurrent stop. A clean STOPPED state can then be resumed
+interruption remains BLOCKED. Source reconnect discards unapplied capture only
+after the active target batch finishes and its acknowledgments are journaled;
+cancellation during reconnect backoff can then stop cleanly. Target, journal and
+nonretryable capture failures remain errors. A clean STOPPED state can be resumed
 explicitly; uncertain writes are never retried.
 On clean capture cancellation, buffered groups with no prepared intents can be
 discarded and read again from the saved applied boundary. A finite capture limit
@@ -95,11 +104,11 @@ The FIFO allows at most 4,096 items, 64 complete groups and 64 MiB of retained-d
 accounting. These are independent limits, not an RSS promise: the socket queue,
 current bounded assembler group and current apply batch also retain data. Full
 queues pause the producer rather than dropping events. Normal finite completion
-drains the queue and flushes the final batch. Failure discards queued work,
-interrupts the other worker and joins the producer before reporting final state;
-SQL is not retried and acknowledged partial groups retain the existing journal
-semantics. Cancellation is clean only with neither a partial captured/consumed
-group nor a pending write intent; uncertain interruption remains BLOCKED.
+drains the queue and flushes the final batch. Failure discards queued work and
+joins the producer. A retryable source failure lets already-journaled target work
+finish; other failures interrupt execution. SQL is not retried and acknowledged
+partial groups retain the existing journal semantics. Uncertain target outcomes
+remain BLOCKED, including when source and target fail concurrently.
 
 Final summaries include queue high-water marks and enqueued/dequeued group counts
 in `pipeline`. These counters reset per run and are diagnostic, not recovery state.
@@ -117,35 +126,42 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   table. Multi-row events/statements and primary-key changes are supported within
   this subset. Multi-statement groups are rejected before any target mutation,
   consistent with the accepted native MyISAM expected-negative reference.
-- ASCII SQL identifiers (quoted, never interpolated unescaped); a single full,
-  nonnullable integer primary key. Named ordinary/unique BTREE secondary indexes
+- ASCII SQL identifiers (quoted, never interpolated unescaped); a primary key with 1–16 full,
+  nonnullable supported scalar columns, including DATE/integer composite keys. Named ordinary/unique BTREE secondary indexes
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
-  row identity still uses the primary key. No triggers, generated
-  columns or partitioned targets. Prepared targets may use an integer primary-key
+  row identity still uses the primary key. Target triggers are rejected. The
+  [DDL compatibility increment](DDL_COMPATIBILITY.md) adds bounded generated
+  columns and partitioned targets. Prepared targets may use an integer primary-key
   AUTO_INCREMENT, literal defaults and temporal CURRENT_TIMESTAMP defaults/on-update
   attributes. All row values, including generated IDs and source-evaluated temporal
-  values, are supplied explicitly; the target does not generate replacement values.
+  values, are supplied explicitly. Generated-expression columns are the exception:
+  the target computes them and the applier compares them with the FULL source image
+  before completing the write intent.
   Discovery obtains ordered column names, types, defaults, EXTRA attributes, nullability and text collation
   from the target and validates source wire metadata against that description.
   Validated schema is cached for the session and invalidated around source DDL.
 - Prepared-table DML types: signed/unsigned TINYINT, SMALLINT, MEDIUMINT, INT and
   BIGINT; DECIMAL(p,s) including unsigned (precision 1–65, scale 0–30 and no greater
   than precision); DATE, YEAR, TIME/DATETIME/TIMESTAMP with fractional precision
-  0–6; VARCHAR(n), VARBINARY(n), and TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
+  0–6; CHAR(n), BINARY(n), VARCHAR(n), VARBINARY(n), ENUM, SET, and
+  TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
   Text requires utf8mb4_bin, utf8mb4_unicode_ci or utf8mb4_general_ci, matching
-  source and target. A source 8.4-only collation fails rather than being substituted.
-  VARCHAR/VARBINARY lengths remain 1–16383. The decoder's 1 MiB individual-value
+  source and target. A source 8.4-only collation fails unless covered by the explicit
+  [collation mapping policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
+  CHAR/BINARY lengths are 0–255; VARCHAR/VARBINARY lengths remain 1–16383.
+  ENUM/SET require FULL source metadata with exactly matching ordered labels.
+  ENUM error ordinal zero is rejected; a declared empty label is supported. The decoder's 1 MiB individual-value
   and event/group resource limits apply even to MEDIUM/LONG types.
   NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
   Scope/type/shape validation covers the whole source group before writing.
 
 MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
 `.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
-This is not complete 5.7 support: FLOAT/DOUBLE, BIT, CHAR/BINARY, ENUM/SET, JSON,
-spatial types, composite/noninteger primary keys and multi-statement transactions
-remain outside this increment. Broader type support here is for preprovisioned
-tables; the source DDL grammar is unchanged and can still reject definitions that
-would be accepted by prepared-table DML.
+This is not complete 5.7 support: FLOAT/DOUBLE, BIT, JSON,
+spatial types and multi-statement transactions
+remain outside this increment. The source DDL grammar now accepts these DML types,
+including ENUM/SET, together with bounded defaults and schema operations described
+in [DDL compatibility](DDL_COMPATIBILITY.md).
 
 The DML matrix (`make dml-suite ARGS="--slice matrix"`) checks multi-value INSERT,
 multi-row UPDATE/DELETE, upsert, REPLACE, IGNORE, INSERT…SELECT, single-target
@@ -158,7 +174,8 @@ Target preflight checks every native channel and performance_schema worker/recei
 state, failing on missing privileges or indeterminate results. This initial version
 rejects even retained stopped channels; explicit stopped-channel adoption is later
 work. It acquires one server-wide advisory writer lock on the single target
-connection, which never reconnects or releases that lock during the run.
+connection. Safe target reconnect destroys that session and reacquires ownership
+on a fresh connection before applying; see [target reconnect](TARGET_RECONNECT.md).
 Ownership/channel checks also run at DDL barriers, but not for every DML group.
 The target is a dedicated replica: DBAs must exclude target-local writes, DDL,
 grant changes and administrative native starts during application. Native
@@ -201,7 +218,7 @@ The source GTID remains local replication identity, never a target SQL GTID. The
 is no target transaction pretending to make MyISAM rows atomic.
 
 The applier validates schema on discovery, on clean resume and around ordered
-source DDL. Its session cache holds at most 64 validated schemas and their SQL
+source DDL. Its session cache holds at most 1,024 validated schemas and their SQL
 templates; releasing a table lock does not invalidate them. DDL clears both this
 cache and prepared statements, and following DML validates the new version.
 `target.explicitTableLocks` defaults to `false`: the applier sends no client
@@ -224,7 +241,7 @@ Ordered DDL replaces this cache after execution drains. The SQL worker owns
 separate immutable column descriptors for exact target result decoding.
 A successful SQL response with the expected count acknowledges the row; there is
 no post-write SELECT. This acknowledges MyISAM's write acceptance, not a guarantee
-of crash durability or atomicity with SQLite. Integer primary keys identify rows. Text comparisons
+of crash durability or atomicity with SQLite. Full primary-key tuples identify rows. Text comparisons
 use stored UTF-8 bytes, not collation or Swift's canonical Unicode equivalence;
 binary values and full unsigned 64-bit values remain exact. Plain INSERT relies
 on MySQL to reject duplicate primary/unique keys, without an existence SELECT;
@@ -269,8 +286,8 @@ Baseline GTIDs are externally asserted coverage; initialization does not count t
 as work performed by this process or claim a locally verified applied position.
 Received relay bytes, a pending group and completed target writes are distinct.
 If a later row fails, earlier MyISAM mutations remain; only fully acknowledged
-groups advance the checkpoint, and the journal records partial work. Failures set
-BLOCKED where storage is writable and exit nonzero. An uncertain SQL outcome closes
+groups advance the checkpoint, and the journal records partial work. Safe source/target
+transport failures reconnect; other failures set BLOCKED where storage is writable and exit nonzero. An uncertain SQL outcome closes
 its connection and is never automatically retried. A target/host crash can lose
 MyISAM data despite durable local metadata; there is no crash-safe recovery claim.
 DBA reconciliation must use a consistent source snapshot and matching GTID boundary,
@@ -361,3 +378,6 @@ The harness reads copied SQLite snapshots only after the writer exits. During
 a run it waits on JSON progress. The live relay/SQLite files remain inside Docker
 until copied, so the VM and host never share live WAL locks/mmap. This is harness
 coordination, not recovery qualification.
+
+See [fleet compatibility work](FLEET_COMPATIBILITY.md) for composite-key behavior,
+ENUM/SET metadata requirements and the sanitized inventory request.

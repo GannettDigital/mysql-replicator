@@ -2,6 +2,7 @@ import Foundation
 import ReplicatorCodec
 import ReplicatorCapture
 import ReplicatorApply
+import ReplicatorConfiguration
 #if canImport(Musl)
 import Musl
 #elseif canImport(Glibc)
@@ -10,23 +11,26 @@ import Glibc
 import Darwin
 #endif
 
+// Periphery 3.5.1 does not follow this entry point's top-level invocation.
+// periphery:ignore
 func main() throws {
     var args = Array(CommandLine.arguments.dropFirst())
     if args == ["--version"] {
-        print("mysql-replicator 0.1.0-dev (codec ABI \(Codec.abiVersion), capabilities \(Codec.capabilities))")
+        print("mysql-replicator \(ReleaseVersion.current) (codec ABI \(Codec.abiVersion), capabilities \(Codec.capabilities))")
         return
     }
     if args.isEmpty || args == ["--help"] {
         print("""
-        mysql-replicator — development binlog inspector and DML applier
+        mysql-replicator — cross-version binlog replication
         Usage: mysql-replicator inspect FILE [--schema HISTORY.json] [--include-raw]
                    [--transactions --binlog-file SOURCE_FILENAME]
-               mysql-replicator inspect --source-config SOURCE.json [--transactions] [--include-raw]
+               mysql-replicator inspect --source-config SOURCE.yaml [--transactions] [--include-raw]
                mysql-replicator inspect-relay FILE [--include-raw]
-               mysql-replicator run --config APPLY.json [--initialize]
-               mysql-replicator blackhole --source-config SOURCE.json
-               mysql-replicator skip GTID_SET --config APPLY.json
+               mysql-replicator run --config APPLY.yaml [--initialize]
+               mysql-replicator blackhole --source-config SOURCE.yaml
+               mysql-replicator skip GTID_SET --config APPLY.yaml
                mysql-replicator --version | --help
+        Configuration: YAML (.yaml or .yml); JSON configuration is not supported.
         Output: one JSON event per line; diagnostics on stderr, failure exits nonzero.
         --transactions emits complete source groups and rejects incomplete EOF.
         Rows require historical signedness/encoding tied to table-map positions.
@@ -34,7 +38,8 @@ func main() throws {
         run applies qualified DML/DDL; --initialize creates new state from the configured baseline.
         Without --initialize, run resumes clean STOPPED state from SQLite.
         skip excludes the captured failed GTID only when no target write intents exist; leaves STOPPED.
-        Automatic reconnect and recovery of interrupted/uncertain writes are not implemented.
+        Source and safe target reconnect are automatic; uncertain writes remain blocked.
+        Send SIGUSR1 to run to drain its active batch and exit STOPPED before target maintenance.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
         return
@@ -50,9 +55,9 @@ func main() throws {
         return
     }
     if args.first == "blackhole" {
-        guard args.count == 3, args[1] == "--source-config" else { throw CaptureError("use blackhole --source-config SOURCE.json") }
-        let config=try JSONDecoder().decode(CaptureConfiguration.self,from:readBounded(URL(fileURLWithPath:args[2])))
-        guard let password=ProcessInfo.processInfo.environment[config.passwordEnvironment] else { throw CaptureError("source password environment variable is unset") }
+        guard args.count == 3, args[1] == "--source-config" else { throw CaptureError("use blackhole --source-config SOURCE.yaml") }
+        let config=try ConfigurationFile.load(CaptureConfiguration.self,from:URL(fileURLWithPath:args[2]))
+        let password=try PasswordConfiguration.resolve(password:config.password,environmentVariable:config.passwordEnvironment,endpoint:"source")
         let cancellation=CaptureCancellation()
         signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN)
         let signals=[SIGINT,SIGTERM].map { number -> DispatchSourceSignal in
@@ -66,27 +71,27 @@ func main() throws {
         return
     }
     if args.first == "skip" {
-        guard args.count == 4, args[2] == "--config" else { throw ApplyError("use skip GTID_SET --config APPLY.json") }
-        let config = try JSONDecoder().decode(ApplyConfiguration.self,from:readBounded(URL(fileURLWithPath:args[3])))
+        guard args.count == 4, args[2] == "--config" else { throw ApplyError("use skip GTID_SET --config APPLY.yaml") }
+        let config = try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:args[3]))
         let summary = try ApplySkip.run(configuration:config,gtidSet:args[1])
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
         try FileHandle.standardOutput.write(contentsOf:encoder.encode(summary) + Data([10]))
         return
     }
     if args.first == "run" {
-        guard (args.count == 3 || (args.count == 4 && args[3] == "--initialize")), args[1] == "--config" else { throw ApplyError("use run --config APPLY.json [--initialize]") }
-        let config = try JSONDecoder().decode(ApplyConfiguration.self,from:readBounded(URL(fileURLWithPath:args[2])))
-        guard let sourcePassword = ProcessInfo.processInfo.environment[config.source.passwordEnvironment],
-              let targetPassword = ProcessInfo.processInfo.environment[config.target.passwordEnvironment] else { throw ApplyError("source or target password environment variable is unset") }
-        let cancellation = CaptureCancellation()
-        signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN)
-        let signals = [SIGINT,SIGTERM].map { number -> DispatchSourceSignal in
+        guard (args.count == 3 || (args.count == 4 && args[3] == "--initialize")), args[1] == "--config" else { throw ApplyError("use run --config APPLY.yaml [--initialize]") }
+        let config = try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:args[2]))
+        let sourcePassword=try PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
+        let targetPassword=try PasswordConfiguration.resolve(password:config.target.password,environmentVariable:config.target.passwordEnvironment,endpoint:"target")
+        let cancellation = CaptureCancellation(), drain = CaptureCancellation()
+        signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGUSR1,SIG_IGN)
+        let signals = [SIGINT,SIGTERM,SIGUSR1].map { number -> DispatchSourceSignal in
             let source = DispatchSource.makeSignalSource(signal:number,queue:.global())
-            source.setEventHandler { cancellation.cancel() }; source.resume(); return source
+            source.setEventHandler { if number == SIGUSR1 { drain.cancel() } else { cancellation.cancel() } }; source.resume(); return source
         }
         defer { signals.forEach { $0.cancel() } }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
-        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,
+        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,
             emitProgress: { try FileHandle.standardOutput.write(contentsOf:encoder.encode($0) + Data([10])) })
         try FileHandle.standardError.write(contentsOf:encoder.encode(summary) + Data([10]))
         return
@@ -94,16 +99,13 @@ func main() throws {
     guard args.removeFirst() == "inspect", !args.isEmpty else { throw DecoderError(code: 1, offset: 0, reason: "unsupported command; use --help") }
     if args.first == "--source-config" {
         args.removeFirst()
-        guard !args.isEmpty else { throw CaptureError("--source-config requires a JSON file") }
+        guard !args.isEmpty else { throw CaptureError("--source-config requires a YAML file") }
         let source = URL(fileURLWithPath: args.removeFirst())
-        let data = try readBounded(source)
-        let config = try JSONDecoder().decode(CaptureConfiguration.self, from: data)
+        let config = try ConfigurationFile.load(CaptureConfiguration.self, from: source)
         guard Set(args).count == args.count, args.allSatisfy({ ["--transactions", "--include-raw"].contains($0) }) else {
             throw CaptureError("invalid or duplicate live inspect option")
         }
-        guard let password = ProcessInfo.processInfo.environment[config.passwordEnvironment] else {
-            throw CaptureError("source password environment variable is unset")
-        }
+        let password=try PasswordConfiguration.resolve(password:config.password,environmentVariable:config.passwordEnvironment,endpoint:"source")
         let cancellation = CaptureCancellation()
         signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
         let signals = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
@@ -158,13 +160,6 @@ func main() throws {
             try FileHandle.standardOutput.write(contentsOf: encoder.encode(event) + Data([10]))
         }
     }
-}
-func readBounded(_ url: URL) throws -> Data {
-    let file = try FileHandle(forReadingFrom: url)
-    defer { try? file.close() }
-    let data = try file.read(upToCount: 1024*1024+1) ?? Data()
-    guard data.count <= 1024*1024 else { throw CaptureError("configuration exceeds 1 MiB") }
-    return data
 }
 do { try main() }
 catch {

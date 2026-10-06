@@ -2,6 +2,15 @@
 
 Phase 1 is in progress.
 
+Current DDL additions are described in [DDL compatibility](DDL_COMPATIBILITY.md):
+broader types/defaults and ALTER, database lifecycle, generated columns,
+partition lifecycle, views and routine creation, with audited trigger skipping
+(or explicit rejection) and event rejection.
+The latest addition is explicit collation mapping with durable policy/audit,
+plus same-database multi-table RENAME for dynamic table replacement; see the
+[compatibility policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
+The checkpoint descriptions below retain their historical scope.
+
 Current follow-up after `3618fd4`: [native engine/charset defaults](DDL_NATIVE_DEFAULTS.md)
 remove DDL compatibility rewriting, resolve inherited defaults from discovered schema,
 add typed Rust query-context decoding and TRUNCATE, and broaden the native/Swift
@@ -9,7 +18,7 @@ fixtures. General DDL/type/charset coverage and recovery are still open. The ear
 prototype validation below remains tied to that checkpoint.
 
 Reviewed DML checkpoint: `d188f58`. The current follow-up implements automatic
-schema discovery (version 2 configuration), ABI 5/event JSON 4 metadata and bounded
+schema discovery (version 2 configuration), ABI 6/event JSON 4 metadata and bounded
 SQLite history. Cleanup removes covered completed records older than the minimum
 age only when storage approaches its limit. See [the implementation and storage
 policy](SCHEMA_DISCOVERY_AND_RETENTION.md). That work is committed as `e8c0e77`.
@@ -50,6 +59,12 @@ The current unit run passes 197 Swift and 5 Rust tests; this run does not extend
 the earlier sanitizer qualification. See [scope and validation](DML_APPLY.md)
 for the DML compatibility matrix and integration evidence.
 
+Source reconnect update: the running applier retries transient source-only
+transport failures from its durable applied checkpoint, preserving the target
+connection and refusing uncertain target outcomes. This supersedes the earlier
+deferral of source reconnect; process-crash and target recovery remain separate.
+See [source reconnect policy and qualification](SOURCE_RECONNECT.md).
+
 Implemented and validated:
 
 - Independent repository, approved architecture and accepted native-reference contract.
@@ -70,3 +85,10 @@ Remaining Phase 1 gates:
 - Complete the remaining per-pair workload inventory and publish the Phase 1 exit report. This increment is not Phase 1 completion.
 
 Source settings remain ON/ON; both targets remain OFF_PERMISSIVE/WARN. The positive native MyISAM case now passes with both positioning modes. The native multi-statement error-1837 case is an accepted expected-negative reference, so it is not necessary to make native MySQL succeed before proceeding. The initial DML subset and local BLOCKED/checkpoint journal are now implemented; full apply/storage/recovery qualification remains open.
+
+## Target reconnect and planned maintenance
+
+Safe target reconnect, SIGUSR1 drain, and failure-only execution diagnostics are
+implemented; see [TARGET_RECONNECT.md](TARGET_RECONNECT.md). This supersedes older
+blanket statements that target disconnects always block. Uncertain writes,
+partially acknowledged groups, and process-crash recovery remain fail-stop.

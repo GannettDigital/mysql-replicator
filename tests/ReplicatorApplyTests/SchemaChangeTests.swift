@@ -1,4 +1,5 @@
 import XCTest
+import ReplicatorConfiguration
 import Foundation
 @testable import ReplicatorApply
 @testable import ReplicatorCodec
@@ -30,7 +31,7 @@ final class SchemaChangeTests: XCTestCase {
         XCTAssertEqual(try parse("ALTER TABLE t RENAME KEY ix TO other"),.indexes(TableName(database:"poc",table:"t"),.rename("ix","other")))
     }
     func testUnsupportedOptionsCannotFallThroughToSQL() throws {
-        for sql in ["CREATE INDEX ix ON t(name DESC)","CREATE FULLTEXT INDEX ix ON t(name)","CREATE INDEX ix ON t((id+1))","ALTER TABLE t ADD INDEX (name)","ALTER TABLE t ADD KEY ix(name), ADD KEY iy(id)","ALTER TABLE t MODIFY name VARCHAR(120), ADD KEY ix(name)","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))","ALTER TABLE t MODIFY name VARCHAR(10) DEFAULT 'x'"] {XCTAssertThrowsError(try parse(sql),sql)}
+        for sql in ["CREATE INDEX ix ON t(name DESC)","CREATE FULLTEXT INDEX ix ON t(name)","CREATE INDEX ix ON t((id+1))","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))"] {XCTAssertThrowsError(try parse(sql),sql)}
     }
     func testIndexModelRejectsUnsupportedShapeAndPreservesPrimaryRowIdentity() throws {
         let key=ApplyIndex(name:"ix",unique:false,parts:[ApplyIndexPart(column:"name",prefix:10)])
@@ -69,14 +70,14 @@ final class SchemaChangeTests: XCTestCase {
             try state.bindTargetIdentity(f.target);try state.running()
             try f.apply(f.helper.groups()[0],to:state);try state.stopped()
         }
-        try f.write(path,"UPDATE schemas SET schema_json=json_remove(schema_json,'$.secondaryIndexes'); PRAGMA user_version=4")
+        try f.write(path,"DROP TABLE ddl_details; DROP TABLE compatibility; DROP TABLE ddl_skips; UPDATE schemas SET schema_json=json_remove(schema_json,'$.secondaryIndexes'); PRAGMA user_version=4")
         let db=path.appendingPathComponent("state.sqlite")
         let before=try f.helper.sqlite(db,"SELECT * FROM state")
         let history=try f.helper.sqlite(db,"SELECT * FROM schemas")
         let groups=try f.helper.sqlite(db,"SELECT * FROM groups")
         let intents=try f.helper.sqlite(db,"SELECT * FROM row_intents")
         do {let state=try StateStore(configuration:c,initialize:false);XCTAssertEqual(state.transactions,1)}
-        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["6"]])
+        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["8"]])
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM state"),before)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM schemas"),history)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM groups"),groups)
@@ -94,20 +95,17 @@ final class SchemaChangeTests: XCTestCase {
         XCTAssertEqual(try f.config().ddlDeadline,300)
         // Use a valid fixture so an unrelated placeholder cannot satisfy rejection.
         let valid=try f.config()
-        let template=try Data(contentsOf:f.root.appendingPathComponent("examples/apply.example.json"))
-        var object=try JSONSerialization.jsonObject(with:template) as! [String:Any]
-        var source=object["source"] as! [String:Any]
-        source["sourceUUID"]=valid.source.sourceUUID
-        source["start"]=["executedGTIDs":""]
-        object["source"]=source
+        let template=try String(contentsOf:f.root.appendingPathComponent("examples/apply.example.yaml"),encoding:.utf8)
+            .replacingOccurrences(of:"REPLACE_SOURCE_UUID",with:valid.source.sourceUUID)
+            .replacingOccurrences(of:"REPLACE_SNAPSHOT_GTID_SET",with:"\"\"")
         for seconds in [1,300,86400] {
-            object["ddlTimeoutSeconds"]=seconds
-            let config=try JSONDecoder().decode(ApplyConfiguration.self,from:JSONSerialization.data(withJSONObject:object))
+            let text=template.replacingOccurrences(of:"ddlTimeoutSeconds: 300",with:"ddlTimeoutSeconds: \(seconds)")
+            let config=try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(text.utf8))
             XCTAssertEqual(config.ddlDeadline,seconds);try config.validate()
         }
         for seconds in [0,86401] {
-            object["ddlTimeoutSeconds"]=seconds
-            let config=try JSONDecoder().decode(ApplyConfiguration.self,from:JSONSerialization.data(withJSONObject:object))
+            let text=template.replacingOccurrences(of:"ddlTimeoutSeconds: 300",with:"ddlTimeoutSeconds: \(seconds)")
+            let config=try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(text.utf8))
             XCTAssertThrowsError(try config.validate()) { XCTAssertTrue(String(describing:$0).contains("DDL timeout")) }
         }
     }

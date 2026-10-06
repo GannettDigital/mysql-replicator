@@ -151,7 +151,7 @@ Names and keys absent under MINIMAL rely on the externally prepared target's
 matching column order. This cannot independently certify a load or detect a
 preexisting permutation of indistinguishable columns.
 
-The initial cache is bounded to 64 tables, 256 columns each. Each first discovery
+The cache is bounded to 1,024 tables, 256 columns each (expanded from the initial 64-table limit). Each first discovery
 records source coordinate, table-map hash, discovery time, target description and
 wire description in `schemas`; row intents reference its ID. Repeated maps are
 validated against that description. The subsequent [DDL increment](DDL_APPLY.md) adds ordered versions for its strict

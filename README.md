@@ -3,114 +3,48 @@
 [![CI](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml/badge.svg)](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-`mysql-replicator` reads MySQL binary logs and applies changes to another MySQL
-server. It is built for replication across versions or dialects where native
-MySQL replication cannot meet the compatibility requirements. The current focus
-is MySQL 8.4 InnoDB to MySQL 5.7 MyISAM, including Cloud SQL to on-premises targets.
+Replicate MySQL across versions where native replication does not meet your needs.
+`mysql-replicator` reads source binary logs and applies supported INSERT, UPDATE,
+DELETE and DDL changes to a dedicated replica.
 
-The implementation uses Swift for capture and application, Rust for binlog
-decoding, and local relay files plus SQLite for replication state. It supports
-INSERT/UPDATE/DELETE and a limited set of DDL, with tests against a native MySQL
-replica. This is an experimental project: supported schemas are limited,
-performance is not yet qualified, and automatic crash recovery is not implemented.
+**First beta: `0.1.0-beta.1`.** The tested and enforced configuration is
+**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**. Other version/engine combinations,
+including upgrades to newer replicas, are not supported yet. Initial data copying
+is external; interrupted or uncertain writes can require DBA intervention.
+See [supported behavior](PLAN/DML_APPLY.md) and [DDL compatibility](PLAN/DDL_COMPATIBILITY.md).
 
-## Build
+## Install and start
 
-Use Swift 6.2.1, Rust/Cargo 1.93.1, Make, and Git. Native builds also need SQLite
-headers and libraries (`libsqlite3-dev` on Ubuntu; supplied by the macOS SDK).
-
-```sh
-git clone https://github.com/GannettDigital/mysql-replicator.git
-cd mysql-replicator
-make build
-.build/debug/mysql-replicator --help
-```
-
-To build an x86_64 Debian package through Docker:
+Linux x86_64 packages are available from [Releases](https://github.com/GannettDigital/mysql-replicator/releases)
+when the beta is published. On Debian/Ubuntu:
 
 ```sh
-make deb
+curl -fLO https://github.com/GannettDigital/mysql-replicator/releases/download/v0.1.0-beta.1/mysql-replicator_0.1.0~beta.1-1_amd64.deb
+sudo apt install ./mysql-replicator_0.1.0~beta.1-1_amd64.deb
 ```
 
-The package and checksum are written to `artifacts/deb/`. See
-[packaging instructions](packaging/README.md) for options and verification scope.
-
-## Test
-
-Run the Rust and Swift unit tests without Docker:
+Follow the [setup guide](docs/INSTALL.md) to prepare the target, snapshot boundary,
+TLS and credentials in `/etc/mysql-replicator/apply.yaml`, then start:
 
 ```sh
-make test
+sudo -u mysql-replicator mysql-replicator run --config /etc/mysql-replicator/apply.yaml --initialize
 ```
 
-Run a small integration sample with Docker Compose, Linux/amd64 support, OpenSSL,
-the SQLite CLI, and a MySQL 8.4 `mysqlbinlog` in `PATH`:
+The setup guide also covers checksums, standalone archives and service restarts.
+
+## Try the demo
+
+From a source checkout with the [developer prerequisites](CONTRIBUTING.md#prerequisites):
 
 ```sh
-make integration-smoke
-# If mysqlbinlog is installed elsewhere:
-# MYSQLBINLOG=/path/to/mysqlbinlog make integration-smoke
+make demo-up
+make demo-start
 ```
 
-The sample checks INSERT/UPDATE/DELETE, a column change, and index creation using
-GTID positioning. It compares the source, native replica, and replicator target
-in disposable containers, then removes the stack and keeps evidence under
-`artifacts/ddl-suite/`. CI runs this same sample alongside unit tests and Debian
-package verification. The first Docker build downloads toolchains and dependencies
-and can take several minutes.
+Follow the [interactive demo workbook](PLAN/DEMO_WORKBOOK.md) to issue SQL and
+compare replicas, or use the [demo runbook](PLAN/DEMO.md). Clean up with `make demo-down`.
 
-For broader coverage, run `make dml-suite` and `make ddl-suite`. See
-[incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selecting individual cases.
-
-To compare native and custom replication under source write load, run
-`make benchmark`; use `make benchmark-capture` to isolate download and decoding
-with a blackhole sink. See the [performance harness](PLAN/PERFORMANCE_BENCHMARK.md)
-for sysbench workloads, progress measurements, and interpretation limits.
-
-## Try the interactive demo
-
-The demo needs Swift, Docker Compose with Linux/amd64 support, and OpenSSL.
-It prepares a MySQL 8.4 source, a native reference replica, and a MySQL 5.7 target,
-including fixture data, certificates, and a ready-to-run replicator configuration.
-No host MySQL client or SQLite CLI is required.
-
-```sh
-make demo-up                                  # Prepare the containers
-make demo-start                               # Start replication
-make demo-sql FILE=examples/demo/01-success.sql
-make demo-compare                             # Compare schema and rows
-make demo-status                              # Inspect replication progress
-```
-
-`demo-up` prints commands for opening MySQL shells. Try the sample SQL one
-statement at a time instead of running the SQL file, or follow the
-[four-terminal walkthrough](PLAN/DEMO_WORKBOOK.md) to run the replicator in the
-foreground and watch each server. The [demo runbook](PLAN/DEMO.md) also covers
-clean-stop resume and a controlled failure with `make demo-fail`.
-
-When finished, archive the evidence and remove the demo containers and volumes:
-
-```sh
-make demo-down
-```
-
-## Use your own databases
-
-Start with an externally prepared target and a known source position or GTID set.
-Adapt [the example configuration](examples/apply.example.json), then follow the
-[setup and supported-behavior guide](PLAN/DML_APPLY.md). Initial data copying and
-target provisioning are outside this project's scope. The CLI also supports
-[offline binlog inspection](PLAN/OFFLINE_INSPECT.md) and
-[live source inspection](PLAN/LIVE_INSPECTION.md).
-
-Treat the target as a dedicated replica: application writes and schema changes
-must come through replication, with local administrative changes made while stopped.
-
-## Project information
-
-- [Contributing and development checks](CONTRIBUTING.md)
-- [Security reporting](SECURITY.md)
-- [Apache 2.0 license](LICENSE) and [third-party notices](NOTICE)
-- [Implementation status](PLAN/IMPLEMENTATION_STATUS.md) and [DDL coverage](tests/DDLCoverage/README.md)
+[Build, test and contribute](CONTRIBUTING.md) · [Security](SECURITY.md) ·
+[License](LICENSE) · [Third-party notices](NOTICE)
 
 Copyright 2026 USAToday Co., Inc.

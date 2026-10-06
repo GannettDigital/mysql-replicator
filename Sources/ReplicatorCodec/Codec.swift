@@ -82,6 +82,7 @@ public struct WireColumn: Codable, Equatable {
     public let name: String?
     public var metadata: Data = Data()
     public var isUnsigned: Bool? = nil
+    public var labels: [Data]? = nil
 }
 public struct DecodedEvent: Equatable, Encodable {
     public let schemaVersion = 4
@@ -128,13 +129,11 @@ public final class BinlogDecoder {
     private let lock = NSLock()
     private var context: OpaquePointer?
     private var failed = false
-    public let maximumEventBytes: UInt32
     private let timings: StageTimings?
     /// When supplied, the collector and this decoder's lifetime belong to one worker.
     public init(maximumEventBytes: UInt32 = 4 * 1024 * 1024, timings: StageTimings? = nil) throws {
         self.timings = timings
-        self.maximumEventBytes = maximumEventBytes
-        guard Codec.abiVersion == 5, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 6, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -274,8 +273,17 @@ public final class BinlogDecoder {
                         var c = rc_column()
                         guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
                         let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal][c.kind]
+                        let packedLabels = bytes(c.labels)
+                        var labels: [Data] = [], labelOffset = 0
+                        while labelOffset < packedLabels.count {
+                            guard packedLabels.count-labelOffset >= 4 else { throw DecoderError(code:8,offset:offset,reason:"invalid label metadata") }
+                            let length = (0..<4).reduce(0) { $0 | (Int(packedLabels[labelOffset+$1]) << ($1*8)) }
+                            labelOffset += 4
+                            guard length <= packedLabels.count-labelOffset else { throw DecoderError(code:8,offset:offset,reason:"invalid label length") }
+                            labels.append(packedLabels.subdata(in:labelOffset..<labelOffset+length)); labelOffset += length
+                        }
                         return WireColumn(interpretation:kind,type:c.column_type,maximumBytes:c.maximum_bytes,nullable:c.nullable != 0,
-                            collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name),metadata:bytes(c.metadata),isUnsigned:c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2)
+                            collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name),metadata:bytes(c.metadata),isUnsigned:c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2,labels:packedLabels.isEmpty ? nil : labels)
                     }
                 }
             }

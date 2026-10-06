@@ -80,12 +80,11 @@ final class DDLTests: XCTestCase {
             "CREATE TABLE t(k INT PRIMARY KEY,v VARCHAR(10)) ENGINE=InnoDB",
             "CREATE TABLE t(k INT PRIMARY KEY,v JSON) ENGINE=InnoDB",
             "CREATE TABLE t(k INT PRIMARY KEY,INDEX(k)) ENGINE=InnoDB",
-            "ALTER TABLE t ADD n INT NOT NULL", "ALTER TABLE t ADD n INT DEFAULT 7",
-            "ALTER TABLE t ADD n INT, ADD m INT", "ALTER TABLE t MODIFY k DECIMAL(10,2)",
+            "ALTER TABLE t ADD n INT NOT NULL",
             "ALTER TABLE t ADD n INT PRIMARY KEY", "ALTER TABLE t ADD n INT /*!80000 INVISIBLE */",
             "DROP TABLE IF NOT EXISTS t", "CREATE TABLE IF EXISTS t(id INT PRIMARY KEY)", "CREATE TABLE t LIKE x; DROP TABLE x", "CREATE TABLE t LIKE x ENGINE=MyISAM", "DROP TABLE t,other", "DROP TABLE t; DROP DATABASE poc",
-            "RENAME TABLE t TO otherdb.t", "ALTER DATABASE d CHARACTER SET utf8mb4", "DROP SCHEMA d",
-            "ALTER TABLE t ADD n INT DEFAULT (1+1)", "DROP TABLE \"t\"", "DROP TABLE t -- comment"
+            "RENAME TABLE t TO otherdb.t",
+            "ALTER TABLE t ADD n INT DEFAULT (1+1)", "DROP TABLE \"t\""
         ] {XCTAssertThrowsError(try parse(sql),sql)}
         XCTAssertThrowsError(try parse("DROP TABLE t",database:nil))
     }
@@ -149,6 +148,30 @@ final class DDLTests: XCTestCase {
         XCTAssertEqual(try helpers.sqlite(db,"SELECT transactions_applied,rows_applied,ddl_applied FROM state"),[["3","1","2"]])
         XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM schemas"),[["1"]])
     }
+    func testDropDatabaseRetiresAllItsSchemasAndPreservesOtherDatabases() throws {
+        #if os(Linux)
+        let helpers=ApplyTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let helpers=ApplyTests()
+        #endif
+        let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:parent)}
+        let store=try StateStore(configuration:helpers.config(parent.appendingPathComponent("state").path))
+        let base=try helpers.groups()[0],table=helpers.tables()[0]
+        let second=ApplyTable(database:table.database,table:"second",columns:table.columns,primaryKeyColumns:table.primaryKeyColumns)
+        let other=ApplyTable(database:"other",table:table.table,columns:table.columns,primaryKeyColumns:table.primaryKeyColumns)
+        for schema in [table,second,other] {try store.schema(schema,event:base.events[0],coordinate:base.start)}
+        let group=ddlGroup(base,sql:"DROP DATABASE poc")
+        let plan=PreparedDDL(statement:.dropDatabase("poc",ifExists:false),before:nil,after:nil,sql:"DROP DATABASE poc",database:PreparedDatabaseDDL(name:"poc",before:DDLEncoding(characterSet:"utf8mb4",collation:"utf8mb4_bin"),after:nil,serverCollation:nil),additional:[SchemaTransition(before:table,after:nil),SchemaTransition(before:second,after:nil)])
+        try store.begin(group); try store.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+        let db=store.directory.appendingPathComponent("state.sqlite")
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT SUM(current) FROM schemas"),[["3"]])
+        try store.complete(group,rowCount:0,ddl:plan)
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT SUM(current) FROM schemas"),[["1"]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT json_extract(schema_json,'$.database') FROM schemas WHERE current=1"),[["other"]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT status FROM ddl_intents"),[["DONE"]])
+    }
     func testDDLJournalVersionsSchemaAndPrunesOnlyUnreferencedCompletedHistory() throws {
         #if os(Linux)
         let helpers=ApplyTests(name:"fixtures",testClosure:{_ in})
@@ -185,6 +208,7 @@ final class DDLTests: XCTestCase {
         now.addTimeInterval(120);free=c.policy.minimumFreeDiskBytes+c.policy.maximumSQLiteBytes*3/2
         try store.ensureCapacity()
         XCTAssertEqual(try helpers.sqlite(db,"SELECT status FROM ddl_intents"),[["PENDING"]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM ddl_details"),[["1"]])
         XCTAssertEqual(try helpers.sqlite(db,"SELECT current FROM schemas"),[["1"]])
         XCTAssertEqual(try store.durableAppliedGTIDs(),helpers.sid+":1-13")
         XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM row_intents"),[["0"]])

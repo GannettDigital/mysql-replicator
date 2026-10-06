@@ -1,12 +1,23 @@
 [Unit]
 Description=MySQL Replicator Service
-After=network.target
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/mysql-replicator/apply.yaml
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/mysql-replicator run --config /etc/mysql-replicator/apply.json
-Restart=on-failure
-RestartSec=5s
+User=mysql-replicator
+Group=mysql-replicator
+WorkingDirectory=/var/lib/mysql-replicator
+EnvironmentFile=-/etc/mysql-replicator/credentials
+ExecStart=/usr/bin/mysql-replicator run --config /etc/mysql-replicator/apply.yaml
+# Uncertain writes and interrupted state require operator investigation.
+Restart=no
+# Let SIGTERM drain the current work; do not turn a slow clean stop into SIGKILL.
+# Sites requiring bounded shutdown can override this; see docs/INSTALL.md.
+TimeoutStopSec=infinity
+UMask=0077
+NoNewPrivileges=true
 LimitNOFILE=65536
 
 [Install]

@@ -32,7 +32,7 @@ final class DDLCoverageTests: XCTestCase {
             let inventory = try DDLCoverage.load(directory: directory)
             XCTAssertEqual(inventory.catalog.scenarios.count, 63)
             XCTAssertEqual(inventory.catalog.families.map(\.reviewState), Array(repeating: "partial", count: 6))
-            XCTAssertEqual(DDLCoverageCases.registry.count, 165)
+            XCTAssertEqual(DDLCoverageCases.registry.count, 165 + DDLCompatibilityCases.declarations.count)
             let report = DDLCoverage.report(inventory)
             let rows = report["scenarios"] as! [[String: Any]]
             XCTAssertTrue(rows.allSatisfy { $0["qualification"] as? String == "unverified" })

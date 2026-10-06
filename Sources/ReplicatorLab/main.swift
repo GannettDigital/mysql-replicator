@@ -13,7 +13,7 @@ func main() throws -> Int32 {
           ubuntu-smoke [--skip-build]
           live-suite [--skip-build]
           dml-suite [--skip-build] [--slice all|basic|matrix|extended] [--positioning both|gtid|file-position] [--list]
-          ddl-suite [--skip-build] [--slice all|basic|modify-index|database|ordered|filters]
+          ddl-suite [--skip-build] [--slice all|basic|modify-index|database|ordered|filters|compatibility]
                     [--case ID ...] [--positioning both|gtid|file-position] [--list]
           native-ddl-suite
           benchmark-capture [--skip-build] [--events N] [--rate N] [--decoder-profile on|off]
@@ -37,7 +37,7 @@ func main() throws -> Int32 {
           demo-down                # archive evidence and delete only this disposable stack
           demo-suite [--skip-build]
           upstream-tests
-          package-deb [--version VERSION] [--output DIR] [--skip-build] [--skip-verification]
+          package-deb [--output DIR] [--skip-build] [--skip-verification]
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.

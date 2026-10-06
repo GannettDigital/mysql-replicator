@@ -37,6 +37,7 @@ extension ApplyTests {
                 growth:growth,databaseLimit:databaseLimit,policy:policy)
         }
         XCTAssertFalse(due())
+        XCTAssertTrue(due(relay:49)) // Source reconnect trimmed the sampled relay.
         XCTAssertFalse(due(incoming:margin-1))
         XCTAssertTrue(due(incoming:margin))
         XCTAssertTrue(due(relay:UInt64(margin)+50))

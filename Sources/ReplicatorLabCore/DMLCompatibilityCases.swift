@@ -9,8 +9,31 @@ enum DMLCompatibilityCases {
         let definition: String
         let phases: [Phase]
         var setup: String = ""
+        var orderBy: String = "id"
+        var rowMetadata: String? = nil
     }
     static let cases: [Case] = [
+        Case(id:"fixed",definition:"id INT PRIMARY KEY,c CHAR(255),b BINARY(8)",phases:[
+            .init(sql:"INSERT INTO poc.matrix_fixed VALUES(1,CONVERT(0xF09F988065CC812020 USING utf8mb4),0x00FF),(2,'',X''),(3,NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND HEX(c)='F09F988065CC81' AND HEX(b)='00FF000000000000'"),
+            .init(sql:"UPDATE poc.matrix_fixed SET c=REPEAT('x',255),b=0x0102030405060708 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND CHAR_LENGTH(c)=255 AND HEX(b)='0102030405060708'"),
+            .init(sql:"DELETE FROM poc.matrix_fixed WHERE id IN (1,3)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=2 AND HEX(b)='0000000000000000'")]),
+        Case(id:"choices",definition:"id INT PRIMARY KEY,e ENUM('','one','it''s','x,y','🙂'),s SET('a','b','c')",phases:[
+            .init(sql:"INSERT INTO poc.matrix_choices VALUES(1,1,0),(2,2,7),(3,'it''s','a,c'),(4,NULL,NULL),(5,'🙂','b')",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=1 AND e+0=1 AND s+0=0"),
+            .init(sql:"UPDATE poc.matrix_choices SET e='x,y',s=6 WHERE id=3",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=3 AND e+0=4 AND s+0=6"),
+            .init(sql:"DELETE FROM poc.matrix_choices WHERE id IN (1,2,3,5)",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=4 AND e IS NULL")],rowMetadata:"FULL"),
+        Case(id:"widechoices",definition:"id INT PRIMARY KEY,e ENUM("+(1...256).map { "'e\($0)'" }.joined(separator:",")+"),s SET("+(1...64).map { "'s\($0)'" }.joined(separator:",")+")",phases:[
+            .init(sql:"INSERT INTO poc.matrix_widechoices VALUES(1,256,18446744073709551615)",check:"SELECT COUNT(*)=1 FROM poc.matrix_widechoices WHERE e+0=256 AND CAST(s AS UNSIGNED)=18446744073709551615"),
+            .init(sql:"UPDATE poc.matrix_widechoices SET e=255,s=9223372036854775808 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_widechoices WHERE e+0=255 AND CAST(s AS UNSIGNED)=9223372036854775808"),
+            .init(sql:"DELETE FROM poc.matrix_widechoices WHERE id=1",check:"SELECT COUNT(*)=0 FROM poc.matrix_widechoices")],rowMetadata:"FULL"),
+        Case(id:"composite",definition:"id INT NOT NULL,report_date DATE NOT NULL,v VARCHAR(40),PRIMARY KEY(report_date,id)",phases:[
+            .init(sql:"INSERT INTO poc.matrix_composite VALUES(7,'2026-01-01','a'),(7,'2026-01-02','b'),(8,'2026-01-01','c')",check:"SELECT COUNT(*)=3 AND SUM(id)=22 FROM poc.matrix_composite"),
+            .init(sql:"UPDATE poc.matrix_composite SET report_date='2026-01-03',v='moved-date' WHERE report_date='2026-01-01' AND id=7",check:"SELECT COUNT(*)=1 FROM poc.matrix_composite WHERE id=7 AND report_date='2026-01-03' AND v='moved-date'"),
+            .init(sql:"UPDATE poc.matrix_composite SET id=9,v='moved-id' WHERE report_date='2026-01-02' AND id=7",check:"SELECT COUNT(*)=1 FROM poc.matrix_composite WHERE id=9 AND report_date='2026-01-02'"),
+            .init(sql:"DELETE FROM poc.matrix_composite WHERE report_date='2026-01-01' AND id=8",check:"SELECT COUNT(*)=2 AND SUM(id)=16 FROM poc.matrix_composite")],orderBy:"report_date,id"),
+        Case(id:"textkey",definition:"id VARCHAR(20) COLLATE utf8mb4_unicode_ci PRIMARY KEY,v INT",phases:[
+            .init(sql:"INSERT INTO poc.matrix_textkey VALUES('Key',1),('other',2)",check:"SELECT COUNT(*)=2 FROM poc.matrix_textkey"),
+            .init(sql:"UPDATE poc.matrix_textkey SET id='KEY',v=3 WHERE id='Key'",check:"SELECT COUNT(*)=1 FROM poc.matrix_textkey WHERE HEX(id)='4B4559' AND v=3"),
+            .init(sql:"DELETE FROM poc.matrix_textkey WHERE id='key'",check:"SELECT COUNT(*)=1 FROM poc.matrix_textkey WHERE id='other'")]),
         Case(id:"values",definition:"id INT PRIMARY KEY,v INT NOT NULL",phases:[
             .init(sql:"INSERT INTO poc.matrix_values VALUES(1,10),(2,20),(3,30)",check:"SELECT COUNT(*)=3 AND SUM(v)=60 FROM poc.matrix_values"),
             .init(sql:"UPDATE poc.matrix_values SET v=v*2 WHERE id IN (1,2)",check:"SELECT SUM(v)=90 FROM poc.matrix_values"),
@@ -63,8 +86,14 @@ enum DMLCompatibilityCases {
         let targetDefinition: String
         let values: String
         let reason: String
+        var rowMetadata: String = "FULL"
+        var sourceSession: String = ""
     }
     static let rejections: [Rejection] = [
+        .init(id:"enum-error-value",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,0)",reason:"ENUM/SET value out of range",sourceSession:"SET SESSION sql_mode='';"),
+        .init(id:"enum-minimal",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,'a')",reason:"requires source binlog_row_metadata=FULL",rowMetadata:"MINIMAL"),
+        .init(id:"enum-order",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('b','a') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,'a')",reason:"labels or order differ"),
+        .init(id:"set-order",sourceDefinition:"id INT PRIMARY KEY,v SET('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v SET('b','a') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,'a')",reason:"labels or order differ"),
         .init(id:"mysql84-collation",sourceDefinition:"id INT PRIMARY KEY,v VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",targetDefinition:"id INT PRIMARY KEY,v VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",values:"(1,'test')",reason:"collation"),
         .init(id:"decimal-scale",sourceDefinition:"id INT PRIMARY KEY,v DECIMAL(10,3)",targetDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2)",values:"(1,1.234)",reason:"precision"),
         .init(id:"decimal-sign",sourceDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2) UNSIGNED",targetDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2)",values:"(1,1.23)",reason:"signedness"),

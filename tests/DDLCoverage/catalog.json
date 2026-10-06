@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "inventory_revision": "2026-09-30-database-creation",
+  "inventory_revision": "2026-10-03-ddl-compatibility",
   "families": [
     {
       "id": "A",
@@ -180,7 +180,7 @@
       "id": "column.types",
       "family": "C",
       "name": "Column Types",
-      "grammar": "Reject unsupported DECIMAL column before mutation",
+      "grammar": "Reject unsupported JSON column before mutation",
       "scenario_ids": [
         "ddl.reject.ddl-unsupported"
       ]
@@ -2137,7 +2137,7 @@
     },
     {
       "id": "ddl.reject.ddl-unsupported",
-      "name": "Reject unsupported DECIMAL column before mutation",
+      "name": "Reject unsupported JSON column before mutation",
       "family": "C",
       "feature": "column.types",
       "scope": "in_scope",
@@ -2148,7 +2148,7 @@
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "Reject unsupported DECIMAL column before mutation"
+        "Reject unsupported JSON column before mutation"
       ],
       "following_workload": [
         "A later event must remain unapplied."
@@ -9334,6 +9334,91 @@
       "suite": "ddl-suite",
       "case_id": "wild-ignore-included-rejection",
       "reason": "Replication filtering/checkpoint regression; does not independently qualify an included DDL grammar feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-types",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-database",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-generated",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partitions",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-hash-list",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-views",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-routines",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-temporary",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-reject-trigger",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-reject-event",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-source-trigger",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-target-trigger",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-generated-mismatch",
+      "reason": "Generated-value mismatch regression retains a pending intent without advancing the checkpoint; no full generated-column feature qualification is inferred."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-skip-trigger",
+      "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup",
+      "reason": "Opt-in collation mapping and dynamic table replacement regression, including clean restart and policy pinning. Aggregate success does not qualify all charset or rename catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-collision",
+      "reason": "Opt-in collation mapping rejection regression: source NO PAD keys collide on the PAD SPACE target, which retains pending intent and the prior checkpoint."
     }
   ]
 }

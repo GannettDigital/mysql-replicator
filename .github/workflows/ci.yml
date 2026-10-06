@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Stacked feature PRs target the preceding beta branch.
+    branches: [main, "beta/**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,13 +20,29 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.93.1
 
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
+
+      - name: Check release version consistency
+        run: python3 tools/release_version.py
 
       - name: Run unit test suites
-        run: make test
+        run: make coverage-unit
+
+      - name: Test coverage report tooling
+        run: python3 -m unittest discover -s tools -p 'test_*.py'
+
+      - name: Upload unit coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: artifacts/coverage/unit/
+          if-no-files-found: error
 
       - name: Verify DDL coverage catalog
         run: make ddl-catalog-check
@@ -39,17 +56,18 @@ jobs:
 
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
 
-      - name: Build and verify Debian package (.deb)
-        run: make deb ARGS="--version 0.1.0"
+      - name: Build and verify Linux release packages
+        run: make release-artifacts
 
-      - name: Upload Debian package artifact
+      - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mysql-replicator-deb
+          name: linux-release-packages
           path: |
-            artifacts/deb/*.deb
-            artifacts/deb/*.sha256
+            artifacts/release/
           if-no-files-found: error
 
       - name: Install integration test tools
@@ -73,6 +91,20 @@ jobs:
       - name: Run DML and DDL integration sample
         run: make integration-smoke
 
+      - name: Verify integration exercised the release binary
+        run: python3 tools/verify_release_binary.py
+
+      - name: Measure applier coverage on DML and DDL sample
+        run: make integration-smoke ARGS="--coverage"
+
+      - name: Upload portable integration coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: artifacts/ddl-suite/**/code-coverage/combined/coverage.json
+          if-no-files-found: error
+
       - name: Upload integration evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -82,3 +114,59 @@ jobs:
             artifacts/ddl-suite/
             artifacts/dml-suite/build-*.log
           if-no-files-found: ignore
+
+  combined-coverage:
+    name: Combined Swift Coverage
+    needs: [unit-tests, packaging-and-smoke]
+    # Preserve useful partial evidence on failure, but do not call it complete.
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: artifacts/coverage/downloaded
+      - name: Combine line coverage
+        env:
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          INTEGRATION_RESULT: ${{ needs.packaging-and-smoke.result }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/coverage/downloaded')
+          inputs = sorted(root.rglob('coverage.json'))
+          if not inputs:
+              raise SystemExit('No coverage reports downloaded')
+          subprocess.run(['python3', 'tools/code_coverage.py', 'merge', *map(str, inputs)], check=True)
+          complete = os.environ['UNIT_RESULT'] == os.environ['INTEGRATION_RESULT'] == 'success'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(('Complete selected CI suites' if complete else 'PARTIAL — a producing job failed') + '\n\n')
+              summary.write(pathlib.Path('artifacts/coverage/combined/summary.md').read_text())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: combined-swift-coverage
+          path: artifacts/coverage/combined/
+          if-no-files-found: error
+
+  periphery:
+    name: Unused Swift Code
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
+      - name: Install pinned Periphery
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --fail --show-error --location --retry 3 \
+            https://github.com/peripheryapp/periphery/releases/download/3.5.1/periphery-3.5.1.artifactbundle.zip \
+            --output periphery.zip
+          echo '55beee48bde34390cd6cb8dd4eca762c2646d7d0b58631fd2f00b15898e194d6  periphery.zip' | shasum -a 256 --check
+          unzip -q periphery.zip
+          echo "$RUNNER_TEMP/periphery-3.5.1.artifactbundle/periphery-3.5.1-macos/bin" >> "$GITHUB_PATH"
+      - name: Reject unused declarations
+        run: make periphery

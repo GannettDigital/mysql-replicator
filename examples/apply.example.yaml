@@ -1,0 +1,95 @@
+# Copy to apply.yaml and replace REPLACE_* values with your snapshot's settings.
+# Choose passwordEnvironment OR password per connection. Initial data/schema copying is external.
+# Optional settings below show their defaults unless marked otherwise.
+
+version: 2                          # Config format; schema/table allowlists are obsolete.
+stateDirectory: ./replica-state      # New with --initialize; reuse after a clean stop.
+
+# Optional comparison-semantics translation; omitted means strict matching.
+# Enable BEFORE initializing state and use the same mapping for snapshot schemas.
+# utf8mb4 bytes are preserved, but sorting/equality and unique keys can differ.
+# compatibility:
+#   collations:
+#     utf8mb4_0900_ai_ci: utf8mb4_unicode_ci  # Also permits utf8mb4_general_ci or utf8mb4_bin.
+
+source:
+  version: 2
+  host: REPLACE_SOURCE_HOST          # MySQL 8.4 source with ROW/FULL binlogging.
+  port: 3306
+  username: capture                 # Source replication account.
+  passwordEnvironment: REPLICATOR_SOURCE_PASSWORD
+  # password: 'REPLACE_SOURCE_PASSWORD'  # Alternative: remove passwordEnvironment.
+  serverHostname: REPLACE_SOURCE_TLS_HOSTNAME  # Certificate hostname to verify.
+  caFile: /REPLACE/source-ca.pem      # Omit to use default TLS trust roots.
+  serverID: 9100                     # Nonzero client ID, unique in the topology.
+  sourceUUID: REPLACE_SOURCE_UUID    # Expected source server_uuid.
+  mode: gtid                        # gtid or file-position.
+  start:                            # Verified snapshot boundary; resume uses SQLite.
+    executedGTIDs: REPLACE_SNAPSHOT_GTID_SET  # Quote an empty set as "".
+    # file: binlog.000123            # Required together with position for file-position.
+    # position: 4                   # Next event byte offset, at least 4.
+  # nonBlocking: false              # true drains the existing backlog through EOF.
+  # stopAfterTransactions: 10000     # Optional run limit, 1..1000000; omitted = continuous.
+  # idleTimeoutSeconds: 15          # Source read/heartbeat timeout, 1..300 seconds.
+  # maximumEventBytes: 4194304       # 4 MiB per event; range 23 bytes..16 MiB.
+  # downloadCacheBytes: 268435456    # 256 MiB disposable backlog; range 20 MiB..1 GiB.
+  # decoderProfiling: false         # Detailed decoder timings; coarse timings stay on.
+
+target:
+  host: REPLACE_TARGET_HOST          # Dedicated MySQL 5.7 MyISAM target.
+  port: 3306
+  username: applier                 # DML/DDL and metadata visibility privileges.
+  passwordEnvironment: REPLICATOR_TARGET_PASSWORD
+  # password: 'REPLACE_TARGET_PASSWORD'  # Alternative: remove passwordEnvironment.
+  serverHostname: REPLACE_TARGET_TLS_HOSTNAME
+  caFile: /REPLACE/target-ca.pem      # Omit to use default TLS trust roots.
+  nativeAutoStartDisabled: true      # Attests skip-slave-start is configured.
+  explicitTableLocks: false          # Optional client LOCK TABLES; internal locks remain.
+  # unixSocket: /var/run/mysqld/mysqld.sock  # Local alternative; remove host and port.
+  # requireTLS: true                # TCP requires true. Only a socket may use false;
+                                    # then remove serverHostname and caFile.
+
+ddlPolicy:
+  triggers: skip                    # Audit CREATE/DROP, advance, apply source row effects.
+                                    # reject stops instead. Target triggers always reject.
+  events: reject                    # Only supported choice; no scheduled target writes.
+ddlTimeoutSeconds: 300               # 1..86400; timeout can leave an uncertain pending DDL.
+
+# Case-sensitive database.table exclusions: % = any sequence, _ = one character.
+# Use single quotes for patterns containing backslashes, e.g. 'scratch.tmp\_%'.
+replicateWildIgnoreTable: []
+
+sourceReconnect:
+  enabled: true                     # Resume from the applied source checkpoint.
+  initialDelaySeconds: 1             # First retry delay, 1..300 seconds.
+  maximumDelaySeconds: 30            # Backoff cap: initial delay..300 seconds.
+  maximumAttempts: 0                 # 0 = unlimited; otherwise 1..10000 since progress.
+targetReconnect:
+  enabled: true                     # Only safe reconnects; uncertain writes still block.
+  initialDelaySeconds: 1             # First retry delay, 1..300 seconds.
+  maximumDelaySeconds: 30            # Backoff cap: initial delay..300 seconds.
+  maximumAttempts: 0                 # 0 = unlimited; applied progress resets the budget.
+
+storage:
+  maximumSQLiteBytes: 268435456       # 256 MiB including WAL/headroom; range 8 MiB..1 GiB.
+  minimumFreeDiskBytes: 536870912     # 512 MiB reserve; minimum 1 MiB.
+  pruneAtPercent: 80                 # Prune eligible history at 50..90% utilization.
+  historyRetentionSeconds: 86400     # Minimum history age; 1..31536000, includes skip audit.
+  snapshotEveryTransactions: 1000    # Covering GTID snapshot interval, 1..10000 groups.
+  capacityCheckEveryTransactions: 1000  # Inspect every 1..10000 groups, earlier under pressure.
+  capacityCheckIntervalSeconds: 5    # Inspect while active every 1..60 seconds.
+
+# Batches preserve source order; grouping does not make MyISAM writes atomic.
+batch:
+  maximumInsertRows: 32              # Compatible rows per INSERT statement, 1..128.
+  maximumInsertBytes: 1048576        # 1 MiB; 1 KiB..4 MiB, also capped by max_allowed_packet.
+  overlapPreparation: true           # Prepare next batch while the single executor runs.
+  flushOnTableChange: false          # true ends a batch whenever its table changes.
+  maximumTransactions: 32            # Complete source groups per batch, 1..256.
+  maximumRows: 4096                  # Collection threshold, 1..65536 rows.
+  maximumWireBytes: 8388608          # Collection threshold, 1 KiB..32 MiB; default 8 MiB.
+  maximumDelayMilliseconds: 25       # Flush nonempty batch after 1..1000 ms.
+                                    # Oversized groups run alone without being split.
+
+# maximumRelayBytes: 268435456       # Durable relay cap: 1 MiB..1 GiB; default 256 MiB.
+# applierProfiling: false            # Detailed apply timings; coarse timings stay on.

@@ -1,5 +1,10 @@
 # DDL completeness and native engine behavior
 
+Current increment: [DDL compatibility](DDL_COMPATIBILITY.md) adds bounded types,
+defaults, ALTER/database operations, generated columns, partitions, views and
+routine creation, with explicit trigger/event rejection. The sections below
+retain the historical slice boundaries; the new document describes the additions.
+
 Decision update, 2026-09-30. The [engine/charset foundation](DDL_NATIVE_DEFAULTS.md)
 implements the first slice of this plan. The broader matrix remains a backlog. It supersedes the prototype's explicit
 InnoDB-to-MyISAM CREATE rewrite and automatic collation substitution described in

@@ -1,0 +1,78 @@
+name: Prepare beta release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require a matching prerelease tag on tested main history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF_TYPE" = tag
+          python3 tools/release_version.py --tag "$GITHUB_REF_NAME"
+          case "$GITHUB_REF_NAME" in *-*) ;; *) echo 'This workflow only prepares prereleases'; exit 1 ;; esac
+          git merge-base --is-ancestor HEAD origin/main
+          gh run list --workflow ci.yml --commit "$GITHUB_SHA" --branch main --event push --json databaseId,conclusion,status > /tmp/ci-runs.json
+          python3 - <<'PY'
+          import json, os
+          runs = json.load(open('/tmp/ci-runs.json'))
+          successful = [r for r in runs if r['status'] == 'completed' and r['conclusion'] == 'success']
+          if not successful:
+              raise SystemExit('Wait for successful main CI on this exact commit, then rerun.')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('CI_RUN_ID=' + str(successful[0]['databaseId']) + '\n')
+          PY
+      - name: Fetch the exact packages tested by main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$CI_RUN_ID" --name linux-release-packages --dir artifacts/release
+          test -f "docs/releases/$(cat VERSION).md"
+          cd artifacts/release
+          test -f release-verified
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-release-assets
+          path: artifacts/release/
+          if-no-files-found: error
+
+  draft:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta-release-assets
+          path: artifacts/release
+      - name: Create draft prerelease with the tested bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(cat VERSION)
+          cd artifacts/release
+          sha256sum --check SHA256SUMS
+          # No overwrite/clobber: a previously created release needs manual review.
+          gh release create "$GITHUB_REF_NAME" *.deb *.tar.gz SHA256SUMS apply.example.yaml LICENSE NOTICE \
+            --verify-tag --draft --prerelease --latest=false \
+            --title "First beta — $version" --notes-file "../../docs/releases/$version.md"

@@ -5,8 +5,10 @@ import ReplicatorCodec
 struct DMLTablePlan {
     let table: ApplyTable
     let columnTypes: [DMLColumnType]
+    let compatibility: CompatibilityPolicy
 
-    init(_ table: ApplyTable) throws {
+    init(_ table: ApplyTable,compatibility: CompatibilityPolicy = .init()) throws {
+        self.compatibility = compatibility
         self.table = table
         columnTypes = try table.columns.map { try DMLColumnType($0.type) }
     }
@@ -25,10 +27,14 @@ struct DMLTablePlan {
         for index in wire.indices {
             let w = wire[index], c = table.columns[index], type = columnTypes[index]
             try require(type.matches(w) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
-            if type.interpretation == .utf8 {
-                try require(w.collation == ["utf8mb4_general_ci":45,"utf8mb4_bin":46,"utf8mb4_unicode_ci":224][c.collation ?? ""],"source collation is unsupported by the MySQL 5.7 target or differs; no collation substitution")
+            if type.isChoice {
+                try require(w.labels != nil,"ENUM/SET requires source binlog_row_metadata=FULL to validate ordered labels")
+                try require(w.labels == type.labels,"source/target ENUM/SET labels or order differ")
             }
-            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == (c.name == table.primaryKey),"source/target column name or primary key differs") }
+            if type.isText {
+                try require(compatibility.targetID(w.collation) == CompatibilityPolicy.collationIDs[c.collation ?? ""],"source collation ID \(w.collation) does not match target \(c.collation ?? "missing") under configured compatibility.collations")
+            }
+            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == table.primaryKeyColumns.contains(c.name),"source/target column name or primary key differs") }
         }
     }
 }
@@ -39,11 +45,13 @@ struct DMLPlanningCache {
     private(set) var tables: [String:DMLTablePlan] = [:]
     private var validatedWire: [String:[WireColumn]] = [:]
 
-    init(_ schemas: [String:ApplyTable] = [:]) throws {
+    let compatibility: CompatibilityPolicy
+    init(_ schemas: [String:ApplyTable] = [:],compatibility: CompatibilityPolicy = .init()) throws {
+        self.compatibility = compatibility
         for table in schemas.values { try insert(table) }
     }
     mutating func insert(_ table: ApplyTable) throws {
-        let plan = try DMLTablePlan(table)
+        let plan = try DMLTablePlan(table,compatibility:compatibility)
         tables[table.identity] = plan
         validatedWire.removeValue(forKey:table.identity)
     }

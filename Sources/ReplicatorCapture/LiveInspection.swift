@@ -66,7 +66,7 @@ final class PacketQueue: @unchecked Sendable {
                 return packet
             }
             if let completion { try completion.get(); return nil }
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw CaptureError("live dump idle timeout") }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw SourceTransportError("live dump idle timeout") }
             // Run consumer work without holding the socket queue mutex.
             condition.unlock()
             do { try onIdle() } catch { condition.lock(); throw error }
@@ -114,10 +114,12 @@ public struct LiveInspectionError: Error, CustomStringConvertible {
     public let reason: String
     public let summary: LiveSummary
     public let isCancellation: Bool
+    public let isRetryableSourceFailure: Bool
     init(error: Error, summary: LiveSummary) {
         self.reason = String(describing: error)
         self.summary = summary
         self.isCancellation = error is CaptureCancelled
+        self.isRetryableSourceFailure = error is SourceTransportError
     }
     public var description: String { reason }
 }
@@ -147,18 +149,18 @@ public enum LiveInspection {
             let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
             defer { try? group.syncShutdownGracefully() }
             let loop = group.next()
-            let address = try SocketAddress.makeAddressResolvingHost(config.host, port: config.port)
+            let address = try sourceNetworkOperation { try SocketAddress.makeAddressResolvingHost(config.host, port: config.port) }
             var tls = TLSConfiguration.makeClientConfiguration()
             tls.certificateVerification = .fullVerification
             if let ca = config.caFile { tls.trustRoots = .file(ca) }
-            let connection = try MySQLConnection.connect(to: address, username: config.username, database: "",
+            let connection = try sourceNetworkOperation { try MySQLConnection.connect(to: address, username: config.username, database: "",
                 password: password, tlsConfiguration: tls, serverHostname: config.serverHostname,
-                requireTLS: true, handshakeTimeout: .seconds(10), on: loop).wait()
+                requireTLS: true, handshakeTimeout: .seconds(10), on: loop).wait() }
             defer { try? connection.close().wait() }
             func query(_ sql: String) throws -> [MySQLRow] {
                 let timeout = loop.scheduleTask(in: .seconds(10)) { _ = connection.close() }
                 defer { timeout.cancel() }
-                return try connection.simpleQuery(sql).wait()
+                return try sourceNetworkOperation { try connection.simpleQuery(sql).wait() }
             }
             let settings = try query("SELECT @@server_uuid AS source_uuid,@@server_id AS server_id,@@GLOBAL.gtid_mode AS gtid_mode,@@GLOBAL.enforce_gtid_consistency AS gtid_consistency,@@GLOBAL.binlog_format AS binlog_format,@@GLOBAL.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum,VERSION() AS version")
             guard let row = settings.first, row.column("source_uuid")?.string?.lowercased() == config.sourceUUID.lowercased(),
@@ -196,7 +198,7 @@ public enum LiveInspection {
             try channel.pipeline.removeHandler(old).wait()
             let command = DumpCommand(request: try start.packet(serverID: config.serverID, nonBlocking: config.nonBlocking ?? false), timings:wireTimings, receive: queue.push)
             let finished = connection.send(command, logger: connection.logger)
-            finished.whenComplete { queue.finish($0) }
+            finished.whenComplete { queue.finish($0.mapError(sourceTransportFailure)) }
             let cache = try DownloadCache(maximumBytes:config.downloadCacheBytes ?? 256*1024*1024,
                                           maximumEventBytes:maximum)
             let receiverTimings = StageTimings()
@@ -239,6 +241,9 @@ public enum LiveInspection {
                         }
                     }
                     if reachedLimit { break }
+                }
+                if !reachedLimit && config.nonBlocking != true {
+                    throw SourceTransportError("source ended a blocking binlog stream")
                 }
                 joinReceiver()
             } catch {

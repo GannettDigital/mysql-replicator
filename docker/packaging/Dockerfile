@@ -19,7 +19,10 @@ COPY packaging/rust packaging/rust
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
 COPY packaging/debian packaging/debian
-COPY packaging/Makefile packaging/Makefile
+COPY packaging/Makefile packaging/collect_notices.py packaging/
+COPY packaging/licenses packaging/licenses
+COPY tools/release_version.py tools/
+COPY VERSION ./
 COPY examples examples
 COPY Vendor Vendor
 COPY Package.swift Package.resolved ./
@@ -27,6 +30,7 @@ COPY Sources Sources
 COPY rust rust
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target,sharing=locked --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked --mount=type=cache,target=/workspace/.build,sharing=locked make -f packaging/Makefile build
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS runtime
+COPY LICENSE NOTICE /usr/share/doc/mysql-replicator/
 COPY --from=build /out/packaging-probe /usr/local/bin/packaging-probe
 COPY --from=build /out/mysql-replicator /usr/local/bin/mysql-replicator
 COPY --from=build /out/evidence /opt/packaging-evidence
@@ -42,19 +46,32 @@ COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 
 # Build and verify Debian package (.deb)
 FROM build AS deb
-ARG VERSION=0.1.0
-RUN make -f packaging/Makefile deb VERSION=${VERSION}
+ARG VERSION
+COPY LICENSE NOTICE ./
+RUN if [ -n "$VERSION" ]; then make -f packaging/Makefile deb VERSION="$VERSION"; else make -f packaging/Makefile deb; fi
 
 # Verify .deb installation in clean Ubuntu 16.04
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS deb-test
 COPY --from=deb /out/deb/ /tmp/deb/
-RUN dpkg -i /tmp/deb/*.deb \
+RUN cd /tmp/deb && sha256sum --check *.sha256 \
+    && dpkg -i /tmp/deb/*.deb \
     && /usr/bin/mysql-replicator --version \
     && test -f /lib/systemd/system/mysql-replicator.service \
-    && test -f /etc/mysql-replicator/apply.example.json \
+    && test -f /etc/mysql-replicator/apply.example.yaml \
     && test -d /var/lib/mysql-replicator
 
 # Scratch export target for Docker BuildKit --output
 FROM scratch AS deb-export
 COPY --from=deb /out/deb/ /
 
+# Package both formats from the SAME compiled binary, then test before export.
+FROM deb AS release
+COPY docs/INSTALL.md docs/INSTALL.md
+RUN make -f packaging/Makefile release
+FROM deb-test AS release-test
+COPY --from=release /out/release /release
+COPY packaging/test-release.sh /test-release.sh
+RUN sh /test-release.sh && touch /release-verified
+FROM scratch AS release-export
+COPY --from=release /out/release/ /
+COPY --from=release-test /release-verified /release-verified

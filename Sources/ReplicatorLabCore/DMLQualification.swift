@@ -3,11 +3,13 @@ import Foundation
 public enum DMLQualification {
     public static func run(root: URL, build: Bool = true, ddl: Bool = false, selection: SuiteSelection = .init()) throws {
         let runner = ProcessRunner(root:root)
-        let image = "mysql-replicator-packaging:dml"
+        let image = selection.codeCoverage ? CodeCoverage.image : "mysql-replicator-packaging:dml"
         let coverageInputs = ddl ? try DDLCoverageEvidence.inputs(root: root) : nil
         let coverageContracts = ddl ? try DDLCoverageEvidence.hashes(root: root, paths: DDLCoverageEvidence.contractPaths) : nil
         let labels = try coverageInputs.map { ["--label", DDLCoverageEvidence.imageLabel + "=" + (try DDLCoverageEvidence.digest($0))] } ?? []
-        if build {
+        if build && selection.codeCoverage {
+            try CodeCoverage.build(runner, labels: labels)
+        } else if build {
             FileHandle.standardError.write(Data("\(ddl ? "DDL" : "DML") suite: building static Ubuntu image (live build output follows).\n".utf8))
             let result = try runner.run(["docker","build","--progress=plain","--platform","linux/amd64","--target","runtime","-f","docker/packaging/Dockerfile","-t",image] + labels + ["."],timeout:3600,checked:false,onOutput:{ FileHandle.standardError.write($0) })
             let log = root.appendingPathComponent("artifacts/dml-suite/build-" + runID() + ".log")
@@ -16,6 +18,7 @@ public enum DMLQualification {
             try require(result.status == 0,"DML image build failed; see \(log.path)")
         }
         let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
+        try CodeCoverage.validate(runner, image: qualifiedImage, enabled: selection.codeCoverage)
         for mode in selection.modes { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts,selection:selection) }
     }
     private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?,selection: SuiteSelection) throws {
@@ -29,8 +32,11 @@ public enum DMLQualification {
         var volumeCreated = false, helperCreated = false
         var copiedStates: Set<String> = []
         var clients: [String] = [], started = false, failure: Error?
+        var coverageLabels: [String: String] = [:]
+        var coverageInvocations: [[String: Any]] = []
         var report: [String:Any] = ["schema_version":1,"result":"failed","mode":mode,"automatic_recovery":false,"ddl":ddl ? "qualified_subset" : "not_exercised"]
         report["selection"] = selection.fields
+        report["code_coverage"] = selection.codeCoverage
         func stage(_ text: String) { FileHandle.standardError.write(Data(("\(ddl ? "DDL" : "DML") \(mode): " + text + "\n").utf8)) }
         let cases = QualificationReporter(output: output, log: stage)
         let coverageProfile = mode == "gtid" ? "swift.gtid.metadata-full" : "swift.position.metadata-minimal"
@@ -46,12 +52,13 @@ public enum DMLQualification {
         func start(_ test: QualificationCase,_ config: [String:Any], initialize: Bool = true) throws -> String {
             try cases.begin(test)
             let label = test.id
-            try writeJSON(config,to:output.appendingPathComponent(label + ".json"))
-            _ = try docker(["cp",output.appendingPathComponent(label + ".json").path,evidenceHelper + ":/evidence/" + label + ".json"])
+            try writeYAML(config,to:output.appendingPathComponent(label + ".yaml"))
+            _ = try docker(["cp",output.appendingPathComponent(label + ".yaml").path,evidenceHelper + ":/evidence/" + label + ".yaml"])
             let name = h.project + "-" + label; clients.append(name)
+            coverageLabels[name] = label
             _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project + "_fixture",
                 "--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only",
-                "--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).json"] + (initialize ? ["--initialize"] : []))
+                ] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label) + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/\(label).yaml"] + (initialize ? ["--initialize"] : []))
             return name
         }
         func finish(_ name: String,_ label: String,success: Bool,reason: String? = nil) throws -> [String:Any] {
@@ -73,6 +80,17 @@ public enum DMLQualification {
                 Thread.sleep(forTimeInterval:0.2)
             }
             throw LabError("applier did not start capture")
+        }
+        func waitProgress(_ name: String, _ predicate: ([String:Any]) -> Bool) throws {
+            let deadline=Date().addingTimeInterval(45)
+            while Date() < deadline {
+                let logs=try docker(["logs",name])
+                let records=logs.stdout.split(separator:10).compactMap { try? JSONSerialization.jsonObject(with:Data($0)) as? [String:Any] }
+                if records.contains(where:predicate) { return }
+                try require(docker(["inspect",name,"--format","{{.State.Running}}"]).text == "true","reconnect client stopped: "+String(decoding:logs.stderr,as:UTF8.self))
+                Thread.sleep(forTimeInterval:0.1)
+            }
+            throw LabError("reconnect progress timeout")
         }
         func state(_ label: String,_ sql: String) throws -> String {
             // Called only after the writer exits. Never share live SQLite WAL
@@ -115,6 +133,7 @@ public enum DMLQualification {
             _ = try h.sql("target57","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON poc.* TO 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'")
             if ddl {_ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON otherdb.* TO 'apply_fixture'@'%'")}
             if ddl {
+                _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX,CREATE VIEW,SHOW VIEW,CREATE ROUTINE,ALTER ROUTINE,EXECUTE ON ddlcompat.* TO 'apply_fixture'@'%'")
                 _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON demo.* TO 'apply_fixture'@'%'")
                 for database in Set(DatabaseCreationCases.cases.map(\.database)) {
                     _ = try h.sql("target57","GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX ON \(database).* TO 'apply_fixture'@'%'")
@@ -137,7 +156,13 @@ public enum DMLQualification {
                 let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem","serverID":9100,"sourceUUID":uuid,"mode":mode,"start":start,"stopAfterTransactions":count]
                 return ["version":2,"source":source,"target":["host":"target57","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],"stateDirectory":"/evidence/state-" + label]
             }
-            let positiveConfig = configuration("positive",at:sourceStart,count:4)
+            var positiveConfig = configuration("positive",at:sourceStart,count:4)
+            // Exercise direct YAML credentials; subsequent fixtures use environment variables.
+            for (endpoint,password) in [("source","fixture-capture-only"),("target","fixture-apply-only")] {
+                var connection=positiveConfig[endpoint] as! [String:Any]
+                connection.removeValue(forKey:"passwordEnvironment"); connection["password"]=password
+                positiveConfig[endpoint]=connection
+            }
             let client = try start(DDLCoverageCases.positive,positiveConfig); try waitForReader(client)
             stage("running INSERT/UPDATE/DELETE workload")
             _ = try h.sql("source",Fixture.sql(transaction:false))
@@ -164,7 +189,9 @@ public enum DMLQualification {
             report["positive"] = positive
             if !ddl && selection.includes("matrix") {
                 let session = "USE poc; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'; "
+                let originalMetadata = try h.sql("source","SELECT @@GLOBAL.binlog_row_metadata")
                 for test in DMLCompatibilityCases.cases where selection.selects("matrix-"+test.id) {
+                    _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? originalMetadata))
                     let table="poc.matrix_"+test.id
                     for service in h.services {
                         let engine=service == "source" ? "InnoDB" : "MyISAM"
@@ -172,7 +199,7 @@ public enum DMLQualification {
                     }
                     let columns=try h.sql("source","SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_\(test.id)' ORDER BY ORDINAL_POSITION").split(separator:"\n")
                     let expressions=columns.map { "IFNULL(HEX(CAST(`"+$0.replacingOccurrences(of:"`",with:"``")+"` AS BINARY)),'<NULL>')" }.joined(separator:",")
-                    let observation="SELECT \(expressions) FROM \(table) ORDER BY id"
+                    let observation="SELECT \(expressions) FROM \(table) ORDER BY \(test.orderBy)"
                     for (ordinal,phase) in test.phases.enumerated() {
                         let label="matrix-\(test.id)-\(ordinal+1)"
                         let before=try h.boundary("source")
@@ -207,8 +234,10 @@ public enum DMLQualification {
                         let engine=service == "source" ? "InnoDB" : "MyISAM"
                         _ = try h.sql(service,session+"SET SESSION sql_log_bin=0; CREATE TABLE \(table)(\(definition)) ENGINE=\(engine)")
                     }
+                    _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+test.rowMetadata)
                     let before=try h.boundary("source")
-                    _ = try h.sql("source",session+"INSERT INTO \(table) VALUES"+test.values)
+                    _ = try h.sql("source",session+test.sourceSession+"INSERT INTO \(table) VALUES"+test.values)
+                    _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+originalMetadata)
                     let client=try start(QualificationCase(label,"Reject incompatible or unqualified MySQL 5.7 target schema: "+test.id),configuration(label,at:before,count:1))
                     _ = try finish(client,label,success:false,reason:test.reason)
                     try require(h.sql("target57","SELECT COUNT(*) FROM \(table)") == "0" && state(label,"SELECT transactions_applied FROM state") == "0","rejected matrix case changed target or checkpoint")
@@ -218,6 +247,221 @@ public enum DMLQualification {
                 let after=try h.boundary("source")
                 _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(after.file)',SOURCE_LOG_POS=\(after.position)")
                 report["dml_matrix"]="passed"
+            }
+            if !ddl && selection.includes("target-reconnect") {
+                func targetConfig(_ label: String, count: Int) throws -> [String:Any] {
+                    var config=configuration(label,at:try h.boundary("source"),count:count)
+                    config["targetReconnect"]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60]
+                    return config
+                }
+                func killWriter() throws {
+                    let id=try h.sql("target57","SELECT ID FROM information_schema.PROCESSLIST WHERE USER='apply_fixture'")
+                    try require(Int(id) != nil,"missing unique target writer")
+                    _ = try h.sql("target57","KILL CONNECTION "+id)
+                }
+                func waitPartial(_ table: String) throws {
+                    let deadline=Date().addingTimeInterval(30)
+                    while true {
+                        let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='\(table)'")) ?? 0
+                        if (1..<8000).contains(writes) { return }
+                        try require(writes < 8000 && Date() < deadline,"missed active target group")
+                        Thread.sleep(forTimeInterval:0.02)
+                    }
+                }
+                for service in h.services {
+                    let engine=service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.target_reconnect(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine); CREATE TABLE poc.target_drain(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine); CREATE TABLE poc.target_uncertain(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
+                }
+                let safe=try start(QualificationCase("target-reconnect","Reconnect after idle socket loss and target restart without replaying acknowledged writes"),targetConfig("target-reconnect",count:3))
+                try waitForReader(safe)
+                _ = try h.sql("source","INSERT INTO poc.target_reconnect VALUES(1,10)")
+                try waitProgress(safe) { $0["transactionsApplied"] as? Int == 1 }
+                try killWriter()
+                try waitProgress(safe) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                try waitForReader(safe)
+                _ = try h.sql("source","UPDATE poc.target_reconnect SET v=11 WHERE id=1")
+                try waitProgress(safe) { $0["transactionsApplied"] as? Int == 2 }
+                _ = try h.compose(["stop","-t","30","target57"])
+                try waitProgress(safe) { ($0["targetReconnectAttempts"] as? Int ?? 0) >= 2 }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","target57"],timeout:150)
+                try waitForReader(safe)
+                _ = try h.sql("source","INSERT INTO poc.target_reconnect VALUES(2,20)")
+                let safeResult=try finish(safe,"target-reconnect",success:true)
+                try require((safeResult["targetReconnectAttempts"] as? Int ?? 0) >= 2,"target reconnect not exercised")
+                try require(h.sql("target57","SELECT id,v FROM poc.target_reconnect ORDER BY id") == "1\t11\n2\t20","target reconnect rows differ")
+                try require(state("target-reconnect","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|3|3","target reconnect checkpoint differs")
+                try cases.pass("target-reconnect")
+
+                // Planned maintenance drains the already-journaled group, then
+                // a separate invocation resumes after mysqld has restarted.
+                var drainConfig=try targetConfig("target-drain",count:2)
+                drainConfig["batch"]=["maximumInsertRows":4]
+                let draining=try start(QualificationCase("target-drain","SIGUSR1 finishes active writes and saves a resumable STOPPED checkpoint"),drainConfig)
+                try waitForReader(draining)
+                _ = try h.sql("source","INSERT INTO poc.target_drain VALUES "+(1...8000).map { "(\($0),\($0))" }.joined(separator:","))
+                try waitPartial("target_drain")
+                _ = try docker(["kill","--signal","USR1",draining])
+                let drained=try finish(draining,"target-drain",success:true)
+                try require(drained["drainRequested"] as? Bool == true,"drain was not reported")
+                try require(state("target-drain","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|1|8000","drain did not finish the active group")
+                try require(state("target-drain","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "0","drain left pending writes")
+                try cases.pass("target-drain")
+                _ = try h.compose(["stop","-t","30","target57"])
+                // Resume while target is still down: initial connection attempts
+                // must retry without changing the saved applied checkpoint.
+                var resumedConfig=drainConfig
+                var resumedSource=resumedConfig["source"] as! [String:Any]; resumedSource["stopAfterTransactions"]=1; resumedConfig["source"]=resumedSource
+                let resumed=try start(QualificationCase("target-drain-resume","Wait for target startup and resume a drained checkpoint"),resumedConfig,initialize:false)
+                try waitProgress(resumed) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","target57"],timeout:150)
+                try waitForReader(resumed)
+                _ = try h.sql("source","UPDATE poc.target_drain SET v=v+1 WHERE id=1")
+                _ = try finish(resumed,"target-drain-resume",success:true)
+                try require(h.sql("target57","SELECT COUNT(*),SUM(v) FROM poc.target_drain") == "8000\t32004001","drained resume duplicated or lost rows")
+                try cases.pass("target-drain-resume")
+
+                let waiting=try start(QualificationCase("target-backoff-drain","Drain exits cleanly while the target is unavailable"),targetConfig("target-backoff-drain",count:1))
+                try waitProgress(waiting) { $0["lifecycle"] as? String == "RUNNING" }
+                try waitForReader(waiting)
+                _ = try h.compose(["stop","-t","30","target57"])
+                try waitProgress(waiting) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                _ = try docker(["kill","--signal","USR1",waiting])
+                _ = try finish(waiting,"target-backoff-drain",success:true)
+                try require(state("target-backoff-drain","SELECT lifecycle||'|'||transactions_applied FROM state") == "STOPPED|0","target backoff drain was not clean")
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","target57"],timeout:150)
+                try cases.pass("target-backoff-drain")
+
+                // Discover first, then hold a table lock until the applier has
+                // submitted INSERT. Kill that socket while its result is unknown.
+                var uncertainConfig=try targetConfig("target-uncertain",count:2)
+                uncertainConfig["batch"]=["maximumInsertRows":4]
+                let uncertain=try start(QualificationCase("target-uncertain","Lost mutation reply blocks and preserves statement/row evidence without replay"),uncertainConfig)
+                try waitForReader(uncertain)
+                _ = try h.sql("source","INSERT INTO poc.target_uncertain VALUES(0,0)")
+                try waitProgress(uncertain) { $0["transactionsApplied"] as? Int == 1 }
+                _ = try h.compose(["exec","-d","-e","MYSQL_PWD=fixture-root-only","target57","mysql","--no-defaults","-uroot","-e","LOCK TABLES poc.target_uncertain WRITE; DO SLEEP(30); UNLOCK TABLES"])
+                let lockDeadline=Date().addingTimeInterval(15)
+                while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(30)'") != "1" {
+                    try require(Date() < lockDeadline,"target blocker failed to start"); Thread.sleep(forTimeInterval:0.05)
+                }
+                _ = try h.sql("source","INSERT INTO poc.target_uncertain VALUES(1,1),(2,2),(3,3),(4,4)")
+                let queryDeadline=Date().addingTimeInterval(15)
+                while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO LIKE 'INSERT INTO%'") != "1" {
+                    try require(Date() < queryDeadline,"target mutation was not submitted"); Thread.sleep(forTimeInterval:0.05)
+                }
+                try killWriter()
+                _ = try finish(uncertain,"target-uncertain",success:false,reason:"target connection")
+                let blocker=try h.sql("target57","SELECT ID FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(30)'")
+                if Int(blocker) != nil { _ = try h.sql("target57","KILL CONNECTION "+blocker) }
+                try require(state("target-uncertain","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|1","uncertain target advanced checkpoint")
+                let diagnostic=try state("target-uncertain","SELECT diagnostic_json FROM target_failure")
+                try require(diagnostic.contains("possiblyExecuted") && diagnostic.contains("target_uncertain"),"missing target statement evidence")
+                try require(h.sql("target57","SELECT COUNT(*) FROM poc.target_uncertain") == "1","uncertain write was retried")
+                try cases.pass("target-uncertain")
+                _ = try finish(start(QualificationCase("target-uncertain-resume","Ordinary resume refuses uncertain target writes"),uncertainConfig,initialize:false),"target-uncertain-resume",success:false,reason:"cleanly STOPPED")
+                try cases.pass("target-uncertain-resume")
+                let changed=try start(QualificationCase("target-reconnect-settings","Reject incompatible target settings on reconnect"),targetConfig("target-reconnect-settings",count:1))
+                try waitProgress(changed) { $0["lifecycle"] as? String == "RUNNING" }
+                _ = try h.sql("target57","SET GLOBAL binlog_row_image=MINIMAL")
+                try killWriter()
+                _ = try finish(changed,"target-reconnect-settings",success:false,reason:"target binary logging differs")
+                _ = try h.sql("target57","SET GLOBAL binlog_row_image=FULL")
+                try require(state("target-reconnect-settings","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","changed target settings advanced progress")
+                try cases.pass("target-reconnect-settings")
+                report["target_reconnect"]="safe_disconnect_restart_drain_resume_backoff_and_uncertain_reply_passed"
+            }
+            if !ddl && selection.includes("reconnect") {
+                func killReader() throws {
+                    let id=try h.sql("source","SELECT ID FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND COMMAND LIKE 'Binlog Dump%'")
+                    try require(Int(id) != nil,"missing unique source reader")
+                    _ = try h.sql("source","KILL CONNECTION "+id)
+                }
+                func reconnectConfig(_ label:String, count:Int) throws -> [String:Any] {
+                    var config=configuration(label,at:try h.boundary("source"),count:count)
+                    config["sourceReconnect"]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60]
+                    return config
+                }
+                for service in h.services {
+                    let engine=service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.reconnect_rows(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine); CREATE TABLE poc.reconnect_batch(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
+                }
+                let reconnect=try start(QualificationCase("source-reconnect","Continue one applier across disconnect, rotation, source shutdown and crash/restart"),reconnectConfig("source-reconnect",count:5))
+                try waitForReader(reconnect)
+                _ = try h.sql("source","INSERT INTO poc.reconnect_rows VALUES(1,10)")
+                try waitProgress(reconnect) { $0["transactionsApplied"] as? Int == 1 }
+                try killReader()
+                try waitProgress(reconnect) { $0["lifecycle"] as? String == "RECONNECTING" }
+                try waitForReader(reconnect)
+                _ = try h.sql("source","UPDATE poc.reconnect_rows SET v=v+1 WHERE id=1; FLUSH BINARY LOGS; INSERT INTO poc.reconnect_rows VALUES(2,20)")
+                try waitProgress(reconnect) { $0["transactionsApplied"] as? Int == 3 }
+                _ = try h.compose(["stop","-t","30","source"])
+                try waitProgress(reconnect) { ($0["sourceReconnectAttempts"] as? Int ?? 0) >= 2 }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","source"],timeout:150)
+                try waitForReader(reconnect)
+                _ = try h.sql("source","UPDATE poc.reconnect_rows SET v=v+100 WHERE id=1")
+                try waitProgress(reconnect) { $0["transactionsApplied"] as? Int == 4 }
+                let sourceContainer=try h.compose(["ps","-q","source"]).text
+                _ = try docker(["kill","--signal","KILL",sourceContainer])
+                try waitProgress(reconnect) { ($0["sourceReconnectAttempts"] as? Int ?? 0) >= 3 }
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","source"],timeout:150)
+                try waitForReader(reconnect)
+                _ = try h.sql("source","INSERT INTO poc.reconnect_rows VALUES(3,30)")
+                let reconnected=try finish(reconnect,"source-reconnect",success:true)
+                try require((reconnected["sourceReconnectAttempts"] as? Int ?? 0) >= 3,"source interruptions did not reconnect")
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT id,v FROM poc.reconnect_rows ORDER BY id") == "1\t111\n2\t20\n3\t30","source reconnect duplicated or lost writes")
+                }
+                try require(state("source-reconnect","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|5|5","source reconnect reset the transaction limit or checkpoint")
+                try require(state("source-reconnect","SELECT COUNT(*) FROM groups WHERE status='APPLIED'") == "5","reconnect duplicated journal groups")
+                try cases.pass("source-reconnect")
+
+                var batchConfig=try reconnectConfig("source-reconnect-batch",count:2)
+                batchConfig["batch"]=["maximumInsertRows":4]
+                let batchClient=try start(QualificationCase("source-reconnect-batch","Finish an active target group after source loss, then reconnect without replaying it"),batchConfig)
+                try waitForReader(batchClient)
+                _ = try h.sql("source","INSERT INTO poc.reconnect_batch VALUES "+(1...8000).map { "(\($0),\($0))" }.joined(separator:","))
+                let writeDeadline=Date().addingTimeInterval(30)
+                while true {
+                    let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='reconnect_batch'")) ?? 0
+                    if (1..<8000).contains(writes) { break }
+                    try require(writes < 8000 && Date() < writeDeadline,"missed active target batch")
+                    Thread.sleep(forTimeInterval:0.02)
+                }
+                try killReader()
+                try waitProgress(batchClient) { $0["lifecycle"] as? String == "RECONNECTING" && $0["transactionsApplied"] as? Int == 1 }
+                try waitForReader(batchClient)
+                _ = try h.sql("source","UPDATE poc.reconnect_batch SET v=v+1 WHERE id=1")
+                _ = try finish(batchClient,"source-reconnect-batch",success:true)
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                for service in h.services { try require(h.sql(service,"SELECT COUNT(*),SUM(v) FROM poc.reconnect_batch") == "8000\t32004001","active batch reconnect differs") }
+                try require(state("source-reconnect-batch","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|2|8001","active batch checkpoint differs")
+                try require(state("source-reconnect-batch","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "0","reconnect left unresolved writes")
+                try cases.pass("source-reconnect-batch")
+
+                let waiting=try start(QualificationCase("source-reconnect-cancel","Stop cleanly during reconnect backoff"),reconnectConfig("source-reconnect-cancel",count:1))
+                try waitForReader(waiting)
+                _ = try h.compose(["stop","-t","30","source"])
+                try waitProgress(waiting) { $0["lifecycle"] as? String == "RECONNECTING" }
+                _ = try docker(["kill","--signal","TERM",waiting])
+                _ = try finish(waiting,"source-reconnect-cancel",success:true)
+                try require(state("source-reconnect-cancel","SELECT lifecycle||'|'||transactions_applied FROM state") == "STOPPED|0","backoff cancellation was not clean")
+                _ = try h.compose(["up","-d","--wait","--wait-timeout","120","source"],timeout:150)
+                try cases.pass("source-reconnect-cancel")
+                let changed=try start(QualificationCase("source-reconnect-settings","Reject incompatible source settings on reconnect without advancing progress"),reconnectConfig("source-reconnect-settings",count:1))
+                try waitForReader(changed)
+                _ = try h.sql("source","SET GLOBAL binlog_row_image=MINIMAL")
+                try killReader()
+                let changedResult=try finish(changed,"source-reconnect-settings",success:false,reason:"source identity/settings differ")
+                _ = try h.sql("source","SET GLOBAL binlog_row_image=FULL")
+                try require(changedResult["progress"].flatMap { $0 as? [String:Any] }?["sourceReconnectAttempts"] as? Int == 1,"incompatible source settings were retried")
+                try require(state("source-reconnect-settings","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","changed source advanced progress")
+                try cases.pass("source-reconnect-settings")
+                report["source_reconnect"]="disconnect_rotation_shutdown_crash_active_batch_cancellation_and_settings_checks_passed"
             }
             if ddl {
                 if selection.includes("filters") {
@@ -286,7 +530,7 @@ public enum DMLQualification {
                     let rejectedTest = DDLCoverageCases.wildcardRejection
                     var rejectionConfig = configuration(rejectedTest.id,at:try h.boundary("source"),count:2); rejectionConfig["replicateWildIgnoreTable"] = patterns
                     let rejected = try start(rejectedTest,rejectionConfig); try waitForReader(rejected)
-                    _ = try h.sql("source","CREATE TABLE poc.filter_included(id INT PRIMARY KEY,d DECIMAL(10,2)); INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
+                    _ = try h.sql("source","CREATE TABLE poc.filter_included(id INT PRIMARY KEY,d JSON); INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
                     _ = try finish(rejected,rejectedTest.id,success:false,reason:"unsupported DDL column type")
                     try require(state(rejectedTest.id,"SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0" && state(rejectedTest.id,"SELECT COUNT(*) FROM ddl_intents") == "0","included DDL bypassed fail-stop policy")
                     try require(h.sql("target57","SELECT COUNT(*) FROM poc.items WHERE id=92") == "0","included DDL failure did not stop following row")
@@ -296,6 +540,229 @@ public enum DMLQualification {
                     // Restore the shared basic fixture without adding source events.
                     for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; UPDATE poc.items SET value='" + Fixture.final[0][1] + "' WHERE id=1") }
                 }
+
+                if selection.includes("compatibility") {
+                    let session = "SET NAMES utf8mb4 COLLATE utf8mb4_bin; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'; "
+                    func resetCompatibility(_ nativeInnoDB: Bool = false) throws {
+                        for service in h.services {
+                            let engine = service == "source" || (service == "native" && nativeInnoDB) ? "InnoDB" : "MyISAM"
+                            _ = try h.sql(service,"SET SESSION sql_log_bin=0; SET GLOBAL default_storage_engine=\(engine); DROP DATABASE IF EXISTS ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+                        }
+                    }
+                    func compatibilityBarrier(_ client: String,_ count: Int) throws {
+                        try waitProgress(client) { ($0["transactionsApplied"] as? Int ?? 0) >= count }
+                        try ModifyIndexCases.waitNative(h,h.boundary("source"))
+                    }
+                    if mode == "file-position" { stage("ENUM/SET type fixture runs only in the GTID/FULL-metadata profile") }
+                    for test in DDLCompatibilityCases.cases where selection.selects(test.test.id) && !(mode == "file-position" && test.test.id == "ddl-compat-types") {
+                        try resetCompatibility(test.nativeInnoDB)
+                        let boundary=try h.boundary("source"),label=test.test.id
+                        let count=test.steps.reduce(0){$0+$1.transactions}
+                        let client=try start(test.test,configuration(label,at:boundary,count:count)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        var applied=0,observations:[[String:Any]]=[]
+                        for step in test.steps {
+                            // DELIMITER is a mysql CLI directive, never binlog SQL.
+                            _ = try h.sql("source",session+"\n"+step.sql)
+                            applied += step.transactions
+                            try compatibilityBarrier(client,applied)
+                            var checks:[[String:Any]]=[]
+                            for check in step.checks {
+                                var result:[String:String]=[:]
+                                for service in h.services {
+                                    let actual=try h.sql(service,session+check.sql)
+                                    try require(actual==check.expected,"\(label) \(service): \(check.sql) returned \(actual), expected \(check.expected)")
+                                    result[service]=actual
+                                }
+                                checks.append(["query":check.sql,"expected":check.expected,"results":result])
+                            }
+                            observations.append(["sql":step.sql,"checks":checks,"transactions":applied])
+                        }
+                        let result=try finish(client,label,success:true),end=try h.boundary("source")
+                        _ = try h.sql("native","STOP REPLICA")
+                        try require(result["transactionsApplied"] as? Int == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'")=="0","unfinished compatibility DDL intent")
+                        if label == "ddl-compat-database" {
+                            try require(state(label,"SELECT COUNT(*) FROM schemas WHERE current=1")=="1","DROP DATABASE retained stale current table schemas")
+                        }
+                        try writeJSON(["steps":observations,"summary":result],to:output.appendingPathComponent(label+"-observations.json"))
+                        try cases.pass(label)
+                    }
+                    if selection.selects(DDLCompatibilityCases.collationCleanup.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; DROP DATABASE ddlcompat") }
+                        let test = DDLCompatibilityCases.collationCleanup, label = test.id
+                        let mapping = ["collations":["utf8mb4_0900_ai_ci":"utf8mb4_unicode_ci"]]
+                        let logged = "SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci; SET SESSION collation_server=utf8mb4_0900_ai_ci; SET SESSION default_collation_for_utf8mb4=utf8mb4_0900_ai_ci; "
+                        var config = configuration(label,at:try h.boundary("source"),count:9)
+                        config["compatibility"] = mapping
+                        let initialTest = QualificationCase(label+"-initial","Persist mapped schemas after the dynamic cleanup workflow")
+                        let initial = try start(initialTest,config); try waitForReader(initial)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source",logged+"""
+                        CREATE DATABASE ddlcompat;
+                        CREATE TABLE ddlcompat.foo(id INT PRIMARY KEY,v VARCHAR(80));
+                        INSERT INTO ddlcompat.foo VALUES(1,'keep'),(2,'drop'),(3,CONVERT(0xC3A9F09F9880 USING utf8mb4));
+                        CREATE TABLE ddlcompat.foo_temp LIKE ddlcompat.foo;
+                        INSERT INTO ddlcompat.foo_temp SELECT * FROM ddlcompat.foo WHERE id<>2;
+                        ALTER TABLE ddlcompat.foo_temp ADD extra VARCHAR(40) CHARACTER SET utf8mb4 DEFAULT 'utf8mb4_0900_ai_ci';
+                        RENAME TABLE ddlcompat.foo TO ddlcompat.foo_old, ddlcompat.foo_temp TO ddlcompat.foo;
+                        CREATE TABLE ddlcompat.explicit_table(id INT PRIMARY KEY,v VARCHAR(40) COLLATE utf8mb4_0900_ai_ci) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+                        CREATE TABLE ddlcompat.charset_only(id INT PRIMARY KEY,v VARCHAR(40)) DEFAULT CHARSET=utf8mb4;
+                        """)
+                        _ = try finish(initial,initialTest.id,success:true)
+                        try ModifyIndexCases.waitNative(h,h.boundary("source"))
+                        try cases.pass(initialTest.id)
+                        // Changing a durable mapping must fail before any target SQL.
+                        for (suffix,policy) in [("changed",["collations":["utf8mb4_0900_ai_ci":"utf8mb4_bin"]]),("removed",["collations":[:]])] {
+                            var changed = config; changed["compatibility"] = policy
+                            let rejectedTest = QualificationCase(label+"-"+suffix,"Refuse a changed saved collation policy")
+                            let rejected = try start(rejectedTest,changed,initialize:false)
+                            _ = try finish(rejected,rejectedTest.id,success:false,reason:"differs from saved state")
+                            try cases.pass(rejectedTest.id)
+                        }
+                        // Use saved schemas after restart, including the replacement
+                        // table's extra column and the old name's original schema.
+                        var capture = config["source"] as! [String:Any]
+                        capture["stopAfterTransactions"] = 7; config["source"] = capture
+                        let resumed = try start(test,config,initialize:false); try waitForReader(resumed)
+                        _ = try h.sql("source",logged+"""
+                        UPDATE ddlcompat.foo SET v='resumed',extra='new' WHERE id=1;
+                        INSERT INTO ddlcompat.explicit_table VALUES(1,CONVERT(0xC3A9F09F9880 USING utf8mb4));
+                        INSERT INTO ddlcompat.charset_only VALUES(1,'bytes');
+                        CREATE TABLE ddlcompat.foo_temp LIKE ddlcompat.foo;
+                        INSERT INTO ddlcompat.foo_temp SELECT * FROM ddlcompat.foo WHERE id=1;
+                        RENAME TABLE ddlcompat.foo TO ddlcompat.spare, ddlcompat.foo_temp TO ddlcompat.foo, ddlcompat.spare TO ddlcompat.foo_temp;
+                        INSERT INTO ddlcompat.foo VALUES(4,'after-swap','four');
+                        """)
+                        let result = try finish(resumed,label,success:true)
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        for (query,expected) in [
+                            ("SELECT id,v,extra FROM ddlcompat.foo ORDER BY id","1\tresumed\tnew\n4\tafter-swap\tfour"),
+                            ("SELECT id,HEX(v) FROM ddlcompat.foo_temp ORDER BY id","1\t726573756D6564\n3\tC3A9F09F9880"),
+                            ("SELECT COUNT(*) FROM ddlcompat.foo_old","3"),
+                            ("SELECT HEX(v) FROM ddlcompat.explicit_table","C3A9F09F9880"),
+                            ("SELECT v FROM ddlcompat.charset_only","bytes")
+                        ] {
+                            for service in h.services {
+                                let actual = try h.sql(service,query)
+                                try require(actual == expected,"collation cleanup row mismatch: \(service) \(query): \(actual), expected \(expected)")
+                            }
+                        }
+                        for service in h.services {
+                            let collation = service == "target57" ? "utf8mb4_unicode_ci" : "utf8mb4_0900_ai_ci"
+                            try require(h.sql(service,"SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='ddlcompat'") == collation,"mapped database default differs")
+                            try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_COLLATION<>'\(collation)'") == "0","mapped table default differs")
+                            try require(h.sql(service,"SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND COLLATION_NAME IS NOT NULL AND COLLATION_NAME<>'\(collation)'") == "0","mapped column encoding differs")
+                        }
+                        try require(result["transactionsApplied"] as? Int == 16 && result["ddlApplied"] as? Int == 9,"mapped cleanup counters differ")
+                        try require(state(label,"SELECT COUNT(*) FROM schemas WHERE current=1") == "5","rename left stale schemas")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE'") == "9","mapped DDL audit missing")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql<>target_sql") == "3","encoding rewrite audit differs")
+                        try require(state(label,"SELECT COUNT(*) FROM ddl_details WHERE json_extract(policy_json,'$.collations.utf8mb4_0900_ai_ci')='utf8mb4_unicode_ci'") == "9","mapping policy missing from audit")
+                        try cases.pass(label)
+                    }
+                    if selection.selects(DDLCompatibilityCases.collationCollision.id) {
+                        try resetCompatibility()
+                        let test = DDLCompatibilityCases.collationCollision, label = test.id
+                        var config = configuration(label,at:try h.boundary("source"),count:5)
+                        config["compatibility"] = ["collations":["utf8mb4_0900_ai_ci":"utf8mb4_unicode_ci"]]
+                        let client = try start(test,config); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source","SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE TABLE ddlcompat.collision(id INT PRIMARY KEY,v VARCHAR(20),UNIQUE KEY value_key(v)) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci; INSERT INTO ddlcompat.collision VALUES(1,'a')")
+                        try compatibilityBarrier(client,2)
+                        let prefix = try h.boundary("source")
+                        _ = try h.sql("source","INSERT INTO ddlcompat.collision VALUES(2,'a '); INSERT INTO ddlcompat.collision VALUES(3,'must-not-apply')")
+                        let failure = try finish(client,label,success:false,reason:"1062")
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(h.sql("target57","SELECT id,HEX(v) FROM ddlcompat.collision") == "1\t61","unique collision was ignored or changed rows")
+                        for service in ["source","native"] { try require(h.sql(service,"SELECT COUNT(*) FROM ddlcompat.collision") == "3","NO PAD source/native fixture did not accept both keys") }
+                        try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|2","collision advanced the checkpoint")
+                        let progress = failure["progress"] as? [String:Any]
+                        try require(progress?["appliedGTIDSet"] as? String == prefix.gtids,"collision GTID was acknowledged")
+                        try require(state(label,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") != "0","collision lost pending row intent")
+                        try cases.pass(label)
+                    }
+                    for (test,sql,reason) in [
+                        (DDLCompatibilityCases.trigger,"CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers"),
+                        (DDLCompatibilityCases.event,"CREATE EVENT ddlcompat.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO ddlcompat.t VALUES(99,99)","DDL policy rejects events")
+                    ] where selection.selects(test.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        let before=try h.boundary("source"),label=test.id
+                        var config=configuration(label,at:before,count:2)
+                        config["ddlPolicy"]=["triggers":"reject","events":"reject"]
+                        let client=try start(test,config); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source",session+sql+"; INSERT INTO ddlcompat.t VALUES(1,1)")
+                        _ = try finish(client,label,success:false,reason:reason)
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(state(label,"SELECT transactions_applied FROM state")=="0" && state(label,"SELECT COUNT(*) FROM ddl_intents")=="0","rejected policy DDL advanced progress or issued SQL")
+                        try require(h.sql("target57","SELECT COUNT(*) FROM ddlcompat.t")=="0","policy rejection applied following DML")
+                        try cases.pass(label)
+                    }
+                    if selection.selects(DDLCompatibilityCases.skipTrigger.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        let test=DDLCompatibilityCases.skipTrigger,before=try h.boundary("source")
+                        // No ddlPolicy override: exercise the default skip policy.
+                        let client=try start(test,configuration(test.id,at:before,count:8)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source",session+"\nDELIMITER $$\nCREATE DEFINER=CURRENT_USER TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW BEGIN SET NEW.n=NEW.n+10; SET NEW.n=NEW.n+1; END$$\nDELIMITER ;")
+                        try compatibilityBarrier(client,1)
+                        try require(h.sql("native","SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='ddlcompat'")=="1","native did not create the trigger")
+                        try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='ddlcompat'")=="0","skip created a target trigger")
+                        _ = try h.sql("source","INSERT INTO ddlcompat.t VALUES(1,7),(2,8); DROP TRIGGER ddlcompat.tr; DROP TRIGGER IF EXISTS ddlcompat.tr; INSERT INTO ddlcompat.t VALUES(3,9); CREATE TRIGGER ddlcompat.tr BEFORE UPDATE ON ddlcompat.t FOR EACH ROW SET NEW.n=NEW.n+10; UPDATE ddlcompat.t SET n=20 WHERE id=1; DROP TRIGGER ddlcompat.tr")
+                        let result=try finish(client,test.id,success:true),end=try h.boundary("source")
+                        try ModifyIndexCases.waitNative(h,end); _ = try h.sql("native","STOP REPLICA")
+                        for service in h.services { try require(h.sql(service,"SELECT id,n FROM ddlcompat.t ORDER BY id")=="1\t30\n2\t19\n3\t9","trigger effect was lost or applied twice") }
+                        try require(result["appliedGTIDSet"] as? String == end.gtids,"skipped trigger GTIDs were not checkpointed")
+                        try require(state(test.id,"SELECT COUNT(*) FROM ddl_skips WHERE reason='ddlPolicy.triggers=skip' AND database_name='ddlcompat' AND object_name='tr'")=="5","missing trigger skip audit")
+                        try require(state(test.id,"SELECT COUNT(*) FROM ddl_intents")=="0" && state(test.id,"SELECT COUNT(*) FROM groups WHERE status='APPLIED'")=="8","skipped DDL became a write intent or failed to complete")
+                        try require(state(test.id,"SELECT transactions_applied||'|'||rows_applied||'|'||ddl_applied FROM state")=="8|4|0","skip counters differ")
+                        try cases.pass(test.id)
+                    }
+                    if selection.selects(DDLCompatibilityCases.sourceTrigger.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        _ = try h.sql("source","SET SESSION sql_log_bin=0; CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=NEW.n+10")
+                        let test=DDLCompatibilityCases.sourceTrigger,before=try h.boundary("source")
+                        let client=try start(test,configuration(test.id,at:before,count:1)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA")
+                        _ = try h.sql("source","INSERT INTO ddlcompat.t VALUES(1,7)")
+                        _ = try finish(client,test.id,success:true); try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        for service in h.services { try require(h.sql(service,"SELECT n FROM ddlcompat.t")=="17","source trigger effect differs") }
+                        try cases.pass(test.id)
+                    }
+                    if selection.selects(DDLCompatibilityCases.generatedMismatch.id) {
+                        try resetCompatibility()
+                        for service in h.services {
+                            let multiplier=service == "target57" ? 3 : 2
+                            _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT,g INT AS (n*\(multiplier)) STORED)")
+                        }
+                        let test=DDLCompatibilityCases.generatedMismatch,before=try h.boundary("source")
+                        let client=try start(test,configuration(test.id,at:before,count:1)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA"); _ = try h.sql("source","INSERT INTO ddlcompat.t(id,n) VALUES(1,7)")
+                        _ = try finish(client,test.id,success:false,reason:"target generated-column values differ")
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(state(test.id,"SELECT transactions_applied FROM state")=="0" && state(test.id,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'")=="1","generated mismatch was completed or lost its uncertain row intent")
+                        try cases.pass(test.id)
+                    }
+                    if selection.selects(DDLCompatibilityCases.targetTrigger.id) {
+                        try resetCompatibility()
+                        for service in h.services { _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)") }
+                        _ = try h.sql("target57","SET SESSION sql_log_bin=0; CREATE TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW SET NEW.n=NEW.n+10")
+                        let test=DDLCompatibilityCases.targetTrigger,before=try h.boundary("source")
+                        let client=try start(test,configuration(test.id,at:before,count:1)); try waitForReader(client)
+                        _ = try h.sql("native","START REPLICA"); _ = try h.sql("source","INSERT INTO ddlcompat.t VALUES(1,7)")
+                        _ = try finish(client,test.id,success:false,reason:"target triggers are unsupported")
+                        try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")
+                        try require(h.sql("target57","SELECT COUNT(*) FROM ddlcompat.t")=="0","target trigger executed")
+                        try cases.pass(test.id)
+                    }
+                    try resetCompatibility()
+                }
+
                 if selection.includes("modify-index") {
                 for test in ModifyIndexCases.failures where selection.selects(test.test.id) {
                     let label=test.test.id
@@ -337,10 +804,14 @@ public enum DMLQualification {
                         try require(Date()<lockDeadline,"test table lock was not acquired");Thread.sleep(forTimeInterval:0.1)
                     }
                     _ = try h.sql("source",test.sql+"; INSERT INTO demo.mi VALUES(99,'blocked marker',9,NULL)")
-                    let result=try finish(applying,label,success:false,reason:"uncertain")
+                    let result=try finish(applying,label,success:false)
+                    let failureProgress=result["progress"] as? [String:Any]
+                    let failureTrace=(failureProgress?["targetFailure"] as? [String:Any])?["statement"] as? [String:Any]
+                    try require(failureTrace?["phase"] as? String == "possiblyExecuted","DDL timeout did not retain uncertain statement phase")
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied FROM state")=="BLOCKED|0" && state(label,"SELECT status FROM ddl_intents")=="PENDING","DDL timeout lost uncertain intent")
                     let id=try state(label,"SELECT active_gtid FROM state")
-                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".json"],checked:false)
+                    let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(evidenceVolume),dst=/evidence"] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label + "-skip-refusal") + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"skip",id,"--config","/evidence/"+label+".yaml"],checked:false)
+                    coverageInvocations.append(["label": label + "-skip-refusal", "exit_code": Int(refusal.status)])
                     try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target write intents"),"uncertain DDL was eligible for skip")
                     let deadline=Date().addingTimeInterval(20)
                     while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' OR INFO='DO SLEEP(8)'") != "0" {
@@ -411,7 +882,7 @@ public enum DMLQualification {
                         let history=try state(label,"SELECT schema_json FROM schemas WHERE current=1")
                         let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
                         try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
-                        try require(state(label,"PRAGMA user_version")=="6","extended state lacks version gate")
+                        try require(state(label,"PRAGMA user_version")=="8","extended state lacks current version gate (8)")
                         return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
                     }
                     try cases.assertion("normalized-binlog",evidence:"assertions/"+label+"/normalized-binlog.json") {
@@ -437,10 +908,11 @@ public enum DMLQualification {
                     if label == "ddl-index-create" && selection.selects(ModifyIndexCases.resume.id) {
                         try cases.run(ModifyIndexCases.resume) {
                             let config=configuration(label,at:end,count:1)
-                            try writeJSON(config,to:output.appendingPathComponent(label+"-resume.json"))
-                            _ = try docker(["cp",output.appendingPathComponent(label+"-resume.json").path,evidenceHelper+":/evidence/"+label+"-resume.json"])
+                            try writeYAML(config,to:output.appendingPathComponent(label+"-resume.yaml"))
+                            _ = try docker(["cp",output.appendingPathComponent(label+"-resume.yaml").path,evidenceHelper+":/evidence/"+label+"-resume.yaml"])
                             let name=h.project+"-indexed-resume";clients.append(name)
-                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.json"])
+                            coverageLabels[name] = label + "-resume"
+                            _ = try docker(["run","-d","--name",name,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only"] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label + "-resume") + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"])
                             try waitForReader(name)
                             _ = try h.sql("source","INSERT INTO demo.mi VALUES(4,'resumed',4,NULL)")
                             let resumed=try finish(name,label+"-resume",success:true)
@@ -448,7 +920,8 @@ public enum DMLQualification {
                             try require(ModifyIndexCases.rows(h,"target57",test.table)==test.retained+"\n4\t726573756D6564\t4\tNULL","indexed resume row differs")
                             _ = try h.sql("native","START REPLICA");try ModifyIndexCases.waitNative(h,h.boundary("source"));_ = try h.sql("native","STOP REPLICA")
                             _ = try h.sql("target57","CREATE INDEX external_drift ON demo.mi(n)")
-                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.json"],checked:false)
+                            let refusal=try runner.run(["docker","run","--rm","--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(evidenceVolume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only"] + CodeCoverage.environment(enabled: selection.codeCoverage, label: label + "-drift-refusal") + ["--entrypoint","/usr/local/bin/mysql-replicator",image,"run","--config","/evidence/"+label+"-resume.yaml"],checked:false)
+                            coverageInvocations.append(["label": label + "-drift-refusal", "exit_code": Int(refusal.status)])
                             try require(refusal.status != 0 && String(decoding:refusal.stderr,as:UTF8.self).contains("target schema differs from saved checkpoint"),"external index drift was accepted")
                             // The original saved intent/schema evidence above remains
                             // the first run's snapshot; retain the resumed diagnostics separately.
@@ -517,6 +990,18 @@ public enum DMLQualification {
                     try require(state(label,"SELECT lifecycle||'|'||transactions_applied||'|'||COALESCE(applied_position,'NULL') FROM state")=="BLOCKED|0|NULL","failed database CREATE advanced checkpoint")
                     let pending=test.id==DatabaseCreationCases.denied.id ? "1" : "0"
                     try require(state(label,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND status='PENDING'")==pending,"database failure lost or invented a pending intent")
+                    let failureJSON=try state(label,"SELECT diagnostic_json FROM target_failure")
+                    guard let failure=try JSONSerialization.jsonObject(with:Data(failureJSON.utf8)) as? [String:Any],
+                          let statement=failure["statement"] as? [String:Any],
+                          let context=failure["ddlContext"] as? [String:Any] else {throw LabError("missing persisted DDL failure context")}
+                    try require(failure["ddlSQL"] as? String == sql && failure["ddlGTID"] as? String != nil,"persisted failure lost SQL/GTID")
+                    if test.id==DatabaseCreationCases.unsupportedDefault.id {
+                        try require(context["serverCollationID"] as? Int == 255 && context["serverCollationName"] as? String == "utf8mb4_0900_ai_ci","persisted failure lost source server collation")
+                        try require(context["database"] as? String == "created_bad_default" && statement["phase"] as? String == "notIssued","wrong database failure context/phase")
+                        try require((failure["reason"] as? String ?? "").contains("ID 255 (utf8mb4_0900_ai_ci)"),"failure reason lacks collation identity")
+                    } else if test.id==DatabaseCreationCases.unsupported.id {
+                        try require((failure["reason"] as? String ?? "").contains("collation=utf8mb4_0900_ai_ci"),"failure reason lacks explicit collation")
+                    }
                     let database=sql.split(separator:" ")[2]
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'")=="0","rejected database was created")
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='after_"+label.replacingOccurrences(of:"-",with:"_")+"'")=="0","database failure did not block following DDL")
@@ -640,7 +1125,7 @@ public enum DMLQualification {
                 let missing=try start(DDLCoverageCases.missingTemplate,configuration("ddl-like-missing-template",at:missingStart,count:2));try waitForReader(missing)
                 _ = try h.sql("native","START REPLICA")
                 _ = try h.sql("source","CREATE TABLE poc.failed_like LIKE poc.only_source; CREATE TABLE poc.after_failed_like(id INT PRIMARY KEY)")
-                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"single primary-key")
+                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"requires a primary key with 1 to 16 columns")
                 let failureDeadline=Date().addingTimeInterval(20)
                 var nativeFailure=try h.status()
                 while nativeFailure["Last_SQL_Errno"] == "0" && Date()<failureDeadline {
@@ -665,7 +1150,7 @@ public enum DMLQualification {
                 }
                 // A valid source DDL outside the grammar stops before mutation.
                 let unsupported=try start(DDLCoverageCases.unsupported,configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
-                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DECIMAL(10,2) NULL")
+                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported JSON NULL")
                 _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
                 try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
                 try require(state("ddl-unsupported","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","unsupported DDL advanced checkpoint")
@@ -762,6 +1247,60 @@ public enum DMLQualification {
                 _ = try h.sql("native","STOP REPLICA")
                 try cases.pass("discovery")
                 report["automatic_discovery"]="multiple_tables_nonleading_keys_MINIMAL_and_FULL"
+                // The sampled fleet exceeds the former 64-table ceiling.
+                for service in h.services {
+                    let engine = service == "source" ? "InnoDB" : "MyISAM"
+                    let creates = (0..<160).map { "CREATE TABLE poc.capacity_\($0)(id INT PRIMARY KEY,v INT) ENGINE=\(engine)" }.joined(separator:";")
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; "+creates)
+                }
+                let capacity = try start(QualificationCase("table-capacity", "Discover and apply 160 tables in one session"),configuration("table-capacity",at:try h.boundary("source"),count:160))
+                try waitForReader(capacity)
+                _ = try h.sql("source",(0..<160).map { "INSERT INTO poc.capacity_\($0) VALUES(1,\($0))" }.joined(separator:";"))
+                _ = try finish(capacity,"table-capacity",success:true)
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                let capacityRows = (0..<160).map { "SELECT id,v FROM poc.capacity_\($0)" }.joined(separator:" UNION ALL ")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT COUNT(*),SUM(v) FROM ("+capacityRows+") t") == "160\t12720","many-table rows differ")
+                }
+                try require(state("table-capacity","SELECT COUNT(*) FROM schemas") == "160","many-table schemas were lost")
+                try cases.pass("table-capacity")
+
+                for service in ["native","target57"] {
+                    _ = try h.sql(service,"SET GLOBAL default_storage_engine=MyISAM")
+                }
+                var resumeConfig = configuration("composite-resume",at:try h.boundary("source"),count:2)
+                let initial = try start(QualificationCase("composite-resume-initial", "Create and persist a composite primary key at a clean stop"),resumeConfig)
+                try waitForReader(initial)
+                _ = try h.sql("source","CREATE TABLE poc.composite_resume(id INT,report_date DATE,payload CHAR(4),PRIMARY KEY(report_date,id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; INSERT INTO poc.composite_resume VALUES(7,'2026-01-01','one'),(7,'2026-01-02','two')")
+                _ = try finish(initial,"composite-resume-initial",success:true)
+                try cases.pass("composite-resume-initial")
+                _ = try h.sql("source","ALTER TABLE poc.composite_resume ADD COLUMN score INT NULL; RENAME TABLE poc.composite_resume TO poc.composite_renamed; UPDATE poc.composite_renamed SET report_date='2026-01-03',payload='new' WHERE report_date='2026-01-01' AND id=7; DELETE FROM poc.composite_renamed WHERE report_date='2026-01-02' AND id=7")
+                var resumeSource = resumeConfig["source"] as! [String:Any]
+                resumeSource["stopAfterTransactions"] = 4; resumeConfig["source"] = resumeSource
+                let resumedComposite = try start(QualificationCase("composite-resume", "Resume a composite key through ADD, RENAME and key-changing DML"),resumeConfig,initialize:false)
+                _ = try finish(resumedComposite,"composite-resume",success:true)
+                _ = try h.sql("native","START REPLICA")
+                try ModifyIndexCases.waitNative(h,try h.boundary("source"))
+                _ = try h.sql("native","STOP REPLICA")
+                for service in h.services {
+                    try require(h.sql(service,"SELECT id,report_date,payload,score FROM poc.composite_renamed") == "7\t2026-01-03\tnew\tNULL","composite resume data differs")
+                }
+                try require(state("composite-resume","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied FROM state") == "STOPPED|6|4","composite resume checkpoint differs")
+                try cases.pass("composite-resume")
+                for service in ["source","target57"] {
+                    let engine = service == "source" ? "InnoDB" : "MyISAM"
+                    _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.composite_collision(id INT,report_date DATE,v INT,PRIMARY KEY(report_date,id)) ENGINE=\(engine); INSERT INTO poc.composite_collision VALUES(7,'2026-01-01',1)")
+                }
+                _ = try h.sql("target57","INSERT INTO poc.composite_collision VALUES(7,'2026-01-02',2)")
+                let collisionStart = try h.boundary("source")
+                _ = try h.sql("source","UPDATE poc.composite_collision SET report_date='2026-01-02' WHERE report_date='2026-01-01' AND id=7")
+                let collision = try start(QualificationCase("composite-collision", "Reject a changed composite key occupied by another target row"),configuration("composite-collision",at:collisionStart,count:1))
+                _ = try finish(collision,"composite-collision",success:false,reason:"updated primary key already exists")
+                try require(h.sql("target57","SELECT report_date,v FROM poc.composite_collision ORDER BY report_date") == "2026-01-01\t1\n2026-01-02\t2","composite collision changed target rows")
+                try require(state("composite-collision","SELECT transactions_applied FROM state") == "0","composite collision advanced checkpoint")
+                try cases.pass("composite-collision")
                 // A dedicated replica retains validated schema across idle lock
                 // releases. Local schema changes during apply are unsupported.
                 for service in ["source","target57"] {
@@ -807,7 +1346,7 @@ public enum DMLQualification {
                     }
                     let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
                     _ = try h.sql("source","INSERT INTO poc.\(table) VALUES(1)")
-                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "single primary-key" : "signedness")
+                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "requires a primary key" : "signedness")
                     try require(state(label,"SELECT transactions_applied FROM state") == "0","invalid schema advanced checkpoint")
                     try cases.pass(label)
                 }
@@ -912,10 +1451,27 @@ public enum DMLQualification {
         stage("cleaning up")
         var cleanup: [String] = []
         for client in clients {
+            if selection.codeCoverage {
+                do {
+                    // Give an interrupted fixture a chance to flush its profile.
+                    _ = try docker(["stop", "--time", "15", client])
+                    let exit = try docker(["inspect", client, "--format", "{{.State.ExitCode}}"] ).text
+                    coverageInvocations.append(["label": coverageLabels[client]!, "exit_code": Int(exit) ?? -1])
+                } catch { cleanup.append("coverage process exit: " + String(describing: error)) }
+            }
             if let logs = try? docker(["logs",client]) { try? (logs.stdout + logs.stderr).write(to:output.appendingPathComponent(client + ".log")) }
             do { _ = try docker(["rm","-f",client]) } catch { cleanup.append(String(describing:error)) }
         }
         if helperCreated {
+            if selection.codeCoverage {
+                do {
+                    let invocations = output.appendingPathComponent("code-coverage-invocations.json")
+                    try writeJSON(coverageInvocations, to: invocations)
+                    _ = try docker(["cp", invocations.path, evidenceHelper + ":/evidence/code-coverage-invocations.json"])
+                    try CodeCoverage.collect(runner, image: image, volume: evidenceVolume, label: h.project)
+                }
+                catch { cleanup.append("code coverage: " + String(describing: error)) }
+            }
             do { _ = try docker(["cp",evidenceHelper + ":/evidence/.",output.path]) } catch { cleanup.append("evidence copy: " + String(describing:error)) }
             do { _ = try docker(["rm","-f",evidenceHelper]) } catch { cleanup.append(String(describing:error)) }
         }

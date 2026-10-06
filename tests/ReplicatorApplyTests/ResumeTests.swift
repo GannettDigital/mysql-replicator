@@ -103,6 +103,21 @@ final class ResumeTests: XCTestCase {
         store=nil
         XCTAssertNoThrow(try StateStore(configuration:c,initialize:false))
     }
+    func testResumeRestoresMoreThan64TableSchemas() throws {
+        let path=try directory(), c=try config(path.path), group=try helper.groups()[0]
+        var store: StateStore?=try StateStore(configuration:c)
+        try store!.bindTargetIdentity(target); try store!.running()
+        let event=group.events.first(where:{$0.eventType == 19})!
+        let columns=helper.tables()[0].columns
+        for index in 0..<160 {
+            let table=ApplyTable(database:"poc",table:"capacity_\(index)",columns:columns,primaryKey:helper.tables()[0].primaryKey)
+            try store!.schema(table,event:event,coordinate:group.start)
+        }
+        try store!.stopped(); store=nil
+        let resumed=try StateStore(configuration:c,initialize:false)
+        XCTAssertEqual(resumed.currentSchemas.count,160)
+        XCTAssertEqual(Set(resumed.currentSchemas.map(\.table)),Set((0..<160).map { "capacity_\($0)" }))
+    }
     func testUnsafeOrInconsistentSavedStateIsRejectedWithoutChangingLifecycle() throws {
         let corruptions = [
             "UPDATE state SET lifecycle='BLOCKED',diagnostic='target failed'",

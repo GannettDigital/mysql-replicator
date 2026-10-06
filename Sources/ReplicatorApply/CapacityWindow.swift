@@ -19,6 +19,9 @@ struct CapacityWindow {
     func needsInspection(sequence: Int64, time: Double, relay: UInt64, incoming: Int64,
                          growth: Int64, databaseLimit: Int64, policy: StoragePolicy) -> Bool {
         guard let previous = self.sequence else { return true }
+        // Reconnect can trim the unapplied relay tail. The old free-space
+        // sample must be refreshed before charging growth from the new length.
+        if relay < self.relay { return true }
         let relayGrowth = Int64(relay-self.relay) + incoming
         return sequence-previous >= Int64(policy.capacityCheckEveryTransactions)
             || time-self.time >= Double(policy.capacityCheckIntervalSeconds)

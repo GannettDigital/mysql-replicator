@@ -3,18 +3,20 @@
 The optional top-level apply configuration field `replicateWildIgnoreTable`
 emulates MySQL's wildcard ignore rule for the supported replication flow:
 
-```json
-{
-  "replicateWildIgnoreTable": ["temp.%", "scratch.%", "poc.ignore\\_%"]
-}
+```yaml
+replicateWildIgnoreTable:
+  - 'temp.%'
+  - 'scratch.%'
+  - 'poc.ignore\_%'
 ```
 
-Merge this field into the existing apply configuration; it is not a complete
+Merge this field into the existing `apply.yaml`; it is not a complete
 config file. The example config defaults to an empty array (no exclusions).
 Rules match the full `database.table` name, regardless of the current `USE`
 database for row events or qualified DDL. `%` matches zero or more characters,
-`_` matches one character, and `\` escapes the next character. In JSON, `\\_`
-represents a literal underscore. Names are case-sensitive; configured filtering
+`_` matches one character, and `\` escapes the next character. YAML single quotes
+preserve the backslash, so `'poc.ignore\_%'` matches a literal underscore after
+`ignore`. Names are case-sensitive; configured filtering
 requires `lower_case_table_names=0` on both source and target. Patterns use ASCII,
 are limited to 128 entries of at most 512 bytes, and require nonempty database
 and table components separated by one dot.
@@ -52,7 +54,7 @@ source-group count (includes filtered groups); `rowsApplied` and `ddlApplied`
 count target operations. Existing timestamped history retention and SQLite/relay
 limits remain in force. Filtering does not remove events from the local relay.
 
-On a clean stop, resume with the same config using `run --config apply.json`.
+On a clean stop, resume with the same config using `run --config apply.yaml`.
 Saved GTIDs/position take precedence over the config baseline, including ignored
 GTIDs. Patterns are read on each start, so operators can change them while stopped
 for subsequent events. Removing an exclusion does **not** backfill earlier ignored

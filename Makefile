@@ -9,6 +9,18 @@ build: codec
 test: codec
 	cargo test --manifest-path rust/Cargo.toml --locked
 	swift test
+
+.PHONY: coverage-unit coverage-report periphery
+coverage-unit:
+	python3 tools/code_coverage.py unit
+
+# Explicit inputs prevent old integration runs from inflating the report.
+coverage-report:
+	python3 tools/code_coverage.py merge $(INPUTS)
+
+periphery:
+	cargo build --manifest-path rust/Cargo.toml --locked
+	periphery scan --strict
 native-smoke:
 	swift run replicator-lab native-smoke $(ARGS)
 native-suite:
@@ -76,3 +88,12 @@ demo-sql:
 .PHONY: benchmark-capture
 benchmark-capture:
 	swift run replicator-lab benchmark-capture $(ARGS)
+
+.PHONY: release-check release-artifacts
+release-check:
+	python3 tools/release_version.py
+	python3 -m unittest discover -s tools -p 'test_*.py'
+
+# Docker only: export is gated by installation and archive tests.
+release-artifacts: release-check
+	docker build --platform linux/amd64 --target release-export -f docker/packaging/Dockerfile --output type=local,dest=artifacts/release .

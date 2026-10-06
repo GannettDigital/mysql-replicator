@@ -1,0 +1,11 @@
+# Include tests in the reference graph, but report only our shipping/harness code.
+report_include:
+  - Sources/**
+retain_codable_properties: true
+disable_redundant_public_analysis: true
+disable_update_check: true
+relative_results: true
+clean_build: true
+build_arguments:
+  - --build-tests
+  - --enable-index-store

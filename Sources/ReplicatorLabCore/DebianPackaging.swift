@@ -1,7 +1,8 @@
 import Foundation
+import ReplicatorConfiguration
 
 public struct DebianPackagingOptions {
-    public var version: String = "0.1.0"
+    public let version: String = ReleaseVersion.debian
     public var outputDirectory: String = "artifacts/deb"
     public var skipBuild: Bool = false
     public var skipVerification: Bool = false
@@ -11,14 +12,7 @@ public struct DebianPackagingOptions {
         while let arg = iter.next() {
             switch arg {
             case "--version":
-                guard let v = iter.next(), !v.isEmpty else {
-                    throw LabError("--version requires a non-empty version string")
-                }
-                // Absolute anchors reject trailing line terminators on Linux as well as macOS.
-                guard v.range(of: #"\A[0-9][a-zA-Z0-9.+~]*(?:-[a-zA-Z0-9.+~]+)?\z"#, options: .regularExpression) != nil else {
-                    throw LabError("invalid Debian package version: '\(v)' (expected e.g. 0.1.0 or 0.1.0-1)")
-                }
-                self.version = v
+                throw LabError("package-deb version comes from VERSION; edit it and run python3 tools/release_version.py --write instead of using --version")
             case "--output":
                 guard let out = iter.next(), !out.isEmpty else {
                     throw LabError("--output requires a directory path")
@@ -84,7 +78,7 @@ public enum DebianPackaging {
         }
 
         let debPath = outDir.appendingPathComponent(debName).path
-        print("\nPASS: Debian package created and verified successfully:")
+        print(options.skipVerification ? "\nCREATED (installation verification skipped):" : "\nPASS: Debian package created and verified successfully:")
         print("  Package:  \(debPath)")
         if let sha = try? String(contentsOf: outDir.appendingPathComponent("\(debName).sha256"), encoding: .utf8) {
             print("  Checksum: \(sha.trimmingCharacters(in: .whitespacesAndNewlines))")

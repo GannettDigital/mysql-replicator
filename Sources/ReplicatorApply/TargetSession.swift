@@ -9,6 +9,7 @@ final class TargetSession {
     let group: MultiThreadedEventLoopGroup
     let connection: MySQLConnection
     let timings: StageTimings
+    var statementTrace = TargetStatementTrace()
     var lockEpoch = TableLockEpoch()
     let config: ApplyConfiguration
     init(configuration: ApplyConfiguration,password: String, timings: StageTimings = .init()) throws {
@@ -23,26 +24,39 @@ final class TargetSession {
             let address = try c.unixSocket.map { try SocketAddress(unixDomainSocketPath:$0) }
                 ?? SocketAddress.makeAddressResolvingHost(c.host!,port:c.port!)
             connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.requireTLS ? tls : nil,serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
-        } catch { try? group.syncShutdownGracefully(); throw error }
+        } catch {
+            try? group.syncShutdownGracefully()
+            let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT
+            if isTargetTransportFailure(error) || missingSocket { throw TargetConnectionFailure(description:"target connection unavailable") }
+            throw error
+        }
     }
     deinit { try? connection.close().wait(); try? group.syncShutdownGracefully() }
     func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
         if config.applierProfiling != true { return try body() }
         return try timings.measure("apply.detail." + stage,body)
     }
+    func checkConnection() throws {
+        if connection.isClosed { throw TargetConnectionFailure(description:"target connection closed") }
+    }
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
-    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10) throws -> ([MySQLRow],UInt64?) {
+    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false) throws -> ([MySQLRow],UInt64?) {
+        try checkConnection()
         let timer = connection.eventLoop.scheduleTask(in:.seconds(Int64(timeoutSeconds))) { _ = self.connection.close() }
         defer { timer.cancel() }
         var affected: UInt64?
+        if mutation { statementTrace = TargetStatementTrace(phase:.possiblyExecuted,sql:sql) }
         do {
             let rows = try timings.measure("target.sql") {
                 try profile(textProtocol ? "sql.text" : "sql.prepared") {
                     try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
                 }
             }
+            if mutation { statementTrace.phase = .acknowledged }
             return (rows,affected)
+        } catch let e where isTargetTransportFailure(e) {
+            throw TargetConnectionFailure(description:"target connection interrupted")
         } catch let e as MySQLError {
             switch e {
             case .duplicateEntry: throw ApplyError("target SQL error 1062 (duplicate key)")
@@ -76,7 +90,9 @@ final class TargetSession {
         guard let packet = Int(try scalar("SELECT @@max_allowed_packet AS v") ?? ""), packet >= 4096 else { throw ApplyError("invalid target packet limit") }
         insertByteLimit = min(config.batchPolicy.maximumInsertBytes,packet/2)
         try nativeExclusion()
-        try require(try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v") == "1","target already has a Swift writer")
+        let ownership=try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v")
+        if ownership == "0" { throw TargetConnectionFailure(description:"waiting for target writer ownership") }
+        try require(ownership == "1","target writer ownership is indeterminate")
         try nativeExclusion()
         _ = try query("SET @@SESSION.GTID_NEXT = 'AUTOMATIC'")
         _ = try query("SET SESSION autocommit=1")
@@ -86,6 +102,7 @@ final class TargetSession {
 
     }
     func resetDMLSession() throws {
+        _ = try query("SET SESSION timestamp=DEFAULT")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
@@ -103,41 +120,43 @@ final class TargetSession {
             let table: ApplyTable
             if let cached = discovered[identity] { table = cached }
             else {
-                try require(discovered.count < 64,"discovered schema limit reached")
+                try require(discovered.count < maximumCachedTables,"discovered schema limit reached")
                 // Discovery is a drained barrier. Release any prior table lock
                 // before querying metadata for a previously unseen table.
                 try unlock()
                 table=try readSchema(database:database,name:name)
             }
-            try Self.validateTableMap(event, table:table)
+            try Self.validateTableMap(event, table:table,compatibility:config.compatibilityPolicy)
             discovered[identity] = table
             return table
         }
     }
     /// Pure source/target compatibility validation; safe with an immutable table
     /// snapshot while the target connection executes an earlier batch.
-    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable) throws {
+    static func validateTableMap(_ event: DecodedEvent, table: ApplyTable,compatibility: CompatibilityPolicy = .init()) throws {
         guard let wire = event.wireColumns else { throw ApplyError("missing table-map metadata") }
-        try DMLTablePlan(table).validate(wire:wire)
+        try DMLTablePlan(table,compatibility:compatibility).validate(wire:wire)
     }
 
     func readSchema(database: String,name: String) throws -> ApplyTable {
         try profile("target.read_schema") {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
-            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
             let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
-            try require(keys.count == 1,"discovered target requires a single primary-key column")
+            try require((1...16).contains(keys.count),"discovered target requires a primary key with 1 to 16 columns")
             var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
                 guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
                 var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
                 column.characterSet=row.column("CHARACTER_SET_NAME")?.string
                 column.defaultValue=row.column("COLUMN_DEFAULT")?.string
                 column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
+                column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }
                 return column
-            },primaryKey:keys[0].column("COLUMN_NAME")?.string ?? "")
+            },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
             let encoding=try tableEncoding(TableName(database:database,table:name))
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
-            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKey)
+            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKeyColumns)
+            table.partitions=try readPartitions(database:database,name:name)
             try table.validate(); try verifySchema(table)
             return table
         }
@@ -145,7 +164,7 @@ final class TargetSession {
     private func normalizeType(_ type: String) -> String {
         type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
-    func readIndexes(database:String,name:String,primaryKey:String) throws -> [ApplyIndex] {
+    func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
         let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
         var indexes:[ApplyIndex]=[], primary=0
         for row in rows {
@@ -155,7 +174,7 @@ final class TargetSession {
             let prefix=row.column("SUB_PART")?.int
             if name == "PRIMARY" {
                 primary += 1
-                try require(primary == 1 && column == primaryKey && ordinal == 1 && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
+                try require(primary <= primaryKey.count && column == primaryKey[primary-1] && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
             } else {
                 let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction)
                 if let previous=indexes.last, previous.name == name {
@@ -167,13 +186,13 @@ final class TargetSession {
                 }
             }
         }
-        try require(primary == 1,"missing primary-key index")
+        try require(primary == primaryKey.count,"missing primary-key index")
         return indexes.sorted{$0.name.lowercased() < $1.name.lowercased()}
     }
     func verifySchema(_ t: ApplyTable) throws {
         validatedPlans.removeValue(forKey:t.identity)
         try timings.measure("target.schema") { try verifyTargetSchema(t) }
-        try require(validatedPlans.count < 64,"validated schema limit reached")
+        try require(validatedPlans.count < maximumCachedTables,"validated schema limit reached")
         validatedPlans[t.identity] = try DMLSQLPlan(t)
     }
     private func verifyTargetSchema(_ t: ApplyTable) throws {
@@ -183,15 +202,15 @@ final class TargetSession {
         // A collation uniquely determines its charset; discovery/DDL resolution
         // already validates that mapping when constructing the ApplyTable.
         try require(metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,"target table defaults differ from historical schema")
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue,"target schema differs from historical manifest")
+            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue && (try r.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }) == c.generationExpression,"target schema differs from historical manifest")
         }
-        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKey) == t.secondaryIndexes,"target indexes differ from historical schema")
+        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
         try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
-        try require(try query("SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL",binds).0.isEmpty,"partitioned target tables are unsupported")
+        try require(try readPartitions(database:t.database,name:t.table) == t.partitions,"target partition layout differs from historical schema")
     }
     private func verifyTriggerVisibility(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
@@ -211,7 +230,7 @@ final class TargetSession {
     }
     func lock(_ table: ApplyTable) throws {
         // GET_LOCK belongs to this connection until explicit release or session
-        // death. This session never releases it or reconnects after an error.
+        // death. Reconnect creates a new session and must acquire ownership again.
         if !config.target.explicitTableLocks {
             if validatedPlans[table.identity]?.table != table { try verifySchema(table) }
             return
@@ -253,12 +272,12 @@ final class TargetSession {
         case .absent: throw ApplyError("absent full row value")
         }
     }
-    func read(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
+    func read(_ t: ApplyTable, key: [DecodedValue]) throws -> [DecodedValue]? {
         try timings.measure("target.read") { try readRow(t,key:key) }
     }
-    private func readRow(_ t: ApplyTable, key: DecodedValue) throws -> [DecodedValue]? {
+    private func readRow(_ t: ApplyTable, key: [DecodedValue]) throws -> [DecodedValue]? {
         let plan = try sqlPlan(t)
-        let rows = try query(plan.select,[try bind(key)]).0
+        let rows = try query(plan.select,try key.map(bind)).0
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
         guard let row = rows.first else { return nil }
         return try profile("target.decode_result") {
@@ -284,27 +303,32 @@ final class TargetSession {
     }
     private func applyRow(_ m: Mutation) throws {
         let t = m.table, row = m.row, plan = try sqlPlan(t)
-        let keyIndex = plan.keyIndex
-        let oldKey = (row.before ?? row.after!)[keyIndex]
+        let oldImage = row.before ?? row.after!
+        let oldKey = plan.keyIndexes.map { oldImage[$0] }
         // Plain INSERT enforces primary and secondary unique keys atomically.
         // No IGNORE/REPLACE/upsert: duplicate keys still block the pending group.
         if row.operation != "insert" {
             try require(exactImage(try read(t,key:oldKey),row.before),"target before-image mismatch or missing row")
         }
-        if let before = row.before, let after = row.after, before[keyIndex] != after[keyIndex] {
-            try require(try read(t,key:after[keyIndex]) == nil,"updated primary key already exists")
+        if let before = row.before, let after = row.after {
+            let newKey = plan.keyIndexes.map { after[$0] }
+            if !exactImage(oldKey,newKey), let existing = try read(t,key:newKey) {
+                // A case/padding-equivalent text key may resolve to the same row.
+                try require(exactImage(existing,before),"updated primary key already exists")
+            }
         }
         let sql: String, values: [DecodedValue]
         switch row.operation {
-        case "insert": sql = plan.insert; values = row.after!
-        case "update": sql = plan.update; values = row.after! + [oldKey]
-        case "delete": sql = plan.delete; values = [oldKey]
+        case "insert": sql = plan.insert; values = plan.generatedIndexes.isEmpty ? row.after! : plan.writeIndexes.map { row.after![$0] }
+        case "update": sql = plan.update; values = (plan.generatedIndexes.isEmpty ? row.after! : plan.writeIndexes.map { row.after![$0] }) + oldKey
+        case "delete": sql = plan.delete; values = oldKey
         default: throw ApplyError("unsupported mutation")
         }
         let binds = try profile("target.bind") { try values.map(bind) }
-        let result = try query(sql,binds)
+        let result = try query(sql,binds,mutation:true)
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
+        if let after=row.after { try verifyGeneratedValues(t,after:after,plan:plan) }
         // A successful statement with the expected affected-row count is the
         // completion signal. Pre-write images, strict SQL mode and schema checks
         // remain enforced; independent qualification compares resulting values.
@@ -317,9 +341,24 @@ final class TargetSession {
             }, "incompatible INSERT chunk")
             try require(mutations.reduce(0) { $0+DMLExecution.insertBytes($1) } <= insertByteLimit,"INSERT chunk exceeds packet budget")
             let plan = try sqlPlan(first.table)
-            let binds = try profile("target.bind") { try mutations.flatMap { try $0.row.after!.map(bind) } }
-            let result = try query(plan.insertSQL(rows:mutations.count),binds)
+            let binds = try profile("target.bind") { try mutations.flatMap { mutation in try plan.writeIndexes.map { try bind(mutation.row.after![$0]) } } }
+            let result = try query(plan.insertSQL(rows:mutations.count),binds,mutation:true)
             try require(result.1 == UInt64(mutations.count),"unexpected multi-row INSERT affected-row count")
+            if !plan.generatedIndexes.isEmpty {
+                for mutation in mutations { try verifyGeneratedValues(first.table,after:mutation.row.after!,plan:plan) }
+            }
+        }
+    }
+    /// Generated values are computed by the target, not bound by us. Compare
+    /// those fields to the FULL source image before completing the intent. This
+    /// also catches mismatched expressions in an externally prepared snapshot;
+    /// TABLE_MAP contains types but does not describe generated expressions.
+    private func verifyGeneratedValues(_ table: ApplyTable,after: [DecodedValue],plan: DMLSQLPlan) throws {
+        let generated=plan.generatedIndexes
+        guard !generated.isEmpty else { return }
+        try profile("target.generated_check") {
+            guard let actual=try read(table,key:plan.keyIndexes.map{after[$0]}) else {throw ApplyError("generated-column result row is missing")}
+            try require(exactImage(generated.map{actual[$0]},generated.map{after[$0]}),"target generated-column values differ from source image")
         }
     }
     private func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {

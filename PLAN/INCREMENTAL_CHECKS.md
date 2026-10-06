@@ -33,6 +33,7 @@ make ddl-suite ARGS='--skip-build --case ddl-index-create --case ddl-index-renam
 make ddl-suite ARGS='--slice filters'
 make ddl-suite ARGS='--slice database --positioning file-position'
 make ddl-suite ARGS='--slice ordered --positioning gtid'
+make ddl-suite ARGS='--slice compatibility --positioning gtid'
 make dml-suite ARGS='--slice basic --positioning gtid'
 ```
 
@@ -54,14 +55,18 @@ DDL slices:
 | `database` | Database/schema creation fixtures and their rejections |
 | `ordered` | Existing ordered schema/DML chain and dependent rejection cases |
 | `filters` | Wildcard exclusion/native comparison and saved-checkpoint resume |
+| `compatibility` | Types/defaults, compound ALTER, database lifecycle, generated columns, partitions, views/routines, temporary workflows and rejection policies |
 
-`--case ID` can be repeated for the independent MODIFY/index fixtures printed by
-`--list`. It selects the `modify-index` slice automatically and rejects unknown
+`--case ID` can be repeated for the independent MODIFY/index or compatibility fixtures printed by
+`--list`. It selects the matching slice automatically and rejects unknown
 IDs or conflicting slice selections **before building/starting Docker**.
 `ddl-index-resume` automatically includes its `ddl-index-create` prerequisite.
 Selecting `ddl-index-create` alone does not run the resume case. The DML-only
 suite offers `all` and `basic`; its other fixtures retain their dependent chain.
 Native-only `make native-ddl-suite` remains a full reference run.
+
+The compatibility partition fixtures use an InnoDB native 8.4 reference and a
+MyISAM external 5.7 target. See [the exact scope](DDL_COMPATIBILITY.md).
 
 Builds are incremental by default. Use `--skip-build` only when the image was
 built from the exact current source/test/harness inputs. DDL evidence validates
