@@ -37,7 +37,7 @@ func main() throws -> Int32 {
           demo-down                # archive evidence and delete only this disposable stack
           demo-suite [--skip-build]
           upstream-tests
-          package-deb [--version VERSION] [--output DIR] [--skip-build] [--skip-verification]
+          package-deb [--output DIR] [--skip-build] [--skip-verification]
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.

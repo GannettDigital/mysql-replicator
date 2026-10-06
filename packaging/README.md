@@ -68,8 +68,12 @@ make deb
 # Custom output directory (version comes from VERSION):
 make deb ARGS="--output dist"
 # Equivalent:
-swift run replicator-lab package-deb [--version VERSION] [--output DIR] [--skip-build] [--skip-verification]
+swift run replicator-lab package-deb [--output DIR] [--skip-build] [--skip-verification]
 ```
+
+The package version is derived from `VERSION`; `package-deb --version` overrides
+are no longer supported. To change it, edit `VERSION` and run
+`python3 tools/release_version.py --write` before rebuilding.
 
 ### Package structure
 - `/usr/bin/mysql-replicator` (statically linked x86_64 musl binary, mode `0755`)
