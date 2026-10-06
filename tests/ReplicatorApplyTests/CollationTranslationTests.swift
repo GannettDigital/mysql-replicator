@@ -35,6 +35,30 @@ final class CollationTranslationTests: XCTestCase {
         let (_,text) = try translate(ansi,mode:4 | (1 << 20))
         XCTAssertEqual(text,ansi.replacingOccurrences(of:"SET utf8mb4",with:"SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
     }
+    func testTranslationRebasesSlicedInputForReplacementsAndInsertions() throws {
+        let cases = [
+            ("CREATE DATABASE d COLLATE utf8mb4_0900_ai_ci",
+             "CREATE DATABASE d COLLATE utf8mb4_unicode_ci"),
+            ("CREATE DATABASE d CHARACTER SET utf8mb4",
+             "CREATE DATABASE d CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"),
+            ("CREATE TABLE t(id INT PRIMARY KEY,v VARCHAR(20) CHARACTER SET utf8mb4 DEFAULT 'é') COLLATE utf8mb4_0900_ai_ci",
+             "CREATE TABLE t(id INT PRIMARY KEY,v VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'é') COLLATE utf8mb4_unicode_ci"),
+            ("CREATE TABLE t(id INT PRIMARY KEY,v VARCHAR(20) COLLATE utf8mb4_0900_ai_ci) COLLATE utf8mb4_0900_ai_ci",
+             "CREATE TABLE t(id INT PRIMARY KEY,v VARCHAR(20) COLLATE utf8mb4_unicode_ci) COLLATE utf8mb4_unicode_ci"),
+            ("CREATE DATABASE d", "CREATE DATABASE d")
+        ]
+        for (sql, expected) in cases {
+            let full = Data(("prefix" + sql + "suffix").utf8)
+            let sliced = full.dropFirst(6).dropLast(6)
+            XCTAssertEqual(sliced.startIndex, 6)
+            var parser = try DDLParser(sliced, database: "poc")
+            parser.compatibility = policy
+            _ = try parser.parse()
+            XCTAssertEqual(parser.translatedSQL(sliced), expected, sql)
+            XCTAssertEqual(parser.translatedSQL(Data(sql.utf8)), expected, sql)
+            XCTAssertEqual(String(decoding: sliced, as: UTF8.self), sql)
+        }
+    }
     func testCharsetOnlyDefaultsAreScopedToEachDeclaration() throws {
         for sql in ["CREATE DATABASE d CHARACTER SET=utf8mb4", "ALTER SCHEMA d CHARSET utf8mb4", "ALTER TABLE t ADD v VARCHAR(20) CHARACTER SET utf8mb4 DEFAULT 'x'", "CREATE TABLE t(id INT PRIMARY KEY,v VARCHAR(20) CHARACTER SET utf8mb4) CHARSET=utf8mb4"] {
             XCTAssertEqual(try translate(sql).1,sql.replacingOccurrences(of:"utf8mb4",with:"utf8mb4 COLLATE utf8mb4_unicode_ci"))

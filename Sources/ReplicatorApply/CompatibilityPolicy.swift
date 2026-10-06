@@ -45,7 +45,8 @@ extension DDLParser {
         return mapped
     }
     func translatedSQL(_ source: Data) -> String {
-        var bytes = source
+        // Lexer ranges are zero-based byte offsets, including for Data slices.
+        var bytes = [UInt8](source)
         for edit in edits.sorted(by:{$0.range.lowerBound > $1.range.lowerBound}) {
             bytes.replaceSubrange(edit.range,with:edit.replacement.utf8)
         }
