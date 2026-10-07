@@ -7,10 +7,10 @@ Replicate MySQL across versions where native replication does not meet your need
 `mysql-replicator` reads source binary logs and applies supported INSERT, UPDATE,
 DELETE and DDL changes to a dedicated replica.
 
-**First beta: `0.1.0-beta.1`.** The tested and enforced configuration is
-**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**. Other version/engine combinations,
-including upgrades to newer replicas, are not supported yet. Initial data copying
-is external; interrupted or uncertain writes can require DBA intervention.
+**First beta: `0.1.0-beta.1`.** The primary tested profile is
+**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**. Current source builds also include an
+[experimental 5.7 → 8.4 InnoDB DML profile](docs/REVERSE_REPLICATION.md). Initial
+data copying is external; interrupted or uncertain writes can require DBA intervention.
 See [supported behavior](PLAN/DML_APPLY.md) and [DDL compatibility](PLAN/DDL_COMPATIBILITY.md).
 
 ## Install and start
@@ -43,6 +43,8 @@ make demo-start
 
 Follow the [interactive demo workbook](PLAN/DEMO_WORKBOOK.md) to issue SQL and
 compare replicas, or use the [demo runbook](PLAN/DEMO.md). Clean up with `make demo-down`.
+
+For the experimental reverse flow, see the [5.7 → 8.4 InnoDB workbook](PLAN/REVERSE_DEMO_WORKBOOK.md).
 
 [Build, test and contribute](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [License](LICENSE) · [Third-party notices](NOTICE)

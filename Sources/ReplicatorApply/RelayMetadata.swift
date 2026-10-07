@@ -64,7 +64,7 @@ public enum RelayInspection {
         public let eventBytes: Int
         public let rawBase64: String?
     }
-    public static func inspect(file: URL, includeRaw: Bool = false, emit: (Record) throws -> Void) throws {
+    public static func inspect(file: URL, includeRaw: Bool = false, endOffset: UInt64? = nil, emit: (Record) throws -> Void) throws {
         let handle=try FileHandle(forReadingFrom:file)
         defer { try? handle.close() }
         var offset: UInt64=0
@@ -77,8 +77,13 @@ public enum RelayInspection {
             return data
         }
         while true {
+            if let endOffset, offset == endOffset { return }
+            try require(endOffset == nil || offset < endOffset!,"relay inspection exceeded requested boundary")
             let header=try read(8)
-            if header.isEmpty { return }
+            if header.isEmpty {
+                try require(endOffset == nil,"relay ended before requested boundary")
+                return
+            }
             try require(header.count == 8,"truncated relay frame header at byte \(offset)")
             let metadataLength=Int(RelayMetadata.read(header,at:0,as:UInt32.self))
             let eventLength=Int(RelayMetadata.read(header,at:4,as:UInt32.self))
@@ -89,6 +94,7 @@ public enum RelayInspection {
             try require(metadata.count == metadataLength && raw.count == eventLength,"truncated relay frame at byte \(offset)")
             let (value,version)=try RelayMetadata.decoded(metadata)
             let end=offset+UInt64(8+metadataLength+eventLength)
+            try require(endOffset == nil || end <= endOffset!,"relay frame crosses requested boundary")
             try emit(Record(relayOffset:offset,relayEnd:end,metadataVersion:version,kind:value.kind,file:value.file,
                             observedPosition:value.observedPosition,eventBytes:eventLength,rawBase64:includeRaw ? raw.base64EncodedString() : nil))
             offset=end

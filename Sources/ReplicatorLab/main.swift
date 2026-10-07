@@ -38,7 +38,12 @@ func main() throws -> Int32 {
           demo-suite [--skip-build]
           upstream-tests
           package-deb [--output DIR] [--skip-build] [--skip-verification]
-          reverse-suite [--skip-build] # 5.7 InnoDB → 8.4 InnoDB
+          reverse-suite [--skip-build] [--events N] # 5.7 InnoDB → 8.4 InnoDB
+          reverse-demo-up [--skip-build]
+          reverse-demo-start | reverse-demo-stop | reverse-demo-status | reverse-demo-compare
+          reverse-demo-sql FILE | reverse-demo-inspect | reverse-demo-down
+          reverse-demo-resolve ACTION --gtids GTID_SET --reason TEXT
+          reverse-demo-suite [--skip-build]
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
@@ -48,6 +53,9 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command.hasPrefix("reverse-demo-") {
+        try ReverseDemo.run(root:root,command:command,arguments:args); return 0
+    }
     if command.hasPrefix("demo-") {
         try DemoSession.run(root: root, command: command, arguments: args); return 0
     }
@@ -72,8 +80,14 @@ func main() throws -> Int32 {
         return 0
     }
     if command == "reverse-suite" {
-        try require(args.isEmpty || args == ["--skip-build"],"reverse-suite accepts only --skip-build")
-        try ReverseQualification.run(root:root,build:args.isEmpty)
+        let build = !args.contains("--skip-build")
+        args.removeAll { $0 == "--skip-build" }
+        var events = 100
+        if !args.isEmpty {
+            guard args.count == 2, args[0] == "--events", let n = Int(args[1]) else { throw LabError("reverse-suite accepts --skip-build and --events N") }
+            events = n
+        }
+        try ReverseQualification.run(root:root,build:build,events:events)
         return 0
     }
     if command == "live-suite" {

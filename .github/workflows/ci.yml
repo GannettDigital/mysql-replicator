@@ -98,6 +98,7 @@ jobs:
         run: |
           docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:reverse
           make reverse-suite ARGS="--skip-build"
+          make reverse-demo-suite ARGS="--skip-build"
 
       - name: Measure applier coverage on DML and DDL sample
         run: make integration-smoke ARGS="--coverage"
@@ -119,6 +120,7 @@ jobs:
             artifacts/ddl-suite/
             artifacts/dml-suite/build-*.log
             artifacts/reverse-suite/
+            artifacts/reverse-demo-suite/
           if-no-files-found: ignore
 
   combined-coverage:

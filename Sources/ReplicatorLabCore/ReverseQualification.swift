@@ -3,74 +3,23 @@ import Foundation
 /// Independent initial profile qualification. The service names are inherited
 /// from NativeHarness: target57 is our source; source is our 8.4 destination.
 public enum ReverseQualification {
-    public static func run(root: URL, build: Bool) throws {
-        let h = NativeHarness(root:root,config:.init(),artifactCategory:"reverse-suite")
-        let runner = h.runner, output = h.output, tls = output.appendingPathComponent("tls")
-        let image = "mysql-replicator-packaging:reverse"
-        try FileManager.default.createDirectory(at:tls,withIntermediateDirectories:true)
-        func stage(_ message: String) { FileHandle.standardError.write(Data(("Reverse: " + message + "\n").utf8)) }
-        stage("evidence: " + output.path)
-        if build {
-            let result = try runner.run(["docker","build","--platform","linux/amd64","--target","runtime","-f","docker/packaging/Dockerfile","-t",image,"."],timeout:1800,checked:false)
-            try (result.stdout+result.stderr).write(to:output.appendingPathComponent("build.log"))
-            try require(result.status == 0,"reverse image build failed; see build.log")
-        }
-        let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
-        func docker(_ args: [String], checked: Bool = true) throws -> CommandResult {
-            try runner.run(["docker"]+args,checked:checked)
-        }
-        let volume = h.project + "-evidence", helper = h.project + "-copy"
-        h.composeOverlays = [root.appendingPathComponent("docker/reverse/compose.yaml").path]
-        h.composeEnvironment = ["REPLICATOR_REVERSE_EVIDENCE_VOLUME":volume]
-        var clients: [String] = [], started = false, createdVolume = false, createdHelper = false
-        var report: [String:Any] = ["profile":"mysql57-to-mysql84-innodb","result":"failed","image":qualifiedImage]
-        defer {
-            for client in clients { _ = try? docker(["rm","-f",client],checked:false) }
-            if started { _ = try? h.compose(["down","-v","--remove-orphans"],checked:false) }
-            if createdHelper { _ = try? docker(["rm","-f",helper],checked:false) }
-            if createdVolume { _ = try? docker(["volume","rm",volume],checked:false) }
-        }
+    public static func run(root: URL, build: Bool, events: Int = 100) throws {
+        try require((1...100000).contains(events),"events must be 1...100000")
+        let fixture=ReverseFixture(root:root)
+        let h=fixture.h, runner=h.runner, output=h.output
+        func stage(_ message: String) { fixture.stage(message) }
+        func docker(_ args: [String], checked: Bool = true) throws -> CommandResult { try fixture.docker(args,checked:checked) }
+        defer { try? fixture.cleanup() }
+        var report: [String:Any] = ["profile":"mysql57-to-mysql84-innodb","result":"failed"]
         do {
-            _ = try runner.run(["openssl","req","-x509","-newkey","rsa:2048","-nodes","-sha256","-days","2","-subj","/CN=Reverse Fixture CA","-keyout",tls.appendingPathComponent("ca-key.pem").path,"-out",tls.appendingPathComponent("ca.pem").path])
-            _ = try runner.run(["openssl","req","-newkey","rsa:2048","-nodes","-sha256","-subj","/CN=source","-keyout",tls.appendingPathComponent("server-key.pem").path,"-out",tls.appendingPathComponent("server.csr").path])
-            let ext = tls.appendingPathComponent("extensions.cnf")
-            try "subjectAltName=DNS:source,DNS:target57\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n".write(to:ext,atomically:true,encoding:.utf8)
-            _ = try runner.run(["openssl","x509","-req","-in",tls.appendingPathComponent("server.csr").path,"-CA",tls.appendingPathComponent("ca.pem").path,"-CAkey",tls.appendingPathComponent("ca-key.pem").path,"-CAcreateserial","-days","2","-sha256","-extfile",ext.path,"-out",tls.appendingPathComponent("server.pem").path])
-            try FileManager.default.setAttributes([.posixPermissions:0o644],ofItemAtPath:tls.appendingPathComponent("server-key.pem").path)
-            _ = try docker(["volume","create",volume]); createdVolume = true
-            _ = try docker(["create","--name",helper,"--platform","linux/amd64","--mount","type=volume,src=\(volume),dst=/evidence","--entrypoint","/bin/true",qualifiedImage]); createdHelper = true
-            _ = try docker(["cp",tls.path,helper+":/evidence/tls"])
-            started = true
-            stage("starting 5.7 source and 8.4 target")
-            _ = try h.compose(["up","-d","--build","--wait","--wait-timeout","300","target57","source"],timeout:360,onOutput:{ FileHandle.standardError.write($0) })
-            let seed = """
-                CREATE DATABASE reverse_poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-                CREATE TABLE reverse_poc.items (
-                  report_date DATE NOT NULL, id BIGINT UNSIGNED NOT NULL,
-                  value VARCHAR(100) NOT NULL, amount DECIMAL(12,2) NOT NULL,
-                  choice ENUM('','ready','done') NOT NULL, flags SET('a','b') NOT NULL,
-                  payload VARBINARY(32), PRIMARY KEY(report_date,id)
-                ) ENGINE=InnoDB;
-                CREATE TABLE reverse_poc.aux (id INT PRIMARY KEY, counter INT NOT NULL) ENGINE=InnoDB;
-                INSERT INTO reverse_poc.items VALUES ('2026-10-06',1,'seed',1.00,'ready','a',X'00FF');
-                """
-            for service in ["target57","source"] { _ = try h.sql(service,seed) }
-            _ = try h.sql("target57","CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE,REPLICATION CLIENT ON *.* TO 'capture_fixture'@'%'")
-            _ = try h.sql("source","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,TRIGGER,REPLICATION CLIENT ON *.* TO 'apply_fixture'@'%'")
-            let baseline = try h.boundary("target57"), uuid = try h.sql("target57","SELECT @@server_uuid")
-            report["baseline"] = baseline.json
-            report["source_version"] = try h.sql("target57","SELECT VERSION()")
-            report["target_version"] = try h.sql("source","SELECT VERSION()")
-            var config: [String:Any] = ["version":2,"profile":"mysql57-to-mysql84-innodb","stateDirectory":"/evidence/state",
-                "source":["version":2,"host":"target57","port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"target57","caFile":"/evidence/tls/ca.pem","serverID":9101,"sourceUUID":uuid,"mode":"gtid","start":["file":baseline.file,"position":baseline.position,"executedGTIDs":baseline.gtids],"stopAfterTransactions":2],
-                "target":["host":"source","port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"source","caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
-                "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024]]
+            try fixture.prepare(build:build)
+            report.merge(fixture.versions) { _,new in new }
+            report["image"]=fixture.image; report["baseline"]=fixture.bootstrap
+            var config=fixture.config
             func run(_ label: String, initialize: Bool, success: Bool) throws -> [String:Any] {
-                let path = output.appendingPathComponent(label+".yaml")
-                try writeYAML(config,to:path); _ = try docker(["cp",path.path,helper+":/evidence/"+label+".yaml"])
-                let client = h.project+"-"+label; clients.append(client)
-                _ = try docker(["run","-d","--name",client,"--platform","linux/amd64","--network",h.project+"_fixture","--mount","type=volume,src=\(volume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/usr/local/bin/mysql-replicator",qualifiedImage,"run","--config","/evidence/"+label+".yaml"] + (initialize ? ["--initialize"] : []))
-                let exit = try runner.run(["docker","wait",client],timeout:90).text
+                fixture.config=config; try fixture.installConfig(label)
+                let client=try fixture.startClient(label,arguments:["run","--config","/evidence/"+label+".yaml"] + (initialize ? ["--initialize"] : []))
+                let exit = try runner.run(["docker","wait",client],timeout:300).text
                 let logs = try docker(["logs",client])
                 try logs.stdout.write(to:output.appendingPathComponent(label+".ndjson"))
                 try logs.stderr.write(to:output.appendingPathComponent(label+".diagnostic.json"))
@@ -96,28 +45,91 @@ public enum ReverseQualification {
                 """
             _ = try h.sql("target57",positive)
             report["positive"] = try run("positive",initialize:true,success:true)
-            let comparison = "SELECT report_date,id,HEX(value),amount,choice+0,flags+0,HEX(payload) FROM reverse_poc.items ORDER BY report_date,id; SELECT * FROM reverse_poc.aux ORDER BY id"
-            try require(try h.sql("target57",comparison) == h.sql("source",comparison),"reverse data mismatch")
+            let comparison = ReverseFixture.comparison
+            try fixture.awaitNative()
+            for destination in ["source","native"] { try require(try h.sql("target57",comparison) == h.sql(destination,comparison),"reverse data mismatch: " + destination) }
             var source = config["source"] as! [String:Any]; source["stopAfterTransactions"] = 1; config["source"] = source
             _ = try h.sql("target57","START TRANSACTION; UPDATE reverse_poc.aux SET counter=11 WHERE id=1; UPDATE reverse_poc.items SET choice='ready' WHERE id=1; COMMIT")
             report["resume"] = try run("resume",initialize:false,success:true)
-            try require(try h.sql("target57",comparison) == h.sql("source",comparison),"resumed data mismatch")
+            try fixture.awaitNative()
+            for destination in ["source","native"] { try require(try h.sql("target57",comparison) == h.sql(destination,comparison),"resumed data mismatch: " + destination) }
+            // Replay the same fully queued backlog sequentially, avoiding competing
+            // appliers on one Docker host. Timings include CLI/startup/wait overhead.
+            _ = try h.sql("native","STOP SLAVE")
+            let workload = (0..<events).map { i in
+                "START TRANSACTION; INSERT INTO reverse_poc.aux VALUES(\(1000+i),\(i)); UPDATE reverse_poc.items SET amount=\(i).00 WHERE id=1; COMMIT;"
+            }.joined(separator:"\n")
+            let workloadFile = output.appendingPathComponent("workload.sql")
+            try workload.write(to:workloadFile,atomically:true,encoding:.utf8)
+            let sourceID = try h.compose(["ps","-q","target57"]).text
+            _ = try docker(["cp",workloadFile.path,sourceID+":/tmp/reverse-workload.sql"])
+            stage("generating \(events) transactions, then measuring sequential backlog replay")
+            _ = try h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only","target57","sh","-c","mysql --no-defaults -uroot < /tmp/reverse-workload.sql"],timeout:300)
+            let nativeBefore=try fixture.counters("native"), targetBefore=try fixture.counters("source")
+            let clock = ProcessInfo.processInfo.systemUptime
+            _ = try h.sql("native","START SLAVE")
+            try fixture.awaitNative()
+            let nativeSeconds = ProcessInfo.processInfo.systemUptime-clock
+            source["stopAfterTransactions"] = events; config["source"] = source
+            let applyStart = ProcessInfo.processInfo.systemUptime
+            let benchmark = try run("benchmark",initialize:false,success:true)
+            let applySeconds = ProcessInfo.processInfo.systemUptime-applyStart
+            report["benchmark"] = ["transactions":events,"native_seconds":nativeSeconds,"replicator_seconds":applySeconds,
+                "native_transactions_per_second":Double(events)/nativeSeconds,"replicator_transactions_per_second":Double(events)/applySeconds,
+                "scope":"Sequential backlog replay including CLI/startup/wait overhead; native 5.7 vs target 8.4, linux/amd64, durable InnoDB, one applier each; not isolated applier CPU time",
+                "summary":benchmark]
+            let nativeAfter=try fixture.counters("native"), targetAfter=try fixture.counters("source")
+            report["benchmark_server_counter_deltas"] = ["native57":nativeAfter.reduce(into:[String:Int64]()) { $0[$1.key]=$1.value-(nativeBefore[$1.key] ?? 0) },
+                "target84":targetAfter.reduce(into:[String:Int64]()) { $0[$1.key]=$1.value-(targetBefore[$1.key] ?? 0) }]
+            report["server_counter_scope"] = "Global counters on isolated targets; includes control/status queries. Native row application does not issue SQL client statements."
+            try fixture.compare()
+            guard let applied=benchmark["appliedGTIDSet"] as? String else { throw LabError("missing benchmark GTID checkpoint") }
+            let expected=try h.boundary("target57")
+            try require(try h.sql("target57","SELECT GTID_SUBSET('"+expected.gtids+"','"+applied+"')") == "1","benchmark GTID checkpoint does not cover source")
+            try require(benchmark["transactionsApplied"] as? Int == events+3,"benchmark checkpoint mismatch")
+            stage("native: \(nativeSeconds)s; replicator: \(applySeconds)s")
+            source["stopAfterTransactions"] = 1; config["source"] = source
             // Diverge one key deliberately: source accepts both inserts, target
             // rejects the second. The first must roll back and stay unacknowledged.
-            _ = try h.sql("source","INSERT INTO reverse_poc.aux VALUES(99,99)")
-            _ = try h.sql("target57","START TRANSACTION; INSERT INTO reverse_poc.aux VALUES(3,30); INSERT INTO reverse_poc.aux VALUES(99,99); COMMIT")
+            for destination in ["source","native"] { _ = try h.sql(destination,"INSERT INTO reverse_poc.aux VALUES(99,99)") }
+            _ = try h.sql("target57","START TRANSACTION; UPDATE reverse_poc.items SET value='recovered' WHERE report_date='2026-10-06' AND id=1; INSERT INTO reverse_poc.aux VALUES(3,30); INSERT INTO reverse_poc.aux VALUES(99,99); COMMIT")
             let failed = try run("rollback",initialize:false,success:false)
             report["rollback"] = failed
             let progress = failed["progress"] as? [String:Any], diagnostic = progress?["targetFailure"] as? [String:Any]
             try require(diagnostic?["transactionOutcome"] as? String == "rolledBack","missing confirmed rollback diagnostic")
-            try require(progress?["transactionsApplied"] as? Int == 3,"failed transaction advanced checkpoint")
+            try require(progress?["transactionsApplied"] as? Int == events+3,"failed transaction advanced checkpoint")
             try require(try h.sql("source","SELECT COUNT(*) FROM reverse_poc.aux WHERE id=3") == "0","partial transaction committed")
-            _ = try docker(["cp",helper+":/evidence/state",output.path])
+            _ = try docker(["cp",fixture.helper+":/evidence/state",output.path])
             let state = try runner.run(["sqlite3",output.appendingPathComponent("state/state.sqlite").path,"SELECT lifecycle,transactions_applied FROM state; SELECT DISTINCT status FROM row_intents WHERE gtid=(SELECT active_gtid FROM state)"]).text
-            try require(state == "BLOCKED|3\nPENDING","rollback journal lost pending evidence")
-            report["state"] = state; report["result"] = "passed"
+            try require(state == "BLOCKED|\(events+3)\nPENDING","rollback journal lost pending evidence")
+            let deadline = Date().addingTimeInterval(30)
+            while true {
+                let status = try h.sql("native","SHOW SLAVE STATUS\\G",headers:true)
+                try status.write(to:output.appendingPathComponent("native-rollback-status.txt"),atomically:true,encoding:.utf8)
+                if status.contains("Last_SQL_Errno: 1062") { break }
+                try require(Date() < deadline,"native did not reject the duplicate key")
+                Thread.sleep(forTimeInterval:0.1)
+            }
+            try require(try h.sql("native","SELECT COUNT(*) FROM reverse_poc.aux WHERE id=3") == "0","native partial transaction committed")
+            report["state"] = state
+            fixture.config=config; try fixture.installConfig()
+            let inspected=try fixture.recovery(["inspect"],label:"recovery-inspection")
+            let pending=inspected["pending"] as? [[String:Any]]
+            try require(pending?.count == 1 && (pending?[0]["rows"] as? [Any])?.count == 3,"recovery inspection lost row evidence")
+            let evidenceRows=pending?[0]["rows"] as? [[String:Any]]
+            try require((evidenceRows?.first?["beforeKey"] as? [Any])?.count == 2,"recovery lost composite primary key")
+            guard let gtid=pending?[0]["gtid"] as? String else { throw LabError("missing pending GTID") }
+            // Reconcile the target-only conflicting row, then explicitly retry.
+            for destination in ["source","native"] { _ = try h.sql(destination,"DELETE FROM reverse_poc.aux WHERE id=99") }
+            report["recovery_resolution"]=try fixture.recovery(["resolve","retry","--gtids",gtid,"--reason","fixture removed target-only conflict; confirmed whole transaction rollback"],label:"recovery-resolution")
+            _ = try h.sql("native","START SLAVE")
+            report["recovery_resume"]=try run("recovered",initialize:false,success:true)
+            try fixture.compare()
+            let resolved=try fixture.recovery(["inspect"],label:"recovery-after-resume")
+            try require((resolved["pending"] as? [Any])?.isEmpty == true && (resolved["audit"] as? [Any])?.count == 1,"recovery audit missing after resume")
+            report["result"] = "passed"
             try writeJSON(report,to:output.appendingPathComponent("result.json"))
-            stage("PASS: multi-table transactions, 5.7 metadata, composite PK changes, resume and rollback")
+            stage("PASS: native comparison, multi-table transactions, composite keys, rollback and audited recovery/resume")
         } catch {
             report["error"] = String(describing:error)
             try? writeJSON(report,to:output.appendingPathComponent("result.json"))

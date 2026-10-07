@@ -32,7 +32,7 @@ particular, text is limited to the supported utf8mb4 collations. Composite keys,
 PK updates, multiple source statements and multiple tables per transaction are
 supported in this profile. Target triggers and foreign keys (including incoming
 references/cascades) are rejected. Dynamic DDL is blocked before execution in
-this first increment; schema reconciliation and DDL qualification are next work.
+this profile; dynamic DDL and foreign keys are outside the current work.
 
 The source needs its normal replication privileges. The target needs DML and
 schema visibility privileges, including explicit TRIGGER visibility and
@@ -57,31 +57,131 @@ transactions are not executed after failure. All unresolved intents are retained
 There is deliberately no automatic uncertain-write recovery. A crash after a
 target commit and before SQLite completion remains ambiguous. Preserve the
 entire state directory and target data for investigation. The existing `skip`
-command still refuses groups with write intents. The planned inspection and
-audited mark-applied/retry/skip commands are not implemented yet; do not edit
-SQLite lifecycle fields to bypass that refusal.
+command still refuses groups with write intents. Use the explicit reverse-profile
+recovery commands below instead of editing SQLite lifecycle fields.
+
+## Offline inspection and DBA resolution
+
+Stop the applier before inspecting or resolving; both commands acquire its
+exclusive state-directory lock. These commands make **no MySQL connections** and
+need no source/target passwords. They do not alter target rows or restart replication.
+
+```sh
+mysql-replicator recovery inspect --config apply.yaml > recovery.json
+mysql-replicator recovery resolve retry --gtids 'SOURCE_UUID:101-104' --reason 'Restored every pending transaction to its initial state; ticket DBA-123' --config apply.yaml
+mysql-replicator run --config apply.yaml
+```
+
+Inspection lists every pending group, GTID and source/relay boundary, retained
+schemas, each mutation's old/new primary key and before/after row images, and
+saved failure/statement diagnostics. Decimal and integer values remain strings
+with explicit types; binary values are base64. Expectations fold repeated writes
+and primary-key changes within each transaction into initial/final images. A
+missing initial/final field means no row at that key. SQL NULL is a typed value
+inside a row, distinct from an absent row.
+
+Compare this evidence to target rows while independent writes are stopped.
+Expectations use exact encoded keys: collation-equivalent keys may alias, and
+later pending transactions may overwrite earlier effects. A plausible final row
+match is evidence, **not proof of commit**. The tool does not classify target
+rows or infer which resolution to choose.
+
+| Action | Required GTIDs | Meaning |
+| --- | --- | --- |
+| `mark-applied` | Exactly the earliest pending GTID | DBA accepts its effects as applied; advance past it. |
+| `skip` | Exactly the earliest pending GTID | DBA accepts omitting it after reconciling the target; advance past it. |
+| `retry` | The complete unresolved GTID set | DBA has restored/reconciled every pending transaction so replay is safe; keep the previous applied checkpoint and re-fetch those GTIDs on resume. |
+
+Every action requires a nonempty `--reason`. Resolve accepted/skipped transactions
+in source order; remaining pending transactions leave the state BLOCKED. Retry
+names the **whole remaining batch**, since a crash can lose SQLite acknowledgements
+for several committed transactions. `retry --gtids none` is only for a crashed
+state with no pending intents; it publishes a clean stop at the already committed
+checkpoint. Source binlogs must still cover any transactions to be retried.
+
+`recovery_audit` in the same SQLite database stores the action, exact GTID set,
+reason, time and the full pre-resolution report (`evidence_json`). Audit insertion,
+checkpoint changes and journal resolution commit atomically. Original relay bytes
+referenced by intents are retained. Extra bytes beyond SQLite's durable relay
+length are archived as `recovery-tail-<audit-id>.bin`, synchronized, then removed
+from the active relay before resolution. An interrupted resolution can leave an
+unreferenced tail archive; preserve it with the rest of the state directory.
+
+`transactionsApplied` counts processed groups, including explicitly skipped ones;
+skips add no applied rows. The audit distinguishes skipped groups from accepted
+commits. Audit history is not automatically pruned; include it in storage planning.
+Recovery currently accepts format-9 reverse-profile DML only. DDL reconciliation,
+MyISAM recovery and automatic repair remain outside this command's scope.
 
 SQLite state format 9 pins the profile. Cleanly stopped older MyISAM state can
 upgrade in place; older state cannot be adopted as an InnoDB checkpoint. Older
 runtimes reject format 9. Back up the stopped state before upgrading.
 
+## Demo
+
+From a checkout with Docker and the build prerequisites in
+[CONTRIBUTING](../CONTRIBUTING.md):
+
+```sh
+make reverse-demo-up
+make reverse-demo-start
+make reverse-demo-sql FILE=examples/reverse-demo/01-success.sql
+```
+
+`up` prepares matching InnoDB tables, an isolated source 5.7, native reference
+5.7, destination 8.4 and a running idle applier shell container. It prints source/target SQL-shell commands and the path
+to generated `apply.yaml`. Replication starts separately with `reverse-demo-start`;
+status before that says `NOT_STARTED`. Repeating `up` reuses the existing session
+and repairs a missing applier container without resetting data. Use the preloaded `reverse_poc.items` and
+`reverse_poc.aux` tables; source DDL remains blocked. Do not reuse the original
+MyISAM demo's DDL examples.
+
+- `make reverse-demo-compare`: wait for catch-up, drain, compare rows/schema and source GTID coverage,
+  then restart an applier that was running. Pause source writes during comparison.
+- `make reverse-demo-status`: show containers, logs and native status.
+- `make reverse-demo-stop`: drain to a clean checkpoint; `reverse-demo-start` resumes.
+- `make reverse-demo-inspect`: inspect stopped/blocked/crashed state without MySQL.
+- `make reverse-demo-resolve ARGS="retry --gtids UUID:N --reason 'DBA reconciled all pending rows'"`:
+  record a deliberate resolution, then use `reverse-demo-start`.
+- `make reverse-demo-down`: archive evidence and delete only this disposable stack.
+
+For a controlled recovery exercise, stop source writes, drain the applier, insert
+a target-only row into `reverse_poc.aux`, then issue a source transaction that first
+inserts a different key and then that conflicting key. Restart the applier: it
+blocks and rolls back both inserts. Inspect the report, remove the target-only
+conflict, resolve `retry` for the reported GTID set and restart. The automated
+reverse suite performs this exercise against both appliers.
+
+Follow the [four-terminal reverse workbook](../PLAN/REVERSE_DEMO_WORKBOOK.md) for
+SQL prompts, expected rows, clean resume and a complete recovery exercise. The
+existing [8.4 → 5.7 workbook](../PLAN/DEMO_WORKBOOK.md) remains separate.
+
 ## Developer qualification
 
 ```sh
-make test
-make reverse-suite
+make reverse-suite ARGS="--events 10000"
+make reverse-demo-suite ARGS="--skip-build"
 ```
 
-The Docker fixture seeds two servers at a known boundary, exercises multi-table
-transactions, composite keys, repeated row updates, unsigned BIGINT values,
-decimal/ENUM/SET/binary values and clean resume. A deliberate target duplicate
-key checks that an earlier successful statement is rolled back, SQLite remains
-at the prior commit, and failed intents survive. Unit fault tests cover lost
-commit replies and failed rollback. Evidence goes to `artifacts/reverse-suite/`.
+The default reverse suite uses 100 benchmark transactions for CI. `--skip-build`
+reuses `mysql-replicator-packaging:reverse`; omit it when executable code changes.
+The fixture uses one 5.7 source feeding native 5.7 InnoDB and our 8.4 InnoDB target.
+All three run linux/amd64 with durable InnoDB settings and one ordered applier.
+It checks multi-table transactions, composite keys/PK moves, repeated updates,
+unsigned BIGINT, decimal/ENUM/SET/binary data, clean resume, duplicate-key rollback,
+then offline inspection and audited retry/resume.
 
-No native 5.7 → 8.4 replica is assumed as a reference. Final row equality and
-transaction/failure assertions are checked directly. Full-chain, realistic
-latency/performance, crash reconciliation and Cloud SQL tests remain planned.
-The downstream MyISAM profile currently rejects multi-statement/multi-table
-source groups, so the complete three-server chain is not yet supported for
-those workloads.
+The benchmark generates a backlog of two-statement transactions (one INSERT and
+one UPDATE on different tables), then replays it sequentially through each path.
+It records wall time, throughput, final data/checkpoints, target server counter deltas and our stage timings.
+Timings include container/client startup and control-command overhead, and compare
+**different destination versions**; they are not isolated applier overhead or CPU
+time. No artificial network latency is injected. Evidence and the exact workload
+are saved under `artifacts/reverse-suite/`; demo lifecycle evidence is under
+`artifacts/reverse-demo-suite/`.
+
+Unit fault tests cover lost commit replies, failed rollback, incomplete relay,
+crashed RUNNING state, ordered resolution and atomic audit/checkpoint updates.
+Managed-service privileges, realistic WAN latency, full-chain operation and
+process-kill-at-COMMIT qualification remain untested. The downstream MyISAM profile
+still rejects multi-statement/multi-table source groups; that extension is deferred.

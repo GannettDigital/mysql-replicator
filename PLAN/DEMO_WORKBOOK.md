@@ -1,5 +1,8 @@
 # Demo workbook: four terminals
 
+This workbook covers **8.4 → 5.7 MyISAM**. For **5.7 → 8.4 InnoDB**, use the
+[reverse demo workbook](REVERSE_DEMO_WORKBOOK.md).
+
 `make demo-up` starts all four containers, including an idle applier.
 The `mysql-replicator` process remains unstarted. For this revised flow, use a
 demo image built from the current code. If an older rehearsal is still present,

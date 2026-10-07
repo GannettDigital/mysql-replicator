@@ -101,3 +101,9 @@ release-check:
 # Docker only: export is gated by installation and archive tests.
 release-artifacts: release-check
 	docker build --platform linux/amd64 --target release-export -f docker/packaging/Dockerfile --output type=local,dest=artifacts/release .
+
+.PHONY: reverse-demo-up reverse-demo-start reverse-demo-stop reverse-demo-status reverse-demo-compare reverse-demo-inspect reverse-demo-resolve reverse-demo-down reverse-demo-suite reverse-demo-sql
+reverse-demo-up reverse-demo-start reverse-demo-stop reverse-demo-status reverse-demo-compare reverse-demo-inspect reverse-demo-resolve reverse-demo-down reverse-demo-suite:
+	swift run replicator-lab $@ $(ARGS)
+reverse-demo-sql:
+	swift run replicator-lab reverse-demo-sql "$(FILE)"

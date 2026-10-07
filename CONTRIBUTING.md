@@ -42,8 +42,8 @@ For AddressSanitizer testing:
 make test-asan
 ```
 
-The experimental reverse-profile integration fixture uses a MySQL 5.7 source
-and an 8.4 InnoDB destination:
+The experimental reverse-profile fixture uses a MySQL 5.7 source, a native 5.7
+InnoDB reference, and an 8.4 InnoDB destination:
 
 ```sh
 make reverse-suite
@@ -51,6 +51,12 @@ make reverse-suite
 
 It retains evidence under `artifacts/reverse-suite/`. See
 [reverse replication](docs/REVERSE_REPLICATION.md) for the current scope.
+
+The reverse profile has a native 5.7 InnoDB comparator and an independent demo:
+`make reverse-suite ARGS="--events 10000"` records the backlog benchmark;
+`make reverse-demo-suite ARGS="--skip-build"` tests the interactive lifecycle using
+that runtime image. See [reverse replication](docs/REVERSE_REPLICATION.md) for
+bootstrap, demo commands and offline recovery. Normal CI uses 100 transactions.
 
 ### Code coverage
 

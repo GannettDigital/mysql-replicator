@@ -29,6 +29,8 @@ func main() throws {
                mysql-replicator run --config APPLY.yaml [--initialize]
                mysql-replicator blackhole --source-config SOURCE.yaml
                mysql-replicator skip GTID_SET --config APPLY.yaml
+               mysql-replicator recovery inspect --config APPLY.yaml
+               mysql-replicator recovery resolve ACTION --gtids GTID_SET --reason TEXT --config APPLY.yaml
                mysql-replicator --version | --help
         Configuration: YAML (.yaml or .yml); JSON configuration is not supported.
         Output: one JSON event per line; diagnostics on stderr, failure exits nonzero.
@@ -68,6 +70,35 @@ func main() throws {
         let result=try BlackholeRun.run(configuration:config,password:password,cancellation:cancellation)
         let encoder=JSONEncoder(); encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
         try FileHandle.standardOutput.write(contentsOf:encoder.encode(result)+Data([10]))
+        return
+    }
+    if args.first == "recovery" {
+        args.removeFirst()
+        guard !args.isEmpty else { throw ApplyError("use recovery inspect|resolve; see --help") }
+        let command=args.removeFirst()
+        var action: Recovery.Action?
+        if command == "resolve" {
+            guard !args.isEmpty, let value=Recovery.Action(rawValue:args.removeFirst()) else { throw ApplyError("action must be mark-applied, retry, or skip") }
+            action=value
+        } else if command != "inspect" { throw ApplyError("use recovery inspect or recovery resolve") }
+        var options: [String:String] = [:]
+        while !args.isEmpty {
+            let key=args.removeFirst()
+            guard ["--config","--gtids","--reason"].contains(key), options[key] == nil, !args.isEmpty else { throw ApplyError("invalid recovery option") }
+            options[key]=args.removeFirst()
+        }
+        guard let path=options["--config"] else { throw ApplyError("recovery requires --config") }
+        let config=try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:path))
+        let encoder=JSONEncoder(); encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
+        let output: Data
+        if let action {
+            guard let gtids=options["--gtids"], let reason=options["--reason"] else { throw ApplyError("resolution requires --gtids and --reason") }
+            output=try encoder.encode(Recovery.resolve(configuration:config,action:action,gtids:gtids,reason:reason))
+        } else {
+            guard options.count == 1 else { throw ApplyError("inspection accepts only --config") }
+            output=try encoder.encode(Recovery.inspect(configuration:config))
+        }
+        try FileHandle.standardOutput.write(contentsOf:output+Data([10]))
         return
     }
     if args.first == "skip" {

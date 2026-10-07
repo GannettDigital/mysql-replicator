@@ -1,7 +1,7 @@
 # MySQL 5.7 → 8.4 InnoDB replication
 
-Status: implementation started. The existing qualified 8.4 → 5.7 MyISAM profile
-must retain its behavior. This document records the agreed scope and acceptance
+Status: reverse DML implemented; native comparison and DBA recovery added.
+The existing qualified 8.4 → 5.7 MyISAM profile must retain its behavior. This document records the agreed scope and acceptance
 criteria; completion and validation evidence are recorded below as work lands.
 
 ## Objective and contract
@@ -125,7 +125,7 @@ this scope. Do not claim Cloud SQL or production readiness from Docker tests alo
 - Lost-COMMIT and rollback-failure paths have unit fault tests. The live fixture
   uses no SUPER privilege on the target account. This is not Cloud SQL validation.
 - Dynamic DDL and foreign keys remain explicitly blocked for the reverse
-  profile. These and steps 4–7 are pending; milestone 1 is not fully complete.
+  profile. DDL/FK expansion and full-chain work are deferred by user request.
 - Operator documentation: `docs/REVERSE_REPLICATION.md`. CI runs the reverse
   fixture using the same executable as the existing integration/release image.
 - Unit qualification: 308 Swift tests pass, including rollback/COMMIT-loss,
@@ -139,3 +139,66 @@ this scope. Do not claim Cloud SQL or production readiness from Docker tests alo
   The directory suffix is inherited from the shared native harness naming;
   `result.json` records the actual InnoDB reverse profile and server versions.
   Validation logs are copied to `artifacts/reverse-suite/validation/`.
+
+## Native comparison, recovery and demo increment
+
+Scope agreed after the initial DML commit: complete the native comparator and
+DBA recovery, then provide a 5.7 → 8.4 demo. Do not expand DDL, foreign keys or
+the downstream MyISAM transaction contract in this increment.
+
+- Native reference: the same 5.7 InnoDB source feeds native 5.7 InnoDB and our
+  8.4 InnoDB target. Compare data, normalized schema, GTID coverage, duplicate-key
+  rollback and resume. The 10K backlog uses one INSERT and one UPDATE on separate
+  tables per transaction; replay paths run sequentially to reduce contention.
+- All fixture servers use linux/amd64, durable InnoDB and single ordered appliers.
+  Destination versions differ. Wall time includes startup/control overhead;
+  record server counter deltas and our stage timings, not a claim about CPU time.
+- Offline recovery reads the existing SQLite and relay evidence under the writer
+  lock. Reports include all pending groups, schemas, row images, composite keys,
+  old/new keys, folded expectations and diagnostics. Target comparison stays
+  manual; the tool never infers a successful COMMIT from matching rows.
+- `mark-applied` and `skip` resolve the first pending group. `retry` requires the
+  exact entire remaining GTID set and operator reconciliation of the whole batch.
+  All actions require a reason and atomically archive evidence with progress in
+  `recovery_audit`. Crashed RUNNING state and unjournaled relay tails are handled.
+- The independent reverse demo reuses the same topology and seed/schema setup.
+  Its lifecycle test covers start, DML, native comparison, drain and clean resume.
+- No target state journal, parallel appliers, dynamic DDL/FK support or full-chain
+  changes were introduced. Cloud SQL and physical process-kill-at-COMMIT tests
+  remain future qualification.
+
+Operator commands and boundaries: [reverse replication guide](../docs/REVERSE_REPLICATION.md).
+
+Validation on 2026-10-06:
+
+- 317 Swift unit tests pass. Periphery reports no unused code.
+- Existing MyISAM DML/DDL sample passes with the same Linux executable used for
+  the final reverse run: `artifacts/ddl-suite/20261006T230355Z-35d6af30-auto-autocommit-myisam/`.
+- Final native/reverse 10K comparison, rollback, composite-key recovery inspection
+  and audited retry/resume pass:
+  `artifacts/reverse-suite/20261006T230803Z-6559ff5f-auto-transaction-innodb/`.
+  Native: 15.80 seconds (~633 transactions/s); replicator: 65.85 seconds
+  (~152 transactions/s), 4.17× wall time for this two-statement workload.
+  These results do not replace the different MyISAM benchmark.
+- Target counter deltas: both paths record 10,000 commits and 10,000 handler
+  updates. Our target records 30,062 prepared executions and 50,167 Questions;
+  native records no prepared executions. Global handler/Questions counts also
+  include internal and control/status work; do not equate them to user row counts.
+- Reverse demo lifecycle passes after adding a catch-up barrier before drain:
+  `artifacts/reverse-demo-suite/20261006T230231Z-be3ad459-auto-transaction-innodb/`.
+- Qualification artifacts and logs are local/ignored. CI now runs the 100-transaction
+  reverse suite, recovery exercise and separate demo lifecycle on the release image.
+
+Demo usability follow-up:
+
+- `reverse-demo-up` now provisions a running idle applier shell; starting/stopping
+  replication is separate from container lifetime. Existing sessions can repair
+  a missing applier without reseeding or resetting configuration/checkpoints.
+- Status distinguishes container state from NOT_STARTED/RUNNING/STOPPED/BLOCKED,
+  labels the inherited Compose roles, and summarizes native health without
+  printing expected missing-container errors.
+- The four-terminal guide is [REVERSE_DEMO_WORKBOOK.md](REVERSE_DEMO_WORKBOOK.md).
+- Extended lifecycle qualification passes: idle status, start, comparison, drain,
+  missing-container repair with saved state, duplicate-key BLOCKED status, audited
+  retry/resume and cleanup. Evidence:
+  `artifacts/reverse-demo-suite/20261006T235559Z-ae91b5e7-auto-transaction-innodb/`.
