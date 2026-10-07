@@ -23,6 +23,7 @@ struct LabTestOptions {
     var profiles=LabProfile.allCases
     var suite="correctness", tier="full"
     var family: String?
+    var variants: [LabVariant] = [.standard]
     var ids: Set<String> = []
     var list=false, build=true, coverage=false
     init(_ arguments: [String]) throws {
@@ -35,6 +36,9 @@ struct LabTestOptions {
             try require(!args.isEmpty,"missing value for "+flag)
             let value=args.removeFirst()
             switch flag {
+            case "--variant":
+                if value == "all" { variants=LabVariant.allCases }
+                else { guard let variant=LabVariant(rawValue:value) else { throw LabError("unknown variant: "+value) }; variants=[variant] }
             case "--profile":
                 if value == "all" { profiles=LabProfile.allCases }
                 else { guard let p=LabProfile(rawValue:value) else { throw LabError("unknown profile: "+value) }; profiles=[p] }
@@ -50,6 +54,7 @@ struct LabTestOptions {
         try require(tier == "full" || suite == "correctness", "--tier smoke selects shared correctness only; adapter suites retain their full scope")
         try require(suite == "correctness" || (family == nil && ids.isEmpty),"--case and --family select shared correctness scenarios")
         try require(!coverage || ["correctness","lifecycle"].contains(suite),"--coverage collects shared correctness and lifecycle runs; legacy coverage commands remain available")
+        try require(variants == [.standard] || ["correctness","lifecycle"].contains(suite),"--variant selects shared correctness or lifecycle; adapters retain their own variants")
         _ = try LabScenario.select(tier:tier,family:family,ids:ids)
     }
 }

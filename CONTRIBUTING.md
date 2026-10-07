@@ -153,10 +153,12 @@ make correctness
 make deb
 ```
 
-Shared profile checks need OpenSSL and the SQLite CLI. Legacy integration
-checks additionally need MySQL 8.4 `mysqlbinlog` in
+Shared profile checks need OpenSSL and the SQLite CLI. Shared filter/index checks
+and legacy integration checks also need MySQL 8.4 `mysqlbinlog` in
 `PATH` (or set `MYSQLBINLOG` to its executable path). See
-[incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selection and evidence details.
+[the test lab](docs/TEST_LAB.md#capture-variants-and-catalog-evidence) for capture
+variants and catalog evidence, and [incremental checks](PLAN/INCREMENTAL_CHECKS.md)
+for legacy selections.
 
 ### 4. DDL Coverage Catalog Checks
 

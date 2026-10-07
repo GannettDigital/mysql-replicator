@@ -110,7 +110,8 @@ make lab-test ARGS="--suite lifecycle"
 make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle --skip-build"
 ```
 
-The 11 lifecycle cases use GTIDs and equivalent bootstrapped integer tables.
+The 11 lifecycle cases use equivalent bootstrapped integer tables and default to
+GTIDs; capture variants below also exercise file-position starts.
 They cover source socket loss, rotation, clean/crash restart, interruption during
 an 8,000-row group, backoff cancellation, and changed source settings; target
 socket loss/restart, active-group drain, saved-state resume with an unavailable
@@ -121,17 +122,47 @@ then checks rollback and durable pending-row evidence. The applier still reports
 an unconfirmed rollback and blocks ordinary resume; this does not authorize
 automatic replay or qualify a lost COMMIT reply. The forward case uses a table
 lock on INSERT instead of an InnoDB row lock on UPDATE. All cases run in order, with distinct state
-directories except the explicit resume pairs. Historical file-position and
-timeout variants remain in the legacy suites.
+directories except the explicit resume pairs. Additional timeout fixtures remain
+in the legacy suites.
 
 The [DDL catalog](../tests/DDLCoverage/README.md) still distinguishes case passes
 from named assertion qualification. Its historical profile IDs describe specific
-variants of the forward lab profile. Shared-run results do not automatically
-satisfy those bindings; their source/native/target assertions remain separate.
+variants of the forward lab profile. Shared-run results qualify only explicitly
+migrated bindings through the named assertion bundles described below.
 
 The [coverage migration review](../PLAN/TEST_SUITE_COVERAGE_MIGRATION.md) compares
 legacy and shared runtime line sets separately from catalog assertions and lists
 the gates for retiring old runners. Declaration overlap alone is not parity.
+The [remaining-gap assessment](../PLAN/TEST_SUITE_RETIREMENT_ASSESSMENT.md) records
+what the filter port closed, the outstanding assertions and runner dependencies,
+and the recommended order before removal.
+
+### Capture variants and catalog evidence
+
+Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|all`.
+The default keeps each topology's usual GTID start with a file/offset. The two
+historical forward variants use file-position with MINIMAL optional row metadata,
+or GTID-only start with FULL metadata. `--variant all` lists/runs each separately;
+the historical variants are explicitly not applicable to the 5.7-source profile.
+MySQL 5.7 has no `binlog_row_metadata` setting. Lifecycle's default integer-only
+workload uses MINIMAL on the 8.4 source; explicit variants preserve their setting
+across restarts. Matrix fixtures that require FULL labels declare that override.
+
+```sh
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--variant position-minimal --family filters --coverage"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite lifecycle --variant gtid-full --coverage --skip-build"
+```
+
+Forward historical correctness runs also write `catalog/coverage-evidence.json`.
+Only explicitly migrated database/MODIFY/index bindings accept the
+`shared-correctness` producer. Their named checks include source warnings,
+following rows, and (for MODIFY/index) normalized source/native/target binlogs,
+durable boundaries and schema history. All required cases for a binding must
+pass; selecting one representative case does not qualify the entire family.
+Default/reverse runs retain their lab assertions but cannot fill historical
+catalog profile slots. Import one bundle per historical profile with the existing
+DDL catalog report command; do not combine passing subsets of different runs.
+Legacy bindings and the 730 required obligations remain intact during migration.
 
 ## Evidence and code coverage
 

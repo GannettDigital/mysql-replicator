@@ -10,7 +10,8 @@ func main() throws -> Int32 {
           test --profile all|mysql84-to-mysql57-myisam|mysql57-to-mysql84-innodb
                [--suite correctness|lifecycle|recovery|demo|legacy-dml|legacy-ddl|native|all]
                [--tier smoke|full] [--family database|ddl|dml|indexes|policy|rejections]
-               [--case ID ...] [--list] [--skip-build] [--coverage]
+               [--case ID ...] [--variant default|position-minimal|gtid-full|all]
+               [--list] [--skip-build] [--coverage]
           demo up|start|stop|status|compare|sql|inspect|resolve|down --profile PROFILE
           benchmark --profile PROFILE [--mode backlog|streaming|capture] [--workload insert|multi-table-transaction] [--events N] [--skip-build]
         Legacy entry points (retained for scripts and specialized evidence):

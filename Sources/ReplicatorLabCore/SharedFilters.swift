@@ -18,7 +18,7 @@ extension SharedCorrectness.Run {
         }
         func configuration(_ label: String, before: Boundary, count: Int) -> [String:Any] {
             var config=original, source=config["source"] as! [String:Any]
-            source["start"]=["file":before.file,"position":before.position,"executedGTIDs":before.gtids]
+            source["start"]=f.variant.start(before)
             source["stopAfterTransactions"]=count; config["source"]=source
             config["stateDirectory"]="/evidence/"+label
             config["replicateWildIgnoreTable"]=patterns

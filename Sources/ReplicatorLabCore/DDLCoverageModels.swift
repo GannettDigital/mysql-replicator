@@ -20,6 +20,8 @@ struct DDLCatalog: Decodable {
     struct Binding: Decodable {
         let suite, role, note: String
         let caseIds, profiles, assertionIds: [String]
+        let producers: [String]?
+        var acceptedProducers: [String] { producers ?? ["legacy"] }
         let completionCaseId: String?
     }
     struct Outcome: Decodable {

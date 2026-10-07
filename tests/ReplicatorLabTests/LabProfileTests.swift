@@ -77,4 +77,18 @@ final class LabProfileTests: XCTestCase {
         XCTAssertTrue(options.coverage)
         XCTAssertEqual(options.profiles,LabProfile.allCases)
     }
+    func testHistoricalVariantsPreserveStartContractsAndApplicability() throws {
+        let boundary=Boundary(file:"binlog.000004",position:123,gtids:"uuid:1-3")
+        XCTAssertNil(LabVariant.gtidFull.start(boundary)["file"])
+        XCTAssertEqual(LabVariant.gtidFull.start(boundary)["executedGTIDs"] as? String,"uuid:1-3")
+        XCTAssertEqual(LabVariant.positionMinimal.start(boundary)["position"] as? UInt64,123)
+        XCTAssertEqual(LabVariant.positionMinimal.mode,"file-position")
+        XCTAssertEqual(try LabTestOptions(["--variant","all"]).variants,LabVariant.allCases)
+        XCTAssertThrowsError(try LabTestOptions(["--variant","unknown"]))
+        XCTAssertThrowsError(try LabTestOptions(["--suite","recovery","--variant","gtid-full"]))
+        XCTAssertTrue(LabLifecycle.fields(.reverse,variant:.gtidFull).allSatisfy { $0["status"] as? String == "not_applicable" && $0["reason"] is String })
+        let types=try XCTUnwrap(LabScenario.correctness.first { $0.id == "ddl-compat-types" })
+        XCTAssertEqual(types.fields(.forward,variant:.positionMinimal)["status"] as? String,"not_applicable")
+        XCTAssertEqual(types.fields(.forward,variant:.gtidFull)["status"] as? String,"not_run")
+    }
 }

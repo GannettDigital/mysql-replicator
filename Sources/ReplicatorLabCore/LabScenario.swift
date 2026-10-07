@@ -9,16 +9,18 @@ struct LabScenario {
     var intent: String = "apply"
     var smoke = false
     var id: String { test.id }
-    func reason(_ profile: LabProfile) -> String? {
-        reverseOnly && profile == .forward ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal remains in legacy DML qualification." : nil
+    func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
+        if let reason=variant.reason(profile) { return reason }
+        if variant == .positionMinimal && id == "ddl-compat-types" { return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full." }
+        return reverseOnly && profile == .forward ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal remains in legacy DML qualification." : nil
     }
-    func fields(_ profile: LabProfile) -> [String:Any] {
+    func fields(_ profile: LabProfile, variant: LabVariant = .standard) -> [String:Any] {
         var value=test.fields
-        value["profile"]=profile.rawValue; value["family"]=family
+        value["profile"]=profile.rawValue; value["variant"]=variant.rawValue; value["family"]=family
         value["dependencies"]=dependencies; value["intent"]=intent
         value["expected"]=["source":"accept","native":"apply","applier":intent]
-        value["status"]=reason(profile) == nil ? "not_run" : "not_applicable"
-        if let reason=reason(profile) { value["reason"]=reason }
+        value["status"]=reason(profile,variant:variant) == nil ? "not_run" : "not_applicable"
+        if let reason=reason(profile,variant:variant) { value["reason"]=reason }
         value["setup"]=family == "filters" ? "equivalent unlogged table snapshots; isolated state and saved-state resume" : "replicated DDL; baseline reverse_poc tables are bootstrapped"
         return value
     }

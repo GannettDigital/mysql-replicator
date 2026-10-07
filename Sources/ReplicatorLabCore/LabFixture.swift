@@ -3,6 +3,7 @@ import Foundation
 /// Shared disposable topology. Physical service names are resolved at this boundary.
 final class LabFixture {
     let profile: LabProfile
+    let variant: LabVariant
     let codeCoverage: Bool
     let h: NativeHarness
     var image: String
@@ -15,9 +16,9 @@ final class LabFixture {
     var runner: ProcessRunner { h.runner }
     var volume: String { h.project + "-evidence" }
     var helper: String { h.project + "-copy" }
-    init(root: URL, category: String = "reverse-suite", identifier: String = runID(), image: String = "mysql-replicator-packaging:reverse", profile: LabProfile = .reverse, codeCoverage: Bool = false) {
-        self.profile=profile; self.codeCoverage=codeCoverage
-        var nativeCase=NativeCase(); nativeCase.nativeEngine=profile.targetEngine; nativeCase.transaction=profile == .reverse
+    init(root: URL, category: String = "reverse-suite", identifier: String = runID(), image: String = "mysql-replicator-packaging:reverse", profile: LabProfile = .reverse, codeCoverage: Bool = false, variant: LabVariant = .standard) {
+        self.profile=profile; self.codeCoverage=codeCoverage; self.variant=variant
+        var nativeCase=NativeCase(); nativeCase.autoPosition=variant.mode == "gtid"; nativeCase.nativeEngine=profile.targetEngine; nativeCase.transaction=profile == .reverse
         h=NativeHarness(root:root,config:nativeCase,artifactCategory:category,identifier:identifier)
         self.image=image
         h.composeOverlays=[root.appendingPathComponent(profile == .reverse ? "docker/reverse/compose.yaml" : "docker/dml/compose.yaml").path]
@@ -65,7 +66,7 @@ final class LabFixture {
             _ = try sql(role,"SET GLOBAL collation_server=utf8mb4_bin")
             _ = try sql(role,seed.replacingOccurrences(of:"ENGINE=InnoDB",with:"ENGINE="+profile.engine(role)))
         }
-        if profile == .forward { _ = try sql(.source,"SET GLOBAL binlog_row_metadata=FULL") }
+        if profile == .forward { _ = try sql(.source,"SET PERSIST binlog_row_metadata="+variant.metadata) }
         _ = try sql(.source,"CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE,REPLICATION CLIENT ON *.* TO 'capture_fixture'@'%'")
         _ = try sql(.target,"CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'" + (profile == .reverse ? "; GRANT SET_ANY_DEFINER ON *.* TO 'apply_fixture'@'%'" : ""))
         let baseline = try boundary(), uuid = try sql(.source,"SELECT @@server_uuid")
@@ -75,14 +76,15 @@ final class LabFixture {
         } else {
             let nativeID=try h.compose(["ps","-q","native"]).text
             _ = try docker(["cp",tls.appendingPathComponent("ca.pem").path,nativeID+":/tmp/lab-ca.pem"])
-            _ = try sql(.native,"RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_HOST='source',SOURCE_USER='capture_fixture',SOURCE_PASSWORD='fixture-capture-only',SOURCE_SSL=1,SOURCE_SSL_CA='/tmp/lab-ca.pem',SOURCE_SSL_VERIFY_SERVER_CERT=1,SOURCE_AUTO_POSITION=1; START REPLICA")
+            let positioning=variant == .positionMinimal ? "SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(baseline.file)',SOURCE_LOG_POS=\(baseline.position)" : "SOURCE_AUTO_POSITION=1"
+            _ = try sql(.native,"RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_HOST='source',SOURCE_USER='capture_fixture',SOURCE_PASSWORD='fixture-capture-only',SOURCE_SSL=1,SOURCE_SSL_CA='/tmp/lab-ca.pem',SOURCE_SSL_VERIFY_SERVER_CERT=1,\(positioning); START REPLICA")
         }
         versions["native_version"] = try h.sql("native","SELECT VERSION()")
         bootstrap = baseline.json
         versions["source_version"] = try sql(.source,"SELECT VERSION()")
         versions["target_version"] = try sql(.target,"SELECT VERSION()")
         config = ["applierProfiling":true,"version":2,"profile":profile.rawValue,"stateDirectory":"/evidence/state",
-            "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","serverID":9101,"sourceUUID":uuid,"mode":"gtid","start":["file":baseline.file,"position":baseline.position,"executedGTIDs":baseline.gtids],"stopAfterTransactions":2],
+            "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","serverID":9101,"sourceUUID":uuid,"mode":variant.mode,"start":variant.start(baseline),"stopAfterTransactions":2],
             "target":["host":profile.service(.target),"port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":profile.service(.target),"caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
             "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024]]
     }
@@ -144,7 +146,7 @@ final class LabFixture {
             servers.append(["role":role.rawValue,"image":image,"settings":settings,"version":version])
         }
         let binary=try docker(["run","--rm","--entrypoint","sha256sum",image,"/usr/local/bin/mysql-replicator"]).text
-        try writeJSON(["profile":profile.rawValue,"servers":servers,"runtime_image":image,"binary_sha256":String(binary.prefix(64)),"code_coverage":codeCoverage],to:output.appendingPathComponent("runtime.json"))
+        try writeJSON(["profile":profile.rawValue,"variant":variant.fields,"servers":servers,"runtime_image":image,"binary_sha256":String(binary.prefix(64)),"code_coverage":codeCoverage],to:output.appendingPathComponent("runtime.json"))
     }
     func recovery(_ arguments: [String], label: String) throws -> [String:Any] {
         let result=try docker(["run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(volume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",image,"recovery"]+arguments+["--config","/evidence/apply.yaml"])

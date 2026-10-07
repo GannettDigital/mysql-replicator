@@ -55,6 +55,23 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         XCTAssertEqual(ModifyIndexCases.cases.first{$0.test.id=="ddl-modify-binary-width"}?.workload.count,1)
         XCTAssertEqual(ModifyIndexCases.cases.first{$0.test.id=="ddl-modify-demo-varchar-120"}?.workload.count,3)
     }
+    func testSharedProducerQualifiesOnlyExplicitlyMigratedBindings() throws {
+        let bundles=DDLCoverageCases.swiftProfiles.map {
+            DDLCoverageEvidence.Bundle(profile:$0,stale:false,passed:true,cases:matchingCases(),origin:"shared",producer:"shared-correctness")
+        }
+        let report=try DDLCoverageEvidence.report(inventory,bundles:bundles)
+        let summary=report["assertion_summary"] as! [String:Int]
+        XCTAssertEqual(summary["required"],730)
+        XCTAssertEqual(summary["passed"],24) // Database (2), MODIFY (5), indexes (5), two variants.
+        let rows=report["scenarios"] as! [[String:Any]]
+        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count,3)
+        let ordered=try XCTUnwrap(rows.first { $0["id"] as? String == "ddl.table.truncate.empty" })
+        XCTAssertEqual(ordered["qualification"] as? String,"unverified")
+        var failed=bundles[0]
+        failed = .init(profile:failed.profile,stale:false,passed:false,cases:failed.cases,origin:"failed",producer:failed.producer)
+        let scenario=try XCTUnwrap(inventory.catalog.scenarios.first { $0.id == "ddl.database.create.supported" })
+        XCTAssertEqual(DDLCoverageEvidence.evaluate(scenario,profile:failed.profile,bundle:failed)["qualification"] as? String,"failed")
+    }
     func testChecksummedBundleRejectsTamperingMissingFilesAndPathEscapes() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ddl-evidence-test-" + UUID().uuidString).resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -80,6 +97,14 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         let path = root.appendingPathComponent("coverage-evidence.json")
         try writeJSON(manifest, to: path)
         XCTAssertFalse(try DDLCoverageEvidence.load(path, currentInputs: input, contracts: contracts, inventory: inventory).stale)
+        manifest["producer"]="shared-correctness"
+        try writeJSON(manifest,to:path)
+        XCTAssertThrowsError(try DDLCoverageEvidence.load(path,currentInputs:input,contracts:contracts,inventory:inventory)) // Ordered cases have not migrated.
+        manifest["producer"]="unknown"
+        try writeJSON(manifest,to:path)
+        XCTAssertThrowsError(try DDLCoverageEvidence.load(path,currentInputs:input,contracts:contracts,inventory:inventory))
+        manifest.removeValue(forKey:"producer")
+        try writeJSON(manifest,to:path)
         XCTAssertTrue(try DDLCoverageEvidence.load(path, currentInputs: [:], contracts: contracts, inventory: inventory).stale)
         XCTAssertTrue(try DDLCoverageEvidence.load(path, currentInputs: input, contracts: [:], inventory: inventory).stale)
         XCTAssertTrue(try DDLCoverageEvidence.load(path, currentInputs: input, contracts: contracts, inventory: inventory, harnessDigest: "different").stale)

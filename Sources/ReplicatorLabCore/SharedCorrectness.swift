@@ -29,25 +29,31 @@ public enum SharedCorrectness {
         var referenceDecoderVersion=""
         func selects(_ id: String) -> Bool { selected?.contains(id) ?? true }
         init(root: URL, profile: LabProfile = .reverse, selected: Set<String>? = nil,
-             category: String = "reverse-correctness", image: String = "mysql-replicator-packaging:reverse", codeCoverage: Bool = false) {
+             category: String = "reverse-correctness", image: String = "mysql-replicator-packaging:reverse", codeCoverage: Bool = false, variant: LabVariant = .standard) {
             self.selected=selected
-            f=LabFixture(root:root,category:category,image:image,profile:profile,codeCoverage:codeCoverage)
+            f=LabFixture(root:root,category:category,image:image,profile:profile,codeCoverage:codeCoverage,variant:variant)
             applier=LabApplier(f)
             reporter=QualificationReporter(output:f.output,log:f.stage)
         }
         func execute(build: Bool, slice: String) throws {
-            if slice == "all" && selects(DDLCoverageCases.wildcardFilter.id) {
+            if slice == "all" && (selects(DDLCoverageCases.wildcardFilter.id) || ModifyIndexCases.cases.contains(where:{selects($0.test.id)})) || slice == "indexes" {
                 referenceDecoderVersion=try f.runner.run([f.h.decoder,"--no-defaults","--version"]).text
-                try require(referenceDecoderVersion.contains("Ver 8.4."),"Filter binlog comparisons require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
+                try require(referenceDecoderVersion.contains("Ver 8.4."),"Independent binlog comparisons require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
             }
-            var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"slice":slice,
-                "scope":"Shared DML matrix, DDL compatibility, database creation, modify/index and filter fixtures; GTID only. Native reference is profile-specific.",
+            var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"variant":f.variant.rawValue,"slice":slice,
+                "scope":"Shared DML matrix, DDL compatibility, database creation, modify/index and filter fixtures; explicit capture variant. Native reference is profile-specific.",
                 "adaptations":["Source-version session settings and explicit temporary-table engine are declared in the fixtures", "Source/target/native table engines are checked before comparing normalized metadata"],
-                "not_covered":["Version-specific collation translation and engine index limits remain in legacy suites", "File-position mode", "Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect/timeout and crash recovery remain separate"]]
+                "not_covered":["Version-specific collation translation and engine index limits remain in legacy suites", "Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect/timeout and crash recovery remain separate"]]
             var failure: Error?
+            let catalogInputs=try DDLCoverageEvidence.inputs(root:f.h.root)
+            let catalogContracts=try DDLCoverageEvidence.hashes(root:f.h.root,paths:DDLCoverageEvidence.contractPaths)
+            var catalogRuntime: [String:Any]?
             do {
                 try f.prepare(build:build)
                 try f.recordRuntime()
+                if let profile=f.variant.catalogProfile {
+                    catalogRuntime=try DDLCoverageEvidence.runtime(f.h,image:f.image,profileID:profile,inventory:DDLCoverage.load(directory:f.h.root.appendingPathComponent("tests/DDLCoverage")),inputDigest:DDLCoverageEvidence.digest(catalogInputs))
+                }
                 f.clients.append(applier.name)
                 var source=f.config["source"] as! [String:Any]
                 source.removeValue(forKey:"stopAfterTransactions"); f.config["source"]=source
@@ -68,7 +74,7 @@ public enum SharedCorrectness {
                 }
                 // Reopen all saved schema history, then apply another transaction.
                 try applier.start(initialize:false)
-                try step("UPDATE reverse_poc.items SET amount=amount+1 WHERE id=1",database:"reverse_poc")
+                try step("INSERT INTO reverse_poc.aux VALUES(99,1)",database:"reverse_poc")
                 try applier.drain()
                 _ = try f.docker(["cp",f.helper+":/evidence/state",f.output.path])
                 report["result"]="passed"; report["versions"]=f.versions; report["image"]=f.image
@@ -103,6 +109,9 @@ public enum SharedCorrectness {
             if !cleanupErrors.isEmpty { report["result"]="failed"; if failure == nil { failure=LabError(cleanupErrors.joined(separator:"; ")) } }
             report["cases"]=reporter.results
             try writeJSON(report,to:f.output.appendingPathComponent("result.json"))
+            if let runtime=catalogRuntime, let profile=f.variant.catalogProfile {
+                try SharedCatalogSupport.export(root:f.h.root,output:f.output,profile:profile,inputs:catalogInputs,contracts:catalogContracts,runtime:runtime,results:reporter.results,result:report)
+            }
             if let failure { throw failure }
             f.stage("PASS: shared correctness fixtures and saved-schema restart (\(observation) steps)")
         }
@@ -119,12 +128,14 @@ public enum SharedCorrectness {
             }
             try f.awaitNative()
         }
-        func step(_ sql: String, database: String, checks: [DDLCompatibilityCases.Check] = []) throws {
+        @discardableResult
+        func step(_ sql: String, database: String, checks: [DDLCompatibilityCases.Check] = [], warning: Int? = nil, checkWarnings: Bool = false) throws -> [String:Any] {
             currentDatabase=database
             observation += 1
             let file=f.output.appendingPathComponent(String(format:"step-%04d.json",observation))
             try writeJSON(["sql":sql,"status":"running"],to:file)
-            _ = try f.sql(.source,session+"\n"+sql)
+            let warnings=try f.sql(.source,session+"\n"+sql+(checkWarnings ? "; SHOW WARNINGS" : ""))
+            if checkWarnings { try require(warning.map { warnings.hasPrefix("Note\t\($0)\t") } ?? warnings.isEmpty,"unexpected source warnings: "+warnings) }
             try wait()
             var results: [[String:Any]]=[]
             for check in checks {
@@ -138,7 +149,9 @@ public enum SharedCorrectness {
                 results.append(["query":check.sql,"expected":check.expected,"values":values])
             }
             let snapshots=try compare(database)
-            try writeJSON(["sql":sql,"status":"passed","checks":results,"snapshots":snapshots],to:file)
+            let result: [String:Any] = ["sql":sql,"status":"passed","checks":results,"snapshots":snapshots,"warnings":warnings]
+            try writeJSON(result,to:file)
+            return result
         }
         func compare(_ database: String) throws -> [String:Any] {
             // Fixture-controlled names only. Compare exact row bytes and stable
@@ -198,7 +211,43 @@ public enum SharedCorrectness {
             for test in DatabaseCreationCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
                     let prefix=f.profile == .reverse ? test.prefix57 : test.prefix
-                    try step(prefix+test.sql,database:test.database,checks:[.init(test.metadataSQL,test.expected)])
+                    let before=try applier.latestProgress() ?? [:]
+                    let observation=try step(prefix+test.sql,database:test.database,checks:[.init(test.metadataSQL,test.expected)],warning:test.existing ? 1007 : nil,checkWarnings:true)
+                    let table=test.database+".probe"
+                    if !test.existing { try step("CREATE TABLE \(table)(id INT PRIMARY KEY,note VARCHAR(20))",database:test.database) }
+                    try assertion("schema-effects",caseID:test.test.id) {
+                        var values: [String:Any] = ["source_observation":observation]
+                        for role in LabProfile.Role.allCases {
+                            let metadata=try f.sql(role,test.metadataSQL)
+                            let columns=try f.sql(role,"SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE,COLUMN_KEY,IFNULL(COLLATION_NAME,'') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe' ORDER BY ORDINAL_POSITION")
+                            let engine=try f.sql(role,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe'")
+                            try require(metadata == test.expected && columns == "id\tint\tNO\tPRI\t\nnote\tvarchar\tYES\t\t"+test.collation && engine == f.profile.engine(role),"database/table inheritance differs")
+                            values[role.rawValue]=["database":metadata,"columns":columns,"engine":engine]
+                        }
+                        return values
+                    }
+                    try assertion("following-dml",caseID:test.test.id) {
+                        let insert=test.existing ? "INSERT INTO \(table) VALUES(2,NULL)" : "INSERT INTO \(table) VALUES(1,'seed'),(2,NULL)"
+                        try step(insert,database:test.database)
+                        try step("UPDATE \(table) SET id=3,note=CONVERT(0xF09F9880 USING utf8mb4) WHERE id=2",database:test.database)
+                        try step("DELETE FROM \(table) WHERE id=3",database:test.database)
+                        let summary=try applier.latestProgress() ?? [:]
+                        try require((summary["rowsApplied"] as? Int ?? 0)-(before["rowsApplied"] as? Int ?? 0) == (test.existing ? 3 : 4),"database following row count differs")
+                        var rows: [String:String] = [:]
+                        for role in LabProfile.Role.allCases {
+                            rows[role.rawValue]=try f.sql(role,"SELECT id,HEX(note) FROM \(table) ORDER BY id")
+                            try require(rows[role.rawValue] == "1\t73656564","database creation lost existing/following rows")
+                        }
+                        return rows
+                    }
+                    try applier.drain()
+                    let saved=try snapshot(test.test.id)
+                    let quoted=test.sql.replacingOccurrences(of:"'",with:"''")
+                    try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE' AND target_sql='\(quoted)'") == "1","database DDL intent differs")
+                    let end=try f.boundary()
+                    try require(state(saved,"SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state") == "STOPPED|\(end.file)|\(end.position)","database checkpoint differs")
+                    try applier.start(initialize:false)
+                    try wait()
                 }
             }
             if f.profile == .reverse && selects("reverse-database-table-defaults") { try reporter.run(QualificationCase("reverse-database-table-defaults","Preserve 5.7 utf8mb4 defaults through CREATE, LIKE, implicit DDL commit and RENAME")) {
@@ -235,6 +284,7 @@ public enum SharedCorrectness {
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"poc")
             for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) {
                 try reporter.run(QualificationCase("matrix-"+test.id,"Shared DML matrix: "+test.id)) {
+                    if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
                     try step("CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",database:"poc")
                     if !test.setup.isEmpty { try step(test.setup,database:"poc") }
                     for phase in test.phases { try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")]) }
@@ -242,6 +292,7 @@ public enum SharedCorrectness {
             }
         }
         func indexes() throws {
+            if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
             try resetNativeEngine()
             for test in ModifyIndexCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
@@ -252,10 +303,51 @@ public enum SharedCorrectness {
                     for name in ["mi_clone","mi_renamed","mi","explicit_default_engine"] { try step("DROP TABLE IF EXISTS demo.\(name)",database:"demo") }
                     let parts=test.seed.components(separatedBy:"; ").filter { !$0.hasPrefix("SET SESSION") && !$0.hasPrefix("CREATE DATABASE") && !$0.hasPrefix("DROP TABLE") && !$0.isEmpty }
                     for sql in parts { try step(sql,database:"demo") }
-                    try step(test.sql,database:"demo",checks:[.init("SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",test.retained)])
-                    for role in LabProfile.Role.allCases {
-                    let service=f.profile.service(role); _ = try ModifyIndexCases.metadata(f.h,service,test,expectedEngine:f.profile.engine(role)) }
-                    for item in test.workload { try step(item.sql,database:"demo",checks:[.init("SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",item.rows)]) }
+                    var starts: [LabProfile.Role:Boundary] = [:]
+                    for role in LabProfile.Role.allCases { starts[role]=try f.boundary(role) }
+                    let before=try applier.latestProgress() ?? [:]
+                    try assertion("schema-effects",caseID:test.test.id) {
+                        let observation=try step(test.sql,database:"demo",checks:[.init("SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",test.retained)],checkWarnings:true)
+                        var values: [String:Any] = ["source_observation":observation]
+                        for role in LabProfile.Role.allCases {
+                            values[role.rawValue]=try ModifyIndexCases.metadata(f.h,f.profile.service(role),test,expectedEngine:f.profile.engine(role))
+                        }
+                        return values
+                    }
+                    if !test.workload.isEmpty {
+                        try assertion("following-dml",caseID:test.test.id) {
+                            var observed: [[String:Any]] = []
+                            for item in test.workload { observed.append(try step(item.sql,database:"demo",checks:[.init("SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",item.rows)])) }
+                            return observed
+                        }
+                    }
+                    try applier.drain()
+                    let saved=try snapshot(test.test.id), end=try f.boundary()
+                    let result=try applier.latestProgress() ?? [:]
+                    try assertion("source-boundary",caseID:test.test.id) {
+                        for (key,expected) in [("transactionsApplied",1+test.workload.count),("rowsApplied",test.workload.reduce(0,{$0+$1.affectedRows})),("ddlApplied",1)] {
+                            try require((result[key] as? Int ?? 0)-(before[key] as? Int ?? 0) == expected,"MODIFY/index counter differs: "+key)
+                        }
+                        try require(result["appliedGTIDSet"] as? String == end.gtids,"MODIFY/index GTIDs differ")
+                        let checkpoint=try state(saved,"SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
+                        try require(checkpoint == "STOPPED|\(end.file)|\(end.position)","MODIFY/index checkpoint differs")
+                        return ["source":end.json,"saved":checkpoint,"summary":result]
+                    }
+                    try assertion("schema-history",caseID:test.test.id) {
+                        let quoted=test.sql.replacingOccurrences(of:"'",with:"''")
+                        let intent=try state(saved,"SELECT status||'|'||target_sql FROM ddl_intents ORDER BY rowid DESC LIMIT 1")
+                        try require(intent == "DONE|"+test.sql,"DDL rewritten or incomplete")
+                        let references=try state(saved,"SELECT COUNT(*) FROM row_intents r JOIN schemas s ON s.id=r.schema_id WHERE s.current=1 AND r.status='DONE' AND r.schema_id=(SELECT after_schema_id FROM ddl_intents WHERE target_sql='\(quoted)' ORDER BY rowid DESC LIMIT 1)")
+                        try require(references == String(test.workload.reduce(0,{$0+$1.affectedRows})),"following rows did not use published schema")
+                        let history=try state(saved,"SELECT schema_json FROM schemas WHERE id=(SELECT after_schema_id FROM ddl_intents ORDER BY rowid DESC LIMIT 1)")
+                        let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
+                        try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
+                        try require(state(saved,"PRAGMA user_version") == "9","state version gate differs")
+                        return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
+                    }
+                    try assertion("normalized-binlog",caseID:test.test.id) { try binlogAssertion(test,starts:starts) }
+                    try applier.start(initialize:false)
+                    try wait()
                 }
             }
         }

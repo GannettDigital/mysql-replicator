@@ -135,6 +135,10 @@ public enum DDLCoverage {
                 if expectation.source.logging == "no_event" { try require(["unknown", "not_applicable"].contains(expectation.native84.outcome) && ["unknown", "not_applicable"].contains(expectation.swift57.outcome), "\(context): no source event cannot prove replicated success or rejection") }
             }
             for binding in scenario.bindings {
+                try require(!binding.acceptedProducers.isEmpty && Set(binding.acceptedProducers).isSubset(of:["legacy","shared-correctness"]), "invalid evidence producer")
+                if binding.acceptedProducers.contains("shared-correctness") {
+                    try require(binding.suite == "ddl-suite" && Set(binding.caseIds).isSubset(of:SharedCatalogSupport.caseIDs), "shared evidence binding lacks a migrated case")
+                }
                 try require(Set(binding.profiles).isSubset(of: Set(scenario.requiredProfiles)), "\(context): binding has an inapplicable profile")
                 try require(Set(binding.assertionIds).isSubset(of: Set(assertions.keys)), "\(context): binding claims undeclared assertions")
                 for assertion in binding.assertionIds {

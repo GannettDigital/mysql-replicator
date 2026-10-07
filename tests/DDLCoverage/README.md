@@ -1,5 +1,14 @@
 # DDL coverage catalog
 
+Historical profile IDs describe qualification contracts, independent of the
+runner that supplies their evidence. Bindings may explicitly accept the
+`shared-correctness` producer as well as `legacy`; omitted `producers` means
+legacy only. Database creation and MODIFY/index are the first migrated bindings.
+Shared historical runs export a checksummed `catalog/coverage-evidence.json`
+bundle, with the same runtime/settings/input validation and per-assertion rules.
+Ordinary shared case passes and reverse/default runs cannot qualify these slots.
+See [capture variants](../../docs/TEST_LAB.md#capture-variants-and-catalog-evidence).
+
 This implements steps 1–2 and the first partial-evidence slice of step 3 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
 reviewable checklist. It contains 63 scoped scenarios, 29 features across families

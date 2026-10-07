@@ -28,7 +28,7 @@ extension SharedCorrectness.Run {
                 f.config=original; f.config["stateDirectory"]="/evidence/"+label
                 f.config["ddlPolicy"]=["triggers":"reject","events":"reject"]
                 var source=f.config["source"] as! [String:Any]
-                source["start"]=["file":before.file,"position":before.position,"executedGTIDs":before.gtids]
+                source["start"]=f.variant.start(before)
                 source["stopAfterTransactions"]=2; f.config["source"]=source
                 try f.installConfig(label)
                 _ = try f.sql(.source,session+sql+"; INSERT INTO rejected.parent VALUES(1,1)")

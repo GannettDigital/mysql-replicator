@@ -16,14 +16,16 @@ enum LabLifecycle {
         .init("target-uncertain-resume","Ordinary resume refuses an unresolved target write"),
         .init("target-reconnect-settings","Block incompatible target settings without advancing progress")
     ]
-    static func fields(_ profile: LabProfile) -> [[String:Any]] {
+    static func fields(_ profile: LabProfile, variant: LabVariant = .standard) -> [[String:Any]] {
         cases.map { test in
             var row=test.fields
             row["profile"]=profile.rawValue; row["suite"]="lifecycle"; row["status"]="not_run"
+            row["variant"]=variant.rawValue
+            if let reason=variant.reason(profile) { row["status"]="not_applicable"; row["reason"]=reason }
             row["family"]=test.id.hasPrefix("source-") ? "source" : "target"
             row["expected"]=test.id.contains("uncertain") || test.id.hasSuffix("settings") ? "block without replay" : "resume or stop cleanly"
             row["target_engine"]=profile.targetEngine
-            row["scope"]="GTID; ordered lifecycle experiments with bootstrapped tables"
+            row["scope"]=variant.mode+"; ordered lifecycle experiments with bootstrapped tables"
             if test.id == "target-drain-resume" { row["dependencies"]=["target-drain"] }
             if test.id == "target-uncertain-resume" { row["dependencies"]=["target-uncertain"] }
             if test.id == "target-uncertain" {
@@ -37,18 +39,18 @@ enum LabLifecycle {
         let f: LabFixture, reporter: QualificationReporter
         var configurations: [String:[String:Any]] = [:]
         var completed: Set<String> = []
-        init(root: URL, profile: LabProfile, category: String, image: String, codeCoverage: Bool = false) {
-            f=LabFixture(root:root,category:category,image:image,profile:profile,codeCoverage:codeCoverage)
+        init(root: URL, profile: LabProfile, category: String, image: String, codeCoverage: Bool = false, variant: LabVariant = .standard) {
+            f=LabFixture(root:root,category:category,image:image,profile:profile,codeCoverage:codeCoverage,variant:variant)
             reporter=QualificationReporter(output:f.output,log:f.stage)
         }
         func execute() throws {
-            var report: [String:Any]=["profile":f.profile.rawValue,"topology":f.profile.topology,"result":"failed","positioning":"gtid"]
+            var report: [String:Any]=["profile":f.profile.rawValue,"topology":f.profile.topology,"result":"failed","positioning":f.variant.mode,"variant":f.variant.rawValue]
             var failure: Error?
             do {
                 try f.prepare(build:false)
                 // Match the server's persisted restart default throughout this
                 // integer-only workload; optional FULL metadata is tested elsewhere.
-                if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata=MINIMAL") }
+                if f.profile == .forward && f.variant == .standard { _ = try f.sql(.source,"SET PERSIST binlog_row_metadata=MINIMAL") }
                 try f.recordRuntime()
                 try f.awaitNative(); try native(start:false)
                 // A stopped native dump connection can linger on the source.
@@ -105,7 +107,7 @@ enum LabLifecycle {
             var value=f.config, source=value["source"] as! [String:Any]
             let boundary=try f.boundary()
             source["username"]="lifecycle_capture"
-            source["start"]=["file":boundary.file,"position":boundary.position,"executedGTIDs":boundary.gtids]
+            source["start"]=f.variant.start(boundary)
             source["stopAfterTransactions"]=count; value["source"]=source
             value["stateDirectory"]="/evidence/state-"+label
             for key in ["sourceReconnect","targetReconnect"] { value[key]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60] }

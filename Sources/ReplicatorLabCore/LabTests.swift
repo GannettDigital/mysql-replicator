@@ -7,12 +7,14 @@ public enum LabTests {
         var rows: [[String:Any]]=[]
         for profile in options.profiles {
             for suite in suites {
+              for variant in options.variants {
                 if suite == "correctness" {
                     rows += try LabScenario.select(tier:options.tier,family:options.family,ids:options.ids).map { item in
-                        var row=item.fields(profile); row["suite"]=suite; return row
+                        var row=item.fields(profile,variant:variant); row["suite"]=suite; return row
                     }
-                } else if suite == "lifecycle" { rows += LabLifecycle.fields(profile) }
+                } else if suite == "lifecycle" { rows += LabLifecycle.fields(profile,variant:variant) }
                 else { rows.append(adapter(profile:profile,suite:suite)) }
+              }
             }
         }
         if options.list {
@@ -29,19 +31,20 @@ public enum LabTests {
         var image: String?
         for profile in options.profiles {
             for suite in suites {
-                let indices=rows.indices.filter { rows[$0]["profile"] as? String == profile.rawValue && rows[$0]["suite"] as? String == suite }
+              for variant in options.variants {
+                let indices=rows.indices.filter { rows[$0]["profile"] as? String == profile.rawValue && rows[$0]["suite"] as? String == suite && (rows[$0]["variant"] as? String ?? "default") == variant.rawValue }
                 guard indices.contains(where:{rows[$0]["status"] as? String == "not_run"}) else { continue }
                 do {
                     if suite == "correctness" || suite == "lifecycle" {
                         if image == nil { image=try LabBuild.prepare(root:root,build:options.build,coverage:options.coverage); report["image"]=image }
                         let selected=Set(indices.filter { rows[$0]["status"] as? String == "not_run" }.compactMap { rows[$0]["id"] as? String })
                         let reporter: QualificationReporter, output: URL, execute: () throws -> Void
-                        let category="lab/"+directory.lastPathComponent+"/"+profile.rawValue+"/"+suite
+                        let category="lab/"+directory.lastPathComponent+"/"+profile.rawValue+"/"+suite+"/"+variant.rawValue
                         if suite == "correctness" {
-                            let run=SharedCorrectness.Run(root:root,profile:profile,selected:selected,category:category,image:image!,codeCoverage:options.coverage)
+                            let run=SharedCorrectness.Run(root:root,profile:profile,selected:selected,category:category,image:image!,codeCoverage:options.coverage,variant:variant)
                             reporter=run.reporter; output=run.f.output; execute={ try run.execute(build:false,slice:"all") }
                         } else {
-                            let run=LabLifecycle.Run(root:root,profile:profile,category:category,image:image!,codeCoverage:options.coverage)
+                            let run=LabLifecycle.Run(root:root,profile:profile,category:category,image:image!,codeCoverage:options.coverage,variant:variant)
                             reporter=run.reporter; output=run.f.output; execute={ try run.execute() }
                         }
                         var error: Error?
@@ -63,10 +66,11 @@ public enum LabTests {
                     }
                 } catch {
                     failed=true
-                    report[profile.rawValue+"/"+suite+"/error"]=String(describing:error)
+                    report[profile.rawValue+"/"+suite+"/"+variant.rawValue+"/error"]=String(describing:error)
                     for i in indices where rows[i]["status"] as? String == "running" { rows[i]["status"]="failed"; rows[i]["error"]=String(describing:error) }
                 }
                 try save()
+              }
             }
         }
         if try DDLCoverageEvidence.inputs(root:root) != inputs {

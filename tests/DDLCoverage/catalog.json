@@ -8240,7 +8240,11 @@
             "schema-effects",
             "following-dml"
           ],
-          "note": "Both named assertions require every one of the six cases; source warnings and database/table metadata are observed."
+          "note": "Both named assertions require every one of the six cases; source warnings and database/table metadata are observed.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -8983,7 +8987,11 @@
             "source-boundary",
             "schema-history"
           ],
-          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only."
+          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -9209,7 +9217,11 @@
             "source-boundary",
             "schema-history"
           ],
-          "note": "All named cases must pass structural/binlog/checkpoint/history checks; rename/drop make no following-DML claim."
+          "note": "All named cases must pass structural/binlog/checkpoint/history checks; rename/drop make no following-DML claim.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "ddl-suite",
@@ -9231,7 +9243,11 @@
           "assertion_ids": [
             "following-dml"
           ],
-          "note": "Only explicitly declared row probes are counted; full three-operation sequences are representative, not repeated per DDL."
+          "note": "Only explicitly declared row probes are counted; full three-operation sequences are representative, not repeated per DDL.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
