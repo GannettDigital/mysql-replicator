@@ -100,6 +100,9 @@ jobs:
           make correctness TIER=smoke ARGS="--skip-build"
           make lab-test ARGS="--suite demo --skip-build"
 
+      - name: Qualify source and target reconnect on both profiles
+        run: make lab-test ARGS="--suite lifecycle --skip-build"
+
       - name: Retain reverse recovery and advanced demo qualification
         run: |
           docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:reverse

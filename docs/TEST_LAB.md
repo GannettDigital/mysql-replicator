@@ -71,26 +71,47 @@ both remain available, without presenting one as a substitute for the other.
 
 ## Existing specialized qualification
 
-These suites use the common profile interface and retain their established
-runners/assertions. They are labeled adapters in the inventory, rather than
-claiming that all their cases have moved to the shared runner.
+These suites use the common profile interface. Correctness and lifecycle run
+shared, individually declared cases on both profiles. The remaining suites retain
+their established runners/assertions and are labeled adapters in the inventory.
 
 | `--suite` | Scope |
 | --- | --- |
 | `correctness` | Shared replicated-DDL, DML, indexes, policies and refusals |
-| `lifecycle` | Forward source/target reconnect tests; reverse port explicitly missing |
+| `lifecycle` | Shared source/target reconnect, restart, drain and uncertain-write cases |
 | `recovery` | InnoDB rollback/inspection/audited retry; forward extended fail-stop/refusal tests |
 | `demo` | Common retained-session start, compare, stop, resume and container repair |
 | `legacy-dml` | Original forward DML suite, including bootstrap and positioning variants |
 | `legacy-ddl` | Original forward DDL suite and its catalog-bound assertions |
 | `native` | Original 8.4-source native DDL observation suite |
-| `all` | All of the above; reports incomplete while required ports remain missing |
+| `all` | All of the above; any missing required case makes the run incomplete |
 
 For example: `make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"`.
 Recovery qualification omits the old embedded benchmark. Original commands such
 as `dml-suite`, `ddl-suite`, `reverse-suite`, and `reverse-correctness` remain for
 existing scripts. Old demo commands retain their original sessions and advanced
 failure exercises. New commands never adopt or overwrite those sessions.
+
+Run reconnect qualification for both profiles, or select one:
+
+```sh
+make lab-test ARGS="--suite lifecycle"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle --skip-build"
+```
+
+The 11 lifecycle cases use GTIDs and equivalent bootstrapped integer tables.
+They cover source socket loss, rotation, clean/crash restart, interruption during
+an 8,000-row group, backoff cancellation, and changed source settings; target
+socket loss/restart, active-group drain, saved-state resume with an unavailable
+target, backoff drain, lost mutation replies and changed target settings.
+Successful cases compare source/native/target rows and saved checkpoints.
+The InnoDB lost-reply case observes a provisional write before disconnecting,
+then checks rollback and durable pending-row evidence. The applier still reports
+an unconfirmed rollback and blocks ordinary resume; this does not authorize
+automatic replay or qualify a lost COMMIT reply. The forward case uses a table
+lock on INSERT instead of an InnoDB row lock on UPDATE. All cases run in order, with distinct state
+directories except the explicit resume pairs. Historical file-position and
+timeout variants remain in the legacy suites.
 
 The [DDL catalog](../tests/DDLCoverage/README.md) still distinguishes case passes
 from named assertion qualification. Its historical profile IDs describe specific
@@ -108,8 +129,8 @@ runs separate.
 DDL/native adapters list registered cases; other legacy adapters explicitly report
 suite-level inventory until their assertions are registered individually.
 
-For shared correctness, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
-matches the checkout. Both profiles use the same pinned image in a combined correctness run. Changing fixture or
+For shared correctness and lifecycle, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
+matches the checkout. Both profiles use the same pinned image in a combined run. Changing fixture or
 implementation inputs during qualification fails the aggregate.
 `--coverage` builds the instrumented image and exports each profile's coverage
 separately. Merge explicitly selected reports with the existing `make coverage-report`
@@ -118,10 +139,10 @@ Instrumented runs are not performance measurements. Legacy adapters retain their
 original image tags and build controls; build those suites before reusing their
 images with `--skip-build`.
 
-PR CI runs the same smoke cases and demo lifecycle for both profiles, retains
+PR CI runs the same smoke, reconnect and demo cases for both profiles, retains
 specialized forward integration/reverse recovery checks, and merges shared
 applier coverage with unit coverage. `Full Profile Qualification` runs the full
-correctness matrix weekly, on release tags, and through manual workflow dispatch.
+correctness and reconnect matrix weekly, on release tags, and through manual workflow dispatch.
 It uploads each profile's evidence separately.
 
 ## Interactive demo

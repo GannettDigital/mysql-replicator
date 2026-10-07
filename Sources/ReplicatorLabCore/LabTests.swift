@@ -11,7 +11,8 @@ public enum LabTests {
                     rows += try LabScenario.select(tier:options.tier,family:options.family,ids:options.ids).map { item in
                         var row=item.fields(profile); row["suite"]=suite; return row
                     }
-                } else { rows.append(adapter(profile:profile,suite:suite)) }
+                } else if suite == "lifecycle" { rows += LabLifecycle.fields(profile) }
+                else { rows.append(adapter(profile:profile,suite:suite)) }
             }
         }
         if options.list {
@@ -31,16 +32,24 @@ public enum LabTests {
                 let indices=rows.indices.filter { rows[$0]["profile"] as? String == profile.rawValue && rows[$0]["suite"] as? String == suite }
                 guard indices.contains(where:{rows[$0]["status"] as? String == "not_run"}) else { continue }
                 do {
-                    if suite == "correctness" {
+                    if suite == "correctness" || suite == "lifecycle" {
                         if image == nil { image=try LabBuild.prepare(root:root,build:options.build,coverage:options.coverage); report["image"]=image }
                         let selected=Set(indices.filter { rows[$0]["status"] as? String == "not_run" }.compactMap { rows[$0]["id"] as? String })
-                        let run=SharedCorrectness.Run(root:root,profile:profile,selected:selected,category:"lab/"+directory.lastPathComponent+"/"+profile.rawValue,image:image!,codeCoverage:options.coverage)
+                        let reporter: QualificationReporter, output: URL, execute: () throws -> Void
+                        let category="lab/"+directory.lastPathComponent+"/"+profile.rawValue+"/"+suite
+                        if suite == "correctness" {
+                            let run=SharedCorrectness.Run(root:root,profile:profile,selected:selected,category:category,image:image!,codeCoverage:options.coverage)
+                            reporter=run.reporter; output=run.f.output; execute={ try run.execute(build:false,slice:"all") }
+                        } else {
+                            let run=LabLifecycle.Run(root:root,profile:profile,category:category,image:image!)
+                            reporter=run.reporter; output=run.f.output; execute={ try run.execute() }
+                        }
                         var error: Error?
-                        do { try run.execute(build:false,slice:"all") } catch let e { error=e }
+                        do { try execute() } catch let e { error=e }
                         for i in indices where rows[i]["status"] as? String == "not_run" {
-                            let observed=run.reporter.results.first { $0["id"] as? String == rows[i]["id"] as? String }
+                            let observed=reporter.results.first { $0["id"] as? String == rows[i]["id"] as? String }
                             rows[i]["status"]=observed?["status"] ?? "not_run"
-                            rows[i]["evidence"]=run.f.output.path
+                            rows[i]["evidence"]=output.path
                             if let detail=observed?["error"] { rows[i]["error"]=detail }
                         }
                         if let error { throw error }
@@ -91,9 +100,6 @@ public enum LabTests {
         case "legacy-dml","legacy-ddl","native":
             row["intent"]="preserve existing assertions and evidence; includes bootstrap/version-specific experiments"
             if profile == .reverse { row["status"]="not_applicable"; row["reason"]="Historical 8.4-source qualification; shared applicable workloads run in correctness." }
-        case "lifecycle":
-            row["intent"]="source and target reconnect qualification"
-            if profile == .reverse { row["status"]="not_implemented"; row["reason"]="The forward reconnect workloads have not been ported to the reverse topology." }
         case "recovery":
             row["intent"]=profile == .reverse ? "transaction rollback, inspection and audited retry" : "MyISAM fail-stop and recovery refusal"
         case "demo": row["intent"]="retained demo lifecycle"
@@ -107,10 +113,6 @@ public enum LabTests {
         case "legacy-dml","legacy-ddl":
             let ddl=suite == "legacy-ddl"
             try DMLQualification.run(root:root,build:build,ddl:ddl,selection:SuiteSelection(arguments:args,ddl:ddl),onEvidence:onEvidence)
-        case "lifecycle":
-            for slice in ["reconnect","target-reconnect"] {
-                try DMLQualification.run(root:root,build:build,selection:SuiteSelection(arguments:args+["--slice",slice,"--positioning","gtid"],ddl:false),onEvidence:onEvidence)
-            }
         case "recovery":
             if profile == .reverse { try ReverseQualification.run(root:root,build:build,events:0,onEvidence:onEvidence) }
             else { try DMLQualification.run(root:root,build:build,selection:SuiteSelection(arguments:args+["--slice","extended","--positioning","gtid"],ddl:false),onEvidence:onEvidence) }

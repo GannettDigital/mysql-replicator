@@ -26,9 +26,13 @@ final class LabProfileTests: XCTestCase {
         XCTAssertThrowsError(try LabScenario.select(tier:"full",family:nil,ids:["typo"]))
         XCTAssertThrowsError(try LabScenario.select(tier:"full",family:"dml",ids:["ddl-index-create"]))
     }
-    func testMissingPortIsNotAnAutomaticSkipOrPass() {
-        let row=LabTests.adapter(profile:.reverse,suite:"lifecycle")
-        XCTAssertEqual(row["status"] as? String,"not_implemented")
+    func testLifecycleRunsTheSameDeclaredCasesOnBothProfiles() {
+        let forward=LabLifecycle.fields(.forward), reverse=LabLifecycle.fields(.reverse)
+        XCTAssertEqual(forward.compactMap{$0["id"] as? String},reverse.compactMap{$0["id"] as? String})
+        XCTAssertEqual(Set(reverse.compactMap{$0["id"] as? String}).count,11)
+        XCTAssertTrue((forward+reverse).allSatisfy{$0["status"] as? String == "not_run"})
+        XCTAssertEqual(reverse.first{$0["id"] as? String == "target-drain-resume"}?["dependencies"] as? [String],["target-drain"])
+        XCTAssertEqual(reverse.first{$0["id"] as? String == "target-uncertain-resume"}?["dependencies"] as? [String],["target-uncertain"])
         let fk=LabScenario.correctness.first{$0.id == "reject-foreign-key"}!
         XCTAssertEqual(fk.fields(.reverse)["status"] as? String,"not_run")
         XCTAssertEqual(fk.intent,"reject before target SQL")

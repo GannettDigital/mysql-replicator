@@ -31,6 +31,8 @@ jobs:
           sudo apt-get install -y sqlite3 openssl
       - name: Run shared full correctness
         run: make correctness PROFILE=${{ matrix.profile }}
+      - name: Run shared source and target lifecycle
+        run: make lab-test PROFILE=${{ matrix.profile }} ARGS="--suite lifecycle --skip-build"
       - name: Upload qualification evidence
         if: always()
         uses: actions/upload-artifact@v4

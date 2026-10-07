@@ -204,6 +204,18 @@ are saved under `artifacts/reverse-suite/`; demo lifecycle evidence is under
 
 Unit fault tests cover lost commit replies, failed rollback, incomplete relay,
 crashed RUNNING state, ordered resolution and atomic audit/checkpoint updates.
+Live source/target reconnect qualification uses the shared profile runner:
+
+```sh
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle"
+```
+
+Its 11 cases cover socket loss, source rotation and restart, target restart,
+active-group drain/resume, backoff shutdown, settings revalidation and lost target
+mutation replies. The InnoDB case observes a provisional write, disconnects the
+writer, and checks rollback, pending-row evidence and refusal of ordinary resume.
+See [the test lab](TEST_LAB.md) for scope and evidence under `artifacts/lab/`.
+
 Managed-service privileges, realistic WAN latency, full-chain operation and
 process-kill-at-COMMIT qualification remain untested. The downstream MyISAM profile
 still rejects multi-statement/multi-table source groups; that extension is deferred.
