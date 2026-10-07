@@ -1,7 +1,7 @@
 # Reverse demo workbook: four terminals
 
 This workbook exercises **5.7 InnoDB → replicator → 8.4 InnoDB**, alongside a
-native **5.7 → 5.7 InnoDB** reference. It uses preloaded tables and DML only.
+native **5.7 → 5.7 InnoDB** reference. Its worked examples use preloaded tables and DML.
 The original [demo workbook](DEMO_WORKBOOK.md) covers the separate MyISAM profile.
 
 ## Prepare the demo
@@ -98,8 +98,10 @@ all three databases and restarts the previously running applier. Pause other
 source writes during comparison.
 
 Tables `reverse_poc.items` and `reverse_poc.aux` already exist on all servers.
-Do not run the original demo's CREATE/ALTER examples here: reverse-profile DDL
-and foreign keys remain unsupported.
+Supported CREATE/ALTER DDL also works in newly built reverse sessions. Use InnoDB
+for explicit engine clauses; foreign keys remain unsupported. This workbook's
+comparison checks the two preloaded tables. See [shared correctness tests](../docs/REVERSE_REPLICATION.md#shared-correctness-suite)
+for broader schema/data coverage. Retained demos keep their original image and grants.
 
 ## Terminal 3 — native MySQL 5.7 reference
 

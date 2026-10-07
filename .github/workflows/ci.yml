@@ -97,6 +97,7 @@ jobs:
       - name: Test reverse InnoDB profile using the same executable
         run: |
           docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:reverse
+          make reverse-correctness ARGS="--skip-build"
           make reverse-suite ARGS="--skip-build"
           make reverse-demo-suite ARGS="--skip-build"
 
@@ -119,6 +120,7 @@ jobs:
           path: |
             artifacts/ddl-suite/
             artifacts/dml-suite/build-*.log
+            artifacts/reverse-correctness/
             artifacts/reverse-suite/
             artifacts/reverse-demo-suite/
           if-no-files-found: ignore

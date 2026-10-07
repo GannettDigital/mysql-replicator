@@ -139,6 +139,9 @@ make dml-suite ARGS="--slice basic"
 # DDL qualification with GTID positioning:
 make ddl-suite ARGS="--slice modify-index --positioning gtid"
 
+# Shared DML/DDL correctness on 5.7 InnoDB → 8.4 InnoDB:
+make reverse-correctness
+
 # Debian packaging smoke test on Ubuntu 16.04:
 make deb
 ```

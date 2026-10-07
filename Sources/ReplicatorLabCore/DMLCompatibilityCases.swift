@@ -17,8 +17,10 @@ enum DMLCompatibilityCases {
             .init(sql:"INSERT INTO poc.matrix_fixed VALUES(1,CONVERT(0xF09F988065CC812020 USING utf8mb4),0x00FF),(2,'',X''),(3,NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND HEX(c)='F09F988065CC81' AND HEX(b)='00FF000000000000'"),
             .init(sql:"UPDATE poc.matrix_fixed SET c=REPEAT('x',255),b=0x0102030405060708 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND CHAR_LENGTH(c)=255 AND HEX(b)='0102030405060708'"),
             .init(sql:"DELETE FROM poc.matrix_fixed WHERE id IN (1,3)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=2 AND HEX(b)='0000000000000000'")]),
-        Case(id:"choices",definition:"id INT PRIMARY KEY,e ENUM('','one','it''s','x,y','🙂'),s SET('a','b','c')",phases:[
-            .init(sql:"INSERT INTO poc.matrix_choices VALUES(1,1,0),(2,2,7),(3,'it''s','a,c'),(4,NULL,NULL),(5,'🙂','b')",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=1 AND e+0=1 AND s+0=0"),
+        // COLUMN_TYPE loses supplementary-plane ENUM/SET labels on both versions.
+        // Keep BMP Unicode here; the reverse DDL refusal suite covers that limit.
+        Case(id:"choices",definition:"id INT PRIMARY KEY,e ENUM('','one','it''s','x,y','é'),s SET('a','b','c')",phases:[
+            .init(sql:"INSERT INTO poc.matrix_choices VALUES(1,1,0),(2,2,7),(3,'it''s','a,c'),(4,NULL,NULL),(5,'é','b')",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=1 AND e+0=1 AND s+0=0"),
             .init(sql:"UPDATE poc.matrix_choices SET e='x,y',s=6 WHERE id=3",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=3 AND e+0=4 AND s+0=6"),
             .init(sql:"DELETE FROM poc.matrix_choices WHERE id IN (1,2,3,5)",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=4 AND e IS NULL")],rowMetadata:"FULL"),
         Case(id:"widechoices",definition:"id INT PRIMARY KEY,e ENUM("+(1...256).map { "'e\($0)'" }.joined(separator:",")+"),s SET("+(1...64).map { "'s\($0)'" }.joined(separator:",")+")",phases:[

@@ -107,3 +107,7 @@ reverse-demo-up reverse-demo-start reverse-demo-stop reverse-demo-status reverse
 	swift run replicator-lab $@ $(ARGS)
 reverse-demo-sql:
 	swift run replicator-lab reverse-demo-sql "$(FILE)"
+
+.PHONY: reverse-correctness
+reverse-correctness:
+	swift run replicator-lab reverse-correctness $(ARGS)

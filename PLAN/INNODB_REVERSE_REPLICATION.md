@@ -124,8 +124,9 @@ this scope. Do not claim Cloud SQL or production readiness from Docker tests alo
   evidence: `artifacts/reverse-suite/20261006T221314Z-9aaf94ad-auto-transaction-myisam/`.
 - Lost-COMMIT and rollback-failure paths have unit fault tests. The live fixture
   uses no SUPER privilege on the target account. This is not Cloud SQL validation.
-- Dynamic DDL and foreign keys remain explicitly blocked for the reverse
-  profile. DDL/FK expansion and full-chain work are deferred by user request.
+- At this initial increment, dynamic DDL and foreign keys were blocked. DDL
+  qualification is added in the correctness increment below; FK/full-chain work
+  remains deferred.
 - Operator documentation: `docs/REVERSE_REPLICATION.md`. CI runs the reverse
   fixture using the same executable as the existing integration/release image.
 - Unit qualification: 308 Swift tests pass, including rollback/COMMIT-loss,
@@ -202,3 +203,71 @@ Demo usability follow-up:
   missing-container repair with saved state, duplicate-key BLOCKED status, audited
   retry/resume and cleanup. Evidence:
   `artifacts/reverse-demo-suite/20261006T235559Z-ae91b5e7-auto-transaction-innodb/`.
+
+
+## Shared reverse correctness increment
+
+The next agreed priority is correctness parity for applicable existing fixtures,
+including source-side CREATE DATABASE and CREATE TABLE, ahead of more performance
+or physical crash-injection work. This supersedes the earlier DDL deferral; it
+does not expand foreign-key/cascade support or the downstream MyISAM contract.
+
+- `make reverse-correctness` uses the existing database-creation, DDL compatibility,
+  DML matrix and MODIFY/index SQL/expectations. Topology: 5.7 InnoDB source,
+  native 5.7 InnoDB reference, external 8.4 InnoDB destination.
+- DDL stays a drained, journaled barrier. Explicit engines are checked against
+  the target contract. The 8.4 contract restores 5.7 utf8mb4 defaults and removes
+  only the obsolete SQL-mode bits that upstream 8.4 replication ignores.
+- Normalize version-specific metadata presentation: temporal DEFAULT_GENERATED /
+  CURRENT_TIMESTAMP and 8.4's hex-rendered binary defaults. Keep row bytes exact
+  and preserve literal/default/ENUM/SET text in the test oracle.
+- Treat logged 5.7 conditional temporary-table DROP cleanup as an audited no-op.
+  Test a permanent table sharing its name to prove cleanup cannot remove it.
+- Restore validated SQL plans for all tables before an InnoDB transaction begins
+  after DDL invalidation. No table locks or target journal are introduced.
+- Compare rows and schema after each step, check original independent expected
+  results, require GTID catch-up and clean intent completion, then reopen saved
+  schemas. Extra coverage includes implicit DDL commit and CREATE LIKE → INSERT
+  SELECT → multi-table RENAME → DROP.
+- Refusal fixtures check engine, FK, event, trigger policy and unsupported types:
+  no issued target statement, no checkpoint advance, no following DML, durable
+  diagnostics. Source/native acceptance is checked separately.
+- Evidence and the explicit scope exclusions are described in
+  [REVERSE_REPLICATION.md](../docs/REVERSE_REPLICATION.md#shared-correctness-suite).
+  CI runs this suite on the same release executable as the other integration tests.
+
+Additional gaps exposed by shared fixtures:
+
+- MySQL COLUMN_TYPE loses supplementary-plane ENUM/SET labels. Dynamic DDL now
+  rejects them before issuing SQL. Positive ENUM coverage uses quoted/BMP Unicode
+  labels; supplementary UTF-8 remains covered in ordinary text columns.
+- The comparison oracle accounts for partition identifier quoting and view-only
+  placeholder rows in information_schema.PARTITIONS, and uses explicit utf8mb4
+  client/results encoding. These presentation differences do not normalize data.
+- A 5.7 CREATE EVENT exposed incorrect multi-database query-status decoding in
+  the pinned Rust dependency. The adapter now bounds and skips each database
+  name's NUL terminator, handles the native over-limit sentinel, and rejects
+  truncation/duplicate fields. Trigger/event policy diagnostics also take
+  precedence over unsupported session metadata.
+
+Qualification investigation note: an early run at
+`artifacts/reverse-correctness/20261007T013426Z-1bcae547-auto-transaction-innodb/`
+timed out waiting for a source GTID without an applier error. It did not retain
+the source binlog, so the cause was not established. Later runs passed that
+boundary. Failure artifacts now include the awaited/source boundaries, source
+binlog and container logs to make a recurrence diagnosable.
+
+Validation (2026-10-06 local time):
+
+- Complete `reverse-correctness --skip-build`: **64 cases, 384 steps passed**
+  against MySQL 5.7.42 source/native and 8.4.8 target. Evidence:
+  `artifacts/reverse-correctness/20261007T021905Z-f3ab467a-auto-transaction-innodb/`.
+  Final state is STOPPED with zero unfinished row/DDL intents, two audited
+  trigger skips and two temporary-cleanup skips. Saved schemas reopen and the
+  next source transaction applies successfully.
+- `make test`: 328 Swift tests and 8 Rust tests passed.
+- `make periphery`: no unused code detected.
+- Forward `make integration-smoke` and the selected `matrix-choices` DML suite
+  passed on the rebuilt release executable. Evidence:
+  `artifacts/ddl-suite/20261007T022010Z-08c71c52-auto-autocommit-myisam/` and
+  `artifacts/dml-suite/20261007T022201Z-772b2c76-auto-autocommit-myisam/`.

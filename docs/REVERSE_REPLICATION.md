@@ -1,6 +1,6 @@
 # Experimental 5.7 → 8.4 InnoDB profile
 
-This is an initial DML implementation, not Cloud SQL qualification or a complete
+This is an experimental DML/DDL implementation, not Cloud SQL qualification or a complete
 migration/recovery solution. The default 8.4 → 5.7 MyISAM profile is unchanged.
 The implementation plan is [INNODB_REVERSE_REPLICATION.md](../PLAN/INNODB_REVERSE_REPLICATION.md).
 
@@ -28,16 +28,33 @@ changes invalidate this assumption.
 
 The supported scalar types, collations and primary-key requirements remain the
 existing applier subset. This does not imply support for every 5.7 type. In
-particular, text is limited to the supported utf8mb4 collations. Composite keys,
+particular, text is limited to the supported utf8mb4 collations. DDL ENUM/SET labels
+outside the Unicode BMP are rejected: MySQL COLUMN_TYPE metadata replaces them
+with `?`, preventing reliable definition verification. Ordinary utf8mb4 text can
+still contain supplementary characters such as emoji. Composite keys,
 PK updates, multiple source statements and multiple tables per transaction are
 supported in this profile. Target triggers and foreign keys (including incoming
-references/cascades) are rejected. Dynamic DDL is blocked before execution in
-this profile; dynamic DDL and foreign keys are outside the current work.
+references/cascades) are rejected. Supported database/table DDL, generated columns,
+partitions, views and stored routines use the same ordered, journaled DDL path as
+the forward profile. Explicit table engines must be InnoDB; omitted engines use
+the target's InnoDB default. Trigger definitions follow the configured skip/reject
+policy, and events are rejected. Unsupported syntax still blocks replication.
+
+For 5.7 query events, the 8.4 session uses `utf8mb4_general_ci` as the utf8mb4
+charset default and discards the obsolete SQL-mode bits ignored by native 8.4
+replication. Database defaults come from the logged source session; table defaults
+come from the owning database. This preserves source defaults without collation
+translation. Existing databases must therefore have matching defaults at bootstrap.
+The source must use explicit TIMESTAMP defaults (`explicit_defaults_for_timestamp=ON`).
 
 The source needs its normal replication privileges. The target needs DML and
 schema visibility privileges, including explicit TRIGGER visibility and
-REPLICATION CLIENT to exclude native replication. The reverse harness uses no
-SUPER grant for the applier and does not assign GTID_NEXT. Managed-service
+REPLICATION CLIENT to exclude native replication. DDL also needs the corresponding
+CREATE/ALTER/DROP/index/view/routine privileges. Preserving source DEFINER clauses
+may need `SET_ANY_DEFINER` on 8.4; stored functions with binary logging have additional
+server privilege/flag requirements. The disposable harness grants ALL PRIVILEGES
+plus SET_ANY_DEFINER; this is not a least-privilege Cloud SQL recipe. The applier
+does not assign GTID_NEXT. Managed-service
 privileges, network access and failover must still be tested on Cloud SQL.
 
 ## Transaction and failure behavior
@@ -133,8 +150,10 @@ make reverse-demo-sql FILE=examples/reverse-demo/01-success.sql
 to generated `apply.yaml`. Replication starts separately with `reverse-demo-start`;
 status before that says `NOT_STARTED`. Repeating `up` reuses the existing session
 and repairs a missing applier container without resetting data. Use the preloaded `reverse_poc.items` and
-`reverse_poc.aux` tables; source DDL remains blocked. Do not reuse the original
-MyISAM demo's DDL examples.
+`reverse_poc.aux` tables for the workbook's data comparison. Supported source DDL
+also works in newly built sessions; use InnoDB instead of the original workbook's
+explicit MyISAM clauses. Existing retained demos keep their pinned image and
+original user grants until deliberately recreated.
 
 - `make reverse-demo-compare`: wait for catch-up, drain, compare rows/schema and source GTID coverage,
   then restart an applier that was running. Pause source writes during comparison.
@@ -185,3 +204,39 @@ crashed RUNNING state, ordered resolution and atomic audit/checkpoint updates.
 Managed-service privileges, realistic WAN latency, full-chain operation and
 process-kill-at-COMMIT qualification remain untested. The downstream MyISAM profile
 still rejects multi-statement/multi-table source groups; that extension is deferred.
+
+## Shared correctness suite
+
+```sh
+make reverse-correctness
+```
+
+This uses the forward profile's database-creation, DDL compatibility, DML type/
+operation matrix and MODIFY/index case definitions against a **5.7 InnoDB source,
+5.7 native reference and 8.4 InnoDB target**. CREATE DATABASE/TABLE and subsequent
+schema changes run on the source and must reach both replicas. Each step checks
+GTID catch-up, exact row bytes, normalized columns/defaults/indexes, and the shared
+independent expectations. The suite also checks saved-schema restart, trigger
+skip behavior, and refused DDL with durable diagnostics and no checkpoint advance
+or following DML. Successful work must leave no unfinished intents.
+
+Use `ARGS="--skip-build --slice database"` (or `ddl`, `dml`, `indexes`, `policy`,
+`rejections`) while iterating. The default is `all`. Evidence lives under
+`artifacts/reverse-correctness/`: incremental `cases.json`, per-step SQL/checks/
+snapshots, logs, SQLite/relay evidence, and `result.json`. A failed run exits nonzero.
+
+This is not full parity with every forward-suite scenario: forward-only 8.4
+collation translation and MyISAM limits do not apply; file-position, filters,
+reconnect/timeout qualification and foreign keys are not covered here. 5.7 has no
+FULL optional table-map metadata. Its missing metadata uses the target schema,
+which these tests first create through replicated DDL. The temporary CREATE LIKE
+case uses an InnoDB template for this profile. MySQL 5.7's logged conditional
+`DROP TEMPORARY TABLE IF EXISTS` cleanup is an audited no-op (`ddl_skips`); the
+suite checks that a permanent table with the same name survives. Other temporary
+DDL syntax is not broadened. Binary-default hex rendering,
+integer display widths, temporal-default presentation and partition identifier quoting are normalized for
+schema comparison; actual row bytes are not normalized.
+
+DDL commits independently of DML even on InnoDB. Failed or uncertain DDL remains
+blocked with its journal/diagnostic; the offline row-recovery commands do not
+resolve pending DDL intents automatically.

@@ -10,6 +10,7 @@ extension TargetSession {
         if config.replicationProfile.transactional {
             return InnoDBExecution.run(groups,cancellation:cancellation,
                 maximumInsertRows:config.batchPolicy.maximumInsertRows,maximumInsertBytes:maximumInsertBytes,
+                prepare:{ try checkSourceFailure(); try self.prepareDML($0) },
                 begin:{ try checkSourceFailure(); _ = try self.query("START TRANSACTION",textProtocol:true) },
                 commit:{ _ = try self.query("COMMIT",textProtocol:true,mutation:true) },
                 rollback:{ _ = try self.query("ROLLBACK",textProtocol:true) },

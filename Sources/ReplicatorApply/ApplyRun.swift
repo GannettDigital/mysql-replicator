@@ -160,7 +160,7 @@ public enum ApplyRun {
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
                     guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
-                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedTrigger(query) {
+                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile) {
                         try state.complete(group,rowCount:0,filtered:true,skippedDDL:skipped)
                         try progress(); return
                     }
@@ -168,8 +168,7 @@ public enum ApplyRun {
                         try state.complete(group,rowCount:0,filtered:true)
                         try progress(); return
                     }
-                    try require(target.contract.supportsDDL,"reverse InnoDB profile currently requires preloaded schemas; DDL must be reconciled explicitly")
-                    let statement=try DDLStatement.from(group)
+                    let statement=try DDLStatement.from(group,profile:profile)
                     let plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     try require(!cancellation.isCancelled,"apply cancelled")

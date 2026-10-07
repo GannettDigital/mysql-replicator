@@ -620,7 +620,7 @@ final class StateStore {
         if let skippedDDL {
             try require(filtered && group.outcome == .statement && group.events.count == 2,"invalid skipped DDL completion")
             guard case .query(let query) = group.events[1].control else { throw ApplyError("missing skipped DDL query") }
-            let expected = try DDLPolicy().skippedTrigger(query)
+            let expected = try DDLPolicy().skippedQuery(query,profile:replicationProfile)
             try require(expected?.sql == skippedDDL.sql && expected?.name == skippedDDL.name && expected?.reason == skippedDDL.reason,"skipped DDL differs from source query")
         }
         if filtered {

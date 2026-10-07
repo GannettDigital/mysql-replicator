@@ -5,6 +5,7 @@ import Foundation
 struct DDLParser {
     var tokens: [DDLToken]
     var index = 0
+    var engine = "MyISAM"
     let database: String?
     var compatibility = CompatibilityPolicy()
     var defaultUTF8MB4Collation: UInt32 = 255
@@ -65,6 +66,7 @@ struct DDLParser {
         if ["enum","set"].contains(base) {
             let labels = try parenthesized()
             try require(!labels.isEmpty && labels.enumerated().allSatisfy { $0.offset % 2 == 0 ? $0.element.literal != nil : $0.element.keyword == "," } && labels.count % 2 == 1,"invalid ENUM/SET labels")
+            try require(labels.allSatisfy { $0.literal?.unicodeScalars.allSatisfy { $0.value <= 0xffff } ?? true },"DDL ENUM/SET supplementary-plane labels cannot be verified from MySQL COLUMN_TYPE metadata")
             // information_schema escapes backslash/control bytes independently
             // of the creation session's NO_BACKSLASH_ESCAPES mode.
             type += "("+labels.map { token in
@@ -229,6 +231,7 @@ struct DDLParser {
     mutating func createTable(_ name: TableName,conditional: Bool) throws -> DDLStatement {
         try expect("("); var columns: [ApplyColumn] = [], key: [String]?, indexes: [ApplyIndex] = []
         repeat {
+            try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
             if take("PRIMARY") {
                 try expect("KEY"); let parts = try keyParts(); try require(key == nil && parts.allSatisfy{$0.prefix == nil},"invalid DDL primary key"); key = parts.map(\.column)
             } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition()) }
@@ -245,10 +248,10 @@ struct DDLParser {
             let option: String
             if take("ENGINE") {
                 _ = take("="); option = "engine"
-                if take("MYISAM") { engine = .myISAM }
-                else if index < tokens.count && tokens[index].literal?.uppercased() == "MYISAM" { index += 1; engine = .myISAM }
+                if take(self.engine.uppercased()) { engine = self.engine == "MyISAM" ? .myISAM : .innoDB }
+                else if index < tokens.count && tokens[index].literal?.uppercased() == self.engine.uppercased() { index += 1; engine = self.engine == "MyISAM" ? .myISAM : .innoDB }
                 else if index < tokens.count && tokens[index].literal?.uppercased() == "DEFAULT" { index += 1; engine = .defaultEngine }
-                else { throw ApplyError("explicit engine is outside the MyISAM DDL contract (no engine rewriting)") }
+                else { throw ApplyError("explicit engine is outside the \(self.engine) DDL contract (no engine rewriting)") }
             } else if take("AUTO_INCREMENT") { _ = take("="); _ = try number(); option = "auto_increment" }
             else {
                 _ = take("DEFAULT")

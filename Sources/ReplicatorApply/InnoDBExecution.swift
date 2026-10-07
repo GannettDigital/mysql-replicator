@@ -5,6 +5,7 @@ import ReplicatorCapture
 enum InnoDBExecution {
     static func run(_ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
                     maximumInsertRows: Int, maximumInsertBytes: Int,
+                    prepare: (PreparedDMLGroup) throws -> Void = { _ in },
                     begin: () throws -> Void, commit: () throws -> Void, rollback: () throws -> Void,
                     write: (Mutation) throws -> Void, insert: ([Mutation]) throws -> Void,
                     resetTrace: () -> Void, trace: () -> TargetStatementTrace) -> DMLExecution.Outcome {
@@ -14,6 +15,7 @@ enum InnoDBExecution {
             do {
                 resetTrace()
                 try require(!cancellation.isCancelled,"apply cancelled")
+                try prepare(group)
                 try begin(); started = true
                 let result = DMLExecution.run([group],cancellation:cancellation,
                     maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes,

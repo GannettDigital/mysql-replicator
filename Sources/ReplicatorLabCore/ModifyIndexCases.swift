@@ -198,14 +198,14 @@ enum ModifyIndexCases {
             _ = try h.sql("native","START REPLICA")
         }
     }
-    static func metadata(_ h:NativeHarness,_ service:String,_ test:Case) throws -> [String:String] {
+    static func metadata(_ h:NativeHarness,_ service:String,_ test:Case,expectedEngine:String? = nil) throws -> [String:String] {
         let condition="TABLE_SCHEMA='demo' AND TABLE_NAME='\(test.table)'"
         let columns=try h.sql(service,"SELECT CONCAT(COLUMN_NAME,':',IF(DATA_TYPE IN ('int','bigint'),CONCAT(DATA_TYPE,IF(COLUMN_TYPE LIKE '%unsigned%',' unsigned','')),COLUMN_TYPE),':',IS_NULLABLE,':',IFNULL(CHARACTER_SET_NAME,''),':',IFNULL(COLLATION_NAME,''),':',IFNULL(COLUMN_DEFAULT,'<NULL>')) FROM information_schema.COLUMNS WHERE \(condition) ORDER BY ORDINAL_POSITION")
         let indexes=try h.sql(service,"SELECT CONCAT(INDEX_NAME,':',NON_UNIQUE,':',SEQ_IN_INDEX,':',COLUMN_NAME,':',IFNULL(CAST(SUB_PART AS CHAR),'FULL'),':',INDEX_TYPE,':',COLLATION) FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX")
         let engine=try h.sql(service,"SELECT ENGINE FROM information_schema.TABLES WHERE \(condition)")
         try require(columns==test.columns,"\(test.test.id) \(service) columns differ: \(columns)")
         try require(indexes==test.indexes,"\(test.test.id) \(service) indexes differ: \(indexes)")
-        try require(engine==(service=="source" ? "InnoDB" : "MyISAM"),"index DDL changed local engine")
+        try require(engine==(expectedEngine ?? (service=="source" ? "InnoDB" : "MyISAM")),"index DDL changed local engine")
         return ["columns":columns,"indexes":indexes,"engine":engine]
     }
     static func rows(_ h:NativeHarness,_ service:String,_ table:String) throws -> String {

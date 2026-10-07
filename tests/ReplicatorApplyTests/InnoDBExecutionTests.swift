@@ -55,6 +55,18 @@ extension ApplyTests {
         }
     }
 
+    func testInnoDBPreparationPrecedesBeginAndFailureLeavesTargetUnstarted() throws {
+        try withBatchFixture { _,groups in
+            var operations: [String] = []
+            let outcome=InnoDBExecution.run(Array(groups.prefix(1)),cancellation:.init(),maximumInsertRows:1,maximumInsertBytes:1024,
+                prepare:{ _ in operations.append("prepare"); throw ApplyError("schema changed") },
+                begin:{ operations.append("begin") },commit:{ operations.append("commit") },rollback:{ operations.append("rollback") },
+                write:{ _ in operations.append("write") },insert:{ _ in operations.append("insert") },resetTrace:{},trace:{ .init() })
+            XCTAssertEqual(operations,["prepare"])
+            XCTAssertEqual(outcome.acknowledged,[0])
+            XCTAssertEqual(outcome.diagnostic?.transactionOutcome,"notStarted")
+        }
+    }
     func testInnoDBCommitLossDoesNotAcknowledgeOrRollbackUncertainTransaction() throws {
         try withBatchFixture { store,groups in
             try store.beginBatch(groups)

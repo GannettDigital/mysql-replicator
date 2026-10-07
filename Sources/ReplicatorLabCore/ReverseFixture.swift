@@ -57,7 +57,7 @@ final class ReverseFixture {
             """
         for service in ["target57","source","native"] { _ = try h.sql(service,seed) }
         _ = try h.sql("target57","CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE,REPLICATION CLIENT ON *.* TO 'capture_fixture'@'%'")
-        _ = try h.sql("source","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE,TRIGGER,REPLICATION CLIENT ON *.* TO 'apply_fixture'@'%'")
+        _ = try h.sql("source","CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'; GRANT SET_ANY_DEFINER ON *.* TO 'apply_fixture'@'%'")
         let baseline = try h.boundary("target57"), uuid = try h.sql("target57","SELECT @@server_uuid")
         // Reset only the disposable reference's locally generated seed GTIDs.
         _ = try h.sql("native","RESET MASTER; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE MASTER TO MASTER_HOST='target57',MASTER_USER='capture_fixture',MASTER_PASSWORD='fixture-capture-only',MASTER_SSL=1,MASTER_SSL_CA='/evidence/tls/ca.pem',MASTER_SSL_VERIFY_SERVER_CERT=1,MASTER_AUTO_POSITION=1; START SLAVE")

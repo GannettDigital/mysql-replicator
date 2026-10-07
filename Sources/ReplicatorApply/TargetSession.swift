@@ -149,8 +149,8 @@ final class TargetSession {
                 guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
                 var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
                 column.characterSet=row.column("CHARACTER_SET_NAME")?.string
-                column.defaultValue=row.column("COLUMN_DEFAULT")?.string
-                column.extra=row.column("EXTRA")?.string.flatMap{$0.isEmpty ? nil : $0}
+                column.defaultValue=try contract.columnDefault(row.column("COLUMN_DEFAULT")?.string,type:t)
+                column.extra=contract.columnExtra(row.column("EXTRA")?.string,defaultValue:row.column("COLUMN_DEFAULT")?.string,type:t)
                 column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }
                 return column
             },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
@@ -207,7 +207,7 @@ final class TargetSession {
         let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && r.column("EXTRA")?.string == (c.extra ?? "") && r.column("COLUMN_DEFAULT")?.string == c.defaultValue && (try r.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }) == c.generationExpression,"target schema differs from historical manifest")
+            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && contract.columnExtra(r.column("EXTRA")?.string,defaultValue:r.column("COLUMN_DEFAULT")?.string,type:c.type) == c.extra && (try contract.columnDefault(r.column("COLUMN_DEFAULT")?.string,type:c.type)) == c.defaultValue && (try r.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }) == c.generationExpression,"target schema differs from historical manifest")
         }
         try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
@@ -229,6 +229,16 @@ final class TargetSession {
     func writerExclusion() throws {
         try nativeExclusion()
         try require(try scalar("SELECT IS_USED_LOCK('mysql-replicator-writer')=CONNECTION_ID() AS v") == "1","writer ownership lost")
+    }
+    func prepareDML(_ group: PreparedDMLGroup) throws {
+        // DDL clears plans for every table. An InnoDB group can revisit several
+        // already-discovered tables; restore their plans before BEGIN, without
+        // LOCK TABLES (which would implicitly commit the transaction).
+        var seen = Set<String>()
+        for mutation in group.mutations where seen.insert(mutation.table.identity).inserted {
+            let table = mutation.table
+            if validatedPlans[table.identity]?.table != table { try verifySchema(table) }
+        }
     }
     func lock(_ table: ApplyTable) throws {
         // GET_LOCK belongs to this connection until explicit release or session

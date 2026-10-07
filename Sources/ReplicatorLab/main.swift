@@ -38,6 +38,7 @@ func main() throws -> Int32 {
           demo-suite [--skip-build]
           upstream-tests
           package-deb [--output DIR] [--skip-build] [--skip-verification]
+          reverse-correctness [--skip-build] [--slice all|database|ddl|dml|indexes|policy|rejections]
           reverse-suite [--skip-build] [--events N] # 5.7 InnoDB → 8.4 InnoDB
           reverse-demo-up [--skip-build]
           reverse-demo-start | reverse-demo-stop | reverse-demo-status | reverse-demo-compare
@@ -78,6 +79,9 @@ func main() throws -> Int32 {
         if selection.list { selection.describe(ddl: ddl); return 0 }
         try DMLQualification.run(root: root, build: selection.build, ddl: ddl, selection: selection)
         return 0
+    }
+    if command == "reverse-correctness" {
+        try ReverseCorrectness.run(root:root,arguments:args); return 0
     }
     if command == "reverse-suite" {
         let build = !args.contains("--skip-build")
