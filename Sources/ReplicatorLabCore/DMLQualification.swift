@@ -241,7 +241,12 @@ public enum DMLQualification {
                     _ = try h.sql("source","SET GLOBAL binlog_row_metadata="+originalMetadata)
                     let client=try start(QualificationCase(label,"Reject incompatible or unqualified MySQL 5.7 target schema: "+test.id),configuration(label,at:before,count:1))
                     _ = try finish(client,label,success:false,reason:test.reason)
-                    try require(h.sql("target57","SELECT COUNT(*) FROM \(table)") == "0" && state(label,"SELECT transactions_applied FROM state") == "0","rejected matrix case changed target or checkpoint")
+                    let check=test.postWriteCheck ?? "COUNT(*)=0"
+                    try require(h.sql("target57","SELECT \(check) FROM \(table)") == "1","rejected matrix target effects differ")
+                    try require(state(label,"SELECT lifecycle||'|'||transactions_applied||'|'||COALESCE(applied_position,'NULL') FROM state") == "BLOCKED|0|NULL","rejected matrix case advanced checkpoint or did not block")
+                    if test.postWriteCheck != nil {
+                        try require(state(label,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "1","generated mismatch lost pending row evidence")
+                    }
                     try cases.pass(label)
                 }
                 // Negative fixtures are intentionally absent on the native reference.
@@ -597,7 +602,7 @@ public enum DMLQualification {
                         let logged = "SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci; SET SESSION collation_server=utf8mb4_0900_ai_ci; SET SESSION default_collation_for_utf8mb4=utf8mb4_0900_ai_ci; "
                         var config = configuration(label,at:try h.boundary("source"),count:9)
                         config["compatibility"] = mapping
-                        let initialTest = QualificationCase(label+"-initial","Persist mapped schemas after the dynamic cleanup workflow")
+                        let initialTest = DDLCompatibilityCases.collationCleanupInitial
                         let initial = try start(initialTest,config); try waitForReader(initial)
                         _ = try h.sql("native","START REPLICA")
                         _ = try h.sql("source",logged+"""
@@ -615,9 +620,8 @@ public enum DMLQualification {
                         try ModifyIndexCases.waitNative(h,h.boundary("source"))
                         try cases.pass(initialTest.id)
                         // Changing a durable mapping must fail before any target SQL.
-                        for (suffix,policy) in [("changed",["collations":["utf8mb4_0900_ai_ci":"utf8mb4_bin"]]),("removed",["collations":[:]])] {
+                        for (rejectedTest,policy) in [(DDLCompatibilityCases.collationCleanupChanged,["collations":["utf8mb4_0900_ai_ci":"utf8mb4_bin"]]),(DDLCompatibilityCases.collationCleanupRemoved,["collations":[:]])] {
                             var changed = config; changed["compatibility"] = policy
-                            let rejectedTest = QualificationCase(label+"-"+suffix,"Refuse a changed saved collation policy")
                             let rejected = try start(rejectedTest,changed,initialize:false)
                             _ = try finish(rejected,rejectedTest.id,success:false,reason:"differs from saved state")
                             try cases.pass(rejectedTest.id)

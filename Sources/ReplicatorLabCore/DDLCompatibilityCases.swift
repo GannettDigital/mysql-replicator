@@ -105,6 +105,9 @@ enum DDLCompatibilityCases {
         ])
     ]
     static let collationCleanup = QualificationCase("ddl-compat-collation-cleanup","Translate default and explicit collations through CREATE LIKE, INSERT SELECT, multi-table RENAME and clean restart")
+    static let collationCleanupInitial = QualificationCase("ddl-compat-collation-cleanup-initial","Persist mapped schemas after the dynamic cleanup workflow")
+    static let collationCleanupChanged = QualificationCase("ddl-compat-collation-cleanup-changed","Refuse a changed saved collation policy")
+    static let collationCleanupRemoved = QualificationCase("ddl-compat-collation-cleanup-removed","Refuse removal of a saved collation policy")
     static let collationCollision = QualificationCase("ddl-compat-collation-collision","Block a NO PAD to PAD SPACE unique-key collision without advancing past the failed group")
     static let trigger = QualificationCase("ddl-compat-reject-trigger","Reject source trigger DDL before target mutation and checkpoint advance")
     static let event = QualificationCase("ddl-compat-reject-event","Reject source event DDL even when disabled on the source")
@@ -112,5 +115,6 @@ enum DDLCompatibilityCases {
     static let sourceTrigger = QualificationCase("ddl-compat-source-trigger","A preexisting source-only BEFORE trigger produces final row values without target re-firing")
     static let targetTrigger = QualificationCase("ddl-compat-target-trigger","Reject preexisting target triggers before DML")
     static let generatedMismatch = QualificationCase("ddl-compat-generated-mismatch","Block when target-generated values differ from the FULL source row image")
-    static var declarations: [QualificationCase] {cases.map(\.test)+[trigger,event,skipTrigger,sourceTrigger,targetTrigger,generatedMismatch,collationCleanup,collationCollision]}
+    static var independent: [QualificationCase] {cases.map(\.test)+[trigger,event,skipTrigger,sourceTrigger,targetTrigger,generatedMismatch,collationCleanup,collationCollision]}
+    static var declarations: [QualificationCase] {independent+[collationCleanupInitial,collationCleanupChanged,collationCleanupRemoved]}
 }

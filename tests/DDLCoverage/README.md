@@ -4,7 +4,7 @@ This implements steps 1–2 and the first partial-evidence slice of step 3 of th
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
 reviewable checklist. It contains 63 scoped scenarios, 29 features across families
 A–F, four fixture profiles and 30 pinned research references. The shared registry
-contains 182 executable case declarations: 134 from `ddl-suite` and 48 from
+contains 185 executable case declarations: 137 from `ddl-suite` and 48 from
 `native-ddl-suite`. Baseline, setup/cleanup and extra research regressions have explicit non-catalog classifications.
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
@@ -15,11 +15,11 @@ variants; its named assertion evidence is not inferred from shared-suite passes.
 
 The [2026-10-07 migration measurement](../../PLAN/TEST_SUITE_COVERAGE_MIGRATION.md)
 records 730 required assertion/profile obligations, of which 68 have named
-bindings. It also found that fresh full legacy bundles currently fail import
-because three executed collation-policy helper cases are absent from the registry.
-Passing cases and recorded observations are not accepted catalog qualification
-until that drift is fixed. Counts in the dated implementation increments below
-describe their historical snapshots.
+bindings. It also found three executed collation-policy helper cases missing from
+the registry. Those dependent phases are now declared and classified explicitly;
+they remain part of the complete collation workflow, not independently selectable
+tests. Fresh evidence is required after the repair. Counts in the dated
+implementation increments below describe their historical snapshots.
 
 ## Commands available now
 

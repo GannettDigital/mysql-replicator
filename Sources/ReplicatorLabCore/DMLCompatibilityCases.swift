@@ -13,6 +13,10 @@ enum DMLCompatibilityCases {
         var rowMetadata: String? = nil
     }
     static let cases: [Case] = [
+        Case(id:"generated",definition:"id INT PRIMARY KEY,n INT,v INT AS (n+1) STORED",phases:[
+            .init(sql:"INSERT INTO poc.matrix_generated(id,n) VALUES(1,1),(2,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_generated WHERE id=1 AND v=2"),
+            .init(sql:"UPDATE poc.matrix_generated SET n=3 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_generated WHERE id=1 AND v=4"),
+            .init(sql:"DELETE FROM poc.matrix_generated WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_generated WHERE id=2 AND v IS NULL")]),
         Case(id:"fixed",definition:"id INT PRIMARY KEY,c CHAR(255),b BINARY(8)",phases:[
             .init(sql:"INSERT INTO poc.matrix_fixed VALUES(1,CONVERT(0xF09F988065CC812020 USING utf8mb4),0x00FF),(2,'',X''),(3,NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND HEX(c)='F09F988065CC81' AND HEX(b)='00FF000000000000'"),
             .init(sql:"UPDATE poc.matrix_fixed SET c=REPEAT('x',255),b=0x0102030405060708 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND CHAR_LENGTH(c)=255 AND HEX(b)='0102030405060708'"),
@@ -90,6 +94,8 @@ enum DMLCompatibilityCases {
         let reason: String
         var rowMetadata: String = "FULL"
         var sourceSession: String = ""
+        // MyISAM retains the write when generated-value verification fails.
+        var postWriteCheck: String? = nil
     }
     static let rejections: [Rejection] = [
         .init(id:"enum-error-value",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,0)",reason:"ENUM/SET value out of range",sourceSession:"SET SESSION sql_mode='';"),
@@ -101,7 +107,7 @@ enum DMLCompatibilityCases {
         .init(id:"decimal-sign",sourceDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2) UNSIGNED",targetDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2)",values:"(1,1.23)",reason:"signedness"),
         .init(id:"time-precision",sourceDefinition:"id INT PRIMARY KEY,v TIME(6)",targetDefinition:"id INT PRIMARY KEY,v TIME(3)",values:"(1,'12:34:56.123456')",reason:"precision"),
         .init(id:"blob-width",sourceDefinition:"id INT PRIMARY KEY,v MEDIUMBLOB",targetDefinition:"id INT PRIMARY KEY,v BLOB",values:"(1,0x00FF)",reason:"type"),
-        .init(id:"generated",sourceDefinition:"id INT PRIMARY KEY,v INT",targetDefinition:"id INT PRIMARY KEY,v INT AS (id+1) STORED",values:"(1,2)",reason:"EXTRA"),
+        .init(id:"generated",sourceDefinition:"id INT PRIMARY KEY,v INT",targetDefinition:"id INT PRIMARY KEY,v INT AS (id+1) STORED",values:"(1,3)",reason:"target generated-column values differ",postWriteCheck:"COUNT(*)=1 AND MIN(id)=1 AND MIN(v)=2"),
         .init(id:"float",sourceDefinition:"id INT PRIMARY KEY,v FLOAT",targetDefinition:"id INT PRIMARY KEY,v FLOAT",values:"(1,1.25)",reason:"column type not supported"),
         .init(id:"json",sourceDefinition:"id INT PRIMARY KEY,v JSON",targetDefinition:"id INT PRIMARY KEY,v JSON",values:"(1,JSON_OBJECT('a',1))",reason:"column type not supported")
     ]

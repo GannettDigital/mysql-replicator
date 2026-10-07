@@ -235,3 +235,91 @@ legacy case is unique. Preserve the asserted behavior and variant when mapping.
    resulting checkout. Update CI, workbooks and contributor commands together.
 
 No legacy suite has been removed by this measurement work.
+
+## Migration increments after the measurement
+
+The measurement was committed as `b527a7a`. Subsequent results below are separate
+from the original partial baseline; its counts and failures remain historical
+evidence.
+
+### Repair the baseline
+
+`matrix-reject-generated` now inserts a value that actually differs from the
+target expression. It requires the generated-value diagnostic, a BLOCKED state
+with no applied checkpoint, one pending row intent, and the exact retained MyISAM
+row. Other matrix rejections still require an empty target. A matching generated
+INSERT/UPDATE/DELETE fixture, including NULL, also runs in the shared matrix on
+both topologies.
+
+The three collation cleanup phases are declared centrally and included in the
+catalog registry. They are classified as dependent regression phases, not new
+DDL feature qualifications, and cannot be selected without their workflow.
+The registry now contains 185 declarations (137 DDL, 48 native); the catalog's
+730 required assertion/profile obligations and 68 named bindings are unchanged.
+
+Fresh runs and the exact repair patch are retained under
+`artifacts/coverage-migration/baseline-repair/`. Keep this frozen baseline separate
+from later harness edits, which correctly make old catalog evidence stale.
+
+The repaired full baseline passed 136 file-position and 137 GTID DDL cases,
+plus 75 file-position and 94 GTID DML cases, with successful cleanup. Unlike the
+original measurement, no DML rejection was excluded. The fresh combined catalog
+import accepted **68/730 named obligations**, across 28 partially evidenced
+scenario/profile combinations; zero combinations are fully verified. See
+`baseline-repair/catalog-combined.json`. All 338 Swift tests and 14 Python tooling
+tests also passed at this checkpoint.
+
+The matched shared rerun passed 129 correctness cases (64 forward, 65 reverse)
+and 22 lifecycle cases. The complete legacy union still hits 4,717/5,855 runtime
+lines. Shared forward hits 4,400, with **330 legacy-only** and 13 shared-only
+lines; shared reverse hits 4,582. Thus repairing the baseline did not remove the
+measured forward gap. The explicit inputs and exact line sets are in
+`baseline-repair/manifest.json` and `baseline-repair/comparison/`. The intentionally
+killed `batch-crash` process still has no flushed LLVM profile; its behavioral
+assertions pass, while crash-path code coverage remains incomplete.
+
+### First port: filters
+
+The shared `filters` family preserves the three legacy IDs on both topologies:
+
+| Legacy case | Shared assertions | Preserved contract |
+| --- | --- | --- |
+| `wild-ignore` | `filter-effects`, `normalized-binlog` | Same 25-statement workload and escaped wildcard patterns; excluded schemas/unsupported types; mixed included/excluded row events; exact native/target row-operation sequence, rows, counters and GTID boundary |
+| `wild-ignore-resume` | `saved-filter-state` | Resume from persisted progress despite stale configured start; cumulative counters, exact intent/schema counts and resumed values |
+| `wild-ignore-included-rejection` | `included-refusal` | Included unsupported DDL still blocks with no applied transaction or DDL intent; following target write is absent, while native applies it |
+
+Selection closes the ordered dependencies. Full runs include all three; smoke
+includes the wildcard workload. Native binlog positions use each role's declared
+server version, including the reverse profile's 5.7 native reference. These named
+filter assertions are lab evidence, not new DDL catalog bindings; the 730 catalog
+obligations remain unchanged.
+
+Validation passed on the new frozen image
+`sha256:7892e18f57f2492644f05b38b074765553c99a923cc5d6e8704628f3c42a44d7`:
+five shared cases per topology (composite-key DML, JSON DDL refusal and all three
+filter cases), plus four legacy cases per positioning mode (basic prerequisite
+and all three filters), including cleanup. All 339 Swift tests passed. Evidence,
+the explicit comparison manifest and the migration line check are under
+`artifacts/coverage-migration/filter-port/`.
+
+The comparison selects only the three legacy filter invocation profiles; it
+does not include their mandatory basic prerequisite. Shared coverage includes
+the two additional integration cases described above. Both shared topologies hit
+the same **159 `TableFilter.swift` lines** as both legacy variants. Those include
+all **140 filter lines** missing from the full shared baseline. Runtime source
+hashes are unchanged; this does not claim a newly measured whole-suite percentage.
+
+For the forward comparison, the only remaining legacy-family lines are:
+
+| Legacy capture variant | Lines absent from shared run | Explanation |
+| --- | --- | --- |
+| File-position / MINIMAL metadata | 8 | Seven lines building `COM_BINLOG_DUMP`, plus the requested-position check |
+| GTID-only / FULL metadata | 3 | Accepting a GTID start without a file/offset |
+
+There are **zero lost Apply, Codec, Configuration or CLI lines** in either
+forward family comparison. Reverse comparisons remain separate and additionally
+miss forward engine/version paths; they do not waive those forward obligations.
+
+File-position and GTID-only capture variants, other legacy-only families and
+catalog assertion migration remain outstanding. Keep the legacy runners until
+those separate gates pass; this port alone does not authorize their retirement.

@@ -13,11 +13,11 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversEveryFamily() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,64)
+        XCTAssertEqual(cases.count,68)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         do {
             let smoke=try LabScenario.select(tier:"smoke",family:nil,ids:[])
-            XCTAssertEqual(Set(smoke.map(\.family)),Set(["database","ddl","dml","indexes","policy","rejections"]))
+            XCTAssertEqual(Set(smoke.map(\.family)),Set(["database","ddl","dml","indexes","policy","rejections","filters"]))
         }
     }
     func testSelectionClosesDependenciesButDoesNotSelectUnrelatedCases() throws {
@@ -25,6 +25,14 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(Set(cases.map(\.id)),["database-existing-matching","database-explicit"])
         XCTAssertThrowsError(try LabScenario.select(tier:"full",family:nil,ids:["typo"]))
         XCTAssertThrowsError(try LabScenario.select(tier:"full",family:"dml",ids:["ddl-index-create"]))
+    }
+    func testFilterSelectionPreservesTheOrderedResumeWorkflowOnBothProfiles() throws {
+        let cases=try LabScenario.select(tier:"full",family:"filters",ids:["wild-ignore-included-rejection"])
+        XCTAssertEqual(cases.map(\.id),["wild-ignore","wild-ignore-resume","wild-ignore-included-rejection"])
+        for profile in LabProfile.allCases {
+            XCTAssertTrue(cases.allSatisfy { $0.fields(profile)["status"] as? String == "not_run" })
+        }
+        XCTAssertThrowsError(try LabScenario.select(tier:"full",family:"rejections",ids:["wild-ignore-included-rejection"]))
     }
     func testLifecycleRunsTheSameDeclaredCasesOnBothProfiles() {
         let forward=LabLifecycle.fields(.forward), reverse=LabLifecycle.fields(.reverse)

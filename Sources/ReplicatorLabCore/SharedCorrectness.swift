@@ -1,7 +1,8 @@
 import Foundation
 
 /// Reuses the forward profile's SQL/expectations. Only endpoint, engine and
-/// source-version setup differ; no workload is executed directly on the target.
+/// source-version setup differ. Filter/refusal experiments explicitly seed
+/// unlogged snapshots; their measured workloads execute only on the source.
 public enum SharedCorrectness {
     public static func run(root: URL, arguments: [String]) throws {
         var args=arguments, build=true, slice="all"
@@ -25,6 +26,7 @@ public enum SharedCorrectness {
         var session: String { f.profile.session }
         let selected: Set<String>?
         var nativeInnoDB=false
+        var referenceDecoderVersion=""
         func selects(_ id: String) -> Bool { selected?.contains(id) ?? true }
         init(root: URL, profile: LabProfile = .reverse, selected: Set<String>? = nil,
              category: String = "reverse-correctness", image: String = "mysql-replicator-packaging:reverse", codeCoverage: Bool = false) {
@@ -34,10 +36,14 @@ public enum SharedCorrectness {
             reporter=QualificationReporter(output:f.output,log:f.stage)
         }
         func execute(build: Bool, slice: String) throws {
+            if slice == "all" && selects(DDLCoverageCases.wildcardFilter.id) {
+                referenceDecoderVersion=try f.runner.run([f.h.decoder,"--no-defaults","--version"]).text
+                try require(referenceDecoderVersion.contains("Ver 8.4."),"Filter binlog comparisons require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
+            }
             var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"slice":slice,
-                "scope":"Shared positive DML matrix, DDL compatibility, database creation and modify/index fixtures; GTID only. Native reference is profile-specific.",
+                "scope":"Shared DML matrix, DDL compatibility, database creation, modify/index and filter fixtures; GTID only. Native reference is profile-specific.",
                 "adaptations":["Source-version session settings and explicit temporary-table engine are declared in the fixtures", "Source/target/native table engines are checked before comparing normalized metadata"],
-                "not_covered":["Version-specific collation translation and engine index limits remain in legacy suites", "File-position mode", "Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect/filter/timeout and crash recovery remain separate"]]
+                "not_covered":["Version-specific collation translation and engine index limits remain in legacy suites", "File-position mode", "Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect/timeout and crash recovery remain separate"]]
             var failure: Error?
             do {
                 try f.prepare(build:build)
@@ -69,6 +75,7 @@ public enum SharedCorrectness {
                 report["summary"]=try applier.latestProgress()
                 report["steps"]=observation
                 if slice == "all" || slice == "rejections" { try rejections() }
+                if slice == "all" { try filters() }
             } catch {
                 report["result"]="failed"
                 report["error"]=String(describing:reporter.fail(error))

@@ -89,7 +89,9 @@ final class LabFixture {
     func sql(_ role: LabProfile.Role, _ statement: String, preserveWhitespace: Bool = false) throws -> String {
         try h.sql(profile.service(role),statement,preserveWhitespace:preserveWhitespace)
     }
-    func boundary() throws -> Boundary { try h.boundary(profile.service(.source)) }
+    func boundary(_ role: LabProfile.Role = .source) throws -> Boundary {
+        try h.boundary(profile.service(role),statusCommand:profile.version(role) == "5.7" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS")
+    }
     func awaitNative() throws {
         let end = try boundary()
         let waited = try h.sql("native","SELECT WAIT_FOR_EXECUTED_GTID_SET('\(end.gtids)',90)")

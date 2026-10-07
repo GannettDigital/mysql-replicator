@@ -2,6 +2,14 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class SuiteSelectionTests: XCTestCase {
+    func testCollationPhasesAreRegisteredButCannotRunWithoutTheirWorkflow() throws {
+        let phases=[DDLCompatibilityCases.collationCleanupInitial,DDLCompatibilityCases.collationCleanupChanged,DDLCompatibilityCases.collationCleanupRemoved]
+        for phase in phases {
+            XCTAssertTrue(DDLCoverageCases.registry.contains { $0.suite == "ddl-suite" && $0.test.id == phase.id })
+            XCTAssertThrowsError(try SuiteSelection(arguments:["--case",phase.id],ddl:true))
+        }
+        XCTAssertTrue(try SuiteSelection(arguments:["--case",DDLCompatibilityCases.collationCleanup.id],ddl:true).selects(DDLCompatibilityCases.collationCleanup.id))
+    }
     func testCoverageIsOptInAndIndependentOfFixtureSelection() throws {
         XCTAssertFalse(try SuiteSelection(arguments: [], ddl: true).codeCoverage)
         let selection = try SuiteSelection(arguments: ["--coverage", "--skip-build", "--positioning", "gtid", "--slice", "basic"], ddl: false)

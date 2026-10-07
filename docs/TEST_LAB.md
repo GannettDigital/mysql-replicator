@@ -37,7 +37,7 @@ make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--family database"
 ```
 
 Equivalent CLI: `swift run replicator-lab test --profile PROFILE --suite correctness`.
-Use `--list`, `--tier smoke|full`, `--family database|ddl|dml|indexes|policy|rejections`,
+Use `--list`, `--tier smoke|full`, `--family database|ddl|dml|indexes|policy|rejections|filters`,
 repeated `--case ID`, `--skip-build`, or `--coverage`. Cases include dependent
 statements as a unit; prerequisite cases are selected automatically. Unknown IDs
 and invalid combinations fail before provisioning. Current shared correctness
@@ -51,12 +51,23 @@ catch-up and intent completion, and reopens saved schemas before applying anothe
 transaction. Engine differences are checked against the profile before schema
 comparison; arbitrary data/DDL differences are not normalized away.
 
+The `filters` family runs wildcard exclusions, saved-state resume and included-DDL
+refusal on both profiles. It keeps the independent native/target binlog oracle as
+well as row, checkpoint and intent checks. MySQL 8.4 `mysqlbinlog` must be on PATH
+(or set `MYSQLBINLOG` to its path); this is checked before fixture startup. Smoke
+includes the wildcard workload; full includes resume and refusal. Selecting
+`--case wild-ignore-included-rejection` automatically includes both prerequisites.
+These cases bootstrap equivalent tables without logging, then use isolated state
+directories for their measured source workload.
+
 ## Outcomes and scope
 
 Each selected scenario/profile has a stable ID, expected behavior and status:
 `not_run`, `running`, `passed`, `failed`, `not_applicable` with a reason, or
 `not_implemented` with a visible gap. Expected rejection is a passing test only
-when it confirms the diagnostic, unchanged checkpoint and absence of target writes.
+when it confirms the diagnostic, unchanged checkpoint and documented target
+effects. Refusals before execution require no target writes; a post-write MyISAM
+failure must preserve evidence of any retained writes.
 A source success, native success and applier refusal are distinct outcomes.
 
 A selected obligation that is missing or never ran makes the aggregate incomplete
@@ -77,7 +88,7 @@ their established runners/assertions and are labeled adapters in the inventory.
 
 | `--suite` | Scope |
 | --- | --- |
-| `correctness` | Shared replicated-DDL, DML, indexes, policies and refusals |
+| `correctness` | Shared replicated-DDL, DML, indexes, policies, filters and refusals |
 | `lifecycle` | Shared source/target reconnect, restart, drain and uncertain-write cases |
 | `recovery` | InnoDB rollback/inspection/audited retry; forward extended fail-stop/refusal tests |
 | `demo` | Common retained-session start, compare, stop, resume and container repair |

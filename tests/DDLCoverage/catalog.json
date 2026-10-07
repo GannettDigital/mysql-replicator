@@ -9419,6 +9419,21 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-collation-collision",
       "reason": "Opt-in collation mapping rejection regression: source NO PAD keys collide on the PAD SPACE target, which retains pending intent and the prior checkpoint."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup-initial",
+      "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup-changed",
+      "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup-removed",
+      "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
     }
   ]
 }

@@ -19,7 +19,7 @@ struct LabScenario {
         value["expected"]=["source":"accept","native":"apply","applier":intent]
         value["status"]=reason(profile) == nil ? "not_run" : "not_applicable"
         if let reason=reason(profile) { value["reason"]=reason }
-        value["setup"]="replicated DDL; baseline reverse_poc tables are bootstrapped"
+        value["setup"]=family == "filters" ? "equivalent unlogged table snapshots; isolated state and saved-state resume" : "replicated DDL; baseline reverse_poc tables are bootstrapped"
         return value
     }
     static var correctness: [LabScenario] {
@@ -37,6 +37,11 @@ struct LabScenario {
         cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float","json"].map {
             .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "json")
         }
+        cases += [
+            .init(test:DDLCoverageCases.wildcardFilter,family:"filters",intent:"skip excluded events; apply included rows",smoke:true),
+            .init(test:DDLCoverageCases.wildcardResume,family:"filters",dependencies:[DDLCoverageCases.wildcardFilter.id],intent:"resume saved filter state"),
+            .init(test:DDLCoverageCases.wildcardRejection,family:"filters",dependencies:[DDLCoverageCases.wildcardResume.id],intent:"reject included DDL before target SQL")
+        ]
         return cases
     }
     static func select(tier: String, family: String?, ids: Set<String>) throws -> [LabScenario] {

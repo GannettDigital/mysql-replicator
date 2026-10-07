@@ -48,7 +48,7 @@ public struct SuiteSelection {
         caseIDs.isEmpty || caseIDs.contains(id) || (id == "ddl-index-create" && caseIDs.contains("ddl-index-resume"))
     }
     static var independent: [QualificationCase] {
-        DDLCompatibilityCases.declarations + ModifyIndexCases.cases.map(\.test) + ModifyIndexCases.failures.map(\.test) + [ModifyIndexCases.timeout, ModifyIndexCases.resume]
+        DDLCompatibilityCases.independent + ModifyIndexCases.cases.map(\.test) + ModifyIndexCases.failures.map(\.test) + [ModifyIndexCases.timeout, ModifyIndexCases.resume]
     }
     public func describe(ddl: Bool) {
         print("Slices: " + (ddl ? "all, basic, modify-index, database, ordered, filters, compatibility" : "all, basic, matrix, extended (GTID multirow, discovery, failure and recovery fixtures), reconnect, target-reconnect"))

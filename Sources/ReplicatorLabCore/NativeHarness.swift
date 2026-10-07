@@ -63,8 +63,8 @@ public final class NativeHarness {
         }
         return result.text
     }
-    func boundary(_ service: String) throws -> Boundary {
-        let fields = try sql(service, service == "target57" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS").components(separatedBy: "\t")
+    func boundary(_ service: String, statusCommand: String? = nil) throws -> Boundary {
+        let fields = try sql(service, statusCommand ?? (service == "target57" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS")).components(separatedBy: "\t")
         guard fields.count >= 2, let position = UInt64(fields[1]) else { throw LabError("invalid binlog boundary") }
         try require(fields[0].range(of: #"^binlog\.[0-9]+$"#, options: .regularExpression) != nil, "unexpected binlog filename")
         return Boundary(file: fields[0], position: position, gtids: try sql(service, "SELECT @@GLOBAL.gtid_executed"))
