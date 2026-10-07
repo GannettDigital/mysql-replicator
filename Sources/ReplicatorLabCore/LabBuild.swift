@@ -49,7 +49,7 @@ struct LabTestOptions {
         try require(["smoke","full"].contains(tier),"tier must be smoke or full")
         try require(tier == "full" || suite == "correctness", "--tier smoke selects shared correctness only; adapter suites retain their full scope")
         try require(suite == "correctness" || (family == nil && ids.isEmpty),"--case and --family select shared correctness scenarios")
-        try require(!coverage || suite == "correctness","--coverage currently collects shared correctness runs; legacy coverage commands remain available")
+        try require(!coverage || ["correctness","lifecycle"].contains(suite),"--coverage collects shared correctness and lifecycle runs; legacy coverage commands remain available")
         _ = try LabScenario.select(tier:tier,family:family,ids:ids)
     }
 }

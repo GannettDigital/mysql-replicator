@@ -41,7 +41,7 @@ public enum LabTests {
                             let run=SharedCorrectness.Run(root:root,profile:profile,selected:selected,category:category,image:image!,codeCoverage:options.coverage)
                             reporter=run.reporter; output=run.f.output; execute={ try run.execute(build:false,slice:"all") }
                         } else {
-                            let run=LabLifecycle.Run(root:root,profile:profile,category:category,image:image!)
+                            let run=LabLifecycle.Run(root:root,profile:profile,category:category,image:image!,codeCoverage:options.coverage)
                             reporter=run.reporter; output=run.f.output; execute={ try run.execute() }
                         }
                         var error: Error?

@@ -37,8 +37,8 @@ enum LabLifecycle {
         let f: LabFixture, reporter: QualificationReporter
         var configurations: [String:[String:Any]] = [:]
         var completed: Set<String> = []
-        init(root: URL, profile: LabProfile, category: String, image: String) {
-            f=LabFixture(root:root,category:category,image:image,profile:profile)
+        init(root: URL, profile: LabProfile, category: String, image: String, codeCoverage: Bool = false) {
+            f=LabFixture(root:root,category:category,image:image,profile:profile,codeCoverage:codeCoverage)
             reporter=QualificationReporter(output:f.output,log:f.stage)
         }
         func execute() throws {
@@ -73,6 +73,10 @@ enum LabLifecycle {
                     let logs=try f.docker(["logs",client])
                     try (logs.stdout+logs.stderr).write(to:f.output.appendingPathComponent(client+".log"))
                 } catch { cleanup.append(String(describing:error)) }
+            }
+            if f.codeCoverage {
+                do { try f.collectCoverage() }
+                catch { cleanup.append("coverage: "+String(describing:error)) }
             }
             do {
                 if try f.docker(["inspect",f.helper],checked:false).status == 0 {

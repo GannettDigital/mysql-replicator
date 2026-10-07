@@ -118,6 +118,10 @@ from named assertion qualification. Its historical profile IDs describe specific
 variants of the forward lab profile. Shared-run results do not automatically
 satisfy those bindings; their source/native/target assertions remain separate.
 
+The [coverage migration review](../PLAN/TEST_SUITE_COVERAGE_MIGRATION.md) compares
+legacy and shared runtime line sets separately from catalog assertions and lists
+the gates for retiring old runners. Declaration overlap alone is not parity.
+
 ## Evidence and code coverage
 
 `artifacts/lab/RUN_ID/result.json` records the selected matrix and overall outcome.
@@ -132,7 +136,7 @@ suite-level inventory until their assertions are registered individually.
 For shared correctness and lifecycle, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
 matches the checkout. Both profiles use the same pinned image in a combined run. Changing fixture or
 implementation inputs during qualification fails the aggregate.
-`--coverage` builds the instrumented image and exports each profile's coverage
+For `correctness` and `lifecycle`, `--coverage` builds the instrumented image and exports each profile's coverage
 separately. Merge explicitly selected reports with the existing `make coverage-report`
 command; a combined line-coverage number does not replace per-profile scenario results.
 Instrumented runs are not performance measurements. Legacy adapters retain their

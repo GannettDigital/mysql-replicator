@@ -2,9 +2,9 @@
 
 This implements steps 1–2 and the first partial-evidence slice of step 3 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
-reviewable checklist. It contains 61 scoped scenarios, 29 features across families
-A–F, four fixture profiles and 29 pinned research references. The shared registry
-contains 113 executable case declarations: 88 from `ddl-suite` and 25 from
+reviewable checklist. It contains 63 scoped scenarios, 29 features across families
+A–F, four fixture profiles and 30 pinned research references. The shared registry
+contains 182 executable case declarations: 134 from `ddl-suite` and 48 from
 `native-ddl-suite`. Baseline, setup/cleanup and extra research regressions have explicit non-catalog classifications.
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
@@ -12,6 +12,14 @@ upstream/fleet review. These counts are not the size of the MySQL DDL language.
 The [profile-driven lab](../../docs/TEST_LAB.md) shares correctness scenarios across
 both topologies. This catalog's current profile IDs remain forward-specific
 variants; its named assertion evidence is not inferred from shared-suite passes.
+
+The [2026-10-07 migration measurement](../../PLAN/TEST_SUITE_COVERAGE_MIGRATION.md)
+records 730 required assertion/profile obligations, of which 68 have named
+bindings. It also found that fresh full legacy bundles currently fail import
+because three executed collation-policy helper cases are absent from the registry.
+Passing cases and recorded observations are not accepted catalog qualification
+until that drift is fixed. Counts in the dated implementation increments below
+describe their historical snapshots.
 
 ## Commands available now
 
@@ -77,9 +85,10 @@ capability and Swift policy rejection are separate outcomes, not one supported f
 
 Without selected evidence, every in-scope scenario reports **unverified**, including those with
 previously passing integration cases. This preserves the historical test results
-while requiring fresh per-assertion/build/profile evidence. Three lifecycle
-scenarios now bind `schema-effects` and `following-dml`; all other assertion
-bindings remain empty. An aggregate case pass never supplies them automatically. Unknown outcomes and unresolved settings remain gaps.
+while requiring fresh per-assertion/build/profile evidence. Fourteen scenarios
+have named assertion bindings; the MODIFY/index scenarios also bind binlog,
+boundary and schema-history assertions. Other required assertions remain unbound.
+An aggregate case pass never supplies them automatically. Unknown outcomes and unresolved settings remain gaps.
 
 ## Editing workflow
 

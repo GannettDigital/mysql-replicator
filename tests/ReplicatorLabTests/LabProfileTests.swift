@@ -64,4 +64,9 @@ final class LabProfileTests: XCTestCase {
             XCTAssertThrowsError(try LabTestOptions(args))
         }
     }
+    func testLifecycleAllowsInstrumentedRuns() throws {
+        let options=try LabTestOptions(["--suite","lifecycle","--coverage"])
+        XCTAssertTrue(options.coverage)
+        XCTAssertEqual(options.profiles,LabProfile.allCases)
+    }
 }
