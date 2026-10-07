@@ -7,6 +7,13 @@ func main() throws -> Int32 {
     if command == "--help" {
         print("""
         replicator-lab: repository automation (run from the repository root)
+          test --profile all|mysql84-to-mysql57-myisam|mysql57-to-mysql84-innodb
+               [--suite correctness|lifecycle|recovery|demo|legacy-dml|legacy-ddl|native|all]
+               [--tier smoke|full] [--family database|ddl|dml|indexes|policy|rejections]
+               [--case ID ...] [--list] [--skip-build] [--coverage]
+          demo up|start|stop|status|compare|sql|inspect|resolve|down --profile PROFILE
+          benchmark --profile PROFILE [--mode backlog|streaming|capture] [--workload insert|multi-table-transaction] [--events N] [--skip-build]
+        Legacy entry points (retained for scripts and specialized evidence):
           native-suite [--positioning auto|file-position|both]
           native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
                        [--native-engine MyISAM|InnoDB] [--native-init-automatic]
@@ -48,12 +55,14 @@ func main() throws -> Int32 {
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
-        Source ON/ON and targets OFF_PERMISSIVE/WARN are fixed for qualification.
+        Legacy forward qualification fixes source ON/ON and targets OFF_PERMISSIVE/WARN.
         """)
         return 0
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command == "demo" { try LabDemo.run(root:root,arguments:args); return 0 }
+    if command == "test" { try LabTests.run(root:root,arguments:args); return 0 }
     if command.hasPrefix("reverse-demo-") {
         try ReverseDemo.run(root:root,command:command,arguments:args); return 0
     }
@@ -63,6 +72,7 @@ func main() throws -> Int32 {
     if command == "benchmark-capture" {
         try CaptureBenchmark.run(root:root,arguments:args); return 0
     }
+    if command == "benchmark", args.contains("--profile") { try LabBenchmark.run(root:root,arguments:args); return 0 }
     if command == "benchmark" {
         try PerformanceBenchmark.run(root: root, arguments: args); return 0
     }
@@ -81,7 +91,7 @@ func main() throws -> Int32 {
         return 0
     }
     if command == "reverse-correctness" {
-        try ReverseCorrectness.run(root:root,arguments:args); return 0
+        try SharedCorrectness.run(root:root,arguments:args); return 0
     }
     if command == "reverse-suite" {
         let build = !args.contains("--skip-build")

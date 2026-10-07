@@ -11,8 +11,9 @@ enum DDLCompatibilityCases {
     struct Step {
         let sql: String
         let checks: [Check]
+        let sql57: String
         var transactions = 1
-        init(_ sql: String,_ checks: [Check] = []) { self.sql=sql; self.checks=checks }
+        init(_ sql: String,_ checks: [Check] = [], sql57: String? = nil) { self.sql=sql; self.checks=checks; self.sql57=sql57 ?? sql }
     }
     struct Case {
         let test: QualificationCase
@@ -99,7 +100,7 @@ enum DDLCompatibilityCases {
         .init("temporary","ROW omits temporary operations but keeps permanent effects and expanded CREATE LIKE",[
             .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)"),
             .init("USE ddlcompat; CREATE TEMPORARY TABLE tmp(id INT PRIMARY KEY,n INT); INSERT INTO tmp VALUES(1,7),(2,8); INSERT INTO ddlcompat.t SELECT * FROM tmp; DROP TEMPORARY TABLE tmp",[.init("SELECT * FROM ddlcompat.t ORDER BY id","1\t7\n2\t8")]),
-            .init("USE ddlcompat; CREATE TEMPORARY TABLE tmp(id INT PRIMARY KEY,n INT) ENGINE=MyISAM; CREATE TABLE ddlcompat.cloned LIKE tmp; DROP TEMPORARY TABLE tmp",[.init("SELECT COUNT(*) FROM ddlcompat.cloned","0")]),
+            .init("USE ddlcompat; CREATE TEMPORARY TABLE tmp(id INT PRIMARY KEY,n INT) ENGINE=MyISAM; CREATE TABLE ddlcompat.cloned LIKE tmp; DROP TEMPORARY TABLE tmp",[.init("SELECT COUNT(*) FROM ddlcompat.cloned","0")],sql57:"USE ddlcompat; CREATE TEMPORARY TABLE tmp(id INT PRIMARY KEY,n INT) ENGINE=InnoDB; CREATE TABLE ddlcompat.cloned LIKE tmp; DROP TEMPORARY TABLE tmp"),
             .init("INSERT INTO ddlcompat.cloned VALUES(3,9)",[.init("SELECT * FROM ddlcompat.cloned","3\t9")])
         ])
     ]

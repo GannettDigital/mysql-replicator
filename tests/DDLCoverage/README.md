@@ -9,6 +9,10 @@ contains 113 executable case declarations: 88 from `ddl-suite` and 25 from
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
 
+The [profile-driven lab](../../docs/TEST_LAB.md) shares correctness scenarios across
+both topologies. This catalog's current profile IDs remain forward-specific
+variants; its named assertion evidence is not inferred from shared-suite passes.
+
 ## Commands available now
 
 From the repository root:

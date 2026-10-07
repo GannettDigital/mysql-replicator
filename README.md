@@ -37,14 +37,16 @@ The setup guide also covers checksums, standalone archives and service restarts.
 From a source checkout with the [developer prerequisites](CONTRIBUTING.md#prerequisites):
 
 ```sh
-make demo-up
-make demo-start
+make lab-demo PROFILE=mysql84-to-mysql57-myisam ACTION=up
+make lab-demo PROFILE=mysql84-to-mysql57-myisam ACTION=start
 ```
 
-Follow the [interactive demo workbook](PLAN/DEMO_WORKBOOK.md) to issue SQL and
-compare replicas, or use the [demo runbook](PLAN/DEMO.md). Clean up with `make demo-down`.
-
-For the experimental reverse flow, see the [5.7 → 8.4 InnoDB workbook](PLAN/REVERSE_DEMO_WORKBOOK.md).
+Use the [test lab guide](docs/TEST_LAB.md) to issue SQL, compare replicas, or select
+`mysql57-to-mysql84-innodb`. Clean up with the same profile and `ACTION=down`.
+Run shared smoke tests with `make correctness TIER=smoke`.
+The [forward workbook](PLAN/DEMO_WORKBOOK.md) and
+[reverse workbook](PLAN/REVERSE_DEMO_WORKBOOK.md) cover the original demo commands
+and detailed experiments.
 
 [Build, test and contribute](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [License](LICENSE) · [Third-party notices](NOTICE)

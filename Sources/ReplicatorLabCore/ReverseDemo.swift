@@ -82,12 +82,12 @@ public enum ReverseDemo {
     final class Session {
         let root: URL, manifestURL: URL
         let category: String
-        var fixture: ReverseFixture?
+        var fixture: LabFixture?
         init(root: URL, category: String = "reverse-demo") {
             self.root=root; self.category=category
             manifestURL=root.appendingPathComponent("artifacts/"+category+"/current.json")
         }
-        var applier: ReverseDemoApplier { ReverseDemoApplier(fixture!) }
+        var applier: LabApplier { LabApplier(fixture!) }
         var client: String { applier.name }
         func save(_ manifest: Manifest) throws {
             try FileManager.default.createDirectory(at:manifestURL.deletingLastPathComponent(),withIntermediateDirectories:true)
@@ -97,7 +97,7 @@ public enum ReverseDemo {
             try require(FileManager.default.fileExists(atPath:manifestURL.path),"no reverse demo; run make reverse-demo-up")
             let m=try JSONDecoder().decode(Manifest.self,from:Data(contentsOf:manifestURL)); try m.validate()
             try require(!ready || m.ready,"setup incomplete; inspect artifacts then run make reverse-demo-down")
-            fixture=ReverseFixture(root:root,category:category,identifier:m.identifier,image:m.image)
+            fixture=LabFixture(root:root,category:category,identifier:m.identifier,image:m.image)
         }
         func up(build: Bool) throws {
             if FileManager.default.fileExists(atPath:manifestURL.path) {
@@ -108,7 +108,7 @@ public enum ReverseDemo {
             }
             var m=Manifest(identifier:runID(),image:"mysql-replicator-packaging:reverse",ready:false)
             try save(m)
-            let f=ReverseFixture(root:root,category:category,identifier:m.identifier); fixture=f
+            let f=LabFixture(root:root,category:category,identifier:m.identifier); fixture=f
             try f.prepare(build:build)
             var source=f.config["source"] as! [String:Any]
             source.removeValue(forKey:"stopAfterTransactions"); f.config["source"]=source
@@ -136,7 +136,7 @@ public enum ReverseDemo {
             Drain: make reverse-demo-stop
             Recovery: make reverse-demo-inspect (replication process must have exited)
             Cleanup: make reverse-demo-down
-            DML only: use the preloaded reverse_poc tables. DDL and foreign keys remain unsupported.
+            Compare checks the preloaded reverse_poc tables. Supported DDL can also be tried; foreign keys remain unsupported.
             """
         }
         func running() throws -> Bool { try !applier.pids().isEmpty }

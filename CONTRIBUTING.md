@@ -1,5 +1,10 @@
 # Contributing to mysql-replicator
 
+Use the [profile-driven test lab](docs/TEST_LAB.md) for comparable correctness,
+interactive demos and benchmarks across both supported topologies. Start with
+`make lab-list` and `make correctness TIER=smoke`. Historical commands below remain
+available for specialized qualification and existing scripts.
+
 Thank you for your interest in contributing to `mysql-replicator`!
 
 ## Code of Conduct
@@ -56,7 +61,8 @@ The reverse profile has a native 5.7 InnoDB comparator and an independent demo:
 `make reverse-suite ARGS="--events 10000"` records the backlog benchmark;
 `make reverse-demo-suite ARGS="--skip-build"` tests the interactive lifecycle using
 that runtime image. See [reverse replication](docs/REVERSE_REPLICATION.md) for
-bootstrap, demo commands and offline recovery. Normal CI uses 100 transactions.
+bootstrap, legacy demo commands and offline recovery. CI runs this recovery
+suite with `--events 0`; comparable benchmarks use `make lab-benchmark`.
 
 ### Code coverage
 
@@ -65,6 +71,7 @@ tools on macOS). Coverage is opt-in and uses separate build directories/images:
 
 ```sh
 make coverage-unit
+make correctness TIER=smoke ARGS="--coverage"
 make integration-smoke ARGS="--coverage"
 # Other selected or full DML/DDL suites accept the same flag:
 make dml-suite ARGS="--coverage --slice basic --positioning gtid"
@@ -139,14 +146,15 @@ make dml-suite ARGS="--slice basic"
 # DDL qualification with GTID positioning:
 make ddl-suite ARGS="--slice modify-index --positioning gtid"
 
-# Shared DML/DDL correctness on 5.7 InnoDB → 8.4 InnoDB:
-make reverse-correctness
+# Shared full DML/DDL correctness on both profiles:
+make correctness
 
 # Debian packaging smoke test on Ubuntu 16.04:
 make deb
 ```
 
-Integration checks need OpenSSL, the SQLite CLI, and MySQL 8.4 `mysqlbinlog` in
+Shared profile checks need OpenSSL and the SQLite CLI. Legacy integration
+checks additionally need MySQL 8.4 `mysqlbinlog` in
 `PATH` (or set `MYSQLBINLOG` to its executable path). See
 [incremental checks](PLAN/INCREMENTAL_CHECKS.md) for selection and evidence details.
 
@@ -189,5 +197,7 @@ checksummed assets to `artifacts/release/`. macOS/arm64 distribution is deferred
 See [packaging](packaging/README.md) for qualification limits and
 [the beta release procedure](docs/RELEASING.md) for the PR stack and publication.
 
-For performance work use `make benchmark` or `make benchmark-capture`; see
+For comparable backlog measurements use `make lab-benchmark PROFILE=PROFILE`;
+see the [test lab guide](docs/TEST_LAB.md). For the original forward streaming
+and capture experiments use `make benchmark` or `make benchmark-capture`; see
 [the benchmark guide](PLAN/PERFORMANCE_BENCHMARK.md). These remain uninstrumented.

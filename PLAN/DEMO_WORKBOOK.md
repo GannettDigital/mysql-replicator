@@ -1,5 +1,8 @@
 # Demo workbook: four terminals
 
+For common profile-based test, demo and benchmark commands, see the [test lab](../docs/TEST_LAB.md).
+The commands in this document remain available; retained legacy demos are separate sessions.
+
 This workbook covers **8.4 → 5.7 MyISAM**. For **5.7 → 8.4 InnoDB**, use the
 [reverse demo workbook](REVERSE_DEMO_WORKBOOK.md).
 

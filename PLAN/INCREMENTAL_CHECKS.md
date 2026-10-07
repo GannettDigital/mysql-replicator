@@ -1,5 +1,9 @@
 # Incremental DDL/DML checks
 
+For shared scenarios, demos and comparable backlog measurements across both
+replication topologies, use the [profile-driven test lab](../docs/TEST_LAB.md).
+The commands below retain their original specialized scopes.
+
 Full checks remain `make ddl-suite` and `make dml-suite`. Selection operates on
 independent fixtures or dependent workload slices; it does not skip arbitrary
 SQL statements inside a workload and leave later cases without their schema/data.

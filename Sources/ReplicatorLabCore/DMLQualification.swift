@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DMLQualification {
-    public static func run(root: URL, build: Bool = true, ddl: Bool = false, selection: SuiteSelection = .init()) throws {
+    public static func run(root: URL, build: Bool = true, ddl: Bool = false, selection: SuiteSelection = .init(), onEvidence: ((URL)->Void)? = nil) throws {
         let runner = ProcessRunner(root:root)
         let image = selection.codeCoverage ? CodeCoverage.image : "mysql-replicator-packaging:dml"
         let coverageInputs = ddl ? try DDLCoverageEvidence.inputs(root: root) : nil
@@ -19,12 +19,13 @@ public enum DMLQualification {
         }
         let qualifiedImage = try runner.run(["docker","image","inspect",image,"--format","{{.Id}}"]).text
         try CodeCoverage.validate(runner, image: qualifiedImage, enabled: selection.codeCoverage)
-        for mode in selection.modes { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts,selection:selection) }
+        for mode in selection.modes { try runCase(root:root,image:qualifiedImage,mode:mode,ddl:ddl,coverageInputs:coverageInputs,coverageContracts:coverageContracts,selection:selection,onEvidence:onEvidence) }
     }
-    private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?,selection: SuiteSelection) throws {
+    private static func runCase(root: URL,image: String,mode: String,ddl: Bool,coverageInputs: [String: String]?,coverageContracts: [String: String]?,selection: SuiteSelection,onEvidence: ((URL)->Void)?) throws {
         var native = NativeCase(); native.transaction = false; native.autoPosition = mode == "gtid"
         let h = NativeHarness(root:root,config:native,artifactCategory:ddl ? "ddl-suite" : "dml-suite")
         let runner = h.runner, output = h.output, tls = output.appendingPathComponent("tls")
+        onEvidence?(output)
         try FileManager.default.createDirectory(at:tls,withIntermediateDirectories:true)
         h.composeOverlays = [root.appendingPathComponent("docker/dml/compose.yaml").path]
         let evidenceVolume = h.project + "-evidence", evidenceHelper = h.project + "-evidence-copy"

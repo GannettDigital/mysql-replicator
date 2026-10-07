@@ -1,5 +1,9 @@
 # Native versus custom replication benchmark
 
+For shared scenarios, demos and comparable backlog measurements across both
+replication topologies, use the [profile-driven test lab](../docs/TEST_LAB.md).
+The commands below retain their original specialized scopes.
+
 `make benchmark` runs [sysbench](https://github.com/akopytov/sysbench) against a
 fresh MySQL source while native replication and mysql-replicator consume the
 same binlog. It reports source commits, applied transactions, backlog bounds,

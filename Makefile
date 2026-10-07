@@ -111,3 +111,18 @@ reverse-demo-sql:
 .PHONY: reverse-correctness
 reverse-correctness:
 	swift run replicator-lab reverse-correctness $(ARGS)
+
+# Canonical profile-driven lab commands. Legacy targets above retain their scope.
+PROFILE ?= all
+TIER ?= full
+.PHONY: correctness lab-test lab-list lab-demo lab-benchmark
+correctness:
+	swift run replicator-lab test --profile $(PROFILE) --suite correctness --tier $(TIER) $(ARGS)
+lab-test:
+	swift run replicator-lab test --profile $(PROFILE) $(ARGS)
+lab-list:
+	@swift run replicator-lab test --profile $(PROFILE) --suite all --list $(ARGS)
+lab-demo:
+	swift run replicator-lab demo $(ACTION) --profile $(PROFILE) $(ARGS)
+lab-benchmark:
+	swift run replicator-lab benchmark --profile $(PROFILE) $(ARGS)

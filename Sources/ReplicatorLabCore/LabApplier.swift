@@ -2,10 +2,10 @@ import Foundation
 
 /// Shell container lifetime is separate from the replication process. Supports
 /// sessions created before demo-up provisioned an idle applier, without reseeding.
-final class ReverseDemoApplier {
-    let fixture: ReverseFixture
+final class LabApplier {
+    let fixture: LabFixture
     var name: String { fixture.h.project+"-applier" }
-    init(_ fixture: ReverseFixture) { self.fixture=fixture }
+    init(_ fixture: LabFixture) { self.fixture=fixture }
     func containerState() throws -> String {
         let ids=try fixture.docker(["ps","-aq","--filter","name=^/"+name+"$"]).text
         if ids.isEmpty { return "NOT_CREATED" }
@@ -43,7 +43,7 @@ final class ReverseDemoApplier {
             try archiveLogs()
             _ = try fixture.docker(["rm",name])
         }
-        _ = try fixture.docker(["run","-d","--init","--name",name,"--platform","linux/amd64","--network",fixture.h.project+"_fixture","--mount","type=volume,src=\(fixture.volume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/bin/sleep",fixture.image,"infinity"])
+        _ = try fixture.docker(["run","-d","--init","--name",name,"--platform","linux/amd64","--network",fixture.h.project+"_fixture","--mount","type=volume,src=\(fixture.volume),dst=/evidence","-e","SOURCE_PASSWORD=fixture-capture-only","-e","TARGET_PASSWORD=fixture-apply-only","--entrypoint","/bin/sleep"]+CodeCoverage.environment(enabled:fixture.codeCoverage,label:"continuous")+[fixture.image,"infinity"])
     }
     func logs(tail: Bool = false) throws -> CommandResult {
         if try containerState() == "running" {
@@ -74,7 +74,9 @@ final class ReverseDemoApplier {
     func start(initialize: Bool) throws {
         try archiveLogs(); try ensureIdleContainer()
         let command="exec /usr/local/bin/mysql-replicator run --config /evidence/apply.yaml"+(initialize ? " --initialize" : "")+" > /evidence/applier.ndjson 2> /evidence/applier.stderr"
-        _ = try fixture.docker(["exec","-d",name,"/bin/sh","-c",command])
+        let label="apply-"+runID()
+        if fixture.codeCoverage { fixture.coverageInvocations.append(["label":label,"exit_code":0]) }
+        _ = try fixture.docker(["exec","-d"]+CodeCoverage.environment(enabled:fixture.codeCoverage,label:label)+[name,"/bin/sh","-c",command])
     }
     func drain() throws {
         let ids=try pids()

@@ -1,5 +1,8 @@
 # Reverse demo workbook: four terminals
 
+For common profile-based test, demo and benchmark commands, see the [test lab](../docs/TEST_LAB.md).
+The commands in this document remain available; retained legacy demos are separate sessions.
+
 This workbook exercises **5.7 InnoDB → replicator → 8.4 InnoDB**, alongside a
 native **5.7 → 5.7 InnoDB** reference. Its worked examples use preloaded tables and DML.
 The original [demo workbook](DEMO_WORKBOOK.md) covers the separate MyISAM profile.

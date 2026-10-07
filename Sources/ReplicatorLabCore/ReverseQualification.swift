@@ -3,13 +3,14 @@ import Foundation
 /// Independent initial profile qualification. The service names are inherited
 /// from NativeHarness: target57 is our source; source is our 8.4 destination.
 public enum ReverseQualification {
-    public static func run(root: URL, build: Bool, events: Int = 100) throws {
-        try require((1...100000).contains(events),"events must be 1...100000")
-        let fixture=ReverseFixture(root:root)
+    public static func run(root: URL, build: Bool, events: Int = 100,onEvidence: ((URL)->Void)? = nil) throws {
+        try require((0...100000).contains(events),"events must be 0...100000 (zero omits the benchmark)")
+        let fixture=LabFixture(root:root)
         let h=fixture.h, runner=h.runner, output=h.output
         func stage(_ message: String) { fixture.stage(message) }
         func docker(_ args: [String], checked: Bool = true) throws -> CommandResult { try fixture.docker(args,checked:checked) }
-        defer { try? fixture.cleanup() }
+        onEvidence?(output)
+        var failure: Error?
         var report: [String:Any] = ["profile":"mysql57-to-mysql84-innodb","result":"failed"]
         do {
             try fixture.prepare(build:build)
@@ -45,7 +46,7 @@ public enum ReverseQualification {
                 """
             _ = try h.sql("target57",positive)
             report["positive"] = try run("positive",initialize:true,success:true)
-            let comparison = ReverseFixture.comparison
+            let comparison = LabFixture.comparison
             try fixture.awaitNative()
             for destination in ["source","native"] { try require(try h.sql("target57",comparison) == h.sql(destination,comparison),"reverse data mismatch: " + destination) }
             var source = config["source"] as! [String:Any]; source["stopAfterTransactions"] = 1; config["source"] = source
@@ -53,6 +54,7 @@ public enum ReverseQualification {
             report["resume"] = try run("resume",initialize:false,success:true)
             try fixture.awaitNative()
             for destination in ["source","native"] { try require(try h.sql("target57",comparison) == h.sql(destination,comparison),"resumed data mismatch: " + destination) }
+            if events > 0 {
             // Replay the same fully queued backlog sequentially, avoiding competing
             // appliers on one Docker host. Timings include CLI/startup/wait overhead.
             _ = try h.sql("native","STOP SLAVE")
@@ -88,6 +90,7 @@ public enum ReverseQualification {
             try require(try h.sql("target57","SELECT GTID_SUBSET('"+expected.gtids+"','"+applied+"')") == "1","benchmark GTID checkpoint does not cover source")
             try require(benchmark["transactionsApplied"] as? Int == events+3,"benchmark checkpoint mismatch")
             stage("native: \(nativeSeconds)s; replicator: \(applySeconds)s")
+            }
             source["stopAfterTransactions"] = 1; config["source"] = source
             // Diverge one key deliberately: source accepts both inserts, target
             // rejects the second. The first must roll back and stay unacknowledged.
@@ -128,12 +131,16 @@ public enum ReverseQualification {
             let resolved=try fixture.recovery(["inspect"],label:"recovery-after-resume")
             try require((resolved["pending"] as? [Any])?.isEmpty == true && (resolved["audit"] as? [Any])?.count == 1,"recovery audit missing after resume")
             report["result"] = "passed"
-            try writeJSON(report,to:output.appendingPathComponent("result.json"))
-            stage("PASS: native comparison, multi-table transactions, composite keys, rollback and audited recovery/resume")
+
         } catch {
             report["error"] = String(describing:error)
-            try? writeJSON(report,to:output.appendingPathComponent("result.json"))
-            throw error
+            failure=error
         }
+        do { try fixture.cleanup(); report["cleanup"]="passed" }
+        catch { report["cleanup"]=String(describing:error); if failure == nil { failure=error } }
+        report["result"]=failure == nil ? "passed" : "failed"
+        try writeJSON(report,to:output.appendingPathComponent("result.json"))
+        if let failure { throw failure }
+        stage("PASS: native comparison, multi-table transactions, composite keys, rollback and audited recovery/resume")
     }
 }

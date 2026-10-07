@@ -94,22 +94,32 @@ jobs:
       - name: Verify integration exercised the release binary
         run: python3 tools/verify_release_binary.py
 
-      - name: Test reverse InnoDB profile using the same executable
+      - name: Run the same correctness smoke on both profiles
+        run: |
+          docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:lab
+          make correctness TIER=smoke ARGS="--skip-build"
+          make lab-test ARGS="--suite demo --skip-build"
+
+      - name: Retain reverse recovery and advanced demo qualification
         run: |
           docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:reverse
-          make reverse-correctness ARGS="--skip-build"
-          make reverse-suite ARGS="--skip-build"
+          make reverse-suite ARGS="--skip-build --events 0"
           make reverse-demo-suite ARGS="--skip-build"
 
       - name: Measure applier coverage on DML and DDL sample
         run: make integration-smoke ARGS="--coverage"
+
+      - name: Measure shared applier coverage on both profiles
+        run: make correctness TIER=smoke ARGS="--coverage --skip-build"
 
       - name: Upload portable integration coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
-          path: artifacts/ddl-suite/**/code-coverage/combined/coverage.json
+          path: |
+            artifacts/ddl-suite/**/code-coverage/combined/coverage.json
+            artifacts/lab/**/code-coverage/combined/coverage.json
           if-no-files-found: error
 
       - name: Upload integration evidence
@@ -120,7 +130,8 @@ jobs:
           path: |
             artifacts/ddl-suite/
             artifacts/dml-suite/build-*.log
-            artifacts/reverse-correctness/
+            artifacts/lab/
+            artifacts/lab-demo-tests/
             artifacts/reverse-suite/
             artifacts/reverse-demo-suite/
           if-no-files-found: ignore
