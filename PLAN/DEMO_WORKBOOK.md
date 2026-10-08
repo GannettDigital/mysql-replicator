@@ -45,6 +45,18 @@ The password environment variables are already set. Leave this command running
 in the foreground; progress and errors appear in this terminal. Continue with
 terminals 2–4. Do not run `make lab-demo ACTION=start` as well.
 
+From another host terminal, inspect or gracefully stop that process without
+finding its PID:
+
+```sh
+docker exec "${DEMO_STACK}-applier" mysql-replicator ctl status --config /evidence/apply.yaml
+docker exec "${DEMO_STACK}-applier" mysql-replicator ctl stop --config /evidence/apply.yaml
+```
+
+After editing only the run limits in YAML, use `ctl reload` with the same config
+path. See [process controls](../docs/OFFLINE_REPLAY.md#controlling-a-running-process)
+for exact GTID stopping, reload restrictions, and acknowledgment timeouts.
+
 New demo setups grant the applier full privileges on the disposable 5.7 target,
 including databases other than `demo`. Use explicit 5.7-compatible collations
 when creating databases, such as `CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`.

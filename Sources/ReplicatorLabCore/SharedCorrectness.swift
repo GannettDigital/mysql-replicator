@@ -92,6 +92,7 @@ public enum SharedCorrectness {
                     try forwardFailures()
                     try myisamRecovery()
                     try offline()
+                    try runtimeControl()
                 }
             } catch {
                 report["result"]="failed"

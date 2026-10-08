@@ -74,4 +74,30 @@ final class ArchiveTests: XCTestCase {
             }
         }
     }
+    func testGTIDStopIsInclusivePreservesHolesAndCombinesWithCount() throws {
+        try fixture { _,source,config in
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)
+            var limited=source
+            limited.stopAfterGTIDs=source.sourceUUID+":1-12"
+            limited.stopAfterTransactions=100
+            func run(_ source:CaptureConfiguration) throws -> [String] {
+                var ids:[String]=[]
+                try archive.run(configuration:source,cancellation:.init(),emitEvent:{_ in},emitTransaction:{ids.append($0.gtid!.sequence)},resolveSchema:nil,timings:.init(),ignoreTable:nil)
+                return ids
+            }
+            XCTAssertEqual(try run(limited),["11","12"])
+            limited.stopAfterTransactions=1
+            XCTAssertEqual(try run(limited),["11"])
+            limited.stopAfterTransactions=nil
+            limited.stopAfterGTIDs=source.sourceUUID+":12:14"
+            XCTAssertEqual(try run(limited),["11","12","13","14"])
+            let resumed=limited.resuming(file:nil,position:nil,executedGTIDs:source.sourceUUID+":1-11:13-14")
+            XCTAssertEqual(try run(resumed),["12"])
+            XCTAssertEqual(try run(limited.resuming(file:nil,position:nil,executedGTIDs:source.sourceUUID+":1-14")),[])
+            limited.stopAfterGTIDs=source.sourceUUID+":999"
+            var emitted=false
+            XCTAssertThrowsError(try archive.run(configuration:limited,cancellation:.init(),emitEvent:{_ in emitted=true},emitTransaction:{_ in emitted=true},resolveSchema:nil,timings:.init(),ignoreTable:nil))
+            XCTAssertFalse(emitted)
+        }
+    }
 }

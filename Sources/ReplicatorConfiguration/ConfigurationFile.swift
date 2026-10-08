@@ -14,12 +14,29 @@ public enum ConfigurationFile {
     }
 
     public static func load<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
+        try decode(type,from:read(from:url))
+    }
+
+    /// Read once so reload validation and decoding see the same file generation.
+    public static func read(from url: URL) throws -> Data {
         guard ["yaml", "yml"].contains(url.pathExtension.lowercased()) else {
             throw ConfigurationError("configuration must be a .yaml or .yml file; convert legacy JSON configuration to YAML")
         }
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
-        return try decode(type, from: file.read(upToCount: maximumBytes + 1) ?? Data())
+        let data=try file.read(upToCount:maximumBytes+1) ?? Data()
+        guard data.count <= maximumBytes else { throw ConfigurationError("configuration exceeds 1 MiB") }
+        return data
+    }
+
+    /// In-memory comparison only: this contains credentials and must never be
+    /// logged. Every setting except the two runtime limits requires restart.
+    public static func reloadIdentity(from data: Data) throws -> Data {
+        guard var root=try decode(DiagnosticValue.self,from:data).value as? [String:Any],
+              var source=root["source"] as? [String:Any] else { throw ConfigurationError("reload requires source configuration") }
+        source.removeValue(forKey:"stopAfterTransactions");source.removeValue(forKey:"stopAfterGTIDs")
+        root["source"]=source
+        return try JSONSerialization.data(withJSONObject:root,options:.sortedKeys)
     }
 
     public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
@@ -77,6 +94,13 @@ private indirect enum DiagnosticValue: Decodable {
                 if ["password","secret","token","privatekey"].contains(where:{key.contains($0)}) { out[pair.key]="<excluded>" }
                 else { out[pair.key]=pair.value.redacted }
             }
+        }
+    }
+    var value: Any {
+        switch self {
+        case .scalar(let value):return value
+        case .array(let values):return values.map(\.value)
+        case .object(let values):return values.mapValues(\.value)
         }
     }
 }

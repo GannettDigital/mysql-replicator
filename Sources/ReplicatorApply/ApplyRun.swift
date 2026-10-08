@@ -22,6 +22,8 @@ public struct ApplySummary: Encodable {
     public let targetReconnectReason: String?
     public let targetFailure: TargetFailureDiagnostic?
     public let drainRequested: Bool
+    public var stopReason: String? = nil
+    public var activeBatchTransactions: Int = 0
     // Crash recovery / uncertain target replay remains unsupported.
     public let automaticRecovery = false
 }
@@ -41,7 +43,7 @@ public enum ApplyRun {
     /// Safe source/target transport failures reconnect from durable applied progress.
     /// Interrupted processes and uncertain target outcomes are never retried.
     public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
-                           initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(), archive: ArchiveReplay? = nil, emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
+                           initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(), archive: ArchiveReplay? = nil, control: RunControl? = nil, emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
         try configuration.validate(offline:archive != nil)
         if archive != nil { try require(configuration.source.mode == "gtid","offline replay requires GTID positioning") }
         let profile = configuration.replicationProfile
@@ -57,6 +59,10 @@ public enum ApplyRun {
         var targetReason: String?
         var targetFailure: TargetFailureDiagnostic?
         var consumerPending = false
+        var limits=try StopConditions(transactions:configuration.source.stopAfterTransactions,gtids:configuration.source.stopAfterGTIDs)
+        var stopReason: String?
+        var finalResult: ApplySummary?
+        var activeBatchTransactions=0
         let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
         func finalTimings() -> [String:StageTimings.Sample] {
             let merged = StageTimings()
@@ -69,17 +75,29 @@ public enum ApplyRun {
                 pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
                 sourceReconnectEnabled:archive == nil && configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
                 targetReconnectEnabled:configuration.targetReconnectPolicy.enabled,targetReconnectAttempts:targetRetry.attempts,
-                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled)
+                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions)
         }
+        func report(_ value: ApplySummary) throws {
+            control?.publish(value);try emitProgress(value)
+        }
+        func stoppedResult() -> ApplySummary {
+            if drain.isCancelled { stopReason="drainRequested" }
+            let result=summary("STOPPED");finalResult=result;return result
+        }
+        defer { control?.finish(finalResult ?? summary("BLOCKED")) }
         func progress() throws {
             // Include snapshot construction, JSON encoding and the synchronous
             // output callback so stdout backpressure is visible in final timings.
-            try timings.measure("progress.emit") { try emitProgress(summary("RUNNING")) }
+            try timings.measure("progress.emit") {
+                try report(summary("RUNNING"))
+            }
         }
         let initialTransactions = state.transactions
         var started = false
         do {
-          if let archive { try archive.validate(baseline:state.gtids) }
+          control?.publish(summary("STARTING"))
+          try control?.start(directory:state.directory)
+          if let archive { try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs) }
           while true {
            do {
             let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
@@ -109,6 +127,7 @@ public enum ApplyRun {
                 let outcome = timings.measure("apply.execution_wait") { executor.join()! }
                 if let diagnostic=outcome.diagnostic { targetFailure=diagnostic }
                 try outcome.record(in:state)
+                activeBatchTransactions=0
                 try progress()
             }
             // Always join before target destruction, diagnostics or a journal
@@ -119,6 +138,8 @@ public enum ApplyRun {
                 try checkSourceFailure()
                 try target.lock(groups[0].mutations[0].table)
                 try timings.measure("apply.batch.prepare") { try state.beginBatch(groups) }
+                activeBatchTransactions=groups.count
+                control?.publish(summary("RUNNING"))
                 let byteLimit = target.insertByteLimit
                 executor.start {
                     targetTimings.measure("apply.batch.execute") {
@@ -161,6 +182,7 @@ public enum ApplyRun {
                     try barrier()
                     target.statementTrace = .init()
                     try state.begin(group)
+                    control?.publish(summary("RUNNING"))
                     do {
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
@@ -214,10 +236,14 @@ public enum ApplyRun {
                 try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))
             }
             while true {
-              if drain.isCancelled { try emitProgress(summary("DRAINING")); try state.discardUnappliedCapture(); break }
-              let remaining = configuration.source.stopAfterTransactions.map { $0-(state.transactions-initialTransactions) }
-              if let remaining, remaining <= 0 { break }
-              let capture = try state.captureConfiguration(configuration.source,remainingTransactions:remaining)
+              if drain.isCancelled { try report(summary("DRAINING")); try state.discardUnappliedCapture(); break }
+              if let reason=limits.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) {
+                  stopReason=reason == "gtidsSatisfied" && state.transactions == initialTransactions ? "alreadySatisfied" : reason
+                  break
+              }
+              let remaining = limits.stopAfterTransactions.map { $0-(state.transactions-initialTransactions) }
+              var capture = try state.captureConfiguration(configuration.source,remainingTransactions:remaining)
+              capture.stopAfterTransactions=remaining;capture.stopAfterGTIDs=limits.stopAfterGTIDs
               do {
                 try pipeline.run(cancellation:cancellation,producerTimings:producerTimings,produce:{ stop, send in
                     let resolver: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])? = legacyMetadata ? { event,_ in
@@ -239,6 +265,7 @@ public enum ApplyRun {
                     }
                 },consume:{ message in
                     if drain.isCancelled { throw ApplyDrainRequested() }
+                    if control?.reloadRequested == true { throw ApplyReloadRequested() }
                     try timings.measure("apply.consume") {
                         switch message {
                         case .event(let record): try event(record)
@@ -263,31 +290,48 @@ public enum ApplyRun {
                     }
                 },onWait:{
                     if drain.isCancelled { throw ApplyDrainRequested() }
+                    if control?.reloadRequested == true { throw ApplyReloadRequested() }
                     if !cancellation.isCancelled { try batch.flushIfExpired() }
                     try maintainExecution()
                 },timings:timings)
                 if drain.isCancelled {
-                    try emitProgress(summary("DRAINING"))
+                    try report(summary("DRAINING"))
                     try finishExecution(); try state.discardUnappliedCapture(); batch.discard()
                 } else { try barrier("end") } // Includes finite capture and clean EOF.
+                stopReason=limits.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) ?? "endOfInput"
                 break
               } catch {
                 let sourceInterrupted = configuration.reconnectPolicy.enabled
                     && (error as? LiveInspectionError)?.isRetryableSourceFailure == true
                 let draining = error is ApplyDrainRequested
-                if !sourceInterrupted && !draining { executionStop.cancel() }
-                if draining { try emitProgress(summary("DRAINING")) }
+                let reloading = error is ApplyReloadRequested
+                if !sourceInterrupted && !draining && !reloading { executionStop.cancel() }
+                if draining { try report(summary("DRAINING")) }
                 // Preserve acknowledged work even if preparation/decoding failed.
                 // Unwritten collected work is discarded; uncertain SQL is never retried.
                 do { try finishExecution() }
                 catch let executionError {
-                    if sourceInterrupted || draining { throw executionError }
+                    if sourceInterrupted || draining || reloading { throw executionError }
                     throw ApplyError("\(error); target completion: \(executionError)")
                 }
                 if draining {
                     try state.discardUnappliedCapture()
                     batch.discard(); consumerPending=false
                     break
+                }
+                if reloading,let control {
+                    try state.discardUnappliedCapture();batch.discard();consumerPending=false
+                    try target.unlock()
+                    do {
+                        let candidate=try control.candidate()
+                        try require(candidate.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) == nil,
+                            "new stop condition is already satisfied after issued work; it cannot rewind the target")
+                        if let archive { try archive.validate(baseline:state.gtids,stopAfterGTIDs:candidate.stopAfterGTIDs) }
+                        limits=candidate
+                        control.publish(summary("RUNNING"));control.acknowledge(.success(candidate))
+                    } catch { control.publish(summary("RUNNING"));control.acknowledge(.failure(error)) }
+                    pipeline=ApplyPipeline()
+                    continue
                 }
                 if sourceInterrupted {
                     // The pipeline and receiver have joined. Only acknowledged,
@@ -296,12 +340,12 @@ public enum ApplyRun {
                     batch.discard(); consumerPending=false
                     try target.unlock()
                     if cancellation.isCancelled || drain.isCancelled { break }
-                    if let limit=configuration.source.stopAfterTransactions, state.transactions-initialTransactions >= limit { break }
+                    if let reason=limits.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) { stopReason=reason;break }
                     reconnectReason=String(describing:error)
                     let delay: Int
                     do { delay = try retry.nextDelay(appliedTransactions:state.transactions) }
                     catch { throw ApplyError("\(error); last source failure: \(reconnectReason!)") }
-                    try emitProgress(summary("RECONNECTING"))
+                    try report(summary("RECONNECTING"))
                     timings.measure("source.reconnect_wait") { SourceRetryState.wait(seconds:delay,cancellation:cancellation,drain:drain) }
                     if cancellation.isCancelled || drain.isCancelled { break }
                     pipeline=ApplyPipeline()
@@ -314,7 +358,7 @@ public enum ApplyRun {
             }
             try target.unlock()
             try state.stopped()
-            return summary("STOPPED")
+            return stoppedResult()
            } catch {
             guard error is TargetConnectionFailure, configuration.targetReconnectPolicy.enabled,
                   state.pendingGTID == nil else { throw error }
@@ -325,16 +369,16 @@ public enum ApplyRun {
             targetReason=String(describing:error)
             if cancellation.isCancelled || drain.isCancelled {
                 try require(state.targetUUID != nil,"target unavailable before identity was established")
-                try state.stopped(); return summary("STOPPED")
+                try state.stopped(); return stoppedResult()
             }
             let delay: Int
             do { delay = try targetRetry.nextDelay(appliedTransactions:state.transactions) }
             catch { throw ApplyError("target reconnect attempts exhausted; last failure: \(targetReason!)") }
-            try emitProgress(summary("TARGET_RECONNECTING"))
+            try report(summary("TARGET_RECONNECTING"))
             timings.measure("target.reconnect_wait") { SourceRetryState.wait(seconds:delay,cancellation:cancellation,drain:drain) }
             if cancellation.isCancelled || drain.isCancelled {
                 try require(state.targetUUID != nil,"target unavailable before identity was established")
-                try state.stopped(); return summary("STOPPED")
+                try state.stopped(); return stoppedResult()
             }
             pipeline=ApplyPipeline()
            }

@@ -61,6 +61,18 @@ Ctrl-C exits the log viewer; the replication process keeps running. `docker logs
 shows the idle shell container's output; use the files above for detached
 replication logs. Exit the shell to return to host commands.
 
+From another host terminal, local process controls work the same way on this
+profile:
+
+```sh
+docker exec "${REVERSE_STACK}-applier" mysql-replicator ctl status --config /evidence/apply.yaml
+docker exec "${REVERSE_STACK}-applier" mysql-replicator ctl stop --config /evidence/apply.yaml
+```
+
+Use `ctl reload` after changing only the run limits in YAML. See
+[process controls](../docs/OFFLINE_REPLAY.md#controlling-a-running-process) for
+exact GTID stopping, reload restrictions, and acknowledgment timeouts.
+
 `demo start` initializes state only on the first launch. Later launches
 resume a clean STOPPED checkpoint. Do not initialize again or replay the successful
 SQL example after it has already committed.

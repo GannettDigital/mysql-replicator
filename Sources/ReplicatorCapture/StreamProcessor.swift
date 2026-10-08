@@ -18,6 +18,8 @@ final class StreamProcessor {
     let config: CaptureConfiguration
     let excluded: GTIDSet
     var completeGTIDs: GTIDSet
+    let stopConditions: StopConditions
+    var stopReason: String? { stopConditions.reason(transactions:transactionCount,executed:completeGTIDs) }
     let includeRaw: Bool
     let allowDDL: Bool
     let ignoreTable: ((String, String) -> Bool)?
@@ -51,6 +53,7 @@ final class StreamProcessor {
         self.config = config; self.includeRaw = includeRaw
         self.excluded = try GTIDSet(config.start.executedGTIDs)
         self.completeGTIDs = self.excluded
+        self.stopConditions = try StopConditions(transactions:config.stopAfterTransactions,gtids:config.stopAfterGTIDs)
         self.emitEvent = emitEvent; self.emitTransaction = emitTransaction
     }
     var lastCompleteBoundary: BinlogCoordinate? { assembler?.lastCompleteBoundary }

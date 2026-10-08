@@ -30,6 +30,7 @@ func main() throws {
                mysql-replicator fetch --config APPLY.yaml
                mysql-replicator replay --config APPLY.yaml [--initialize]
                mysql-replicator support-bundle --config APPLY.yaml
+               mysql-replicator ctl status|stop|reload --config APPLY.yaml [--timeout SECONDS]
                mysql-replicator blackhole --source-config SOURCE.yaml
                mysql-replicator skip GTID_SET --config APPLY.yaml
                mysql-replicator recovery inspect --config APPLY.yaml
@@ -46,7 +47,8 @@ func main() throws {
         Without --initialize, run resumes clean STOPPED state from SQLite.
         skip excludes the captured failed GTID only when no target write intents exist; leaves STOPPED.
         Source and safe target reconnect are automatic; uncertain writes remain blocked.
-        Send SIGUSR1 to run to drain its active batch and exit STOPPED before target maintenance.
+        ctl stop waits for a graceful drain; SIGTERM/SIGUSR1 request the same drain.
+        ctl reload updates only source.stopAfterTransactions and source.stopAfterGTIDs.
         See PLAN/OFFLINE_INSPECT.md for supported types and schema format.
         """)
         return
@@ -114,6 +116,17 @@ func main() throws {
         try FileHandle.standardOutput.write(contentsOf:encoder.encode(summary) + Data([10]))
         return
     }
+    if args.first == "ctl" {
+        guard (args.count == 4 || (args.count == 6 && args[4] == "--timeout")),args[2] == "--config" else { throw ApplyError("use ctl status|stop|reload --config APPLY.yaml [--timeout SECONDS]") }
+        struct Config:Decodable { let stateDirectory:String }
+        let config=try ConfigurationFile.load(Config.self,from:URL(fileURLWithPath:args[3]))
+        let timeout=args.count == 6 ? Int(args[5]) : 60
+        guard let timeout else { throw ApplyError("invalid control timeout") }
+        let response=try ControlClient.request(.init(command:args[1],timeoutSeconds:timeout),stateDirectory:config.stateDirectory)
+        try FileHandle.standardOutput.write(contentsOf:response)
+        if (try JSONSerialization.jsonObject(with:response) as? [String:Any])?["ok"] as? Bool != true { throw ApplyError("control request was not acknowledged successfully; see response") }
+        return
+    }
     if args.first == "fetch" || args.first == "support-bundle" {
         guard args.count == 3,args[1] == "--config" else { throw CaptureError("use fetch|support-bundle --config FILE.yaml") }
         let file=URL(fileURLWithPath:args[2]),encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
@@ -132,21 +145,31 @@ func main() throws {
     }
     if args.first == "run" || args.first == "replay" {
         guard (args.count == 3 || (args.count == 4 && args[3] == "--initialize")), args[1] == "--config" else { throw ApplyError("use run|replay --config APPLY.yaml [--initialize]") }
-        let config = try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:args[2]))
+        let configFile=URL(fileURLWithPath:args[2]).standardizedFileURL
+        let configData=try ConfigurationFile.read(from:configFile)
+        let config = try ConfigurationFile.decode(ApplyConfiguration.self,from:configData)
+        let reloadIdentity=try ConfigurationFile.reloadIdentity(from:configData)
         let offline=args[0] == "replay"
         struct ArchiveOptions:Decodable { let archive:ArchiveConfiguration }
-        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.load(ArchiveOptions.self,from:URL(fileURLWithPath:args[2])).archive,source:config.source,contract:config.profile == .mysql57To84InnoDB ? .mysql57 : .mysql84,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty) : nil
+        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:config.profile == .mysql57To84InnoDB ? .mysql57 : .mysql84,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty) : nil
         let sourcePassword=try offline ? "" : PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
         let targetPassword=try PasswordConfiguration.resolve(password:config.target.password,environmentVariable:config.target.passwordEnvironment,endpoint:"target")
         let cancellation = CaptureCancellation(), drain = CaptureCancellation()
+        let control=RunControl(limits:try StopConditions(transactions:config.source.stopAfterTransactions,gtids:config.source.stopAfterGTIDs),drain:drain) {
+            let data=try ConfigurationFile.read(from:configFile)
+            guard try ConfigurationFile.reloadIdentity(from:data) == reloadIdentity else { throw ApplyError("reload may change only source.stopAfterTransactions and source.stopAfterGTIDs; other settings require restart, and saved identity/checkpoint restrictions still apply") }
+            let candidate=try ConfigurationFile.decode(ApplyConfiguration.self,from:data)
+            try candidate.validate(offline:offline)
+            return try StopConditions(transactions:candidate.source.stopAfterTransactions,gtids:candidate.source.stopAfterGTIDs)
+        }
         signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGUSR1,SIG_IGN)
         let signals = [SIGINT,SIGTERM,SIGUSR1].map { number -> DispatchSourceSignal in
             let source = DispatchSource.makeSignalSource(signal:number,queue:.global())
-            source.setEventHandler { if number == SIGUSR1 { drain.cancel() } else { cancellation.cancel() } }; source.resume(); return source
+            source.setEventHandler { if number == SIGINT { cancellation.cancel() } else { drain.cancel() } }; source.resume(); return source
         }
         defer { signals.forEach { $0.cancel() } }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
-        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,archive:archive,
+        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,archive:archive,control:control,
             emitProgress: { try FileHandle.standardOutput.write(contentsOf:encoder.encode($0) + Data([10])) })
         try FileHandle.standardError.write(contentsOf:encoder.encode(summary) + Data([10]))
         return

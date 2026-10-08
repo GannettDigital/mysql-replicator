@@ -98,8 +98,32 @@ mysql-replicator replay --config apply.yaml
 ```
 
 `source.stopAfterTransactions` optionally bounds one replay invocation. Remove or
-adjust it for the next invocation. EOF before that requested count is an error.
-Use SIGUSR1 for a clean drain. The existing fail-stop rules still apply: blocked
+adjust it for the next invocation. `source.stopAfterGTIDs` stops inclusively once
+the saved source checkpoint covers the entire requested GTID set:
+
+```yaml
+source:
+  # Keep the other source fields from your apply configuration.
+  start:
+    executedGTIDs: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-25000'
+  stopAfterGTIDs: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-40000'
+```
+
+Use the complete executed set associated with the externally prepared target,
+not only its last GTID. Ranges, holes, and multiple source UUIDs are supported.
+Replay follows binlog order, including intervening transactions outside the stop
+set. Batches end at the satisfying transaction; completion is reported after
+target acknowledgment and the SQLite checkpoint, before applying any later group.
+An already-covered stop set applies nothing (`stopReason: alreadySatisfied`);
+this does not rewind a target that has already passed the requested boundary.
+
+If both limits are set, the first satisfied condition stops the run. The final
+summary reports `gtidsSatisfied` or `transactionLimit` (GTIDs take precedence if
+both are reached together). Offline validation rejects a stop set unavailable in
+the baseline plus archive before target application. EOF with no configured
+condition satisfied is an error; reaching EOF with no limits is `endOfInput`.
+
+Use `ctl stop` for an acknowledged clean drain. The existing fail-stop rules still apply: blocked
 or uncertain writes require explicit operator resolution, not an automatic
 retry. Skips and recovery remain subject to their existing profile restrictions.
 
@@ -107,6 +131,53 @@ Offline replay does not expand supported schemas or DDL. In particular, target
 trigger and foreign-key checks remain active. Successful replay establishes that
 the supplied workload applied without errors; data-equivalence claims require a
 separate comparison against a reference at the same boundary.
+
+## Controlling a running process
+
+Both `run` and `replay` expose the same local controls:
+
+```sh
+mysql-replicator ctl status --config apply.yaml
+mysql-replicator ctl reload --config apply.yaml
+mysql-replicator ctl stop --config apply.yaml --timeout 300
+```
+
+Responses are JSON. `status` includes the process PID, instance ID, latest
+published lifecycle/checkpoint, active batch count, effective limits, and
+configuration generation. `stop` stops admission, finishes issued work, journals
+acknowledged results, discards unissued preparation, and exits `STOPPED` with
+`stopReason: drainRequested`. The command waits for the final checkpoint; errors
+and timeouts return nonzero. A timeout never force-kills the applier or cancels
+an accepted request. The default acknowledgment timeout is 60 seconds; use
+`--timeout` (1..86400 seconds) for longer operations. `SIGTERM` and `SIGUSR1`
+request the same drain; `SIGINT` remains cancellation and may leave blocked state.
+
+Edit the YAML and call `reload` to change **only** `source.stopAfterTransactions`
+and `source.stopAfterGTIDs`. Remove a limit to disable it. The running process
+reads its original configuration path, validates the candidate, finishes issued
+work, and resumes from SQLite with the accepted limits. The count remains relative
+to the invocation's original start, including work before reload and reconnect.
+It does not reset on reload. A limit already satisfied after issued work is
+rejected because an exact earlier stop cannot be promised. Offline reload also
+checks that the archive contains the requested GTIDs.
+
+Rejected reloads preserve the previous settings and configuration generation.
+They may still have drained issued work to establish a safe boundary. All other
+configuration changes require stop/edit/restart. In particular, reload cannot
+reseed `source.start.executedGTIDs`, change identities or compatibility mappings,
+or reset SQLite. Restart retains the existing checkpoint and identity checks.
+After a process exits at its limit, extend/remove the limit and resume normally;
+`ctl` does not start a stopped process.
+
+The endpoint is `stateDirectory/control.sock`, mode 0600, owned by the applier's
+OS user. Its full path must fit within 103 UTF-8 bytes. The existing writer lock
+protects endpoint creation and stale-socket cleanup; PID files are not used for
+signaling. Run `ctl` as the same user (or root), on the same host/container or with
+the same state-volume mount. No TCP port is opened. The client needs only readable
+YAML containing `stateDirectory`, so a separate minimal YAML can reach a process
+whose main configuration currently has invalid settings. `reload` still reads
+the process's original path. Neither control clients nor reload resolve database
+password environment variables.
 
 ## Support evidence
 
@@ -137,6 +208,7 @@ initial schema/data and environment.
 
 ```sh
 make correctness ARGS="--case offline-replay"
+make correctness ARGS="--case runtime-control"
 ```
 
 This shared scenario exercises both profiles, DDL/DML across rotation, fetch,
@@ -147,3 +219,9 @@ the minimal 8.4 image lacks that utility, so its independent external archive is
 copied directly from source binlog files. Unit tests cover GTID holes, corrupt
 and incomplete files, manifest mismatches, writer exclusion, standalone SQLite
 extraction, credential exclusion, and evidence size limits.
+
+`runtime-control` adds exact stops inside a normal batch, already-covered limits,
+resume, offline reload during blocked target execution, live idle reload,
+rejection of checkpoint changes/past limits, and acknowledged stop during an
+active target batch. It compares final rows and schemas against source/native on
+both profiles. Unit tests also cover control socket cleanup and GTID-set holes.

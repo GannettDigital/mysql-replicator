@@ -61,15 +61,19 @@ public final class ArchiveReplay {
 
     /// Validate the complete archive before issuing target writes. Control-only
     /// decoding deliberately does not interpret historical row values.
-    public func validate(baseline: String) throws {
+    public func validate(baseline: String, stopAfterGTIDs: String? = nil) throws {
         let excluded=try GTIDSet(baseline)
+        var available=excluded
         for file in manifest.files {
             let path=directory.appendingPathComponent(file.name)
             guard try ArchiveIO.regularFile(path) == file.bytes,try ArchiveIO.hash(path) == file.sha256 else { throw CaptureError("archive changed before replay: \(file.name)") }
         }
-        try walk { _,_,_,_,_ in } previous: { previous,first in
+        try walk { _,_,_,gtid,complete in
+            if complete,let gtid { try available.include(sid:gtid.sid,sequence:gtid.sequence) }
+        } previous: { previous,first in
             if first && !excluded.covers(previous) { throw CaptureError("archive starts after required history; baseline does not cover first Previous_gtids") }
         }
+        if let stopAfterGTIDs,try !available.covers(GTIDSet(stopAfterGTIDs)) { throw CaptureError("archive does not contain requested stopAfterGTIDs after baseline") }
     }
 
     private func walk(_ emit:(Data,UInt64,String,SourceGTID?,Bool) throws -> Void,
@@ -145,14 +149,15 @@ public final class ArchiveReplay {
                     resolveSchema: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])?,
                     timings: StageTimings, ignoreTable: ((String,String) -> Bool)?) throws {
         let excluded=try GTIDSet(configuration.start.executedGTIDs)
-        try validate(baseline:excluded.canonical)
+        try validate(baseline:excluded.canonical,stopAfterGTIDs:configuration.stopAfterGTIDs)
         let processor=try StreamProcessor(config:configuration,includeRaw:true,emitEvent:emitEvent,
             emitTransaction:emitTransaction,resolveSchema:resolveSchema,timings:timings,allowDDL:true,ignoreTable:ignoreTable)
         struct Limit: Error {}
+        if processor.stopReason != nil { return }
         do {
             try walk { frame,offset,file,gtid,complete in
                 if cancellation.isCancelled { throw CaptureCancelled() }
-                if let limit=configuration.stopAfterTransactions, processor.transactionCount >= limit { throw Limit() }
+                if processor.stopReason != nil { throw Limit() }
                 if offset == 4 { try processor.consume(ArchiveIO.announce(file)) }
                 if let gtid, excluded.contains(sid:gtid.sid,sequence:gtid.sequence) {
                     if complete { try processor.skipArchivedGroup(to:BinlogCoordinate(file:file,position:offset+UInt64(frame.count))) }
@@ -162,6 +167,6 @@ public final class ArchiveReplay {
             }
         } catch is Limit { }
         try processor.finish()
-        if let required=configuration.stopAfterTransactions,processor.transactionCount < required { throw CaptureError("archive EOF before requested transaction count") }
+        if processor.stopReason == nil && (configuration.stopAfterTransactions != nil || configuration.stopAfterGTIDs != nil) { throw CaptureError("archive EOF before requested stop condition") }
     }
 }

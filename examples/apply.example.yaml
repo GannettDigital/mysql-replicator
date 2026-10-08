@@ -31,6 +31,8 @@ source:
     # position: 4                   # Next event byte offset, at least 4.
   # nonBlocking: false              # true drains the existing backlog through EOF.
   # stopAfterTransactions: 10000     # Optional run limit, 1..1000000; omitted = continuous.
+  # stopAfterGTIDs: 'REPLACE_SOURCE_UUID:1-20000' # Inclusive GTID-set limit; first satisfied limit wins.
+  # Both limits may be changed with: mysql-replicator ctl reload --config apply.yaml
   # idleTimeoutSeconds: 15          # Source read/heartbeat timeout, 1..300 seconds.
   # maximumEventBytes: 4194304       # 4 MiB per event; range 23 bytes..16 MiB.
   # downloadCacheBytes: 268435456    # 256 MiB disposable backlog; range 20 MiB..1 GiB.

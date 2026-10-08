@@ -33,7 +33,7 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     func checkFailure(allowSourceReconnect: Bool = false, allowDrain: Bool = false) throws {
         condition.lock(); defer { condition.unlock() }
         if let failure {
-            if allowDrain && failure is ApplyDrainRequested { return }
+            if allowDrain && (failure is ApplyDrainRequested || failure is ApplyReloadRequested) { return }
             // A source-only interruption cannot cancel already-journaled SQL.
             // The consumer still receives the failure and discards queued work.
             if allowSourceReconnect, let live = failure as? LiveInspectionError, live.isRetryableSourceFailure { return }

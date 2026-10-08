@@ -80,6 +80,11 @@ sudo journalctl -u mysql-replicator -f
 Installation does not start or enable replication. The service runs as the
 `mysql-replicator` account and does not automatically restart a failed process.
 `systemctl stop` sends SIGTERM and waits for a clean drain without a forced timeout.
+`systemctl reload mysql-replicator` uses the acknowledged local control command
+to reload only `source.stopAfterTransactions` and `source.stopAfterGTIDs`.
+For status, run `sudo -u mysql-replicator mysql-replicator ctl status --config
+/etc/mysql-replicator/apply.yaml`. See [process controls](OFFLINE_REPLAY.md#controlling-a-running-process)
+for reload restrictions, timeouts, and direct `ctl stop` usage.
 If a stop stalls, investigate before killing it; SIGKILL may leave uncertain writes.
 A machine reboot or process crash is not a clean stop. Safe connection failures
 can reconnect within the running process; `BLOCKED` or interrupted state requires

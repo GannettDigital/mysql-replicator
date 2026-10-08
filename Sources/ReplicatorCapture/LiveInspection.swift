@@ -147,6 +147,7 @@ public enum LiveInspection {
             return result
         }
         do {
+            if processor.stopReason != nil { return summary() }
             let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
             defer { try? group.syncShutdownGracefully() }
             let loop = group.next()
@@ -237,7 +238,7 @@ public enum LiveInspection {
                     for frame in frames {
                         try cache.checkFailure()
                         try timings.measure("capture.process") { try processor.consume(frame) }
-                        if let limit = config.stopAfterTransactions, processor.transactionCount == limit {
+                        if processor.stopReason != nil {
                             reachedLimit = true; break
                         }
                     }
@@ -254,8 +255,8 @@ public enum LiveInspection {
             }
             try cache.checkFailure(ignoringCancellation:true)
             try processor.finish()
-            if let required = config.stopAfterTransactions, processor.transactionCount < required {
-                throw CaptureError("source EOF before requested transaction count")
+            if processor.stopReason == nil && (config.stopAfterTransactions != nil || config.stopAfterGTIDs != nil) {
+                throw CaptureError("source EOF before requested stop condition")
             }
             return summary()
         } catch { throw LiveInspectionError(error: error, summary: summary()) }
