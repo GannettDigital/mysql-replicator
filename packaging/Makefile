@@ -93,8 +93,8 @@ release: deb
 	cp -R /out/third-party /out/archive/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64/
 	tar -C /out/archive -czf /out/release/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64.tar.gz mysql-replicator-$(RELEASE_VERSION)-linux-x86_64
 	cp /out/deb/*.deb /out/release/
-	cp examples/apply.example.yaml LICENSE NOTICE /out/release/
+	cp examples/apply.example.yaml LICENSE NOTICE packaging/install.sh /out/release/
 	cp -R /out/evidence /out/release/build-evidence
 	tar -C /out/release -czf /out/release/build-evidence.tar.gz build-evidence
 	rm -rf /out/release/build-evidence
-	cd /out/release && sha256sum *.deb *.tar.gz apply.example.yaml LICENSE NOTICE > SHA256SUMS
+	cd /out/release && sha256sum *.deb *.tar.gz apply.example.yaml LICENSE NOTICE install.sh > SHA256SUMS

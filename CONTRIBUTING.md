@@ -246,11 +246,15 @@ Do not change config/state/codec protocol versions to match the release number.
 ```sh
 make release-check
 make release-artifacts
+make release-image
 ```
 
 Docker builds Linux x86_64 once, verifies static linking, collects dependency
 notices, packages `.deb` and `.tar.gz`, tests their installed contents and exports
-checksummed assets to `artifacts/release/`. macOS/arm64 distribution is deferred.
+checksummed assets to `artifacts/release/`. The image command uses that archive,
+tests the non-root production container and adds its saved image to the assets.
+No registry login or publication is performed by either command.
+macOS/arm64 distribution is deferred.
 See [packaging](packaging/README.md) for qualification limits and
 [the beta release procedure](docs/RELEASING.md) for the PR stack and publication.
 

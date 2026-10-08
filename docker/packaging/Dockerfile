@@ -19,7 +19,7 @@ COPY packaging/rust packaging/rust
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources
 COPY packaging/debian packaging/debian
-COPY packaging/Makefile packaging/collect_notices.py packaging/
+COPY packaging/Makefile packaging/collect_notices.py packaging/install.sh packaging/
 COPY packaging/licenses packaging/licenses
 COPY tools/release_version.py tools/
 COPY VERSION ./

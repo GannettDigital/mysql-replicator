@@ -66,6 +66,9 @@ jobs:
       - name: Build and verify Linux release packages
         run: make release-artifacts
 
+      - name: Build and verify the production image from the release archive
+        run: make release-image
+
       - name: Upload Linux release artifacts
         uses: actions/upload-artifact@v4
         with:

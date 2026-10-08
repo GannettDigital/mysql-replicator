@@ -4,6 +4,8 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -15,6 +17,7 @@ concurrency:
 
 jobs:
   verify:
+    if: github.event_name != 'release'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +49,7 @@ jobs:
           test -f "docs/releases/$(cat VERSION).md"
           cd artifacts/release
           test -f release-verified
+          test -f "mysql-replicator-$(cat ../../VERSION)-linux-x86_64-image.tar.gz"
           sha256sum --check SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
@@ -73,6 +77,55 @@ jobs:
           cd artifacts/release
           sha256sum --check SHA256SUMS
           # No overwrite/clobber: a previously created release needs manual review.
-          gh release create "$GITHUB_REF_NAME" *.deb *.tar.gz SHA256SUMS apply.example.yaml LICENSE NOTICE \
+          gh release create "$GITHUB_REF_NAME" ./*.deb ./*.tar.gz SHA256SUMS install.sh apply.example.yaml LICENSE NOTICE \
             --verify-tag --draft --prerelease --latest=false \
-            --title "First beta — $version" --notes-file "../../docs/releases/$version.md"
+            --title "Beta release — $version" --notes-file "../../docs/releases/$version.md"
+
+  publish-image:
+    # Publishing the reviewed draft is the maintainer's release action. Draft
+    # creation never publishes a container; this job promotes saved CI bytes.
+    if: github.event_name == 'release'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+      - name: Verify and load the released image
+        run: |
+          python3 tools/release_version.py --tag "$RELEASE_TAG"
+          git merge-base --is-ancestor HEAD origin/main
+          version=$(cat VERSION)
+          asset="mysql-replicator-$version-linux-x86_64-image.tar.gz"
+          gh release download "$RELEASE_TAG" --pattern "$asset" --pattern SHA256SUMS --dir artifacts/publish
+          cd artifacts/publish
+          test -s "$asset"
+          awk -v asset="$asset" '$2 == asset {print; n++} END {if (n != 1) exit 1}' SHA256SUMS > image.sha256
+          sha256sum --check image.sha256
+          docker load --input "$asset"
+          local_image="mysql-replicator-release:$version"
+          test "$(docker image inspect --format '{{.Architecture}}' "$local_image")" = amd64
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$local_image")" = "$(git rev-parse HEAD)"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$local_image")" = "$version"
+          docker run --rm --network none --read-only "$local_image" --version
+      - name: Publish the versioned image to GHCR
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/release-docker-auth
+        run: |
+          version=$(cat VERSION)
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:$version"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo 'Version already exists in GHCR; do not overwrite a released image.' >&2
+            exit 1
+          fi
+          docker tag "mysql-replicator-release:$version" "$image"
+          docker push "$image"
+          echo "Published $image. Verify package visibility is public and test an anonymous pull." >> "$GITHUB_STEP_SUMMARY"

@@ -4,6 +4,21 @@ For downloading and running released binaries, see [installation](../docs/INSTAL
 Contributors can build verified release assets with `make release-artifacts`
 (Docker and Python only). The commands below provide deeper qualification evidence.
 
+Run `make release-image` afterwards to build a Linux/amd64 production image from
+the verified archive. This uses `docker/release/Dockerfile`, a separate scratch
+image containing the distribution, notices, a private writable state parent and
+`/tmp`. It defaults to UID/GID 65532 and executes the replicator directly.
+No compiler, shell, test probe or fixture is shipped in this image. Mount the CA
+files required by your YAML; the scratch image has no system CA bundle.
+
+The image check exercises version/help, non-root directory permissions and
+offline binlog decoding, and compares the image executable with the archive.
+It saves the tested image in `artifacts/release/` and adds its checksum. CI also
+tests the standalone installer against the actual binary archive, with only the
+download transport replaced. Publishing a GitHub release later promotes the saved
+image to GHCR; it never recompiles or rebuilds the image. See
+[release procedure](../docs/RELEASING.md) for visibility and publication steps.
+
 Run from the repository root:
 
 ```sh

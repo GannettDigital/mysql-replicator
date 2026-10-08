@@ -70,7 +70,7 @@ ddl-catalog-upstream-check:
 ddl-catalog-scan:
 	@swift run replicator-lab ddl-catalog scan $(ARGS)
 
-.PHONY: release-check release-artifacts
+.PHONY: release-check release-artifacts release-image
 release-check:
 	python3 tools/release_version.py
 	python3 -m unittest discover -s tools -p 'test_*.py'
@@ -78,6 +78,10 @@ release-check:
 # Docker only: export is gated by installation and archive tests.
 release-artifacts: release-check
 	docker build --platform linux/amd64 --target release-export -f docker/packaging/Dockerfile --output type=local,dest=artifacts/release .
+
+# Uses the already verified archive, tests the runtime image, and saves its bytes.
+release-image:
+	python3 tools/release_image.py
 
 .PHONY: reverse-correctness
 reverse-correctness:
