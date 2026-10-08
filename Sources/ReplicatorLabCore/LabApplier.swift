@@ -55,9 +55,8 @@ final class LabApplier {
     }
     func latestProgress() throws -> [String:Any]? {
         // Bound polling output even when a long demo has produced many summaries.
-        let result=try fixture.docker(["exec",name,"/bin/sh","-c","if [ -f /evidence/applier.ndjson ]; then tail -n 1 /evidence/applier.ndjson; fi"])
-        guard let line=result.stdout.split(separator:10).last else { return nil }
-        return try JSONSerialization.jsonObject(with:Data(line)) as? [String:Any]
+        let result=try fixture.docker(["exec",name,"/bin/sh","-c","if [ -f /evidence/applier.ndjson ]; then tail -n 2 /evidence/applier.ndjson; fi"])
+        return try LabProgress.latest(in:result.stdout)
     }
     func archiveLogs() throws {
         let data=try logs(), label="applier-"+runID()

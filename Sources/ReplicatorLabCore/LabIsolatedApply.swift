@@ -22,8 +22,7 @@ final class LabIsolatedApply {
         let deadline=Date().addingTimeInterval(60)
         repeat {
             let logs=try f.docker(["logs",client])
-            if let last=logs.stdout.split(separator:10).last,
-               let progress=try JSONSerialization.jsonObject(with:Data(last)) as? [String:Any],
+            if let progress=try LabProgress.latest(in:logs.stdout),
                progress["transactionsApplied"] as? Int == count { return }
             try require(try f.docker(["inspect",client,"--format","{{.State.Running}}"] ).text == "true","applier stopped before barrier: "+String(decoding:logs.stderr,as:UTF8.self))
             Thread.sleep(forTimeInterval:0.1)
