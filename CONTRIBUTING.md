@@ -47,22 +47,18 @@ For AddressSanitizer testing:
 make test-asan
 ```
 
-The experimental reverse-profile fixture uses a MySQL 5.7 source, a native 5.7
-InnoDB reference, and an 8.4 InnoDB destination:
+The reverse profile uses a MySQL 5.7 source/native InnoDB reference and an 8.4
+InnoDB destination. Run its specialized recovery checks through the shared interface:
 
 ```sh
-make reverse-suite
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"
 ```
 
-It retains evidence under `artifacts/reverse-suite/`. See
-[reverse replication](docs/REVERSE_REPLICATION.md) for the current scope.
-
-The reverse profile has a native 5.7 InnoDB comparator and an independent demo:
-`make reverse-suite ARGS="--events 10000"` records the backlog benchmark;
-`make reverse-demo-suite ARGS="--skip-build"` tests the interactive lifecycle using
-that runtime image. See [reverse replication](docs/REVERSE_REPLICATION.md) for
-bootstrap, legacy demo commands and offline recovery. CI runs this recovery
-suite with `--events 0`; comparable benchmarks use `make lab-benchmark`.
+That adapter retains evidence under `artifacts/reverse-suite/` and omits its old
+embedded benchmark. Both profiles exercise the same demo lifecycle and applicable
+workbook scenarios with `make lab-test ARGS="--suite demo"`. Use `make lab-benchmark`
+for comparable measurements; see [reverse replication](docs/REVERSE_REPLICATION.md)
+for bootstrap and offline recovery.
 
 ### Code coverage
 
@@ -76,18 +72,20 @@ make integration-smoke ARGS="--coverage"
 # Select shared fixtures or a family:
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--coverage --case positive"
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--coverage --family ddl --variant gtid-full"
-make demo-suite ARGS="--coverage"
+make lab-test ARGS="--suite demo --coverage"
 ```
 
 Unit reports appear under `artifacts/coverage/unit/`. Harness evidence contains
-`code-coverage/<invocation>/report/` and `code-coverage/combined/`; demo evidence
-places these inside `captured/`. Each contains `index.html`, `coverage.lcov`,
+`code-coverage/<invocation>/report/` and `code-coverage/combined/` within each
+fixture's evidence directory. Each contains `index.html`, `coverage.lcov`,
 `coverage.json` and a summary. Open `index.html` to see covered and uncovered
 source lines. The combined view identifies which invocations covered each line.
 These are raw collection reports and include every mapped Swift module. Use the
 scoped report below for runtime and harness percentages.
-For interactive experiments use `make demo-up ARGS="--coverage"`, then the usual
-demo commands; `make demo-down` stops the writer and exports its coverage.
+For interactive experiments use
+`make lab-demo PROFILE=PROFILE ACTION=up ARGS="--coverage"`, then the usual shared
+demo actions; `ACTION=down` stops the writer and exports its coverage. Coverage
+mode persists across commands in the session manifest.
 
 Combine **explicitly selected** reports from the same source revision:
 
@@ -252,5 +250,6 @@ See [packaging](packaging/README.md) for qualification limits and
 
 For comparable backlog measurements use `make lab-benchmark PROFILE=PROFILE`;
 see the [test lab guide](docs/TEST_LAB.md). For the original forward streaming
-and capture experiments use `make benchmark` or `make benchmark-capture`; see
+and capture experiments use `make lab-benchmark PROFILE=mysql84-to-mysql57-myisam`
+with `ARGS="--mode streaming"` or `ARGS="--mode capture"`; see
 [the benchmark guide](PLAN/PERFORMANCE_BENCHMARK.md). These remain uninstrumented.

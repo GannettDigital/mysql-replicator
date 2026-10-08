@@ -2,34 +2,46 @@ import Foundation
 
 /// Identical source workload and timing method for each qualified topology.
 public enum LabBenchmark {
+    struct Options {
+        let profile: LabProfile
+        var mode="backlog", workload="insert"
+        var build=true, events=1000
+        var forwardedArguments: [String]=[]
+        init(_ arguments: [String]) throws {
+            var args=arguments
+            profile=try LabProfile.takeProfile(&args)
+
+            if let index=args.firstIndex(of:"--mode") {
+                try require(index+1 < args.count,"missing benchmark mode")
+                mode=args[index+1]; args.removeSubrange(index...index+1)
+            }
+            try require(!args.contains("--mode"),"duplicate benchmark mode")
+            if mode == "streaming" || mode == "capture" {
+                try require(profile == .forward,"\(mode) measurement is not implemented for this profile; use --mode backlog")
+                forwardedArguments=args
+                return
+            }
+            try require(mode == "backlog","unknown benchmark mode")
+            while !args.isEmpty {
+                let flag=args.removeFirst()
+                if flag == "--skip-build" { build=false; continue }
+                try require(!args.isEmpty,"missing benchmark option value")
+                let value=args.removeFirst()
+                if flag == "--events", let n=Int(value) { events=n }
+                else if flag == "--workload" { workload=value }
+                else { throw LabError("unknown benchmark option: "+flag) }
+            }
+            try require((1...100000).contains(events),"events must be 1...100000")
+            try require(["insert","multi-table-transaction"].contains(workload),"unknown backlog workload")
+            try require(workload == "insert" || profile == .reverse,"multi-table transactions are outside the MyISAM apply contract")
+        }
+    }
+
     public static func run(root: URL, arguments: [String]) throws {
-        var args=arguments
-        let profile=try LabDemo.takeProfile(&args)
-        var mode="backlog"
-        if let index=args.firstIndex(of:"--mode") {
-            try require(index+1 < args.count,"missing benchmark mode")
-            mode=args[index+1]; args.removeSubrange(index...index+1)
-        }
-        if mode == "streaming" || mode == "capture" {
-            try require(profile == .forward,"\(mode) measurement is not implemented for this profile; use --mode backlog")
-            if mode == "streaming" { try PerformanceBenchmark.run(root:root,arguments:args) }
-            else { try CaptureBenchmark.run(root:root,arguments:args) }
-            return
-        }
-        try require(mode == "backlog","unknown benchmark mode")
-        var build=true, events=1000, workload="insert"
-        while !args.isEmpty {
-            let flag=args.removeFirst()
-            if flag == "--skip-build" { build=false; continue }
-            try require(!args.isEmpty,"missing benchmark option value")
-            let value=args.removeFirst()
-            if flag == "--events", let n=Int(value) { events=n }
-            else if flag == "--workload" { workload=value }
-            else { throw LabError("unknown benchmark option: "+flag) }
-        }
-        try require((1...100000).contains(events),"events must be 1...100000")
-        try require(["insert","multi-table-transaction"].contains(workload),"unknown backlog workload")
-        try require(workload == "insert" || profile == .reverse,"multi-table transactions are outside the MyISAM apply contract")
+        let options=try Options(arguments), profile=options.profile
+        if options.mode == "streaming" { try PerformanceBenchmark.run(root:root,arguments:options.forwardedArguments); return }
+        if options.mode == "capture" { try CaptureBenchmark.run(root:root,arguments:options.forwardedArguments); return }
+        let mode=options.mode, workload=options.workload, events=options.events, build=options.build
         let image=try LabBuild.prepare(root:root,build:build,coverage:false)
         let f=LabFixture(root:root,category:"lab-benchmark/"+profile.rawValue,image:image,profile:profile)
         var result: [String:Any]=["result":"failed","profile":profile.rawValue,"topology":profile.topology,"mode":mode,"workload":workload,"events":events,

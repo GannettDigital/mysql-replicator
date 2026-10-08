@@ -112,7 +112,7 @@ final class LabFixture {
         if codeCoverage { coverageInvocations.append(["label":name,"exit_code":0]) }
         return client
     }
-    func collectCoverage() throws {
+    func collectCoverage(allowEmpty: Bool = false) throws {
         guard codeCoverage else { return }
         for index in coverageInvocations.indices {
             guard let label=coverageInvocations[index]["label"] as? String else { continue }
@@ -128,7 +128,7 @@ final class LabFixture {
         let file=output.appendingPathComponent("code-coverage-invocations.json")
         try writeJSON(coverageInvocations,to:file)
         _ = try docker(["cp",file.path,helper+":/evidence/code-coverage-invocations.json"])
-        try CodeCoverage.collect(runner,image:image,volume:volume,label:h.project)
+        try CodeCoverage.collect(runner,image:image,volume:volume,label:h.project,allowEmpty:allowEmpty)
         _ = try docker(["cp",helper+":/evidence/code-coverage",output.path])
     }
     func recordRuntime() throws {

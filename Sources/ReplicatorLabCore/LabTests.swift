@@ -12,6 +12,8 @@ public enum LabTests {
                     rows += try LabScenario.select(tier:options.tier,family:options.family,ids:options.ids).map { item in
                         var row=item.fields(profile,variant:variant); row["suite"]=suite; return row
                     }
+                } else if suite == "demo" {
+                    rows += try LabDemoQualification.select(family:options.family,ids:options.ids).map { $0.fields(profile) }
                 } else if suite == "recovery" && profile == .forward {
                     var row=LabScenario.correctness.first { $0.id == "myisam-recovery" }!.fields(profile,variant:variant)
                     row["suite"]=suite; rows.append(row)
@@ -38,7 +40,21 @@ public enum LabTests {
                 let indices=rows.indices.filter { rows[$0]["profile"] as? String == profile.rawValue && rows[$0]["suite"] as? String == suite && (rows[$0]["variant"] as? String ?? "default") == variant.rawValue }
                 guard indices.contains(where:{rows[$0]["status"] as? String == "not_run"}) else { continue }
                 do {
-                    if suite == "correctness" || suite == "lifecycle" || (suite == "recovery" && profile == .forward) {
+                    if suite == "demo" {
+                        let demoImage=try LabBuild.prepare(root:root,build:options.build,coverage:options.coverage,demo:true)
+                        let category="lab/"+directory.lastPathComponent+"/"+profile.rawValue+"/demo/default"
+                        let selected=Set(indices.filter { rows[$0]["status"] as? String == "not_run" }.compactMap { rows[$0]["id"] as? String })
+                        let run=try LabDemoQualification.Run(root:root,profile:profile,category:category,image:demoImage,coverage:options.coverage,selected:selected)
+                        var error: Error?
+                        do { try run.execute() } catch let e { error=e }
+                        for i in indices where rows[i]["status"] as? String == "not_run" {
+                            let observed=run.reporter.results.first { $0["id"] as? String == rows[i]["id"] as? String }
+                            rows[i]["status"]=observed?["status"] ?? "not_run"; rows[i]["evidence"]=run.output.path
+                            if let detail=observed?["error"] { rows[i]["error"]=detail }
+                        }
+                        if let error { throw error }
+                        try require(indices.allSatisfy { ["passed","not_applicable"].contains(rows[$0]["status"] as? String ?? "") },"demo runner omitted selected cases")
+                    } else if suite == "correctness" || suite == "lifecycle" || (suite == "recovery" && profile == .forward) {
                         if image == nil { image=try LabBuild.prepare(root:root,build:options.build,coverage:options.coverage); report["image"]=image }
                         let selected=Set(indices.filter { rows[$0]["status"] as? String == "not_run" }.compactMap { rows[$0]["id"] as? String })
                         let reporter: QualificationReporter, output: URL, execute: () throws -> Void
@@ -109,7 +125,6 @@ public enum LabTests {
             if profile == .reverse { row["status"]="not_applicable"; row["reason"]="Historical 8.4-source qualification; shared applicable workloads run in correctness." }
         case "recovery":
             row["intent"]=profile == .reverse ? "transaction rollback, inspection and audited retry" : "MyISAM fail-stop and recovery refusal"
-        case "demo": row["intent"]="retained demo lifecycle"
         default: break
         }
         return row
@@ -119,8 +134,6 @@ public enum LabTests {
         case "recovery":
             try require(profile == .reverse,"forward recovery must use the shared runner")
             try ReverseQualification.run(root:root,build:build,events:0,onEvidence:onEvidence)
-        case "demo":
-            try LabDemo.qualify(root:root,profile:profile,build:build,onEvidence:onEvidence)
         case "native": try NativeDDLQualification.run(root:root,onEvidence:onEvidence)
         default: throw LabError("unknown adapter suite")
         }

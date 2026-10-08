@@ -112,12 +112,13 @@ This 3-way comparison checks whether `mysql-replicator` makes changes that are t
 You can test and observe this behavior locally using the demo commands:
 
 ```sh
-make demo-up       # Launches the 3-server Docker stack and prints MySQL connection commands
-make demo-start    # Starts mysql-replicator in the separate applier container
-make demo-sql FILE=examples/demo/01-success.sql   # Executes sample DML/DDL against the primary
-make demo-compare  # Compares rows and schemas across all instances
-make demo-status   # Inspects current replication position and applied GTID progress
-make demo-down     # Archives evidence and cleans up containers
+export PROFILE=mysql84-to-mysql57-myisam
+make lab-demo ACTION=up       # Launches the 3-server Docker stack and prints MySQL connection commands
+make lab-demo ACTION=start    # Starts mysql-replicator in the separate applier container
+make lab-demo ACTION=sql ARGS=examples/demo/01-success.sql   # Executes sample DML/DDL against the primary
+make lab-demo ACTION=compare  # Compares rows and schemas across all instances
+make lab-demo ACTION=status   # Inspects current replication position and applied GTID progress
+make lab-demo ACTION=down     # Archives evidence and cleans up containers
 ```
 additonal manual commands [demo workbook](DEMO_WORKBOOK.md) 
 
@@ -129,4 +130,4 @@ Writing this much low-level replication and harness code from scratch would take
 - Building the automated 3-server test harness and verification suites.
 
 I think this code is safe and maintainable due to the test harness and 3-way verification approach. 
-Any future fixes or feature additions can be verified against the test matrix (`make integration-smoke`, `make dml-suite`, `make ddl-suite`, and `make benchmark`).
+Any future fixes or feature additions can be verified against the test matrix (`make integration-smoke`, `make correctness`, `make lab-test`, and `make lab-benchmark PROFILE=PROFILE`).

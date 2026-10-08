@@ -101,22 +101,23 @@ jobs:
       - name: Run the same correctness smoke on both profiles
         run: |
           make correctness TIER=smoke ARGS="--skip-build"
-          make lab-test ARGS="--suite demo --skip-build"
 
       - name: Qualify source and target reconnect on both profiles
         run: make lab-test ARGS="--suite lifecycle --skip-build"
 
-      - name: Retain reverse recovery and advanced demo qualification
+      - name: Retain specialized reverse recovery qualification
         run: |
           docker tag mysql-replicator-packaging:lab mysql-replicator-packaging:reverse
           make reverse-suite ARGS="--skip-build --events 0"
-          make reverse-demo-suite ARGS="--skip-build"
 
       - name: Measure applier coverage on DML and DDL sample
         run: make integration-smoke ARGS="--coverage"
 
       - name: Measure shared applier coverage on both profiles
         run: make correctness TIER=smoke ARGS="--coverage --skip-build"
+
+      - name: Qualify shared demos and measure their applier coverage on both profiles
+        run: make lab-test ARGS="--suite demo --coverage --skip-build"
 
       - name: Upload portable integration coverage
         if: always()
@@ -135,9 +136,7 @@ jobs:
           name: integration-evidence
           path: |
             artifacts/lab/
-            artifacts/lab-demo-tests/
             artifacts/reverse-suite/
-            artifacts/reverse-demo-suite/
           if-no-files-found: ignore
 
   combined-coverage:

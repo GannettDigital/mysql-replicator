@@ -67,20 +67,24 @@ final class LabApplier {
         let volumes=try fixture.docker(["volume","ls","--format","{{.Name}}"] ).text.split(separator:"\n")
         if !volumes.contains(Substring(fixture.volume)) { return false }
         let result=try fixture.docker(["run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(fixture.volume),dst=/evidence","--entrypoint","/usr/bin/test",fixture.image,"-f","/evidence/state/state.sqlite"],checked:false)
-        try require(result.status == 0 || result.status == 1,"cannot inspect demo state")
+        try require(result.status == 0 || result.status == 1,"cannot inspect demo state (exit \(result.status)): "+String(decoding:result.stderr,as:UTF8.self))
         return result.status == 0
     }
     func start(initialize: Bool) throws {
         try archiveLogs(); try ensureIdleContainer()
-        let command="exec /usr/local/bin/mysql-replicator run --config /evidence/apply.yaml"+(initialize ? " --initialize" : "")+" > /evidence/applier.ndjson 2> /evidence/applier.stderr"
+        let command="rm -f /evidence/applier.exit; /usr/local/bin/mysql-replicator run --config /evidence/apply.yaml"+(initialize ? " --initialize" : "")+" > /evidence/applier.ndjson 2> /evidence/applier.stderr; code=$?; echo $code > /evidence/applier.exit"
         let label="apply-"+runID()
-        if fixture.codeCoverage { fixture.coverageInvocations.append(["label":label,"exit_code":0]) }
+        if fixture.codeCoverage {
+            fixture.coverageInvocations.append(["label":label,"exit_code":0])
+            try writeJSON(fixture.coverageInvocations,to:fixture.output.appendingPathComponent("code-coverage-invocations.json"))
+        }
         _ = try fixture.docker(["exec","-d"]+CodeCoverage.environment(enabled:fixture.codeCoverage,label:label)+[name,"/bin/sh","-c",command])
     }
-    func drain() throws {
+    func drain(signal: String = "USR1") throws {
+        try require(["USR1","INT","TERM"].contains(signal),"unsupported drain signal")
         let ids=try pids()
         if ids.isEmpty { return }
-        _ = try fixture.docker(["exec",name,"/bin/sh","-c",#"kill -USR1 "$@""#,"reverse-demo-stop"]+ids)
+        _ = try fixture.docker(["exec",name,"/bin/sh","-c","kill -"+signal+" \"$@\"","reverse-demo-stop"]+ids)
         let deadline=Date().addingTimeInterval(30)
         while try !pids().isEmpty && Date() < deadline { Thread.sleep(forTimeInterval:0.1) }
         try require(try pids().isEmpty,"applier did not drain; retaining the demo for inspection")

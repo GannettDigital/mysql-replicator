@@ -108,9 +108,3 @@ public final class ProcessRunner {
 func writeYAML(_ object: Any, to url: URL) throws {
     try Yams.dump(object: object, sortKeys: true).write(to: url, atomically: true, encoding: .utf8)
 }
-func readYAML(_ url: URL) throws -> [String: Any] {
-    guard let object = try Yams.load(yaml: String(contentsOf: url, encoding: .utf8)) as? [String: Any] else {
-        throw LabError("configuration must be a YAML mapping")
-    }
-    return object
-}

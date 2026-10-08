@@ -46,8 +46,7 @@ Use the [test lab guide](docs/TEST_LAB.md) to issue SQL, compare replicas, or se
 `mysql57-to-mysql84-innodb`. Clean up with the same profile and `ACTION=down`.
 Run shared smoke tests with `make correctness TIER=smoke`.
 The [forward workbook](PLAN/DEMO_WORKBOOK.md) and
-[reverse workbook](PLAN/REVERSE_DEMO_WORKBOOK.md) cover the original demo commands
-and detailed experiments.
+[reverse workbook](PLAN/REVERSE_DEMO_WORKBOOK.md) use the same profile-based commands for detailed experiments.
 
 [Build, test and contribute](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [License](LICENSE) · [Third-party notices](NOTICE)

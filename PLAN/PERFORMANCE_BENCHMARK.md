@@ -4,7 +4,7 @@ For shared scenarios, demos and comparable backlog measurements across both
 replication topologies, use the [profile-driven test lab](../docs/TEST_LAB.md).
 The commands below retain their original specialized scopes.
 
-`make benchmark` runs [sysbench](https://github.com/akopytov/sysbench) against a
+`make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS="--mode streaming"` runs [sysbench](https://github.com/akopytov/sysbench) against a
 fresh MySQL source while native replication and mysql-replicator consume the
 same binlog. It reports source commits, applied transactions, backlog bounds,
 and observed catch-up time, then compares exact final rows on all three servers.
@@ -21,16 +21,16 @@ mysqlbinlog installation is needed. Run from the repository root:
 
 ```sh
 # 1,000 single-row INSERT transactions, offered at 100 events/sec, one client.
-make benchmark
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS="--mode streaming"
 
 # Small harness check: concurrent writers and three rows per statement.
-make benchmark ARGS='--events 60 --rate 10 --threads 2 --rows-per-event 3 --workload mixed'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --events 60 --rate 10 --threads 2 --rows-per-event 3 --workload mixed'
 
 # Reuse images built from these exact inputs; offer writes as fast as possible.
-make benchmark ARGS='--skip-build --events 5000 --rate 0'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --skip-build --events 5000 --rate 0'
 
 # Rate-controlled run with larger rows.
-make benchmark ARGS='--skip-build --events 3000 --rate 100 --payload-bytes 512'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --skip-build --events 3000 --rate 100 --payload-bytes 512'
 ```
 
 Each invocation creates its own stack under `artifacts/performance/`, without
@@ -153,8 +153,8 @@ logging or SQLite counter writes. A process crash can lose these diagnostic
 counters. This does not change durable replication progress or write ordering.
 
 ```sh
-make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
-make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile off'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile off'
 ```
 
 `applier-profile.tsv` sorts both detailed and existing coarse applier stages by
@@ -758,8 +758,8 @@ exported in the existing final timing summary, with no per-call logging or SQLit
 writes. Resetting a decoder does not reset its run's counters.
 
 ```sh
-make benchmark ARGS='--events 10000 --rate 0 --decoder-profile on'
-make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --events 10000 --rate 0 --decoder-profile on'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --skip-build --events 10000 --rate 0 --decoder-profile off'
 ```
 
 `decoder-profile.tsv` sorts functions by **self time** and reports call count,
@@ -934,8 +934,8 @@ To measure receiving/decoding without target SQL, recovery-journal writes, or
 per-event JSON output:
 
 ```sh
-make benchmark-capture ARGS='--events 10000 --rate 0 --decoder-profile on'
-make benchmark-capture ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode capture --events 10000 --rate 0 --decoder-profile on'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode capture --skip-build --events 10000 --rate 0 --decoder-profile off'
 ```
 
 The new harness uses an isolated stack, generates the **entire backlog first**,
@@ -972,7 +972,7 @@ event bytes, batches, cache high-water marks, elapsed receiving time and EOF.
 Artifacts are under `artifacts/capture-performance/`: `result.json`,
 `blackhole.json`, `blackhole.stderr`, `stage-timings.json`, optional
 `decoder-profile.tsv`, native receiver status, source boundaries/binlog sizes,
-configuration/input hashes and cleanup evidence. The normal `make benchmark`
+configuration/input hashes and cleanup evidence. The normal `make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS="--mode streaming"`
 continues to measure real application.
 
 ### Initial 10K fixed-backlog results, 2026-10-02
@@ -1115,7 +1115,7 @@ Linux release build passed. The following run used single-row INSERTs, TCP+TLS,
 the default batch limits, one source client, and five-second sampling:
 
 ```sh
-.build/debug/replicator-lab benchmark --skip-build --events 10000 --rate 0 --sample-seconds 5 --timeout 600 --batch-transactions 32
+.build/debug/replicator-lab benchmark --profile mysql84-to-mysql57-myisam --mode streaming --skip-build --events 10000 --rate 0 --sample-seconds 5 --timeout 600 --batch-transactions 32
 ```
 
 All 10,000 final rows matched source/native/target exactly; the checkpoint was
@@ -1545,9 +1545,9 @@ connection always uses TLS. The plain socket fixture account is local-only; the
 TCP account still requires TLS and the server retains `require_secure_transport`.
 
 ```sh
-swift run replicator-lab benchmark --events 1000 --rate 0 --sample-seconds 2 --target-transport tcp-tls
-swift run replicator-lab benchmark --skip-build --events 1000 --rate 0 --sample-seconds 2 --target-transport unix-tls
-swift run replicator-lab benchmark --skip-build --events 1000 --rate 0 --sample-seconds 2 --target-transport unix
+swift run replicator-lab benchmark --profile mysql84-to-mysql57-myisam --mode streaming --events 1000 --rate 0 --sample-seconds 2 --target-transport tcp-tls
+swift run replicator-lab benchmark --profile mysql84-to-mysql57-myisam --mode streaming --skip-build --events 1000 --rate 0 --sample-seconds 2 --target-transport unix-tls
+swift run replicator-lab benchmark --profile mysql84-to-mysql57-myisam --mode streaming --skip-build --events 1000 --rate 0 --sample-seconds 2 --target-transport unix
 ```
 
 A socket changes per-exchange overhead, not SQL command count. Separating Unix
@@ -1784,8 +1784,8 @@ reconnect, trigger-policy, and YAML/password changes. The first command rebuilt
 the runtime; the second reused that exact image. Runs were sequential:
 
 ```sh
-make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
-make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
 ```
 
 Both passed exact comparison of all 10,000 rows, applied transaction/row counts,
@@ -1823,8 +1823,8 @@ multi-table RENAME, state-format-8 audit and diagnostic changes. Repeated the
 same October 3 workloads sequentially:
 
 ```sh
-make benchmark ARGS='--events 10000 --rate 0 --decoder-profile off --applier-profile on'
-make benchmark ARGS='--skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --events 10000 --rate 0 --decoder-profile off --applier-profile on'
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS='--mode streaming --skip-build --events 10000 --rate 0 --decoder-profile off --applier-profile on --tables 8 --table-distribution uniform'
 ```
 
 The eight-table command ran twice because its first internal apply/SQL timings

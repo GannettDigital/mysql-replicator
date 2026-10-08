@@ -30,3 +30,13 @@ public enum LabProfile: String, CaseIterable, Codable {
         Role.allCases.map { ["role":$0.rawValue,"version":version($0),"engine":engine($0),"service":service($0)] }
     }
 }
+
+extension LabProfile {
+    static func takeProfile(_ args: inout [String]) throws -> LabProfile {
+        guard let index=args.firstIndex(of:"--profile"), index+1 < args.count,
+              let profile=LabProfile(rawValue:args[index+1]) else { throw LabError("select one explicit --profile: "+LabProfile.allCases.map(\.rawValue).joined(separator:" | ")) }
+        args.removeSubrange(index...index+1)
+        try require(!args.contains("--profile"),"duplicate --profile")
+        return profile
+    }
+}

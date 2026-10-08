@@ -12,8 +12,17 @@ func main() throws -> Int32 {
                [--tier smoke|full] [--family FAMILY]
                [--case ID ...] [--variant default|position-minimal|gtid-full|all]
                [--list] [--skip-build] [--coverage]
-          demo up|start|stop|status|compare|sql|inspect|resolve|down --profile PROFILE
+          demo up|start|stop|status|compare|sql|fail|skip|inspect|resolve|down|legacy-down --profile PROFILE
+               up [--skip-build] [--coverage]; sql FILE; skip GTID; compare [--expect-blocked]
           benchmark --profile PROFILE [--mode backlog|streaming|capture] [--workload insert|multi-table-transaction] [--events N] [--skip-build]
+        Forward streaming options (--mode streaming):
+                    [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
+                    [--target-transport tcp-tls|unix-tls|unix]
+                    [--insert-rows N] [--overlap-preparation on|off] [--flush-on-table-change on|off]
+                    [--explicit-table-locks on|off]
+                    [--batch-transactions N] [--decoder-profile on|off] [--applier-profile on|off]
+                    [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
+                    [--sample-seconds N] [--timeout N]
         Specialized and compatibility entry points:
           native-suite [--positioning auto|file-position|both]
           native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
@@ -21,35 +30,14 @@ func main() throws -> Int32 {
           ubuntu-smoke [--skip-build]
           live-suite [--skip-build]
           native-ddl-suite
-          benchmark-capture [--skip-build] [--events N] [--rate N] [--decoder-profile on|off]
-          benchmark [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
-                    [--target-transport tcp-tls|unix-tls|unix]
-                    [--insert-rows N] [--overlap-preparation on|off] [--flush-on-table-change on|off]
-                    [--explicit-table-locks on|off]
-                    [--batch-transactions N] [--decoder-profile on|off] [--applier-profile on|off]
-                    [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
-                    [--sample-seconds N] [--timeout N]
           ddl-catalog check
           ddl-catalog report [--format markdown|json] [--evidence PATH ...]
           ddl-catalog upstream-check [--mysql-source PATH]
           ddl-catalog scan [--mysql-source PATH]
-          demo-up [--skip-build]    # prepare stack/config and an idle applier container
-          demo-start               # launch mysql-replicator inside the running container
-          demo-status              # containers, native status, live SQLite and diagnostics
-          demo-sql FILE            # execute a SQL file on the demo source
-          demo-compare [--expect-blocked]
-          demo-fail                # run prepared failure and verify both appliers stopped
-          demo-down                # archive evidence and delete only this disposable stack
-          demo-suite [--skip-build]
           upstream-tests
           package-deb [--output DIR] [--skip-build] [--skip-verification]
           reverse-correctness [--skip-build] [--slice all|database|ddl|dml|indexes|policy|rejections]
           reverse-suite [--skip-build] [--events N] # 5.7 InnoDB → 8.4 InnoDB
-          reverse-demo-up [--skip-build]
-          reverse-demo-start | reverse-demo-stop | reverse-demo-status | reverse-demo-compare
-          reverse-demo-sql FILE | reverse-demo-inspect | reverse-demo-down
-          reverse-demo-resolve ACTION --gtids GTID_SET --reason TEXT
-          reverse-demo-suite [--skip-build]
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
@@ -61,19 +49,13 @@ func main() throws -> Int32 {
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
     if command == "demo" { try LabDemo.run(root:root,arguments:args); return 0 }
     if command == "test" { try LabTests.run(root:root,arguments:args); return 0 }
-    if command.hasPrefix("reverse-demo-") {
-        try ReverseDemo.run(root:root,command:command,arguments:args); return 0
-    }
-    if command.hasPrefix("demo-") {
-        try DemoSession.run(root: root, command: command, arguments: args); return 0
+    if command.hasPrefix("demo-") || command.hasPrefix("reverse-demo-") {
+        throw LabError("use demo ACTION --profile PROFILE, or test --suite demo --profile PROFILE; see docs/TEST_LAB.md")
     }
     if command == "benchmark-capture" {
-        try CaptureBenchmark.run(root:root,arguments:args); return 0
+        throw LabError("use benchmark --profile mysql84-to-mysql57-myisam --mode capture")
     }
-    if command == "benchmark", args.contains("--profile") { try LabBenchmark.run(root:root,arguments:args); return 0 }
-    if command == "benchmark" {
-        try PerformanceBenchmark.run(root: root, arguments: args); return 0
-    }
+    if command == "benchmark" { try LabBenchmark.run(root:root,arguments:args); return 0 }
     if command == "ddl-catalog" {
         try DDLCoverage.run(root: root, arguments: args); return 0
     }

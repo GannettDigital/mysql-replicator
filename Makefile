@@ -52,10 +52,6 @@ reverse-suite:
 integration-smoke:
 	swift run replicator-lab test --profile mysql84-to-mysql57-myisam --case positive --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
 
-.PHONY: benchmark
-benchmark:
-	swift run replicator-lab benchmark $(ARGS)
-
 .PHONY: native-ddl-suite
 native-ddl-suite:
 	swift run replicator-lab native-ddl-suite
@@ -74,17 +70,6 @@ ddl-catalog-upstream-check:
 ddl-catalog-scan:
 	@swift run replicator-lab ddl-catalog scan $(ARGS)
 
-.PHONY: demo-up demo-start demo-status demo-compare demo-sql demo-fail demo-down demo-suite
-demo-up demo-start demo-status demo-compare demo-fail demo-down demo-suite:
-	swift run replicator-lab $@ $(ARGS)
-
-demo-sql:
-	swift run replicator-lab demo-sql "$(FILE)"
-
-.PHONY: benchmark-capture
-benchmark-capture:
-	swift run replicator-lab benchmark-capture $(ARGS)
-
 .PHONY: release-check release-artifacts
 release-check:
 	python3 tools/release_version.py
@@ -93,12 +78,6 @@ release-check:
 # Docker only: export is gated by installation and archive tests.
 release-artifacts: release-check
 	docker build --platform linux/amd64 --target release-export -f docker/packaging/Dockerfile --output type=local,dest=artifacts/release .
-
-.PHONY: reverse-demo-up reverse-demo-start reverse-demo-stop reverse-demo-status reverse-demo-compare reverse-demo-inspect reverse-demo-resolve reverse-demo-down reverse-demo-suite reverse-demo-sql
-reverse-demo-up reverse-demo-start reverse-demo-stop reverse-demo-status reverse-demo-compare reverse-demo-inspect reverse-demo-resolve reverse-demo-down reverse-demo-suite:
-	swift run replicator-lab $@ $(ARGS)
-reverse-demo-sql:
-	swift run replicator-lab reverse-demo-sql "$(FILE)"
 
 .PHONY: reverse-correctness
 reverse-correctness:

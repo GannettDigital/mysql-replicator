@@ -76,10 +76,10 @@ final class LabProfileTests: XCTestCase {
     }
     func testDemoRequiresOneExplicitProfile() throws {
         for var args in [[], ["--profile","all"], ["--profile",LabProfile.reverse.rawValue,"--profile",LabProfile.forward.rawValue]] {
-            XCTAssertThrowsError(try LabDemo.takeProfile(&args))
+            XCTAssertThrowsError(try LabProfile.takeProfile(&args))
         }
         var args=["example.sql","--profile",LabProfile.forward.rawValue]
-        XCTAssertEqual(try LabDemo.takeProfile(&args),.forward)
+        XCTAssertEqual(try LabProfile.takeProfile(&args),.forward)
         XCTAssertEqual(args,["example.sql"])
     }
     func testVersionAdaptationsAreDeclaredByFixtures() {
@@ -130,6 +130,7 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(LabVariant.gtidFull.start(boundary)["executedGTIDs"] as? String,"uuid:1-3")
         XCTAssertEqual(LabVariant.positionMinimal.start(boundary)["position"] as? UInt64,123)
         XCTAssertEqual(LabVariant.positionMinimal.mode,"file-position")
+        XCTAssertEqual(LabVariant.positionMinimal.start(boundary)["executedGTIDs"] as? String,"uuid:1-3")
         XCTAssertEqual(try LabTestOptions(["--variant","all"]).variants,LabVariant.allCases)
         XCTAssertThrowsError(try LabTestOptions(["--variant","unknown"]))
         XCTAssertThrowsError(try LabTestOptions(["--suite","recovery","--variant","gtid-full"]))
@@ -138,4 +139,30 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(types.fields(.forward,variant:.positionMinimal)["status"] as? String,"not_applicable")
         XCTAssertEqual(types.fields(.forward,variant:.gtidFull)["status"] as? String,"not_run")
     }
+    func testDemoCatalogPreservesWorkflowsAndProfileApplicability() throws {
+        let all=LabDemoQualification.scenarios
+        XCTAssertEqual(Set(all.map(\.id)).count,14)
+        let selected=try LabDemoQualification.select(family:nil,ids:["demo-modify-index"])
+        XCTAssertEqual(selected.map(\.id),all.prefix(7).filter { $0.id != "demo-container-repair" }.map(\.id))
+        XCTAssertEqual(try LabDemoQualification.select(family:nil,ids:["demo-reverse-recovery"]).map(\.id),["demo-reverse-workbook","demo-reverse-recovery"])
+        XCTAssertEqual(all.filter { $0.fields(.forward)["status"] as? String == "not_run" }.count,11)
+        XCTAssertEqual(all.filter { $0.fields(.reverse)["status"] as? String == "not_run" }.count,10)
+        XCTAssertThrowsError(try LabDemoQualification.select(family:"resume",ids:["demo-success"]))
+        XCTAssertTrue(try LabTestOptions(["--suite","demo","--coverage","--case","demo-idle-sigint"]).coverage)
+    }
+    func testBenchmarkRoutingRequiresAnExplicitProfileAndMode() throws {
+        let forward=LabProfile.forward.rawValue, reverse=LabProfile.reverse.rawValue
+        XCTAssertThrowsError(try LabBenchmark.Options([]))
+        let backlog=try LabBenchmark.Options(["--profile",reverse,"--events","100","--workload","multi-table-transaction"])
+        XCTAssertEqual(backlog.mode,"backlog"); XCTAssertEqual(backlog.events,100)
+        for mode in ["streaming","capture"] {
+            let options=try LabBenchmark.Options(["--mode",mode,"--profile",forward,"--threads","2"])
+            XCTAssertEqual(options.forwardedArguments,["--threads","2"])
+            XCTAssertThrowsError(try LabBenchmark.Options(["--mode",mode,"--profile",reverse]))
+        }
+        for args in [["--mode","invalid"],["--mode","backlog","--mode","capture"],["--events","0"],["--threads","2"],["--workload","multi-table-transaction"]] {
+            XCTAssertThrowsError(try LabBenchmark.Options(["--profile",forward]+args))
+        }
+    }
+
 }

@@ -112,7 +112,7 @@ both remain available, without presenting one as a substitute for the other.
 
 ## Existing specialized qualification
 
-These suites use the common profile interface. Correctness and lifecycle run
+These suites use the common profile interface. Correctness, lifecycle and demo run
 shared, individually declared cases on both profiles. Forward recovery uses the
 shared MyISAM workflow. Other specialized suites retain their established
 runners/assertions and are labeled adapters in the inventory.
@@ -122,7 +122,7 @@ runners/assertions and are labeled adapters in the inventory.
 | `correctness` | Shared replicated-DDL, DML, indexes, policies, filters and refusals |
 | `lifecycle` | Shared source/target reconnect, restart, drain and uncertain-write cases |
 | `recovery` | Shared forward MyISAM workflow; retained InnoDB rollback/inspection/audited retry runner |
-| `demo` | Common retained-session start, compare, stop, resume and container repair |
+| `demo` | Shared workbook, manual start, heartbeats, signals/resume, shell repair; profile-specific failure/skip and recovery |
 | `native` | Original 8.4-source native DDL observation suite |
 | `all` | All of the above; any missing required case makes the run incomplete |
 
@@ -132,8 +132,26 @@ the same `myisam-recovery` group included in full correctness; `--suite all` run
 that group once. Its ordered child cases are listed in the offline inventory.
 The `dml-suite`, `ddl-suite`, `legacy-dml` and `legacy-ddl` commands are removed.
 Use shared `correctness`, its `bootstrap` family and capture variants instead.
-`reverse-suite` and the `reverse-correctness` compatibility alias remain. Old demo
-commands retain their original sessions and advanced failure exercises. New commands never adopt or overwrite those sessions.
+`reverse-suite` and the `reverse-correctness` compatibility alias remain.
+The former `demo-*` and `reverse-demo-*` commands are replaced by `demo ACTION
+--profile PROFILE`; their rehearsals are now named cases in `test --suite demo`.
+Existing legacy sessions are never adopted or overwritten. To archive and remove
+one, use `make lab-demo PROFILE=PROFILE ACTION=legacy-down`.
+
+Demo selection supports `--family lifecycle|workbook|failure|resume` and `--case ID`.
+Dependencies are included automatically; profile-specific cases report
+`not_applicable` on the other topology. For example:
+
+```sh
+make lab-list ARGS="--suite demo" | jq '.scenarios'
+make lab-test ARGS="--suite demo --coverage"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite demo --case demo-skip-and-resume"
+```
+
+Demo test evidence lives under `artifacts/lab/RUN_ID/PROFILE/demo/default/`.
+Each independent session records assertions, comparisons, pinned runtime metadata,
+archived SQLite/relay state and, when enabled, `code-coverage/combined/`. These
+workbook checks do not claim additional MySQL catalog coverage.
 
 Run reconnect qualification for both profiles, or select one:
 
@@ -245,15 +263,25 @@ and the generated YAML configuration. Repeating `up` repairs a missing idle
 container while preserving its pinned image and saved state. `down` archives
 state and removes only that disposable session. Pause source writes for comparison.
 
-`compare` verifies the preloaded `reverse_poc.items` and `reverse_poc.aux` tables,
-including checkpoints. The example also creates `lab_example` through replication;
+`compare` verifies `demo.items` (when present) and the preloaded `reverse_poc.items`
+and `reverse_poc.aux`, including schema, expected engine differences and checkpoints.
+It reads SQLite in its Docker volume after the completed boundary without
+interrupting either a foreground or detached writer. The example also creates `lab_example` through replication;
 inspect it in the printed shells or use the correctness suite for automated DDL
 assertions. The fixture database name is retained across profiles for shared SQL.
 Audited `inspect`/`resolve` actions are available only for the InnoDB profile.
 
-The original [forward workbook](../PLAN/DEMO_WORKBOOK.md) and
-[reverse workbook](../PLAN/REVERSE_DEMO_WORKBOOK.md) continue to describe the legacy
-commands and their separate retained sessions.
+The [forward workbook](../PLAN/DEMO_WORKBOOK.md) and
+[reverse workbook](../PLAN/REVERSE_DEMO_WORKBOOK.md) use these same commands for
+multi-terminal experiments. The forward profile also provides `fail`, `skip GTID`
+and `compare --expect-blocked` actions for its controlled explicit-engine rejection.
+
+For instrumentation, create the session with `ACTION=up ARGS=--coverage`.
+Coverage mode and the image are pinned in `artifacts/demos/PROFILE/current.json`;
+subsequent commands preserve that choice. `down` drains the writer and exports
+coverage before archiving/removing its volume. Recreate sessions made before this
+migration to obtain the SQLite-equipped demo image; retained sessions never rebuild
+or switch their image implicitly.
 
 ## Comparable benchmarks
 
@@ -271,6 +299,16 @@ explicit InnoDB-only experiment, never silently substituted for `insert`.
 The historical forward sysbench streaming and blackhole capture experiments are
 available with `--mode streaming` and `--mode capture`, respectively. These are
 separate measurements and are currently unavailable for the reverse profile.
+All modes require one explicit profile. For example:
+
+```sh
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS="--mode streaming --events 10000"
+make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS="--mode capture --events 10000"
+```
+
+Streaming/capture retain their transport and tuning options from the
+[benchmark guide](../PLAN/PERFORMANCE_BENCHMARK.md), and share a dedicated forward
+measurement fixture rather than the interactive demo implementation.
 Backlog evidence lives in `artifacts/lab-benchmark/PROFILE/`; historical measurement
 adapters retain their original categories. Do not compare timings across different
 workloads, modes, instrumentation, durability settings or transports as applier

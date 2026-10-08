@@ -143,14 +143,15 @@ From a checkout with Docker and the build prerequisites in
 [CONTRIBUTING](../CONTRIBUTING.md):
 
 ```sh
-make reverse-demo-up
-make reverse-demo-start
-make reverse-demo-sql FILE=examples/reverse-demo/01-success.sql
+export PROFILE=mysql57-to-mysql84-innodb
+make lab-demo ACTION=up
+make lab-demo ACTION=start
+make lab-demo ACTION=sql ARGS=examples/reverse-demo/01-success.sql
 ```
 
 `up` prepares matching InnoDB tables, an isolated source 5.7, native reference
 5.7, destination 8.4 and a running idle applier shell container. It prints source/target SQL-shell commands and the path
-to generated `apply.yaml`. Replication starts separately with `reverse-demo-start`;
+to generated `apply.yaml`. Replication starts separately with `demo start`;
 status before that says `NOT_STARTED`. Repeating `up` reuses the existing session
 and repairs a missing applier container without resetting data. Use the preloaded `reverse_poc.items` and
 `reverse_poc.aux` tables for the workbook's data comparison. Supported source DDL
@@ -158,14 +159,14 @@ also works in newly built sessions; use InnoDB instead of the original workbook'
 explicit MyISAM clauses. Existing retained demos keep their pinned image and
 original user grants until deliberately recreated.
 
-- `make reverse-demo-compare`: wait for catch-up, drain, compare rows/schema and source GTID coverage,
-  then restart an applier that was running. Pause source writes during comparison.
-- `make reverse-demo-status`: show containers, logs and native status.
-- `make reverse-demo-stop`: drain to a clean checkpoint; `reverse-demo-start` resumes.
-- `make reverse-demo-inspect`: inspect stopped/blocked/crashed state without MySQL.
-- `make reverse-demo-resolve ARGS="retry --gtids UUID:N --reason 'DBA reconciled all pending rows'"`:
-  record a deliberate resolution, then use `reverse-demo-start`.
-- `make reverse-demo-down`: archive evidence and delete only this disposable stack.
+- `make lab-demo ACTION=compare`: wait for catch-up and compare rows/schema and the saved source boundary
+  without interrupting the writer. Pause source writes during comparison.
+- `make lab-demo ACTION=status`: show containers, logs and native status.
+- `make lab-demo ACTION=stop`: drain to a clean checkpoint; `demo start` resumes.
+- `make lab-demo ACTION=inspect`: inspect stopped/blocked/crashed state without MySQL.
+- `make lab-demo ACTION=resolve ARGS="retry --gtids UUID:N --reason 'DBA reconciled all pending rows'"`:
+  record a deliberate resolution, then use `demo start`.
+- `make lab-demo ACTION=down`: archive evidence and delete only this disposable stack.
 
 For a controlled recovery exercise, stop source writes, drain the applier, insert
 a target-only row into `reverse_poc.aux`, then issue a source transaction that first
@@ -181,26 +182,29 @@ existing [8.4 → 5.7 workbook](../PLAN/DEMO_WORKBOOK.md) remains separate.
 ## Developer qualification
 
 ```sh
-make reverse-suite ARGS="--events 10000"
-make reverse-demo-suite ARGS="--skip-build"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite demo"
 ```
 
-The default reverse suite uses 100 benchmark transactions for CI. `--skip-build`
-reuses `mysql-replicator-packaging:reverse`; omit it when executable code changes.
+The recovery adapter omits the embedded benchmark; benchmark mode is selected
+separately. Omit `--skip-build` when executable or fixture inputs change.
 The fixture uses one 5.7 source feeding native 5.7 InnoDB and our 8.4 InnoDB target.
 All three run linux/amd64 with durable InnoDB settings and one ordered applier.
 It checks multi-table transactions, composite keys/PK moves, repeated updates,
 unsigned BIGINT, decimal/ENUM/SET/binary data, clean resume, duplicate-key rollback,
 then offline inspection and audited retry/resume.
 
-The benchmark generates a backlog of two-statement transactions (one INSERT and
-one UPDATE on different tables), then replays it sequentially through each path.
+The common benchmark defaults to single-row INSERT transactions. Add
+`--workload multi-table-transaction` to generate one INSERT and one UPDATE on
+different tables per transaction. It replays the backlog sequentially through each path.
 It records wall time, throughput, final data/checkpoints, target server counter deltas and our stage timings.
 Timings include container/client startup and control-command overhead, and compare
 **different destination versions**; they are not isolated applier overhead or CPU
 time. No artificial network latency is injected. Evidence and the exact workload
-are saved under `artifacts/reverse-suite/`; demo lifecycle evidence is under
-`artifacts/reverse-demo-suite/`.
+are saved under `artifacts/lab-benchmark/mysql57-to-mysql84-innodb/`; demo
+qualification evidence is under `artifacts/lab/RUN_ID/PROFILE/demo/default/`.
+The specialized recovery adapter retains `artifacts/reverse-suite/`.
 
 Unit fault tests cover lost commit replies, failed rollback, incomplete relay,
 crashed RUNNING state, ordered resolution and atomic audit/checkpoint updates.

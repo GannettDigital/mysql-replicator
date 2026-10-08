@@ -25,14 +25,14 @@ public enum CaptureBenchmark {
         try require(arguments.filter { $0.hasPrefix("--") }.allSatisfy { allowed.contains($0) },"unsupported capture benchmark option")
         var options=try PerformanceOptions(arguments:arguments)
         options.applierProfiling=false // This benchmark never starts the applier.
-        let session=DemoSession.Session(root:root,category:"capture-performance/"+runID())
+        let session=ForwardBenchmarkFixture(root:root,category:"capture-performance/"+runID())
         let runner=ProcessRunner(root:root), tag="mysql-replicator-benchmark:sysbench"
         var failure:Error?, output:URL?, loadName:String?
-        var report:[String:Any]=["result":"failed","options":try jsonObject(options),
+        var report:[String:Any]=["result":"failed","options":try jsonObject(options), "profile":LabProfile.forward.rawValue,"mode":"capture","topology":LabProfile.forward.topology,
             "scope":"fixed backlog; sequential native receiver-only, native SQL from relay, and custom blackhole; shared ARM host may emulate x86_64; blackhole does not apply writes or verify target rows"]
         do {
             if options.build { _ = try runner.run(["docker","build","--progress=plain","-t",tag,"docker/performance"],timeout:600,onOutput:{ FileHandle.standardError.write($0) }) }
-            try session.up(build:options.build,showInstructions:false)
+            try session.up(build:options.build)
             output=session.h.output
             report["replicator_image"]=session.manifest!.image
             report["revision"]=try runner.run(["git","rev-parse","HEAD"]).text

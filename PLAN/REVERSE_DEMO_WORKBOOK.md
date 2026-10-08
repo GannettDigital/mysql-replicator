@@ -1,7 +1,7 @@
 # Reverse demo workbook: four terminals
 
 For common profile-based test, demo and benchmark commands, see the [test lab](../docs/TEST_LAB.md).
-The commands in this document remain available; retained legacy demos are separate sessions.
+Both profiles use the shared retained-session implementation. Set `PROFILE` in each host terminal as shown below.
 
 This workbook exercises **5.7 InnoDB → replicator → 8.4 InnoDB**, alongside a
 native **5.7 → 5.7 InnoDB** reference. Its worked examples use preloaded tables and DML.
@@ -12,22 +12,24 @@ The original [demo workbook](DEMO_WORKBOOK.md) covers the separate MyISAM profil
 On the host, from the repository root:
 
 ```sh
-make reverse-demo-up
-make reverse-demo-status
+export PROFILE=mysql57-to-mysql84-innodb
+make lab-demo ACTION=up
+make lab-demo ACTION=status
 ```
 
 `up` prepares three databases and an idle Ubuntu applier container. Expected status:
-`Applier container: running`, `Replication: NOT_STARTED`, and native IO/SQL `Yes`.
+`container: running` and `lifecycle: NOT_STARTED` in the JSON status output.
 Replication starts only when requested. Rerunning `up` reuses the current session;
 it can add an applier missing from an older setup without resetting databases,
 configuration, or SQLite. It uses that session's pinned image. To deliberately
-start fresh, use `make reverse-demo-down`, then `make reverse-demo-up`.
+start fresh, use `make lab-demo ACTION=down`, then `make lab-demo ACTION=up`.
 
 Run this setup in **each host terminal** so the container names match your session:
 
 ```sh
 cd /path/to/mysql-replicator
-export REVERSE_STACK="replicator-lab-$(python3 -c 'import json; print(json.load(open("artifacts/reverse-demo/current.json"))["identifier"].lower())')"
+export PROFILE=mysql57-to-mysql84-innodb
+export REVERSE_STACK="replicator-lab-$(python3 -c 'import json; print(json.load(open("artifacts/demos/mysql57-to-mysql84-innodb/current.json"))["identifier"].lower())')"
 ```
 
 The shared Compose service names are inherited from the original test stack:
@@ -44,7 +46,7 @@ The shared Compose service names are inherited from the original test stack:
 On the host:
 
 ```sh
-make reverse-demo-start
+make lab-demo ACTION=start
 docker exec -it "${REVERSE_STACK}-applier" /bin/bash
 ```
 
@@ -59,11 +61,11 @@ Ctrl-C exits the log viewer; the replication process keeps running. `docker logs
 shows the idle shell container's output; use the files above for detached
 replication logs. Exit the shell to return to host commands.
 
-`reverse-demo-start` initializes state only on the first launch. Later launches
+`demo start` initializes state only on the first launch. Later launches
 resume a clean STOPPED checkpoint. Do not initialize again or replay the successful
 SQL example after it has already committed.
 
-For a **foreground** process instead of `reverse-demo-start`, enter the idle
+For a **foreground** process instead of `demo start`, enter the idle
 container and run:
 
 ```sh
@@ -71,10 +73,9 @@ mysql-replicator run --config /evidence/apply.yaml --initialize
 ```
 
 On later starts, omit `--initialize`. Do not also start a detached process. Status
-and `reverse-demo-stop` detect either launch method. Foreground output appears in
-that terminal, not in the detached log files. For comparison in this mode, wait
-until the workload is reflected in the progress output, run `reverse-demo-stop`
-on the host, then `reverse-demo-compare`; resume manually afterward.
+and `demo stop` detect either launch method. Foreground output appears in
+that terminal, not in the detached log files. `make lab-demo ACTION=compare`
+also works in foreground mode without stopping your writer.
 
 ## Terminal 2 — source MySQL 5.7
 
@@ -92,13 +93,12 @@ writes another table, all within one transaction.
 Alternatively, execute the file **on the host**, instead of pasting it:
 
 ```sh
-make reverse-demo-sql FILE=examples/reverse-demo/01-success.sql
-make reverse-demo-compare
+make lab-demo ACTION=sql ARGS=examples/reverse-demo/01-success.sql
+make lab-demo ACTION=compare
 ```
 
-The comparison waits for the source GTID, drains the detached applier, compares
-all three databases and restarts the previously running applier. Pause other
-source writes during comparison.
+The comparison waits for the source boundary and compares all three databases
+without stopping the writer. Pause other source writes during comparison.
 
 Tables `reverse_poc.items` and `reverse_poc.aux` already exist on all servers.
 Supported CREATE/ALTER DDL also works in newly built reverse sessions. Use InnoDB
@@ -144,7 +144,7 @@ SHOW REPLICA STATUS\G
 ```
 
 There is no native channel on this destination, so `SHOW REPLICA STATUS` is empty.
-Use `make reverse-demo-status` for our process and checkpoint. All tables are
+Use `make lab-demo ACTION=status` for our process and checkpoint. All tables are
 InnoDB. After the first SQL example, all three databases contain:
 
 - Item `(2026-10-06, 1)`: `seed`, amount `1.00`, choice `ready`.
@@ -156,11 +156,11 @@ InnoDB. After the first SQL example, all three databases contain:
 On the host:
 
 ```sh
-make reverse-demo-stop
-make reverse-demo-status
-make reverse-demo-start
-make reverse-demo-sql FILE=examples/reverse-demo/02-after-resume.sql
-make reverse-demo-compare
+make lab-demo ACTION=stop
+make lab-demo ACTION=status
+make lab-demo ACTION=start
+make lab-demo ACTION=sql ARGS=examples/reverse-demo/02-after-resume.sql
+make lab-demo ACTION=compare
 ```
 
 After stopping, the applier container stays running and available for a shell;
@@ -172,7 +172,7 @@ is `11` and item 2 has choice `done` on all three servers.
 Run this once, after the preceding examples. Stop source writes and drain:
 
 ```sh
-make reverse-demo-stop
+make lab-demo ACTION=stop
 ```
 
 In **terminal 4 (8.4 destination only)**, introduce a conflicting row:
@@ -193,9 +193,9 @@ COMMIT;
 On the host, start replication and inspect its failure:
 
 ```sh
-make reverse-demo-start
-make reverse-demo-status
-make reverse-demo-inspect
+make lab-demo ACTION=start
+make lab-demo ACTION=status
+make lab-demo ACTION=inspect
 ```
 
 The start command may report failure if replication exits before its readiness
@@ -213,9 +213,9 @@ DELETE FROM reverse_poc.aux WHERE id=99;
 Copy the exact pending GTID from inspection. On the host, replace `<FAILED_GTID>`:
 
 ```sh
-make reverse-demo-resolve ARGS="retry --gtids '<FAILED_GTID>' --reason 'Removed target-only conflict after confirmed rollback'"
-make reverse-demo-start
-make reverse-demo-compare
+make lab-demo ACTION=resolve ARGS="retry --gtids '<FAILED_GTID>' --reason 'Removed target-only conflict after confirmed rollback'"
+make lab-demo ACTION=start
+make lab-demo ACTION=compare
 ```
 
 All three now contain item 2 with value `recovered` and auxiliary row `(99,99)`.
@@ -229,10 +229,10 @@ see the [recovery guide](../docs/REVERSE_REPLICATION.md#offline-inspection-and-d
 On the host:
 
 ```sh
-make reverse-demo-down
+make lab-demo ACTION=down
 ```
 
 This drains any active process, archives the volume and logs, and removes only
-this disposable reverse-demo stack. The original demo and other stacks are separate.
-`make reverse-demo-suite ARGS=--skip-build` tests this lifecycle on its own stack,
+this disposable profile session. The other profile and qualification stacks are separate.
+`make lab-test ARGS="--suite demo --skip-build"` tests this lifecycle on its own stack,
 including idle status, missing-container repair, blocked status and recovery.
