@@ -82,9 +82,9 @@ def write_reports(root, output, inputs, unit_result="unknown", integration_resul
         "runtime-integration": [select(r, False) for r in integration],
         "harness": [select(r, True) for r in unit],
     }
-    metrics = {"version": 1, "complete": complete, "policy": policy_hash(root),
+    metrics = {**(metadata or {}), "version": 1, "complete": complete, "policy": policy_hash(root),
                "unit_result": unit_result, "integration_result": integration_result,
-               "integration_reports": len(integration), "scopes": {}, **(metadata or {})}
+               "integration_reports": len(integration), "scopes": {}}
     output.mkdir(parents=True, exist_ok=True)
     rows, links = [], []
     for name, selections in scoped.items():

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from code_coverage import source_hashes
-from coverage_report import main, write_reports
+from coverage_report import main, policy_hash, write_reports
 
 
 class ScopedCoverageTests(unittest.TestCase):
@@ -43,6 +43,20 @@ class ScopedCoverageTests(unittest.TestCase):
         report = json.loads((self.output / "runtime/coverage.json").read_text())
         self.assertEqual(report["covered_by"][self.runtime], {"1": ["unit"], "2": ["integration"]})
         self.assertIn("100.00%", (self.output / "runtime.svg").read_text())
+
+    def test_metadata_cannot_override_measured_results(self):
+        unit = self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}})
+        metadata = dict(version=999, complete=True, policy="wrong", unit_result="success",
+                        integration_result="success", integration_reports=100, scopes=None,
+                        commit="a" * 40, run_id="123")
+        metrics = write_reports(self.root, self.output, [unit], "failure", "unknown", metadata=metadata)
+        self.assertEqual(metrics["version"], 1)
+        self.assertFalse(metrics["complete"])
+        self.assertEqual(metrics["policy"], policy_hash(self.root))
+        self.assertEqual((metrics["unit_result"], metrics["integration_result"]), ("failure", "unknown"))
+        self.assertEqual(metrics["integration_reports"], 0)
+        self.assertEqual(metrics["scopes"]["runtime"], {"covered": 1, "total": 1})
+        self.assertEqual((metrics["commit"], metrics["run_id"]), ("a" * 40, "123"))
 
     def test_missing_failed_and_unverified_suites_are_partial(self):
         unit = self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}})
