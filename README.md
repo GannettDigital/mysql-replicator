@@ -8,30 +8,35 @@ Replicate MySQL across versions where native replication does not meet your need
 `mysql-replicator` reads source binary logs and applies supported INSERT, UPDATE,
 DELETE and DDL changes to a dedicated replica.
 
-**First beta: `0.1.0-beta.1`.** The primary tested profile is
-**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**. Current source builds also include an
+**Next release: `0.1.0-beta.2`.** The primary tested profile is
+**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**. This beta also includes an
 [experimental 5.7 → 8.4 InnoDB profile](docs/REVERSE_REPLICATION.md). Initial
 data copying is external; interrupted or uncertain writes can require DBA intervention.
 See [supported behavior](PLAN/DML_APPLY.md) and [DDL compatibility](PLAN/DDL_COMPATIBILITY.md).
 
 ## Install and start
 
-Linux x86_64 packages are available from [Releases](https://github.com/GannettDigital/mysql-replicator/releases)
-when the beta is published. On Debian/Ubuntu:
+Download a standalone binary from [Releases](https://github.com/GannettDigital/mysql-replicator/releases)
+when beta.2 is published. **Binaries and containers are Linux x86_64 only**;
+other platforms require a source build. No Swift, Rust, Node.js or SQLite runtime
+installation is needed:
 
 ```sh
-curl -fLO https://github.com/GannettDigital/mysql-replicator/releases/download/v0.1.0-beta.1/mysql-replicator_0.1.0~beta.1-1_amd64.deb
-sudo apt install ./mysql-replicator_0.1.0~beta.1-1_amd64.deb
+curl -fLO https://github.com/GannettDigital/mysql-replicator/releases/download/v0.1.0-beta.2/install.sh
+sh install.sh --version 0.1.0-beta.2
+~/.local/bin/mysql-replicator --version
 ```
 
 Follow the [setup guide](docs/INSTALL.md) to prepare the target, snapshot boundary,
-TLS and credentials in `/etc/mysql-replicator/apply.yaml`, then start:
+TLS and credentials in your `apply.yaml`, then start:
 
 ```sh
-sudo -u mysql-replicator mysql-replicator run --config /etc/mysql-replicator/apply.yaml --initialize
+~/.local/bin/mysql-replicator run --config ./apply.yaml --initialize
 ```
 
-The setup guide also covers checksums, standalone archives and service restarts.
+The installer verifies the archive checksum and preserves configuration and state.
+The setup guide also covers `.deb` packages, systemd and containers:
+`ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.2` (available after publication).
 See [offline replay and support bundles](docs/OFFLINE_REPLAY.md) to test captured
 binlogs against a prepared target and collect troubleshooting evidence.
 

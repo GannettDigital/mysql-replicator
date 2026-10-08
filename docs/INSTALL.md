@@ -1,20 +1,51 @@
-# Install and configure the first beta
+# Install and configure mysql-replicator
 
 The release supplies Linux x86_64 binaries: a Debian `amd64` package and a static
-archive. Swift, Rust and SQLite runtimes do not need separate installation.
+archive, plus a container image. Swift, Rust and SQLite runtimes do not need separate installation.
 The packaged executable is tested in an Ubuntu 16.04 container and CI on Ubuntu
 24.04; this is not qualification of every Linux distribution, kernel or systemd
-version. macOS users can [build from source](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.1/CONTRIBUTING.md).
+version. macOS and Linux ARM64 binaries are not supplied; those users can
+[build from source](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/CONTRIBUTING.md).
+
+## Standalone installer
+
+After publication, download the installer from the explicit release:
+
+```sh
+curl -fLO https://github.com/GannettDigital/mysql-replicator/releases/download/v0.1.0-beta.2/install.sh
+sh install.sh --version 0.1.0-beta.2
+~/.local/bin/mysql-replicator --version
+```
+
+The installer requires Linux x86_64, `curl`, `tar` and coreutils (`sha256sum`).
+It downloads the versioned archive and checks it against the release's
+`SHA256SUMS`. It installs the complete distribution, including examples and
+notices, into `~/.local/lib/mysql-replicator/0.1.0-beta.2/` and links the command
+from `~/.local/bin/`. Add that directory to `PATH`, or use the full path.
+Use `--prefix /absolute/path` to choose another prefix; no sudo is needed when
+the prefix is writable. It refuses unsupported platforms and unmanaged binaries.
+
+Copy the example from the installed distribution to a private location and edit
+it for your source, target and snapshot boundary. The installer does not configure
+or start replication. It neither reads nor changes existing configuration/state.
+After completing the replication preconditions below, start it with
+`~/.local/bin/mysql-replicator run --config /absolute/path/apply.yaml --initialize`.
+Use a second terminal to run `~/.local/bin/mysql-replicator ctl stop --config
+/absolute/path/apply.yaml` for a planned shutdown. The Debian account and systemd
+commands below apply only to `.deb` installations.
+For upgrades, cleanly stop the old process first, back up the full state directory,
+and install the new explicit version. Old version directories are retained, but
+an existing version is never overwritten. Resume without `--initialize`.
 
 ## Download and verify
 
 Download the `.deb` or `linux-x86_64.tar.gz` and `SHA256SUMS` from the
-[versioned release](https://github.com/GannettDigital/mysql-replicator/releases/tag/v0.1.0-beta.1).
+[versioned release](https://github.com/GannettDigital/mysql-replicator/releases/tag/v0.1.0-beta.2).
 Assets appear only after publication. From the download directory:
 
 ```sh
 sha256sum --ignore-missing --check SHA256SUMS
-sudo apt install ./mysql-replicator_0.1.0~beta.1-1_amd64.deb
+sudo apt install ./mysql-replicator_0.1.0~beta.2-1_amd64.deb
 ```
 
 The checksum check must report `OK` for the downloaded package. Checksums verify
@@ -26,13 +57,15 @@ config/state paths; the following paths and account are created by the `.deb`.
 
 ## Prepare replication
 
-Only MySQL **8.4 InnoDB → 5.7 MyISAM** is currently accepted. Fixtures use 8.4.8
-and 5.7.42. Provision a dedicated target, copy the initial schema/data externally,
+The default profile is **8.4 InnoDB → 5.7 MyISAM**. Beta.2 also includes the
+experimental [5.7 → 8.4 InnoDB profile](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/docs/REVERSE_REPLICATION.md), selected with
+`profile: mysql57-to-mysql84-innodb`. Both have shared correctness and reconnect
+tests using 8.4.8 and 5.7.42; this is not Cloud SQL qualification. Provision a dedicated target, copy the initial schema/data externally,
 and record the matching source GTID set or binlog file/offset. Do not use an
 arbitrary current GTID set after an unrelated snapshot.
 
-Follow [source/target preconditions and supported behavior](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.1/PLAN/DML_APPLY.md)
-and the comments in [apply.example.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.1/examples/apply.example.yaml). Configure
+Follow [source/target preconditions and supported behavior](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/PLAN/DML_APPLY.md)
+and the comments in [apply.example.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/examples/apply.example.yaml). Configure
 ROW/FULL/CRC32 binlogs, the required GTID settings, account privileges, verified TLS,
 and disable native replication autostart on the target. No native channel or
 other writer may operate on that target. The program checks these preconditions.
@@ -65,8 +98,9 @@ For the first start only:
 sudo -u mysql-replicator mysql-replicator run --config /etc/mysql-replicator/apply.yaml --initialize
 ```
 
-Let it run and check its JSON progress output. Stop with Ctrl-C and wait for the
-process to finish cleanly with lifecycle `STOPPED`. To resume in the foreground,
+Let it run and check its JSON progress output. From another terminal, run
+`sudo -u mysql-replicator mysql-replicator ctl stop --config /etc/mysql-replicator/apply.yaml`
+and wait for lifecycle `STOPPED`. To resume in the foreground,
 repeat the command **without** `--initialize`. Never delete state to bypass a
 startup error: it holds the applied boundary and write intents.
 
@@ -83,12 +117,63 @@ Installation does not start or enable replication. The service runs as the
 `systemctl reload mysql-replicator` uses the acknowledged local control command
 to reload only `source.stopAfterTransactions` and `source.stopAfterGTIDs`.
 For status, run `sudo -u mysql-replicator mysql-replicator ctl status --config
-/etc/mysql-replicator/apply.yaml`. See [process controls](OFFLINE_REPLAY.md#controlling-a-running-process)
+/etc/mysql-replicator/apply.yaml`. See [process controls](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/docs/OFFLINE_REPLAY.md#controlling-a-running-process)
 for reload restrictions, timeouts, and direct `ctl stop` usage.
 If a stop stalls, investigate before killing it; SIGKILL may leave uncertain writes.
 A machine reboot or process crash is not a clean stop. Safe connection failures
 can reconnect within the running process; `BLOCKED` or interrupted state requires
-operator investigation. See [target reconnect and drain](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.1/PLAN/TARGET_RECONNECT.md).
+operator investigation. See [target reconnect and drain](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/PLAN/TARGET_RECONNECT.md).
+
+## Container
+
+The Linux/amd64 image uses the exact release-archive binary, runs as UID/GID 65532
+by default, and includes licenses and examples under `/opt/mysql-replicator`.
+It has no shell or package manager. The image is published to GHCR after the
+GitHub prerelease is published. No registry login is required once the package
+is public. Pin a version (or its registry digest); no `latest` tag is published.
+
+Prepare `config/apply.yaml` and CA files in a private local `config/` directory.
+Set `stateDirectory: /data/state` and use container paths such as `/config/ca.pem`.
+For archive/replay/bundle settings, also choose mounted paths. Create an empty
+private `replica-data/` directory owned by your user. This example runs with your
+UID so that bind-mounted credentials and persistent state keep their host ownership:
+
+```sh
+docker run --name mysql-replicator --platform linux/amd64 \
+  --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
+  --mount "type=bind,src=$(pwd)/config,dst=/config,readonly" \
+  --mount "type=bind,src=$(pwd)/replica-data,dst=/data" \
+  ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.2 \
+  run --config /config/apply.yaml --initialize
+```
+
+`--initialize` is only for the first run. After a clean stop, remove the stopped
+container and create it again with the same mounts and **without** that flag.
+Do not restart a container whose command still contains `--initialize`.
+For Docker-managed named volumes, use the default UID and mount the volume at
+`/var/lib/mysql-replicator`, with `stateDirectory: /var/lib/mysql-replicator/state`.
+The image provides a writable parent there, without preinitializing state.
+Ensure the default UID can read your config and CA mounts.
+
+Control the running process without a shell inside the image:
+
+```sh
+docker exec mysql-replicator /opt/mysql-replicator/mysql-replicator ctl status --config /config/apply.yaml
+docker exec mysql-replicator /opt/mysql-replicator/mysql-replicator ctl stop --config /config/apply.yaml --timeout 300
+```
+
+`ctl stop` drains and waits for durable `STOPPED` state. A client timeout does not
+force-kill the process. Docker's ordinary stop has a finite grace period; use the
+control command for planned shutdown or `docker stop --timeout -1 mysql-replicator`
+to wait indefinitely after SIGTERM. Investigate a stalled drain before forcing it.
+Keep state on persistent storage and leave automatic container restart disabled.
+
+For offline container installation, download the release's
+`mysql-replicator-0.1.0-beta.2-linux-x86_64-image.tar.gz` and `SHA256SUMS`, verify the
+checksum, then `docker load --input mysql-replicator-0.1.0-beta.2-linux-x86_64-image.tar.gz`.
+The loaded image is named `mysql-replicator-release:0.1.0-beta.2`; substitute that
+name in the command above. To build your own image, the ordinary binary archive
+can also be extracted and copied into a Linux x86_64 container; preserve its notices.
 
 ## Optional bounded shutdown
 
@@ -117,7 +202,7 @@ Have a DBA inspect and reconcile affected target tables against the source befor
 explicit recovery. Do not delete state, change its lifecycle to `STOPPED`, or run
 `--initialize` to bypass the refusal.
 
-## Upgrade from a development checkout
+## Upgrade from beta.1 or a development checkout
 
 Stop the old writer cleanly and back up its configuration and entire state directory
 before installing. Convert JSON configuration to YAML; JSON is no longer accepted.
@@ -126,3 +211,8 @@ service now uses a dedicated account, so move any old relative state path to a
 known absolute location and explicitly grant that account access to the existing
 state and certificates. Do not reinitialize an existing replica. Resume only from
 clean `STOPPED` state; consult the state-version rules in the setup guide above.
+Beta.2 records the replication profile in SQLite schema version 9. Supported
+older forward-profile state is migrated on resume; beta.1 cannot read the upgraded
+state. A version rollback therefore needs a coordinated state/target recovery,
+not just switching the binary or restoring an old checkpoint after target writes.
+Changing profiles requires a separately prepared baseline and new state directory.
