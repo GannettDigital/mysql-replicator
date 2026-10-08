@@ -50,6 +50,11 @@ catch-up and intent completion, and reopens saved schemas before applying anothe
 transaction. Engine differences are checked against the profile before schema
 comparison; arbitrary data/DDL differences are not normalized away.
 
+`--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
+CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
+after the changes on both profiles. Foreign keys and CHECK constraints remain
+outside the supported DDL contract.
+
 The `filters` family runs wildcard exclusions, saved-state resume and included-DDL
 refusal on both profiles. It keeps the independent native/target binlog oracle as
 well as row, checkpoint and intent checks. MySQL 8.4 `mysqlbinlog` must be on PATH

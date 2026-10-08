@@ -9435,6 +9435,11 @@
     },
     {
       "suite": "ddl-suite",
+      "case_id": "ddl-compat-constraints",
+      "reason": "Bounded PRIMARY/UNIQUE constraint syntax regression on both shared profiles, with per-step index/row oracles and durable checkpoint checks. Aggregate success does not independently qualify all broader index catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
       "case_id": "ddl-compat-database",
       "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
     },

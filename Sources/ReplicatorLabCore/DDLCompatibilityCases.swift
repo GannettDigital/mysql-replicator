@@ -25,6 +25,22 @@ enum DDLCompatibilityCases {
         }
     }
     static let cases: [Case] = [
+        .init("constraints","Named PRIMARY/UNIQUE constraints in CREATE and ALTER preserve index names and following DML",[
+            .init("CREATE TABLE ddlcompat.aux(id INT, val INT, CONSTRAINT pk PRIMARY KEY(id), CONSTRAINT initial_uni UNIQUE(val))",[
+                .init("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='aux' ORDER BY BINARY INDEX_NAME","PRIMARY\ninitial_uni")]),
+            .init("INSERT INTO ddlcompat.aux VALUES(1,10)"),
+            .init("ALTER TABLE ddlcompat.aux DROP INDEX initial_uni"),
+            .init("USE ddlcompat; ALTER TABLE aux ADD CONSTRAINT val_uni UNIQUE(val)",[
+                .init("SELECT INDEX_NAME,NON_UNIQUE,COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='aux' ORDER BY BINARY INDEX_NAME","PRIMARY\t0\tid\nval_uni\t0\tval")]),
+            .init("INSERT INTO ddlcompat.aux VALUES(2,20),(3,NULL),(4,NULL)"),
+            .init("UPDATE ddlcompat.aux SET val=21 WHERE id=2",[.init("SELECT id,val FROM ddlcompat.aux ORDER BY id","1\t10\n2\t21\n3\tNULL\n4\tNULL")]),
+            .init("ALTER TABLE ddlcompat.aux DROP INDEX val_uni, ADD CONSTRAINT ignored_symbol UNIQUE INDEX explicit_uni(val)",[
+                .init("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='aux' ORDER BY BINARY INDEX_NAME","PRIMARY\nexplicit_uni")]),
+            .init("ALTER TABLE ddlcompat.aux DROP INDEX explicit_uni, ADD CONSTRAINT UNIQUE USING BTREE(val)",[
+                .init("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='aux' ORDER BY BINARY INDEX_NAME","PRIMARY\nval")]),
+            .init("ALTER TABLE ddlcompat.aux DROP PRIMARY KEY, ADD CONSTRAINT named_pk PRIMARY KEY(id)"),
+            .init("DELETE FROM ddlcompat.aux WHERE id=2",[.init("SELECT id,val FROM ddlcompat.aux ORDER BY id","1\t10\n3\tNULL\n4\tNULL")])
+        ]),
         .init("types","CREATE supported column types, defaults, auto increment, inline keys; follow with DML",[
             .init("CREATE TABLE ddlcompat.t(id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, tiny TINYINT DEFAULT -7, small SMALLINT, medium MEDIUMINT, amount DECIMAL(12,3) NOT NULL DEFAULT 1.25, note TEXT, payload MEDIUMBLOB, dt DATETIME(6), ts TIMESTAMP NULL DEFAULT NULL, tm TIME(3), y YEAR DEFAULT 0, e ENUM('a','b') NOT NULL, s SET('x','y'), v VARCHAR(20) DEFAULT 'hello', normalized INT DEFAULT '0007', fixed BINARY(5) DEFAULT 'hi', UNIQUE KEY lookup(v), KEY by_amount(amount,id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"),
             .init("INSERT INTO ddlcompat.t(note,payload,dt,ts,tm,y,s) VALUES('first',0x00ff,'2026-01-02 03:04:05.123456','2026-01-02 03:04:05','-12:30:20.123',2026,'x,y')",[.init("SELECT id,tiny,amount,HEX(payload),e,s,v FROM ddlcompat.t","1\t-7\t1.250\t00FF\ta\tx,y\thello")]),

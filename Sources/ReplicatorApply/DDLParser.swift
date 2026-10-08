@@ -133,14 +133,24 @@ struct DDLParser {
         } while take(",")
         try expect(")"); return parts
     }
-    mutating func indexDefinition() throws -> ApplyIndex {
+    mutating func constraintName() throws -> String? {
+        guard take("CONSTRAINT") else { return nil }
+        let name = ["PRIMARY","UNIQUE","FOREIGN","CHECK"].contains(where:isNext) ? nil : try identifier()
+        try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
+        try require(!isNext("CHECK"),"CHECK constraints are unsupported by the DDL contract")
+        try require(isNext("PRIMARY") || isNext("UNIQUE"),"unsupported DDL constraint: expected PRIMARY KEY or UNIQUE")
+        return name
+    }
+    mutating func indexDefinition(constraintName: String? = nil) throws -> ApplyIndex {
         let unique = take("UNIQUE")
         if unique { _ = take("KEY") || take("INDEX") } else { try require(take("INDEX") || take("KEY"),"expected INDEX or KEY") }
-        let explicitName = isNext("(") ? nil : try identifier()
+        let explicitName = isNext("(") || isNext("USING") ? nil : try identifier()
         let using = take("USING"); if using { try expect("BTREE") }
         let parts = try keyParts()
         if take("USING") { try require(!using,"duplicate index type"); try expect("BTREE") }
-        return ApplyIndex(name:explicitName ?? parts[0].column,unique:unique,parts:parts)
+        // Both MySQL versions prefer an explicit index name over the constraint
+        // symbol, then default to the first indexed column.
+        return ApplyIndex(name:explicitName ?? constraintName ?? parts[0].column,unique:unique,parts:parts)
     }
     mutating func databaseDefinition(conditional: Bool = false) throws -> CreateDatabase {
         var charsetEnd: Int?
@@ -231,10 +241,11 @@ struct DDLParser {
     mutating func createTable(_ name: TableName,conditional: Bool) throws -> DDLStatement {
         try expect("("); var columns: [ApplyColumn] = [], key: [String]?, indexes: [ApplyIndex] = []
         repeat {
+            let constraint = try constraintName()
             try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
             if take("PRIMARY") {
                 try expect("KEY"); let parts = try keyParts(); try require(key == nil && parts.allSatisfy{$0.prefix == nil},"invalid DDL primary key"); key = parts.map(\.column)
-            } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition()) }
+            } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition(constraintName:constraint)) }
             else {
                 let (column,primary) = try column(); columns.append(column)
                 try require(columns.count <= 256,"DDL column limit exceeded")
@@ -271,8 +282,9 @@ struct DDLParser {
     }
     mutating func alterAction() throws -> AlterAction {
         if take("ADD") {
+            let constraint = try constraintName()
             if take("PRIMARY") { try expect("KEY"); let parts = try keyParts(); try require(parts.allSatisfy{$0.prefix == nil},"primary prefix unsupported"); return .primaryKey(parts.map(\.column)) }
-            if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { return .indexes(.add(try indexDefinition())) }
+            if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
             if take("PARTITION") { return .partition(.add(try partitionItems(method:"",expression:""))) }
             _ = take("COLUMN"); let (c,primary) = try column(); try require(!primary,"ADD inline primary key is unsupported; use ADD PRIMARY KEY")
             try require(c.nullable || c.defaultValue != nil || c.isGenerated,"ADD NOT NULL requires an explicit default or generated expression")
