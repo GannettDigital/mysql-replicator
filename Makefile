@@ -16,7 +16,7 @@ coverage-unit:
 
 # Explicit inputs prevent old integration runs from inflating the report.
 coverage-report:
-	python3 tools/code_coverage.py merge $(INPUTS)
+	python3 tools/coverage_report.py $(ARGS) $(INPUTS)
 
 periphery:
 	cargo build --manifest-path rust/Cargo.toml --locked

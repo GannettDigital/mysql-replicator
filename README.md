@@ -1,6 +1,7 @@
 # mysql-replicator
 
 [![CI](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml/badge.svg)](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml)
+[Coverage reports](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 Replicate MySQL across versions where native replication does not meet your needs.

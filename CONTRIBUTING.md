@@ -84,7 +84,8 @@ Unit reports appear under `artifacts/coverage/unit/`. Harness evidence contains
 places these inside `captured/`. Each contains `index.html`, `coverage.lcov`,
 `coverage.json` and a summary. Open `index.html` to see covered and uncovered
 source lines. The combined view identifies which invocations covered each line.
-The summary separates runtime coverage from harness coverage and lists each module.
+These are raw collection reports and include every mapped Swift module. Use the
+scoped report below for runtime and harness percentages.
 For interactive experiments use `make demo-up ARGS="--coverage"`, then the usual
 demo commands; `make demo-down` stops the writer and exports its coverage.
 
@@ -94,7 +95,26 @@ Combine **explicitly selected** reports from the same source revision:
 make coverage-report INPUTS="artifacts/coverage/unit artifacts/lab/RUN_ID/PROFILE/correctness/VARIANT/FIXTURE_ID/code-coverage/combined"
 ```
 
-The result is `artifacts/coverage/combined/index.html` plus portable LCOV.
+The result is `artifacts/coverage/combined/index.html`, with four linked reports:
+
+| Directory | Code | Inputs |
+|---|---|---|
+| `runtime/` | Production Swift, excluding `ReplicatorLab*` | Unit + selected integration |
+| `runtime-unit/` | Same production scope | Unit only |
+| `runtime-integration/` | Same production scope | Selected integration only |
+| `harness/` | `ReplicatorLab` and `ReplicatorLabCore` | Unit only |
+
+Each directory contains HTML, `coverage.json`, LCOV and a summary. The root also
+contains `metrics.json`, `summary.md`, and `runtime.svg`. Harness hits from
+integration collections never contribute to its unit-only report. Missing inputs
+show **unavailable**, not 0% coverage. Each view uses its own executable-line
+mapping; combined coverage unions those mappings and hits. The root report is
+marked partial unless suite completion is supplied explicitly. For a locally
+verified successful run, add
+`ARGS="--unit-result success --integration-result success"` to `make coverage-report`.
+Use original unit/per-fixture collection reports as inputs, not an already mixed
+report. The low-level `tools/code_coverage.py merge` command remains available
+for raw collection consumers and migration comparisons.
 Source hashes reject stale reports, including edits in a dirty checkout. Raw
 profiles are exported with the exact producing LLVM toolchain before merging;
 do not merge macOS and Linux `.profraw` files directly. Coverage unions executable
@@ -103,7 +123,8 @@ are not treated as interchangeable. Hit counts are diagnostic, not performance
 measurements. Python report tests run with
 `python3 -m unittest discover -s tools -p 'test_*.py'`.
 
-The scope is **first-party Swift under `Sources/`**, including the harness.
+The collection scope is **first-party Swift under `Sources/`**. Published runtime
+coverage excludes `Sources/ReplicatorLab*/`; harness coverage is separate.
 Rust unit tests still run, but Rust decoder internals and dependencies are not
 part of this percentage. Coverage shows execution, not the strength of assertions.
 The instrumented Linux image uses glibc and the Swift runtime; the separate normal
@@ -117,10 +138,40 @@ record these in `code-coverage/profile-status.json`. Missing profiles after a
 normal exit fail collection. Do not interpret absent crash coverage as an
 unexercised path. Failed suites retain the evidence available before cleanup.
 
-CI uploads unit, per-invocation integration, and combined HTML/LCOV artifacts,
-and posts the combined percentage in the job summary. Failed producing jobs
-mark the summary as partial. No external coverage account or token is required;
-there is no percentage gate until we establish a useful baseline.
+CI uploads raw unit/integration collections, integration evidence, and the four
+scoped reports in `combined-swift-coverage`. It also writes a job summary and a
+small `coverage-summary` artifact. Complete CI coverage requires the unit job
+and packaging/integration job to succeed, with all three selected instrumented
+fixture reports: the integration sample plus shared smoke on both profiles.
+Other CI checks, such as reconnect tests, currently run without instrumentation.
+Weekly full qualification is separate and does not contribute to this percentage.
+
+A separate `Coverage PR Comment` workflow updates one comment per PR, including
+fork PRs. It runs trusted default-branch code and reads only bounded JSON metadata
+from the triggering run; it never executes or extracts PR artifacts. Comments
+include counts, percentages, partial status and a link to the downloadable report.
+Old-head runs and older reruns cannot replace a newer comment. Base deltas require
+a successful CI push run for the exact tested base commit and identical test,
+harness, toolchain configuration and reporting inputs. Missing or expired baseline
+artifacts produce an unavailable comparison, not a zero baseline.
+
+Coverage publication uses GitHub Actions summaries, downloadable artifacts and
+PR comments. It does not require GitHub Pages or an external hosting service.
+The README's **Coverage reports** link opens CI runs on `main`. Select a completed
+run to see the percentages in its summary; download `combined-swift-coverage`,
+extract it, and open `index.html` locally for annotated source and LCOV reports.
+Check the report's completeness status and tested commit before using its numbers.
+Artifacts follow the repository's retention policy.
+
+The generated `runtime.svg` remains inside the report artifact; the README uses a
+results link rather than an externally hosted percentage badge. CI does not write
+generated files or commits back to the repository. PR comments become active once
+`coverage-comment.yml` is on the default branch. No Pages setting or
+`COVERAGE_PAGES_ENABLED` variable is needed.
+
+No external coverage service or personal token is required. There is no percentage
+gate until we establish a useful baseline. This is Swift execution coverage, not
+MySQL catalog qualification or a measure of assertion quality.
 
 ### Unused Swift code
 

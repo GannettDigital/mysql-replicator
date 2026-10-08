@@ -1,0 +1,29 @@
+name: Coverage PR Comment
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: coverage-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_run checks out the trusted default branch, never the PR's code.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Update coverage comment from bounded JSON metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/coverage_comment.py

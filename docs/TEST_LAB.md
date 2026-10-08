@@ -212,7 +212,10 @@ matches the checkout. Both profiles use the same pinned image in a combined run.
 implementation inputs during qualification fails the aggregate.
 For `correctness`, `lifecycle`, and explicitly forward-only `recovery`, `--coverage` builds the instrumented image and exports each profile's coverage
 separately. Merge explicitly selected reports with the existing `make coverage-report`
-command; a combined line-coverage number does not replace per-profile scenario results.
+command. Its published runtime views exclude `ReplicatorLab*`; a separate harness
+view uses only unit-test coverage. Raw per-fixture collections remain available
+for provenance and migration comparisons. A combined line-coverage number does
+not replace per-profile scenario results.
 Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
@@ -221,7 +224,11 @@ PR CI runs the same smoke, reconnect and demo cases for both profiles, retains
 specialized forward integration/reverse recovery checks, and merges shared
 applier coverage with unit coverage. `Full Profile Qualification` runs the full
 correctness and reconnect matrix weekly, on release tags, and through manual workflow dispatch.
-It uploads each profile's evidence separately.
+It uploads each profile's evidence separately. Current published CI coverage uses
+unit tests and instrumented integration/shared smoke, not the full weekly matrix.
+See [coverage reports and publication](../CONTRIBUTING.md#code-coverage) for PR
+comments and downloading the HTML/LCOV reports linked from the README.
+Publishing does not require GitHub Pages.
 
 ## Interactive demo
 

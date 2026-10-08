@@ -7,6 +7,9 @@ on:
     # Stacked feature PRs target the preceding beta branch.
     branches: [main, "beta/**"]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -41,7 +44,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-unit
-          path: artifacts/coverage/unit/
+          overwrite: true
+          path: artifacts/coverage/unit/coverage.json
           if-no-files-found: error
 
       - name: Verify DDL coverage catalog
@@ -119,6 +123,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-integration
+          overwrite: true
           path: |
             artifacts/lab/**/code-coverage/combined/coverage.json
           if-no-files-found: error
@@ -158,16 +163,25 @@ jobs:
           inputs = sorted(root.rglob('coverage.json'))
           if not inputs:
               raise SystemExit('No coverage reports downloaded')
-          subprocess.run(['python3', 'tools/code_coverage.py', 'merge', *map(str, inputs)], check=True)
-          complete = os.environ['UNIT_RESULT'] == os.environ['INTEGRATION_RESULT'] == 'success'
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write(('Complete selected CI suites' if complete else 'PARTIAL — a producing job failed') + '\n\n')
-              summary.write(pathlib.Path('artifacts/coverage/combined/summary.md').read_text())
+          # One integration sample plus one shared smoke run per profile.
+          subprocess.run(['python3', 'tools/coverage_report.py', '--ci',
+                          '--unit-result', os.environ['UNIT_RESULT'],
+                          '--integration-result', os.environ['INTEGRATION_RESULT'],
+                          '--expected-integration', '3', *map(str, inputs)], check=True)
           PY
       - uses: actions/upload-artifact@v4
         with:
           name: combined-swift-coverage
+          overwrite: true
           path: artifacts/coverage/combined/
+          if-no-files-found: error
+
+      - name: Upload small PR summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          overwrite: true
+          path: artifacts/coverage/combined/metrics.json
           if-no-files-found: error
 
   periphery:
