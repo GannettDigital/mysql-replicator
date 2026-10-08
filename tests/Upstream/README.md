@@ -46,9 +46,11 @@ unavailable on the target fail explicitly rather than undergoing a lossy mapping
 Run the prepared-table compatibility matrix with:
 
 ```sh
-make dml-suite ARGS="--slice matrix"
+make correctness ARGS="--family bootstrap --variant all"
 ```
 
-This tests both GTID/FULL-metadata and file-position/MINIMAL-metadata profiles.
-Row images remain FULL in both. Evidence includes SQL, independent expectations,
+This tests both default topologies plus the historical forward GTID-only/FULL-
+metadata and file-position/MINIMAL-metadata variants. Reverse uses 5.7 metadata;
+the historical forward variants are explicitly not applicable there.
+Row images remain FULL throughout. Evidence includes SQL, independent expectations,
 exact source/native/target row bytes after each phase, and saved checkpoints.

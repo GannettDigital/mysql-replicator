@@ -11,9 +11,9 @@ final class LabProfileTests: XCTestCase {
             XCTAssertEqual(profile.engine(.native),profile.engine(.target))
         }
     }
-    func testSharedCatalogHasStableUniqueIDsAndSmokeCoversEveryFamily() throws {
+    func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,68)
+        XCTAssertEqual(cases.count,75+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         do {
             let smoke=try LabScenario.select(tier:"smoke",family:nil,ids:[])
@@ -25,6 +25,28 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(Set(cases.map(\.id)),["database-existing-matching","database-explicit"])
         XCTAssertThrowsError(try LabScenario.select(tier:"full",family:nil,ids:["typo"]))
         XCTAssertThrowsError(try LabScenario.select(tier:"full",family:"dml",ids:["ddl-index-create"]))
+    }
+    func testOrderedWorkflowCannotBeSelectedAsIncompleteSteps() throws {
+        XCTAssertEqual(try LabScenario.select(tier:"full",family:"ordered",ids:[]).map(\.id),["ddl"])
+        XCTAssertThrowsError(try LabScenario.select(tier:"full",family:nil,ids:["create-if-matching"]))
+        XCTAssertEqual(DDLCoverageCases.changes.count,70)
+        let collation=LabScenario.correctness.filter { $0.family == "collation" }
+        XCTAssertEqual(collation.count,2)
+        XCTAssertTrue(collation.allSatisfy { $0.reason(.forward) == nil && $0.reason(.reverse) != nil })
+    }
+    func testSharedSelectionsKeepDependentPhasesTogetherAndRejectRetiredSuites() throws {
+        for phase in [DDLCompatibilityCases.collationCleanupInitial,DDLCompatibilityCases.collationCleanupChanged,DDLCompatibilityCases.collationCleanupRemoved] {
+            XCTAssertTrue(DDLCoverageCases.registry.contains { $0.test.id == phase.id })
+            XCTAssertThrowsError(try LabScenario.select(tier:"full",family:nil,ids:[phase.id]))
+        }
+        let matrix=try LabScenario.select(tier:"full",family:"bootstrap",ids:["bootstrap-matrix-decimal"])
+        XCTAssertEqual(matrix.map(\.id),["bootstrap-matrix-decimal"])
+        XCTAssertEqual(try DMLCompatibilityCases.transactionCount("a:1-3:5,b:9-10"),6)
+        XCTAssertEqual(try DMLCompatibilityCases.transactionCount(""),0)
+        for suite in ["legacy-dml","legacy-ddl"] { XCTAssertThrowsError(try LabTestOptions(["--suite",suite])) }
+        XCTAssertFalse(try LabTestOptions([]).coverage)
+        let options=try LabTestOptions(["--coverage","--skip-build","--case","positive"])
+        XCTAssertTrue(options.coverage); XCTAssertFalse(options.build)
     }
     func testFilterSelectionPreservesTheOrderedResumeWorkflowOnBothProfiles() throws {
         let cases=try LabScenario.select(tier:"full",family:"filters",ids:["wild-ignore-included-rejection"])
@@ -76,6 +98,31 @@ final class LabProfileTests: XCTestCase {
         let options=try LabTestOptions(["--suite","lifecycle","--coverage"])
         XCTAssertTrue(options.coverage)
         XCTAssertEqual(options.profiles,LabProfile.allCases)
+    }
+    func testVersionSessionSettingsFollowEachServerRole() {
+        for profile in LabProfile.allCases {
+            for role in LabProfile.Role.allCases {
+                let session=profile.session(role), legacy=profile.version(role) == "5.7"
+                XCTAssertEqual(session.contains("NO_AUTO_CREATE_USER"),legacy)
+                XCTAssertEqual(session.contains("default_collation_for_utf8mb4"),!legacy)
+            }
+        }
+    }
+    func testFailureWorkflowsExposeChildrenAndCannotPassWithMissingEvidence() throws {
+        for (id,children) in [("forward-failures",SharedWorkflowCases.failures),("myisam-recovery",SharedWorkflowCases.recovery)] {
+            let scenario=try XCTUnwrap(LabScenario.correctness.first { $0.id == id })
+            let declared=try XCTUnwrap(scenario.fields(.forward)["ordered_steps"] as? [[String:Any]])
+            XCTAssertEqual(declared.compactMap { $0["id"] as? String },children.map(\.id))
+            XCTAssertEqual(Set(children.map(\.id)).count,children.count)
+            XCTAssertNotNil(scenario.reason(.reverse))
+            let results=children.map { ["id":$0.id,"status":"passed"] as [String:Any] }
+            XCTAssertNoThrow(try SharedWorkflowCases.requirePassed(children,in:results))
+            XCTAssertThrowsError(try SharedWorkflowCases.requirePassed(children,in:Array(results.dropLast())))
+        }
+        let options=try LabTestOptions(["--profile",LabProfile.forward.rawValue,"--suite","recovery","--coverage","--variant","gtid-full"])
+        XCTAssertTrue(options.coverage)
+        let recovery=try XCTUnwrap(LabScenario.correctness.first { $0.id == "myisam-recovery" })
+        XCTAssertNotNil(recovery.reason(.forward,variant:.positionMinimal))
     }
     func testHistoricalVariantsPreserveStartContractsAndApplicability() throws {
         let boundary=Boundary(file:"binlog.000004",position:123,gtids:"uuid:1-3")

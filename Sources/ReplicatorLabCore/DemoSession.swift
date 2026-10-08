@@ -181,7 +181,7 @@ public enum DemoSession {
             In applier shell: mysql-replicator skip '<pendingGTID from failure>' --config /evidence/apply.yaml
             Resume: mysql-replicator run --config /evidence/apply.yaml
             Following insert: make demo-sql FILE=examples/demo/03-after-skip.sql
-            Separate longer validation: make ddl-suite
+            Separate longer validation: make correctness PROFILE=mysql84-to-mysql57-myisam
             Inspect: make demo-status
             Read SQLite in Docker: docker exec \(helper) sqlite3 -readonly -header -column /evidence/state/state.sqlite 'SELECT * FROM state;'
             Interactive source SQL: docker exec -it -e MYSQL_PWD=fixture-root-only \(h.project)-source-1 mysql --no-defaults -uroot --default-character-set=utf8mb4

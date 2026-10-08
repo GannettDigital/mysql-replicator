@@ -28,8 +28,8 @@ make correctness
 
 The list is an offline JSON inventory: no Docker provisioning or implicit use of
 old evidence. `make correctness` runs the shared full correctness catalog for
-both profiles; `TIER=smoke` selects one case from every family. Unit tests remain
-`make test`. Select one topology or an ordered scenario with:
+both profiles; `TIER=smoke` selects a small representative subset. Use the full
+tier for every applicable family. Unit tests remain `make test`. Select one topology or an ordered scenario with:
 
 ```sh
 make correctness PROFILE=mysql57-to-mysql84-innodb ARGS="--case ddl-index-create"
@@ -37,13 +37,12 @@ make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--family database"
 ```
 
 Equivalent CLI: `swift run replicator-lab test --profile PROFILE --suite correctness`.
-Use `--list`, `--tier smoke|full`, `--family database|ddl|dml|indexes|policy|rejections|filters`,
+Use `--list`, `--tier smoke|full`, `--family FAMILY`,
 repeated `--case ID`, `--skip-build`, or `--coverage`. Cases include dependent
 statements as a unit; prerequisite cases are selected automatically. Unknown IDs
-and invalid combinations fail before provisioning. Current shared correctness
-variants use GTID positioning, FULL row images, FULL optional metadata on 8.4,
-and the metadata available on 5.7. File-position and other historical variants
-remain in the legacy adapters; unsupported combinations are not inferred.
+and invalid combinations fail before provisioning. The default uses GTID
+positioning, FULL row images, FULL optional metadata on 8.4, and the metadata available on 5.7. Historical forward capture variants are
+also available, as described below; unsupported combinations are not inferred.
 
 The shared runner creates schemas through source-side DDL, executes the same
 DML/index/DDL fixtures, compares exact row bytes and expected metadata, checks
@@ -59,6 +58,37 @@ includes the wildcard workload; full includes resume and refusal. Selecting
 `--case wild-ignore-included-rejection` automatically includes both prerequisites.
 These cases bootstrap equivalent tables without logging, then use isolated state
 directories for their measured source workload.
+
+## Ordered and isolated experiments
+
+The full correctness inventory includes these additional families. Use `--list`
+for applicability reasons and the selected variant; source-version and engine
+specific refusals are not silently reused with different expectations.
+
+| Family | Experiment |
+| --- | --- |
+| `ordered` | `ddl`: 70 dependent table-lifecycle steps, conditional no-ops, LIKE, cross-schema moves, defaults, schema history and independent binlog comparisons |
+| `collation` | Forward 0900 translation, cleanup/table swap, policy-change resume refusal and PAD collision |
+| `bootstrap` | `bootstrap-matrix-*`: the DML matrix against preexisting table snapshots, with isolated checkpoints for each phase |
+| `dml-refusals` | Forward `matrix-reject-*`: incompatible metadata, generated values and decoder refusals, with target effects and unchanged checkpoint checks |
+| `discovery` | `ddl-index-resume`: saved indexed schema, resumed DML and external index-drift refusal |
+| `failures` | `forward-failures`: restricted grants, target SQL errors, uncertain DDL, skip refusal, trigger policies and generated-value divergence |
+| `recovery` | `myisam-recovery`: exact values, discovery/cache/explicit locks, partial writes, killed groups and refused replay; GTID variants only |
+
+`positive` preserves the bootstrapped INSERT/UPDATE/DELETE sample, direct YAML
+credentials, exact counters and independent source/native/target binlogs. It is
+included in smoke. Smoke also checks database retirement immediately after
+resuming saved schemas. The other isolated experiments run after the continuous
+writer has drained. Explicit restart pairs share a state directory; unrelated failures
+use distinct directories. Group child cases retain individual results in
+`cases.json`; selecting the group runs its required ordered setup and assertions.
+The MyISAM group runs last because its expected native failures deliberately leave
+the native channel blocked. Native-only resets between independent refusal
+experiments are fixture cleanup, never an applier recovery action.
+
+The old DDL/DML runners have been retired after matched runtime coverage,
+[assertion/variant mapping](../PLAN/TEST_SUITE_RETIREMENT_MAP.md), and named catalog
+checks. Historical evidence and the precise limits remain in the retirement report.
 
 ## Outcomes and scope
 
@@ -83,25 +113,27 @@ both remain available, without presenting one as a substitute for the other.
 ## Existing specialized qualification
 
 These suites use the common profile interface. Correctness and lifecycle run
-shared, individually declared cases on both profiles. The remaining suites retain
-their established runners/assertions and are labeled adapters in the inventory.
+shared, individually declared cases on both profiles. Forward recovery uses the
+shared MyISAM workflow. Other specialized suites retain their established
+runners/assertions and are labeled adapters in the inventory.
 
 | `--suite` | Scope |
 | --- | --- |
 | `correctness` | Shared replicated-DDL, DML, indexes, policies, filters and refusals |
 | `lifecycle` | Shared source/target reconnect, restart, drain and uncertain-write cases |
-| `recovery` | InnoDB rollback/inspection/audited retry; forward extended fail-stop/refusal tests |
+| `recovery` | Shared forward MyISAM workflow; retained InnoDB rollback/inspection/audited retry runner |
 | `demo` | Common retained-session start, compare, stop, resume and container repair |
-| `legacy-dml` | Original forward DML suite, including bootstrap and positioning variants |
-| `legacy-ddl` | Original forward DDL suite and its catalog-bound assertions |
 | `native` | Original 8.4-source native DDL observation suite |
 | `all` | All of the above; any missing required case makes the run incomplete |
 
 For example: `make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"`.
-Recovery qualification omits the old embedded benchmark. Original commands such
-as `dml-suite`, `ddl-suite`, `reverse-suite`, and `reverse-correctness` remain for
-existing scripts. Old demo commands retain their original sessions and advanced
-failure exercises. New commands never adopt or overwrite those sessions.
+Recovery qualification omits the old embedded benchmark. Forward `recovery` selects
+the same `myisam-recovery` group included in full correctness; `--suite all` runs
+that group once. Its ordered child cases are listed in the offline inventory.
+The `dml-suite`, `ddl-suite`, `legacy-dml` and `legacy-ddl` commands are removed.
+Use shared `correctness`, its `bootstrap` family and capture variants instead.
+`reverse-suite` and the `reverse-correctness` compatibility alias remain. Old demo
+commands retain their original sessions and advanced failure exercises. New commands never adopt or overwrite those sessions.
 
 Run reconnect qualification for both profiles, or select one:
 
@@ -122,8 +154,8 @@ then checks rollback and durable pending-row evidence. The applier still reports
 an unconfirmed rollback and blocks ordinary resume; this does not authorize
 automatic replay or qualify a lost COMMIT reply. The forward case uses a table
 lock on INSERT instead of an InnoDB row lock on UPDATE. All cases run in order, with distinct state
-directories except the explicit resume pairs. Additional timeout fixtures remain
-in the legacy suites.
+directories except the explicit resume pairs. DDL timeout and skip-refusal
+fixtures run in the shared `forward-failures` group.
 
 The [DDL catalog](../tests/DDLCoverage/README.md) still distinguishes case passes
 from named assertion qualification. Its historical profile IDs describe specific
@@ -133,9 +165,8 @@ migrated bindings through the named assertion bundles described below.
 The [coverage migration review](../PLAN/TEST_SUITE_COVERAGE_MIGRATION.md) compares
 legacy and shared runtime line sets separately from catalog assertions and lists
 the gates for retiring old runners. Declaration overlap alone is not parity.
-The [remaining-gap assessment](../PLAN/TEST_SUITE_RETIREMENT_ASSESSMENT.md) records
-what the filter port closed, the outstanding assertions and runner dependencies,
-and the recommended order before removal.
+The [retirement assessment](../PLAN/TEST_SUITE_RETIREMENT_ASSESSMENT.md) records
+the original gaps, measured migration checkpoints and final removal evidence.
 
 ### Capture variants and catalog evidence
 
@@ -154,7 +185,7 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite lifecycle --varian
 ```
 
 Forward historical correctness runs also write `catalog/coverage-evidence.json`.
-Only explicitly migrated database/MODIFY/index bindings accept the
+Only explicitly migrated database/MODIFY/index and ordered table-lifecycle bindings accept the
 `shared-correctness` producer. Their named checks include source warnings,
 following rows, and (for MODIFY/index) normalized source/native/target binlogs,
 durable boundaries and schema history. All required cases for a binding must
@@ -162,7 +193,8 @@ pass; selecting one representative case does not qualify the entire family.
 Default/reverse runs retain their lab assertions but cannot fill historical
 catalog profile slots. Import one bundle per historical profile with the existing
 DDL catalog report command; do not combine passing subsets of different runs.
-Legacy bindings and the 730 required obligations remain intact during migration.
+The logical catalog suite IDs and all 730 required obligations remain intact;
+those identifiers do not retain old runner entry points.
 
 ## Evidence and code coverage
 
@@ -172,18 +204,18 @@ logs, SQLite/relay state and final `result.json` beneath that directory. Failure
 artifacts include source boundaries/binlogs when available. Adapter suites retain
 their established artifact categories; the runners provide their own evidence paths to the aggregate, keeping concurrent
 runs separate.
-DDL/native adapters list registered cases; other legacy adapters explicitly report
-suite-level inventory until their assertions are registered individually.
+The native adapter lists registered cases; reverse recovery and other specialized
+adapters explicitly report suite-level inventory.
 
 For shared correctness and lifecycle, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
 matches the checkout. Both profiles use the same pinned image in a combined run. Changing fixture or
 implementation inputs during qualification fails the aggregate.
-For `correctness` and `lifecycle`, `--coverage` builds the instrumented image and exports each profile's coverage
+For `correctness`, `lifecycle`, and explicitly forward-only `recovery`, `--coverage` builds the instrumented image and exports each profile's coverage
 separately. Merge explicitly selected reports with the existing `make coverage-report`
 command; a combined line-coverage number does not replace per-profile scenario results.
-Instrumented runs are not performance measurements. Legacy adapters retain their
-original image tags and build controls; build those suites before reusing their
-images with `--skip-build`.
+Instrumented runs are not performance measurements. Specialized adapters retain
+their original image tags and build controls; build those suites before reusing
+their images with `--skip-build`.
 
 PR CI runs the same smoke, reconnect and demo cases for both profiles, retains
 specialized forward integration/reverse recovery checks, and merges shared

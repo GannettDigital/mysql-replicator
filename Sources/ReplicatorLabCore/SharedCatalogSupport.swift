@@ -4,7 +4,7 @@ import Foundation
 /// IDs and the 730-obligation denominator stay unchanged during the migration.
 enum SharedCatalogSupport {
     static var caseIDs: Set<String> {
-        Set(DatabaseCreationCases.cases.map { $0.test.id } + ModifyIndexCases.cases.map { $0.test.id })
+        Set(DatabaseCreationCases.cases.map { $0.test.id } + ModifyIndexCases.cases.map { $0.test.id } + DDLCoverageCases.changes.map { $0.test.id } + [DDLCoverageCases.group.id])
     }
     static func export(root: URL, output: URL, profile: String, inputs: [String:String], contracts: [String:String], runtime: [String:Any], results: [[String:Any]], result: [String:Any]) throws {
         let directory=output.appendingPathComponent("catalog")

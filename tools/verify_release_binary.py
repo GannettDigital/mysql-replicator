@@ -15,7 +15,7 @@ with tarfile.open(ROOT / 'artifacts/release' / (name + '.tar.gz')) as archive:
     for chunk in iter(lambda: binary.read(1024 * 1024), b''):
         digest.update(chunk)
 actual = subprocess.check_output(['docker', 'run', '--rm', '--platform', 'linux/amd64',
-                                 '--entrypoint', 'sha256sum', 'mysql-replicator-packaging:dml',
+                                 '--entrypoint', 'sha256sum', 'mysql-replicator-packaging:lab',
                                  '/usr/local/bin/mysql-replicator'], text=True).split()[0]
 if actual != digest.hexdigest():
     raise SystemExit('Integration executable differs from release archive; do not publish.')

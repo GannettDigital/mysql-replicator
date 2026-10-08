@@ -96,7 +96,6 @@ jobs:
 
       - name: Run the same correctness smoke on both profiles
         run: |
-          docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:lab
           make correctness TIER=smoke ARGS="--skip-build"
           make lab-test ARGS="--suite demo --skip-build"
 
@@ -105,7 +104,7 @@ jobs:
 
       - name: Retain reverse recovery and advanced demo qualification
         run: |
-          docker tag mysql-replicator-packaging:dml mysql-replicator-packaging:reverse
+          docker tag mysql-replicator-packaging:lab mysql-replicator-packaging:reverse
           make reverse-suite ARGS="--skip-build --events 0"
           make reverse-demo-suite ARGS="--skip-build"
 
@@ -121,7 +120,6 @@ jobs:
         with:
           name: coverage-integration
           path: |
-            artifacts/ddl-suite/**/code-coverage/combined/coverage.json
             artifacts/lab/**/code-coverage/combined/coverage.json
           if-no-files-found: error
 
@@ -131,8 +129,6 @@ jobs:
         with:
           name: integration-evidence
           path: |
-            artifacts/ddl-suite/
-            artifacts/dml-suite/build-*.log
             artifacts/lab/
             artifacts/lab-demo-tests/
             artifacts/reverse-suite/

@@ -62,11 +62,11 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         let report=try DDLCoverageEvidence.report(inventory,bundles:bundles)
         let summary=report["assertion_summary"] as! [String:Int]
         XCTAssertEqual(summary["required"],730)
-        XCTAssertEqual(summary["passed"],24) // Database (2), MODIFY (5), indexes (5), two variants.
+        XCTAssertEqual(summary["passed"],68) // All previously evidenced obligations, two variants.
         let rows=report["scenarios"] as! [[String:Any]]
-        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count,3)
+        XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count,14)
         let ordered=try XCTUnwrap(rows.first { $0["id"] as? String == "ddl.table.truncate.empty" })
-        XCTAssertEqual(ordered["qualification"] as? String,"unverified")
+        XCTAssertEqual(ordered["qualification"] as? String,"partial")
         var failed=bundles[0]
         failed = .init(profile:failed.profile,stale:false,passed:false,cases:failed.cases,origin:"failed",producer:failed.producer)
         let scenario=try XCTUnwrap(inventory.catalog.scenarios.first { $0.id == "ddl.database.create.supported" })
@@ -99,7 +99,13 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         XCTAssertFalse(try DDLCoverageEvidence.load(path, currentInputs: input, contracts: contracts, inventory: inventory).stale)
         manifest["producer"]="shared-correctness"
         try writeJSON(manifest,to:path)
-        XCTAssertThrowsError(try DDLCoverageEvidence.load(path,currentInputs:input,contracts:contracts,inventory:inventory)) // Ordered cases have not migrated.
+        XCTAssertFalse(try DDLCoverageEvidence.load(path,currentInputs:input,contracts:contracts,inventory:inventory).stale)
+        try writeJSON(cases + [["id":"ddl-denied","status":"passed"]],to:root.appendingPathComponent("cases.json"))
+        manifest["artifact_hashes"]=try DDLCoverageEvidence.hashes(root:root,paths:paths)
+        try writeJSON(manifest,to:path)
+        XCTAssertThrowsError(try DDLCoverageEvidence.load(path,currentInputs:input,contracts:contracts,inventory:inventory)) // Permission failure has not migrated into catalog contracts.
+        try writeJSON(cases,to:root.appendingPathComponent("cases.json"))
+        manifest["artifact_hashes"]=try DDLCoverageEvidence.hashes(root:root,paths:paths)
         manifest["producer"]="unknown"
         try writeJSON(manifest,to:path)
         XCTAssertThrowsError(try DDLCoverageEvidence.load(path,currentInputs:input,contracts:contracts,inventory:inventory))

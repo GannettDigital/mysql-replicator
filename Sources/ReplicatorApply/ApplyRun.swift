@@ -89,6 +89,9 @@ public enum ApplyRun {
             try state.bindTargetIdentity(target.targetUUID!)
             for table in state.currentSchemas where !filter.ignores(database: table.database, table: table.table) {
                 try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
+                // DDL barriers must see every validated saved table, including
+                // tables with no row event since resume (e.g. DROP DATABASE).
+                target.discovered[table.identity]=table
             }
             try state.running(); started = true
             targetReason=nil

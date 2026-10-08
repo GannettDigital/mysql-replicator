@@ -36,14 +36,14 @@ public enum SharedCorrectness {
             reporter=QualificationReporter(output:f.output,log:f.stage)
         }
         func execute(build: Bool, slice: String) throws {
-            if slice == "all" && (selects(DDLCoverageCases.wildcardFilter.id) || ModifyIndexCases.cases.contains(where:{selects($0.test.id)})) || slice == "indexes" {
+            if slice == "all" && (selects(DDLCoverageCases.positive.id) || selects("myisam-recovery") || selects(DDLCoverageCases.group.id) || selects(DDLCoverageCases.wildcardFilter.id) || ModifyIndexCases.cases.contains(where:{selects($0.test.id)})) || slice == "indexes" {
                 referenceDecoderVersion=try f.runner.run([f.h.decoder,"--no-defaults","--version"]).text
                 try require(referenceDecoderVersion.contains("Ver 8.4."),"Independent binlog comparisons require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
             }
             var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"variant":f.variant.rawValue,"slice":slice,
-                "scope":"Shared DML matrix, DDL compatibility, database creation, modify/index and filter fixtures; explicit capture variant. Native reference is profile-specific.",
+                "scope":"Shared replicated and bootstrapped DML, ordered DDL, collation, failure and discovery fixtures; explicit capture variant. Native reference is profile-specific.",
                 "adaptations":["Source-version session settings and explicit temporary-table engine are declared in the fixtures", "Source/target/native table engines are checked before comparing normalized metadata"],
-                "not_covered":["Version-specific collation translation and engine index limits remain in legacy suites", "Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect/timeout and crash recovery remain separate"]]
+                "not_covered":["Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner", "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage"]]
             var failure: Error?
             let catalogInputs=try DDLCoverageEvidence.inputs(root:f.h.root)
             let catalogContracts=try DDLCoverageEvidence.hashes(root:f.h.root,paths:DDLCoverageEvidence.contractPaths)
@@ -81,7 +81,17 @@ public enum SharedCorrectness {
                 report["summary"]=try applier.latestProgress()
                 report["steps"]=observation
                 if slice == "all" || slice == "rejections" { try rejections() }
-                if slice == "all" { try filters() }
+                if slice == "all" {
+                    try basicDML()
+                    try bootstrapDML()
+                    try dmlRefusals()
+                    try orderedDDL()
+                    try collationWorkflows()
+                    try filters()
+                    try indexResume()
+                    try forwardFailures()
+                    try myisamRecovery()
+                }
             } catch {
                 report["result"]="failed"
                 report["error"]=String(describing:reporter.fail(error))
@@ -244,7 +254,10 @@ public enum SharedCorrectness {
                     let saved=try snapshot(test.test.id)
                     let quoted=test.sql.replacingOccurrences(of:"'",with:"''")
                     try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE' AND target_sql='\(quoted)'") == "1","database DDL intent differs")
-                    let end=try f.boundary()
+                    let end=try f.boundary(), result=try applier.latestProgress() ?? [:]
+                    try require(result["appliedGTIDSet"] as? String == end.gtids,"database GTIDs differ")
+                    try require((result["ddlApplied"] as? Int ?? 0)-(before["ddlApplied"] as? Int ?? 0) == (test.existing ? 1 : 2),"database DDL count differs")
+                    try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == (test.existing ? 4 : 5),"database transaction count differs")
                     try require(state(saved,"SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state") == "STOPPED|\(end.file)|\(end.position)","database checkpoint differs")
                     try applier.start(initialize:false)
                     try wait()
@@ -272,10 +285,30 @@ public enum SharedCorrectness {
                         try step("CREATE TABLE ddlcompat.tmp(id INT PRIMARY KEY,n INT)",database:"ddlcompat")
                         try step("INSERT INTO ddlcompat.tmp VALUES(99,99)",database:"ddlcompat")
                     }
+                    let before=try applier.latestProgress() ?? [:], begin=try f.boundary()
                     for item in test.steps {
                         let sql=f.profile == .reverse ? item.sql57 : item.sql
+                        if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
+                            // Neither table is rediscovered by DML after resume.
+                            // DROP must still retire both durable schema records.
+                            try applier.drain()
+                            let checkpoint=try snapshot("database-before-drop")
+                            try require(state(checkpoint,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "2","database resume fixture lacks both saved schemas")
+                            try applier.start(initialize:false); try wait()
+                        }
                         try step(sql,database:"ddlcompat",checks:item.checks)
                     }
+                    try applier.drain()
+                    let end=try f.boundary(), result=try applier.latestProgress() ?? [:]
+                    let count=try DMLCompatibilityCases.transactionCount(f.sql(.source,"SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')"))
+                    if f.profile == .forward { try require(count == test.steps.reduce(0,{$0+$1.transactions}),"compatibility source event count differs") }
+                    try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
+                    let saved=try snapshot(test.test.id)
+                    try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0","unfinished compatibility DDL")
+                    if test.test.id == "ddl-compat-database" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left current schemas")
+                    }
+                    try applier.start(initialize:false); try wait()
                 }
             }
         }

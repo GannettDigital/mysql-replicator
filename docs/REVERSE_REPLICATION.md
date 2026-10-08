@@ -223,7 +223,7 @@ still rejects multi-statement/multi-table source groups; that extension is defer
 ## Shared correctness suite
 
 ```sh
-make reverse-correctness
+make correctness PROFILE=mysql57-to-mysql84-innodb
 ```
 
 This uses the forward profile's database-creation, DDL compatibility, DML type/
@@ -235,16 +235,20 @@ independent expectations. The suite also checks saved-schema restart, trigger
 skip behavior, and refused DDL with durable diagnostics and no checkpoint advance
 or following DML. Successful work must leave no unfinished intents.
 
-Use `ARGS="--skip-build --slice database"` (or `ddl`, `dml`, `indexes`, `policy`,
-`rejections`) while iterating. The default is `all`. Evidence lives under
-`artifacts/reverse-correctness/`: incremental `cases.json`, per-step SQL/checks/
-snapshots, logs, SQLite/relay evidence, and `result.json`. A failed run exits nonzero.
+Use `ARGS="--skip-build --family database"` (or select another family from
+`make lab-list`) while iterating. The default runs all applicable correctness
+scenarios. Evidence lives beneath `artifacts/lab/`: incremental `cases.json`,
+per-step SQL/checks/snapshots, logs, SQLite/relay evidence, and `result.json`.
+A failed run exits nonzero.
 
 This is not full parity with every forward-suite scenario: forward-only 8.4
-collation translation and MyISAM limits do not apply; file-position, filters,
-reconnect/timeout qualification and foreign keys are not covered here. 5.7 has no
-FULL optional table-map metadata. Its missing metadata uses the target schema,
-which these tests first create through replicated DDL. The temporary CREATE LIKE
+collation translation and MyISAM limits do not apply. The historical forward
+capture variants describe an 8.4 source; reverse qualification uses GTIDs with
+5.7 metadata. Filters and bootstrapped DML are shared correctness families;
+reconnect runs in `--suite lifecycle`. Foreign keys remain a refusal contract.
+5.7 has no FULL optional table-map metadata. Its missing metadata uses the target
+schema, which the tests establish through both replicated DDL and equivalent
+bootstrap snapshots. The temporary CREATE LIKE
 case uses an InnoDB template for this profile. MySQL 5.7's logged conditional
 `DROP TEMPORARY TABLE IF EXISTS` cleanup is an audited no-op (`ddl_skips`); the
 suite checks that a permanent table with the same name survives. Other temporary

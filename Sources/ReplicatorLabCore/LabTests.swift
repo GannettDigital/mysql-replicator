@@ -3,15 +3,18 @@ import Foundation
 public enum LabTests {
     public static func run(root: URL, arguments: [String]) throws {
         let options=try LabTestOptions(arguments)
-        let suites=options.suite == "all" ? ["correctness","legacy-dml","legacy-ddl","lifecycle","recovery","demo","native"] : [options.suite]
+        let suites=options.suite == "all" ? ["correctness","lifecycle","recovery","demo","native"] : [options.suite]
         var rows: [[String:Any]]=[]
         for profile in options.profiles {
-            for suite in suites {
+            for suite in suites where !(options.suite == "all" && profile == .forward && suite == "recovery") {
               for variant in options.variants {
                 if suite == "correctness" {
                     rows += try LabScenario.select(tier:options.tier,family:options.family,ids:options.ids).map { item in
                         var row=item.fields(profile,variant:variant); row["suite"]=suite; return row
                     }
+                } else if suite == "recovery" && profile == .forward {
+                    var row=LabScenario.correctness.first { $0.id == "myisam-recovery" }!.fields(profile,variant:variant)
+                    row["suite"]=suite; rows.append(row)
                 } else if suite == "lifecycle" { rows += LabLifecycle.fields(profile,variant:variant) }
                 else { rows.append(adapter(profile:profile,suite:suite)) }
               }
@@ -30,17 +33,17 @@ public enum LabTests {
         var failed=false
         var image: String?
         for profile in options.profiles {
-            for suite in suites {
+            for suite in suites where !(options.suite == "all" && profile == .forward && suite == "recovery") {
               for variant in options.variants {
                 let indices=rows.indices.filter { rows[$0]["profile"] as? String == profile.rawValue && rows[$0]["suite"] as? String == suite && (rows[$0]["variant"] as? String ?? "default") == variant.rawValue }
                 guard indices.contains(where:{rows[$0]["status"] as? String == "not_run"}) else { continue }
                 do {
-                    if suite == "correctness" || suite == "lifecycle" {
+                    if suite == "correctness" || suite == "lifecycle" || (suite == "recovery" && profile == .forward) {
                         if image == nil { image=try LabBuild.prepare(root:root,build:options.build,coverage:options.coverage); report["image"]=image }
                         let selected=Set(indices.filter { rows[$0]["status"] as? String == "not_run" }.compactMap { rows[$0]["id"] as? String })
                         let reporter: QualificationReporter, output: URL, execute: () throws -> Void
                         let category="lab/"+directory.lastPathComponent+"/"+profile.rawValue+"/"+suite+"/"+variant.rawValue
-                        if suite == "correctness" {
+                        if suite != "lifecycle" {
                             let run=SharedCorrectness.Run(root:root,profile:profile,selected:selected,category:category,image:image!,codeCoverage:options.coverage,variant:variant)
                             reporter=run.reporter; output=run.f.output; execute={ try run.execute(build:false,slice:"all") }
                         } else {
@@ -88,8 +91,8 @@ public enum LabTests {
     }
     static func adapter(profile: LabProfile, suite: String) -> [String:Any] {
         var row: [String:Any]=["profile":profile.rawValue,"suite":suite,"id":suite,"status":"not_run","adapter":true]
-        if suite == "legacy-ddl" || suite == "native" {
-            let legacy=suite == "native" ? "native-ddl-suite" : "ddl-suite"
+        if suite == "native" {
+            let legacy="native-ddl-suite"
             row["declared_cases"]=DDLCoverageCases.registry.filter { $0.suite == legacy }.map { entry -> [String:Any] in
                 var fields=entry.test.fields
                 fields["variant_profiles"]=entry.profiles
@@ -98,10 +101,10 @@ public enum LabTests {
                 return fields
             }
         } else {
-            row["inventory_granularity"]="suite; legacy runner owns individual assertions"
+            row["inventory_granularity"]="suite; specialized runner owns individual assertions"
         }
         switch suite {
-        case "legacy-dml","legacy-ddl","native":
+        case "native":
             row["intent"]="preserve existing assertions and evidence; includes bootstrap/version-specific experiments"
             if profile == .reverse { row["status"]="not_applicable"; row["reason"]="Historical 8.4-source qualification; shared applicable workloads run in correctness." }
         case "recovery":
@@ -112,14 +115,10 @@ public enum LabTests {
         return row
     }
     static func runAdapter(root: URL, profile: LabProfile, suite: String, build: Bool, onEvidence: @escaping (URL)->Void) throws {
-        let args=build ? [] : ["--skip-build"]
         switch suite {
-        case "legacy-dml","legacy-ddl":
-            let ddl=suite == "legacy-ddl"
-            try DMLQualification.run(root:root,build:build,ddl:ddl,selection:SuiteSelection(arguments:args,ddl:ddl),onEvidence:onEvidence)
         case "recovery":
-            if profile == .reverse { try ReverseQualification.run(root:root,build:build,events:0,onEvidence:onEvidence) }
-            else { try DMLQualification.run(root:root,build:build,selection:SuiteSelection(arguments:args+["--slice","extended","--positioning","gtid"],ddl:false),onEvidence:onEvidence) }
+            try require(profile == .reverse,"forward recovery must use the shared runner")
+            try ReverseQualification.run(root:root,build:build,events:0,onEvidence:onEvidence)
         case "demo":
             try LabDemo.qualify(root:root,profile:profile,build:build,onEvidence:onEvidence)
         case "native": try NativeDDLQualification.run(root:root,onEvidence:onEvidence)

@@ -73,9 +73,9 @@ tools on macOS). Coverage is opt-in and uses separate build directories/images:
 make coverage-unit
 make correctness TIER=smoke ARGS="--coverage"
 make integration-smoke ARGS="--coverage"
-# Other selected or full DML/DDL suites accept the same flag:
-make dml-suite ARGS="--coverage --slice basic --positioning gtid"
-make ddl-suite ARGS="--coverage --slice compatibility --positioning gtid"
+# Select shared fixtures or a family:
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--coverage --case positive"
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--coverage --family ddl --variant gtid-full"
 make demo-suite ARGS="--coverage"
 ```
 
@@ -91,7 +91,7 @@ demo commands; `make demo-down` stops the writer and exports its coverage.
 Combine **explicitly selected** reports from the same source revision:
 
 ```sh
-make coverage-report INPUTS="artifacts/coverage/unit artifacts/ddl-suite/RUN_ID/code-coverage/combined"
+make coverage-report INPUTS="artifacts/coverage/unit artifacts/lab/RUN_ID/PROFILE/correctness/VARIANT/FIXTURE_ID/code-coverage/combined"
 ```
 
 The result is `artifacts/coverage/combined/index.html` plus portable LCOV.
@@ -141,10 +141,10 @@ Run incremental integration checks against local container fixtures:
 make integration-smoke
 
 # Basic DML qualification:
-make dml-suite ARGS="--slice basic"
+make correctness ARGS="--case positive"
 
 # DDL qualification with GTID positioning:
-make ddl-suite ARGS="--slice modify-index --positioning gtid"
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--family indexes --variant gtid-full"
 
 # Shared full DML/DDL correctness on both profiles:
 make correctness

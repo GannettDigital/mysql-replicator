@@ -44,21 +44,13 @@ test-asan: codec
 live-suite:
 	swift run replicator-lab live-suite $(ARGS)
 
-.PHONY: dml-suite
-dml-suite:
-	swift run replicator-lab dml-suite $(ARGS)
-
-.PHONY: ddl-suite
 .PHONY: reverse-suite
 reverse-suite:
 	swift run replicator-lab reverse-suite $(ARGS)
 
-ddl-suite:
-	swift run replicator-lab ddl-suite $(ARGS)
-
 .PHONY: integration-smoke
 integration-smoke:
-	swift run replicator-lab ddl-suite --positioning gtid --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
+	swift run replicator-lab test --profile mysql84-to-mysql57-myisam --case positive --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
 
 .PHONY: benchmark
 benchmark:
@@ -112,7 +104,7 @@ reverse-demo-sql:
 reverse-correctness:
 	swift run replicator-lab reverse-correctness $(ARGS)
 
-# Canonical profile-driven lab commands. Legacy targets above retain their scope.
+# Canonical profile-driven lab commands. Specialized targets above retain their scope.
 PROFILE ?= all
 TIER ?= full
 .PHONY: correctness lab-test lab-list lab-demo lab-benchmark

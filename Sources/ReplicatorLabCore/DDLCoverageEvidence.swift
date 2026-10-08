@@ -1,8 +1,7 @@
 import Foundation
 
-/// First evidence slice: named schema/data assertions. This deliberately never
-/// emits full scenario verification; boundary/binlog/history contracts still need
-/// dedicated instrumentation. Explicit bundles, including failures, are retained.
+/// Named assertions with input/runtime provenance. Case passes alone never
+/// qualify an entire MySQL scenario.
 enum DDLCoverageEvidence {
     static let imageLabel = "org.mysql-replicator.coverage-inputs"
     static let contractPaths = ["tests/DDLCoverage/catalog.json", "tests/DDLCoverage/profiles.json", "tests/DDLCoverage/upstream.json"]
@@ -61,7 +60,7 @@ enum DDLCoverageEvidence {
     static func runtime(_ h: NativeHarness, image: String, profileID: String, inventory: DDLCoverage.Inventory, inputDigest: String) throws -> [String: Any] {
         let runner = h.runner
         let label = try runner.run(["docker", "image", "inspect", image, "--format", "{{index .Config.Labels \"\(imageLabel)\"}}" ]).text
-        try require(label == inputDigest, "runtime image inputs differ; rerun ddl-suite without --skip-build")
+        try require(label == inputDigest, "runtime image inputs differ; rerun profile correctness without --skip-build")
         guard let profile = inventory.profiles.profiles.first(where: { $0.id == profileID }) else { throw LabError("missing coverage profile") }
         var servers: [[String: Any]] = []
         for service in h.services {

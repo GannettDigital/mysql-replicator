@@ -1,4 +1,22 @@
-# Remaining gaps before legacy test retirement
+# Legacy DDL/DML runner retirement
+
+The duplicate DML/DDL runners are removed. Their 442 case executions have passing
+shared replacements, the same 68 named catalog obligations are accepted, and no
+runtime lines are lost in either historical capture variant. Forward union line
+coverage increased from 80.59% to 80.81% on the same 5,858-line runtime.
+
+Full forward and reverse qualification passed before removal. Final-tree checks,
+including Periphery, shared integration/recovery, fresh coverage/catalog export
+and exact release-executable verification, also passed. See **Completed retirement
+and final-tree validation** below and the [replacement map](TEST_SUITE_RETIREMENT_MAP.md).
+Native observations, reverse audited recovery, demos, protocol qualification and
+benchmarks retain their specialized runners; this migration does not establish
+that they are redundant.
+
+The assessments and failed attempts below are historical checkpoints, retained
+as an audit trail. Their pending-work statements describe those checkpoints.
+
+## Initial assessment (historical)
 
 Initial assessment at `1ab705d`, 2026-10-07. That commit repairs the qualification
 baselines and ports the filter family. No legacy runner is ready for wholesale
@@ -272,3 +290,210 @@ remain next, followed by negative/discovery/cache/recovery fixtures and the fina
 matched whole-suite comparison. Indexed resume/drift, bootstrapped table
 discovery, release-binary verification and the recovery adapter remain explicit
 retirement gates even where ordinary positive cases now share named assertions.
+
+## Ordered DDL and collation checkpoint
+
+The next increment ports the full 70-step ordered lifecycle as shared `ddl`,
+including conditional no-ops, differing preexisting definitions, cross-schema
+LIKE/defaults, schema history, following DML and normalized binlogs. The native
+and target schemas preserve their separate database defaults. Forward collation
+workflows preserve rewrite audits, CREATE LIKE / INSERT SELECT / multi-table
+RENAME, changed/removed policy refusal on restart and PAD collision behavior.
+
+The selected forward positional run passed 76 reported cases, including the
+ordered parent/70 children and five collation invocations; the reverse ordered
+run passed 71. Both cleaned up successfully. These are executions, not distinct
+MySQL feature counts. The forward ordered bundle accepted 22/730 named catalog
+obligations; this selection did not include the database/MODIFY/index bindings.
+All ordered bindings now accept the same named shared assertions, preserving the
+potential 68 previously evidenced obligations and the unchanged denominator.
+
+Artifacts are in `artifacts/coverage-migration/retirement-work/ordered-checkpoint/`:
+run references, checksums in the catalog report, logs, source snapshots and the
+exact remaining line list. The selected forward run observed 74 of the 151
+remaining original runtime gaps: 44 in DDLRename, 13 in CompatibilityPolicy,
+10 in DDL and 7 in TargetSession. **77 original lines remain unobserved** at this
+checkpoint. Shipping source hashes match; this is a checklist subtraction across
+harness revisions, not a newly matched whole-suite comparison. Reverse hits do
+not close forward gaps. The later fixture ports stale these historical bundles
+for current-checkout import; retain them without bypassing freshness validation.
+
+Negative/discovery/recovery ports follow this checkpoint. Their presence in the
+inventory is not yet retirement evidence. Full matched legacy/shared runs,
+assertion mapping, release-binary verification and dispatch-root removal remain
+the final gates.
+
+## Negative, discovery and recovery checkpoint
+
+The selected forward GTID/FULL run passed all 64 reported cases and cleanup.
+It includes bootstrapped ENUM/SET and composite keys, all 12 metadata/decoder
+refusals, index resume/drift, 19 DDL/policy failure children and the 19 MyISAM
+discovery/fail-stop children. The reverse sample passed basic DML, both bootstrap
+fixtures, database lifecycle and indexed resume/drift. The first attempted
+forward bootstrap run caught a fixture session-setting mismatch; role-specific
+5.7/8.4 sessions fixed it before accepting these runs.
+
+The successful forward run hit all **77 remaining original runtime lines**.
+The original gap checklist is therefore empty, with unchanged shipping source
+hashes. This still is not a matched whole-suite comparison: preserve that final
+gate. Evidence and exact hashes are under
+`artifacts/coverage-migration/retirement-work/failures-checkpoint/`; the full
+run is `artifacts/lab/20261007T220442Z-5c442cc2/`. Reverse evidence is
+`artifacts/lab/20261007T220645Z-59a98ac1/`. The killed writer retains behavioral
+proof and an explicitly unflushed coverage profile.
+
+The shared inventory now declares the individual failure/recovery children and
+requires a passing result for each before completing the workflow. Forward
+`--suite recovery` uses this shared implementation; reverse recovery remains its
+separate adapter. Full correctness already includes the forward group, so
+`--suite all` avoids running it again. The [replacement map](TEST_SUITE_RETIREMENT_MAP.md)
+describes preserved assertions independently of the line counts. Legacy DDL/DML
+runners remain available for the final matched comparison.
+
+## Restart defect exposed by the full comparison
+
+The first full shared GTID run failed after the partition/hash-list sequence:
+resume reported `discovered target requires a primary key with 1 to 16 columns`.
+SQLite still marked `ddlcompat.stage` current even though the next database
+lifecycle had dropped it. On startup `ApplyRun` validated saved schemas without
+restoring them into `TargetSession.discovered`; DROP DATABASE builds its schema
+retirement transitions from that cache. Tables not rediscovered by a subsequent
+row event could therefore remain current in SQLite after their database vanished.
+
+The fix restores each schema to the discovery cache only after verifying it
+against the target. The shared database fixture now explicitly stops with two
+saved tables, resumes, then drops the database before either table has another
+row event. The existing final schema-count and saved-state restart checks must
+pass. This preserves drift refusal and adds no metadata query.
+
+The failing aggregate is `artifacts/lab/20261007T222121Z-b0555826/result.json`.
+Other same-image comparison runs were interrupted and their disposable fixtures
+removed; they are **not accepted evidence**. Their process/project identities are
+recorded in `artifacts/coverage-migration/retirement-work/invalid-comparison.json`.
+The runtime change invalidates earlier source-hash comparisons for the new tree.
+The zero-original-gap result above remains a historical checkpoint; final parity
+requires fresh legacy/shared runs on the corrected runtime, without translating
+old line numbers or combining old and new source hashes.
+
+A subsequent static review found shared fixture pollution: the replicated DML
+matrix leaves `poc.matrix_input`, while the bootstrap SELECT/JOIN fixture creates
+that same helper. Bootstrap now recreates its own `poc` snapshot, without logging,
+after the continuous writer has drained. Its LOAD DATA output also has a distinct
+filename. A focused run selects replicated and bootstrap SELECT/LOAD together.
+
+The high-concurrency legacy DDL attempt also hit its unchanged 20-second capture
+startup deadline at `ddl-index-rename`; the retained writer log reached RUNNING.
+It is a failed run, not accepted evidence. The remaining attempts were interrupted
+before changing fixture inputs, and the next comparison uses lower concurrency.
+See `retirement-work/legacy-ddl-startup-timeout.log` and
+`retirement-work/invalid-comparison-fixture-isolation.json` under the migration
+artifacts. No deadline or behavioral assertion was relaxed.
+
+Focused correction validation passed on both topologies: the database-resume and
+partition sequence in `artifacts/lab/20261007T223706Z-8488600e/`, then replicated
+and bootstrap SELECT/LOAD together in `artifacts/lab/20261007T225521Z-1878275a/`.
+The final comparison uses image
+`sha256:ca67cdd684a921ba34875b8b396bbc9b022e423027c9a62c6072b5c349558792`
+and input digest `b2c06c9899b618b06d9bbc9c6a4487b7b473173b596d8473621e4a36c363b6a3`.
+Its explicit execution matrix and pre-removal patch are saved under
+`artifacts/coverage-migration/retirement-work/final-comparison/`. At most three
+fixtures run concurrently. The corrected runtime maps 5,858 executable Swift
+lines; do not compare that denominator directly with the earlier 5,855-line tree.
+
+## Final comparison: catalog gate
+
+On the corrected, unchanged image above, both full shared forward correctness
+variants passed, including cleanup. The legacy DDL variants also passed. Loading
+their bundles through the normal freshness/provenance validator accepts exactly
+the same set of **68 named scenario/profile/assertion obligations out of 730** in
+both producers: 28 partially evidenced scenario/profile combinations, zero fully
+verified, and 662 unresolved obligations. The comparison checks identities, not
+just equal counts.
+
+The accepted reports and exact obligation list are
+`final-comparison/catalog-legacy.json`, `catalog-shared.json` and
+`catalog-parity.json` beneath the retirement-work artifacts. At that checkpoint, full legacy DML,
+shared lifecycle and reverse correctness were still running; the catalog result
+alone did not authorize runner removal.
+
+## Final comparison: runtime and case gate
+
+The four legacy runs and the shared forward correctness/lifecycle runs all passed,
+including cleanup, on the same image and 5,858-line runtime. Exact line-set
+comparisons have **zero legacy-only lines in each historical variant**, without
+using reverse or unit coverage to close gaps:
+
+| Capture variant | Legacy hits | Shared hits | Lost lines | Additional shared lines |
+| --- | ---: | ---: | ---: | ---: |
+| File-position / MINIMAL | 4,633 | 4,659 | 0 | 26 |
+| GTID-only / FULL | 4,700 | 4,713 | 0 | 13 |
+| Forward union (also includes default shared lifecycle) | 4,721 | 4,734 | 0 | 13 |
+
+The union changes from 80.59% to 80.81%; this is runtime line coverage, not branch
+coverage or MySQL feature completeness. Every one of the **442 legacy case
+executions** maps to a passing shared replacement in the same capture variant.
+The assertion-level review is in the [replacement map](TEST_SUITE_RETIREMENT_MAP.md).
+Both GTID groups retain one explicitly unflushed `batch-crash` profile; SIGKILL
+behavioral proof does not manufacture LLVM hits.
+
+The explicit manifests, checksummed input references, line lists and invocation
+origins are in `final-comparison/per-variant/`, `final-comparison/combined/`, and
+`final-comparison/case-mapping.json`. The earlier DDL-only comparison is an
+intermediate subset, not a separate contribution to these totals. Reverse full
+correctness subsequently passed with cleanup in
+`artifacts/lab/20261007T235944Z-2fca5605/`. The entire execution matrix finished
+successfully before removal began.
+
+
+## Completed retirement and final-tree validation
+
+Removed `DMLQualification`, `SuiteSelection`, their obsolete parser tests,
+`dml-suite`/`ddl-suite`, and the `legacy-dml`/`legacy-ddl` adapters. Useful selection
+and GTID-count assertions now live with the shared profile tests. Forward
+`--suite recovery` uses the shared MyISAM workflow; `--suite all` avoids executing
+it twice. The independent fixture/catalog declarations remain in use.
+
+Make, CLI help, CI artifact paths, the release-binary verifier, CONTRIBUTING,
+test-lab, reverse-profile and catalog/upstream documentation now use shared
+commands. The smoke selection includes the database-drop-after-resume regression.
+The release verifier uses the shared `mysql-replicator-packaging:lab` image.
+
+Validation after removing the old dispatch roots:
+
+- **340 Swift unit tests** and **14 tooling tests** passed. Five obsolete parser
+  tests were replaced by one shared-selection test; the pre-removal total was 344.
+- **Periphery strict scan passed**, with no unused declarations and no new retain
+  rules. `DDLCompatibilityCases.independent` is still used by the catalog's
+  declarations; it is not an orphan merely because the old selector is gone.
+- Catalog structure passed: **63 scenarios, 185 declarations**. Removed CLI
+  commands reject execution; the common all-suite JSON inventory has no legacy
+  adapters.
+- The shared integration sample plus database-resume regression passed (four
+  cases), reverse database-resume passed (one), and direct forward recovery passed
+  (19 child cases plus its parent), all including cleanup.
+- A fresh instrumented ordered-family run passed **71 case results** and exported
+  usable coverage on the final tree. Its GTID-only/FULL catalog bundle was accepted
+  with **22/730 assertions**, 11 partial scenario/profile combinations and zero
+  fully verified. This deliberately selected subset is separate from the full
+  pre-removal **68/730 parity** result; no stale bundle was imported or combined
+  with it.
+- Linux archive and Debian installation/reinstallation checks passed.
+  Each final noninstrumented fixture recorded the exact release binary SHA-256:
+  `c72f406533ff31b29359434041e7bf1b64916ddf956f8d56f4ea62f1c45025a8`.
+- All **55 shipping Swift source hashes** remain identical to the matched full
+  comparison after retirement. Only harness/entry-point changes followed that
+  comparison; unit/reverse hits never waived a forward coverage gap.
+
+Final result paths, runtime IDs and result checksums are recorded in
+`artifacts/coverage-migration/retirement-work/post-removal-validation.json`.
+`post-removal-runtime.json` records the runtime-hash equality, and
+`catalog-post-removal.json` is the fresh accepted partial report. Unit, tooling,
+Periphery, release-build and executable-hash logs are retained alongside them.
+The final instrumented run is `artifacts/lab/20261008T010704Z-7fb36787/`.
+
+The full comparison's harness-input hashes necessarily become historical after
+removing files. Preserve its manifests, reports and pre-removal patch rather than
+bypassing freshness checks. The catalog still has **662 unresolved obligations**;
+Rust internals and the deliberately unflushed killed-writer profile remain outside
+this Swift line-coverage claim. Those are existing qualification limits, not
+coverage silently discarded by retiring the duplicate runners.

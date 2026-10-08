@@ -49,12 +49,13 @@ struct LabTestOptions {
             default: throw LabError("unknown test option: "+flag)
             }
         }
-        try require(["correctness","legacy-dml","legacy-ddl","lifecycle","recovery","demo","native","all"].contains(suite),"unknown suite: "+suite)
+        try require(["correctness","lifecycle","recovery","demo","native","all"].contains(suite),"unknown suite: "+suite)
         try require(["smoke","full"].contains(tier),"tier must be smoke or full")
         try require(tier == "full" || suite == "correctness", "--tier smoke selects shared correctness only; adapter suites retain their full scope")
         try require(suite == "correctness" || (family == nil && ids.isEmpty),"--case and --family select shared correctness scenarios")
-        try require(!coverage || ["correctness","lifecycle"].contains(suite),"--coverage collects shared correctness and lifecycle runs; legacy coverage commands remain available")
-        try require(variants == [.standard] || ["correctness","lifecycle"].contains(suite),"--variant selects shared correctness or lifecycle; adapters retain their own variants")
+        let sharedRecovery=suite == "recovery" && profiles == [.forward]
+        try require(!coverage || sharedRecovery || ["correctness","lifecycle"].contains(suite),"--coverage collects shared correctness, lifecycle and forward recovery runs")
+        try require(variants == [.standard] || sharedRecovery || ["correctness","lifecycle"].contains(suite),"--variant selects shared correctness or lifecycle; adapters retain their own variants")
         _ = try LabScenario.select(tier:tier,family:family,ids:ids)
     }
 }
