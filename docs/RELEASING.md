@@ -23,16 +23,23 @@ specifically the release PR, including version, release notes and operator docs.
 | 8 | `beta/2/08-distribution` | Checksummed installer, tested production image and GHCR promotion |
 | 9 | `beta/2/09-release` | Release `0.1.0-beta.2`, notes, install guide and README |
 
-The first PR targets `main`. Review and merge in table order using **merge commits**,
-then retarget the next PR to `main` and wait for green CI. This preserves ancestry;
-squash/rebase merging would require rebuilding the remaining stack. Keep predecessor
-branches until their dependent PRs have been retargeted. Do not push local `main`
-directly to bypass the reviews. After all merges, update local `main` from upstream,
-preserving any unrelated local edits.
+The first PR targets `main`. Creating dependent PRs does not itself register a
+native GitHub stack: register the ordered PR numbers using the
+[stack API](https://docs.github.com/en/rest/pulls/stacks#create-a-pull-request-stack).
+Beta.2 PRs #11–#19 are registered as native stack #20.
+
+Review and merge from the bottom using GitHub's stack controls, waiting for green
+checks. Merging a higher layer also merges its unmerged predecessors. GitHub
+rebases/retargets remaining layers automatically; fetch and synchronize local
+branches after that operation before making more changes. The original manifest's
+SHA checks deliberately reject stale pushes. Do not manually retarget registered
+stack members or push local `main` to bypass review. After all merges, update
+local `main` from upstream, preserving any unrelated local edits.
 
 The prepared local `artifacts/release-stack-beta2/` directory contains the exact
 branch manifest, PR descriptions, `push-branches.sh` and `open-prs.sh`. The maintainer
-runs these scripts; creating local branches does not publish anything. Scripts
+runs these scripts; the PR helper registers the native stack after creating or
+finding each PR. Creating local branches does not publish anything. Scripts
 never push `main` or tags. Intermediate PRs need their own CI; final-tree local
 tests are not a substitute for branch checks.
 
