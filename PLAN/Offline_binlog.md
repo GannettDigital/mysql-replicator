@@ -1,10 +1,10 @@
-One way of accessing correctness (not performance) is to pull binlog operate in offline mode:
+One way of assessing correctness (not performance) is to pull binlogs and operate in offline mode:
 
 - have a mode to pull binlogs , either all available or from a certain position.
 - then start applying binlog, from starting position (gtid) as we do now in config, but w/out continuing downloading a binlog, just work on binlog files available.
 
 The purpose would be to see if we can apply binlog w/out errors w/out fully deploying the full infa -
-For example, we close exitig prod CloudSQL instance from exiting backup. Then in-place upgrade it to 8.0, and 8.4
+For example, we clone an existing prod CloudSQL instance from an existing backup. Then in-place upgrade it to 8.0, and 8.4
 assume it will retain last execiuted GTID.
 
 We download binlogs from existing primary , and then start fron last exicuted GTID , targting clone upgraded to 8.4.
