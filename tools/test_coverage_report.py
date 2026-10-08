@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from code_coverage import source_hashes
-from coverage_report import main, policy_hash, write_reports
+from coverage_report import downloaded_inputs, main, policy_hash, write_reports
 
 
 class ScopedCoverageTests(unittest.TestCase):
@@ -87,6 +87,43 @@ class ScopedCoverageTests(unittest.TestCase):
         (self.root / self.harness).write_text("changed")
         with self.assertRaisesRegex(ValueError, "source mismatch"):
             write_reports(self.root, self.output, [unit])
+
+    def test_downloaded_collections_exclude_demo_snapshots_but_reject_duplicate_originals(self):
+        downloaded = self.root / "downloaded"
+        unit = downloaded / "coverage-unit/coverage.json"
+        unit.parent.mkdir(parents=True)
+        unit.write_bytes(self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}}).read_bytes())
+        originals = [unit]
+        for i in range(12):
+            fixture = downloaded / f"coverage-integration/run-{i}/fixture"
+            original = fixture / "code-coverage/combined/coverage.json"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(self.report(f"apply-{i}", {self.runtime: {"2": 1}}).read_bytes())
+            originals.append(original)
+            if i >= 3:  # Nine demo sessions also retain an evidence snapshot.
+                snapshot = fixture / "evidence-saved/code-coverage/combined/coverage.json"
+                snapshot.parent.mkdir(parents=True)
+                snapshot.write_bytes(original.read_bytes())
+        with self.assertRaisesRegex(ValueError, "duplicate coverage inputs"):
+            write_reports(self.root, self.output, sorted(downloaded.rglob("coverage.json")))
+        inputs = downloaded_inputs(downloaded)
+        self.assertEqual(inputs, sorted(originals))
+        args = ["coverage_report.py", "--root", str(self.root), "--output", str(self.output),
+                "--downloaded", str(downloaded), "--unit-result", "success", "--integration-result", "success",
+                "--expected-integration", "12"]
+        with patch("sys.argv", args):
+            main()
+        metrics = json.loads((self.output / "metrics.json").read_text())
+        self.assertTrue(metrics["complete"])
+        self.assertEqual(metrics["integration_reports"], 12)
+        originals[-1].unlink()
+        metrics = write_reports(self.root, self.output, downloaded_inputs(downloaded), "success", "success", 12)
+        self.assertFalse(metrics["complete"])  # A snapshot cannot replace a missing original.
+        duplicate = downloaded / "duplicate/coverage.json"
+        duplicate.parent.mkdir()
+        duplicate.write_bytes(originals[1].read_bytes())
+        with self.assertRaisesRegex(ValueError, "duplicate coverage inputs"):
+            write_reports(self.root, self.output, downloaded_inputs(downloaded))
 
     def test_ci_records_tested_merge_head_base_and_run_identity(self):
         unit = self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}})

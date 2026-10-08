@@ -62,6 +62,14 @@ def policy_hash(root):
     return digest.hexdigest()
 
 
+def downloaded_inputs(directory):
+    # Demo teardown copies /evidence, including coverage, into evidence-RUN_ID.
+    # Those snapshots are troubleshooting copies, not new measurements. Keep
+    # the originals; load_reports still rejects overlapping original inputs.
+    return sorted(path for path in directory.rglob("coverage.json")
+                  if not any(part.startswith("evidence-") for part in path.relative_to(directory).parts[:-1]))
+
+
 def write_reports(root, output, inputs, unit_result="unknown", integration_result="unknown",
                   expected_integration=None, metadata=None):
     reports = load_reports(root, inputs)
@@ -122,8 +130,12 @@ def main():
     parser.add_argument("--integration-result", default="unknown")
     parser.add_argument("--expected-integration", type=int)
     parser.add_argument("--ci", action="store_true")
-    parser.add_argument("inputs", type=Path, nargs="+")
+    parser.add_argument("--downloaded", type=Path, help="discover downloaded collections, excluding demo evidence snapshots")
+    parser.add_argument("inputs", type=Path, nargs="*")
     args = parser.parse_args()
+    if bool(args.inputs) == (args.downloaded is not None):
+        parser.error("provide either collection inputs or --downloaded DIRECTORY")
+    inputs = downloaded_inputs(args.downloaded) if args.downloaded is not None else args.inputs
     metadata = {}
     if args.ci:
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
@@ -131,7 +143,7 @@ def main():
         metadata = dict(commit=os.environ["GITHUB_SHA"], head_sha=pr.get("head", {}).get("sha", os.environ["GITHUB_SHA"]),
                         base_sha=pr.get("base", {}).get("sha"), run_id=os.environ["GITHUB_RUN_ID"],
                         run_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
-    write_reports(args.root.resolve(), args.output, args.inputs, args.unit_result,
+    write_reports(args.root.resolve(), args.output, inputs, args.unit_result,
                   args.integration_result, args.expected_integration, metadata)
     if args.ci:
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:

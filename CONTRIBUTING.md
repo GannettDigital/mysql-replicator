@@ -136,6 +136,12 @@ record these in `code-coverage/profile-status.json`. Missing profiles after a
 normal exit fail collection. Do not interpret absent crash coverage as an
 unexercised path. Failed suites retain the evidence available before cleanup.
 
+CI combines one unit report and twelve integration collections: the sample,
+two profile smoke runs, and nine demo sessions (four forward, five reverse).
+Downloaded report discovery excludes demo `evidence-*` snapshots, which copy
+existing measurements. Duplicate inputs in original collections still fail;
+missing collections or failed suites produce a partial report.
+
 CI uploads raw unit/integration collections, integration evidence, and the four
 scoped reports in `combined-swift-coverage`. It also writes a job summary and a
 small `coverage-summary` artifact. Complete CI coverage requires the unit job

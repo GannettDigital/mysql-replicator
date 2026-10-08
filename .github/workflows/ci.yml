@@ -156,18 +156,13 @@ jobs:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           INTEGRATION_RESULT: ${{ needs.packaging-and-smoke.result }}
         run: |
-          python3 - <<'PY'
-          import os, pathlib, subprocess
-          root = pathlib.Path('artifacts/coverage/downloaded')
-          inputs = sorted(root.rglob('coverage.json'))
-          if not inputs:
-              raise SystemExit('No coverage reports downloaded')
-          # One integration sample plus one shared smoke run per profile.
-          subprocess.run(['python3', 'tools/coverage_report.py', '--ci',
-                          '--unit-result', os.environ['UNIT_RESULT'],
-                          '--integration-result', os.environ['INTEGRATION_RESULT'],
-                          '--expected-integration', '3', *map(str, inputs)], check=True)
-          PY
+          # Sample + two profile smoke runs + four forward/five reverse demo sessions.
+          # Discovery excludes archived demo evidence copies; originals stay strict.
+          python3 tools/coverage_report.py --ci \
+            --downloaded artifacts/coverage/downloaded \
+            --unit-result "$UNIT_RESULT" \
+            --integration-result "$INTEGRATION_RESULT" \
+            --expected-integration 12
       - uses: actions/upload-artifact@v4
         with:
           name: combined-swift-coverage
