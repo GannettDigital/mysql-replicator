@@ -335,7 +335,9 @@ final class StateStore {
     func captureConfiguration(_ source: CaptureConfiguration, remainingTransactions: Int? = nil) throws -> CaptureConfiguration {
         let boundary = applied ?? baseline
         let resumed = source.resuming(file:boundary?.file,position:boundary.map { UInt32($0.position) },executedGTIDs:gtids,remainingTransactions:remainingTransactions)
-        _ = try resumed.validate()
+        // Connection credentials are validated/resolved by the selected input;
+        // offline replay only needs the source identity and durable boundary.
+        _ = try resumed.validate(connection:false)
         return resumed
     }
     static func availableSpace(_ url: URL) throws -> Int64 {

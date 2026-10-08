@@ -32,6 +32,8 @@ sudo -u mysql-replicator mysql-replicator run --config /etc/mysql-replicator/app
 ```
 
 The setup guide also covers checksums, standalone archives and service restarts.
+See [offline replay and support bundles](docs/OFFLINE_REPLAY.md) to test captured
+binlogs against a prepared target and collect troubleshooting evidence.
 
 ## Try the demo
 

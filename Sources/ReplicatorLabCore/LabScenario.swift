@@ -12,6 +12,7 @@ struct LabScenario {
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
         if let reason=variant.reason(profile) { return reason }
+        if id == "offline-replay" && variant == .positionMinimal { return "Offline replay uses GTID positioning; qualified on default and gtid-full variants." }
         if profile == .reverse, let reason=forwardOnlyReason { return reason }
         if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
         if variant == .positionMinimal && id == "ddl-compat-types" { return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full." }
@@ -43,6 +44,7 @@ struct LabScenario {
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",smoke:$0.id == "composite") }
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
+        cases.append(.init(test:.init("offline-replay","Fetch, external raw replay, resume, and sensitive support evidence"),family:"offline"))
         cases.append(.init(test:DDLCompatibilityCases.skipTrigger,family:"policy",intent:"skip definitions; apply row effects",smoke:true))
         cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float","json"].map {
             .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "json")

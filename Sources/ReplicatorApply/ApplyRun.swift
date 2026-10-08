@@ -41,8 +41,9 @@ public enum ApplyRun {
     /// Safe source/target transport failures reconnect from durable applied progress.
     /// Interrupted processes and uncertain target outcomes are never retried.
     public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
-                           initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(), emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
-        try configuration.validate()
+                           initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(), archive: ArchiveReplay? = nil, emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
+        try configuration.validate(offline:archive != nil)
+        if archive != nil { try require(configuration.source.mode == "gtid","offline replay requires GTID positioning") }
         let profile = configuration.replicationProfile
         let legacyMetadata = profile.sourceContract.requiresHistoricalSchema
         let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
@@ -66,7 +67,7 @@ public enum ApplyRun {
             ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
                 appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:["RUNNING","DRAINING"].contains(lifecycle) ? nil : finalTimings(),
                 pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
-                sourceReconnectEnabled:configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
+                sourceReconnectEnabled:archive == nil && configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
                 targetReconnectEnabled:configuration.targetReconnectPolicy.enabled,targetReconnectAttempts:targetRetry.attempts,
                 targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled)
         }
@@ -78,6 +79,7 @@ public enum ApplyRun {
         let initialTransactions = state.transactions
         var started = false
         do {
+          if let archive { try archive.validate(baseline:state.gtids) }
           while true {
            do {
             let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
@@ -223,11 +225,18 @@ public enum ApplyRun {
                         try send(.schema(request))
                         return try request.wait(cancellation:stop)
                     } : nil
+                    if let archive {
+                        try archive.run(configuration:capture,cancellation:stop,
+                            emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
+                            resolveSchema:resolver,timings:producerTimings,
+                            ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                    } else {
                     _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:stop,
                         emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
                         resolveSchema:resolver,
                         timings:producerTimings,onIdle:{ try send(.idle) },allowDDL:true,
                         ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) },sourceContract:profile.sourceContract)
+                    }
                 },consume:{ message in
                     if drain.isCancelled { throw ApplyDrainRequested() }
                     try timings.measure("apply.consume") {

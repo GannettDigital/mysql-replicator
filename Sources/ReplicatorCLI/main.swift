@@ -27,6 +27,9 @@ func main() throws {
                mysql-replicator inspect --source-config SOURCE.yaml [--transactions] [--include-raw]
                mysql-replicator inspect-relay FILE [--include-raw]
                mysql-replicator run --config APPLY.yaml [--initialize]
+               mysql-replicator fetch --config APPLY.yaml
+               mysql-replicator replay --config APPLY.yaml [--initialize]
+               mysql-replicator support-bundle --config APPLY.yaml
                mysql-replicator blackhole --source-config SOURCE.yaml
                mysql-replicator skip GTID_SET --config APPLY.yaml
                mysql-replicator recovery inspect --config APPLY.yaml
@@ -38,6 +41,8 @@ func main() throws {
         Rows require historical signedness/encoding tied to table-map positions.
         Live inspection is read-only and has no durable checkpoint or automatic reconnect.
         run applies qualified DML/DDL; --initialize creates new state from the configured baseline.
+        fetch archives a finite source binlog range; replay applies local raw binlogs without source access.
+        support-bundle collects sensitive local evidence while the applier is stopped; never uploads it.
         Without --initialize, run resumes clean STOPPED state from SQLite.
         skip excludes the captured failed GTID only when no target write intents exist; leaves STOPPED.
         Source and safe target reconnect are automatic; uncertain writes remain blocked.
@@ -109,10 +114,29 @@ func main() throws {
         try FileHandle.standardOutput.write(contentsOf:encoder.encode(summary) + Data([10]))
         return
     }
-    if args.first == "run" {
-        guard (args.count == 3 || (args.count == 4 && args[3] == "--initialize")), args[1] == "--config" else { throw ApplyError("use run --config APPLY.yaml [--initialize]") }
+    if args.first == "fetch" || args.first == "support-bundle" {
+        guard args.count == 3,args[1] == "--config" else { throw CaptureError("use fetch|support-bundle --config FILE.yaml") }
+        let file=URL(fileURLWithPath:args[2]),encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
+        let data:Data
+        if args[0] == "fetch" {
+            struct Config:Decodable { let source:CaptureConfiguration;let profile:ReplicationProfile?;let archive:ArchiveConfiguration }
+            let c=try ConfigurationFile.load(Config.self,from:file)
+            let password=try PasswordConfiguration.resolve(password:c.source.password,environmentVariable:c.source.passwordEnvironment,endpoint:"source")
+            let contract:SourceContract = c.profile == .mysql57To84InnoDB ? .mysql57 : .mysql84
+            data=try encoder.encode(ArchiveFetch.run(source:c.source,password:password,archive:c.archive,contract:contract))
+        } else {
+            let c=try ConfigurationFile.load(SupportBundleConfiguration.self,from:file)
+            data=try encoder.encode(SupportBundle.run(configuration:c,redactedConfiguration:ConfigurationFile.diagnosticJSON(from:file),version:ReleaseVersion.current))
+        }
+        try FileHandle.standardOutput.write(contentsOf:data+Data([10]));return
+    }
+    if args.first == "run" || args.first == "replay" {
+        guard (args.count == 3 || (args.count == 4 && args[3] == "--initialize")), args[1] == "--config" else { throw ApplyError("use run|replay --config APPLY.yaml [--initialize]") }
         let config = try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:args[2]))
-        let sourcePassword=try PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
+        let offline=args[0] == "replay"
+        struct ArchiveOptions:Decodable { let archive:ArchiveConfiguration }
+        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.load(ArchiveOptions.self,from:URL(fileURLWithPath:args[2])).archive,source:config.source,contract:config.profile == .mysql57To84InnoDB ? .mysql57 : .mysql84,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty) : nil
+        let sourcePassword=try offline ? "" : PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
         let targetPassword=try PasswordConfiguration.resolve(password:config.target.password,environmentVariable:config.target.passwordEnvironment,endpoint:"target")
         let cancellation = CaptureCancellation(), drain = CaptureCancellation()
         signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGUSR1,SIG_IGN)
@@ -122,7 +146,7 @@ func main() throws {
         }
         defer { signals.forEach { $0.cancel() } }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
-        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,
+        let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,archive:archive,
             emitProgress: { try FileHandle.standardOutput.write(contentsOf:encoder.encode($0) + Data([10])) })
         try FileHandle.standardError.write(contentsOf:encoder.encode(summary) + Data([10]))
         return

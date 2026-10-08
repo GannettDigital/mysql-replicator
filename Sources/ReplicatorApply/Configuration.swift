@@ -212,9 +212,9 @@ public struct ApplyConfiguration: Decodable {
     var reconnectPolicy: SourceReconnectPolicy { sourceReconnect ?? .init() }
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
-    public func validate() throws {
+    public func validate(offline: Bool = false) throws {
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
-        _ = try source.validate()
+        _ = try source.validate(connection:!offline)
         try target.validate()
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")

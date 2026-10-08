@@ -13,7 +13,7 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,76+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
+        XCTAssertEqual(cases.count,77+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         do {
             let smoke=try LabScenario.select(tier:"smoke",family:nil,ids:[])

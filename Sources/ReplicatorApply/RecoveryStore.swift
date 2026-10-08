@@ -19,7 +19,7 @@ final class RecoveryStore {
     private var sql: SQLiteStatementCache?
     private let writable: Bool
     init(configuration: ApplyConfiguration, writable: Bool) throws {
-        try configuration.validate()
+        try configuration.validate(offline:true)
         try require(configuration.replicationProfile == .mysql57To84InnoDB,"recovery currently supports only the reverse InnoDB profile")
         self.configuration = configuration; self.writable = writable
         directory = URL(fileURLWithPath:configuration.stateDirectory)

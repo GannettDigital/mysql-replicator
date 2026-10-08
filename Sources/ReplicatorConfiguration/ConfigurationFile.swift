@@ -6,6 +6,13 @@ import Yams
 public enum ConfigurationFile {
     public static let maximumBytes = 1024 * 1024
 
+    /// Preserve operational settings without exporting credential fields. Never
+    /// read the referenced environment variables or TLS files for diagnostics.
+    public static func diagnosticJSON(from url: URL) throws -> Data {
+        let value=try load(DiagnosticValue.self,from:url)
+        return try JSONSerialization.data(withJSONObject:value.redacted,options:[.prettyPrinted,.sortedKeys,.fragmentsAllowed])
+    }
+
     public static func load<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
         guard ["yaml", "yml"].contains(url.pathExtension.lowercased()) else {
             throw ConfigurationError("configuration must be a .yaml or .yml file; convert legacy JSON configuration to YAML")
@@ -44,6 +51,32 @@ public enum ConfigurationFile {
             }
             let path=context.codingPath.map(\.stringValue).joined(separator:".")
             throw ConfigurationError("configuration \(path.isEmpty ? "root" : path): \(detail)")
+        }
+    }
+}
+
+private indirect enum DiagnosticValue: Decodable {
+    case scalar(Any), array([DiagnosticValue]), object([String:DiagnosticValue])
+    init(from decoder:Decoder) throws {
+        let c=try decoder.singleValueContainer()
+        if c.decodeNil() { self = .scalar(NSNull()) }
+        else if let v=try? c.decode([String:DiagnosticValue].self) { self = .object(v) }
+        else if let v=try? c.decode([DiagnosticValue].self) { self = .array(v) }
+        else if let v=try? c.decode(Bool.self) { self = .scalar(v) }
+        else if let v=try? c.decode(Int64.self) { self = .scalar(v) }
+        else if let v=try? c.decode(Double.self),v.isFinite { self = .scalar(v) }
+        else { self = .scalar(try c.decode(String.self)) }
+    }
+    var redacted:Any {
+        switch self {
+        case .scalar(let value): return value
+        case .array(let values): return values.map(\.redacted)
+        case .object(let values):
+            return values.reduce(into:[String:Any]()) { out,pair in
+                let key=pair.key.lowercased().filter { $0.isLetter }
+                if ["password","secret","token","privatekey"].contains(where:{key.contains($0)}) { out[pair.key]="<excluded>" }
+                else { out[pair.key]=pair.value.redacted }
+            }
         }
     }
 }

@@ -47,8 +47,8 @@ public struct CaptureConfiguration: Decodable {
             idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
     }
 
-    public func validate() throws -> DumpStart {
-        try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source")
+    public func validate(connection: Bool = true) throws -> DumpStart {
+        if connection { try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source") }
         guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
               !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,

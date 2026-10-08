@@ -230,4 +230,11 @@ final class StreamProcessor {
         try assembler!.finish()
         finished = true
     }
+    /// Only the archive reader calls this, after checksum and complete-group
+    /// validation. Historical covered rows need no target schema lookup.
+    func skipArchivedGroup(to boundary: BinlogCoordinate) throws {
+        guard let assembler, let cursor, cursor.file == boundary.file else { throw CaptureError("archive exclusion without format context") }
+        try assembler.advanceExcludedRange(to:boundary)
+        self.cursor=boundary
+    }
 }
