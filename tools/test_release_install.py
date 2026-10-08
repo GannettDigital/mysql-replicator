@@ -8,8 +8,29 @@ import tarfile
 import tempfile
 import unittest
 
-from release_image import checked_asset
+from release_image import checked_asset, update_checksum
 from release_version import ROOT
+
+
+class ChecksumTests(unittest.TestCase):
+    def test_image_checksum_update_tolerates_blank_lines_and_preserves_other_assets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / 'binary.tar.gz'
+            binary.write_bytes(b'binary archive')
+            image = root / 'image.tar.gz'
+            image.write_bytes(b'image archive')
+            binary_record = hashlib.sha256(binary.read_bytes()).hexdigest() + '  ' + binary.name
+            sums = root / 'SHA256SUMS'
+            sums.write_text('\n' + binary_record + '\n \t\n' + '0' * 64 + '  ' + image.name + '\n\n')
+            update_checksum(root, image)
+            updated = sums.read_text()
+            self.assertEqual(checked_asset(root, binary.name), binary)
+            self.assertEqual(checked_asset(root, image.name), image)
+            self.assertEqual(len(updated.splitlines()), 2)
+            self.assertIn(binary_record, updated)
+            update_checksum(root, image)
+            self.assertEqual(sums.read_text(), updated)
 
 
 class InstallerTests(unittest.TestCase):

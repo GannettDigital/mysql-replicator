@@ -23,6 +23,14 @@ def checked_asset(directory, name):
     return path
 
 
+def update_checksum(directory, asset):
+    checksum = hashlib.sha256(asset.read_bytes()).hexdigest()
+    sums = directory / 'SHA256SUMS'
+    lines = [line for line in sums.read_text().splitlines()
+             if line.split() and line.split()[-1] != asset.name]
+    sums.write_text('\n'.join(lines + [f'{checksum}  {asset.name}']) + '\n')
+
+
 def command(*args):
     return subprocess.check_output(args, text=True).strip()
 
@@ -94,11 +102,7 @@ def main():
         subprocess.run(['docker', 'save', '--output', str(context / 'image.tar'), image], check=True)
         with image_archive.open('wb') as output_file:
             subprocess.run(['gzip', '-n', '-c', str(context / 'image.tar')], stdout=output_file, check=True)
-        checksum = hashlib.sha256(image_archive.read_bytes()).hexdigest()
-        sums = release / 'SHA256SUMS'
-        lines = [line for line in sums.read_text().splitlines()
-                 if line.split()[-1] != image_archive.name]
-        sums.write_text('\n'.join(lines + [f'{checksum}  {image_archive.name}']) + '\n')
+        update_checksum(release, image_archive)
         print(f'Verified {image}: archive binary {expected}; saved {image_archive.name}')
 
 
