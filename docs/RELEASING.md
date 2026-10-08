@@ -8,8 +8,9 @@ Only Linux x86_64 binaries and Linux/amd64 containers are distributed.
 ## Review and merge beta.2
 
 This stack groups all changes after upstream commit `d7588a6` (the beta.1 stack)
-into feature increments. Each PR targets the preceding branch; the final PR is
-specifically the release PR, including version, release notes and operator docs.
+into feature increments. Each PR targets the preceding branch. The release PR
+contains the version, release notes and operator docs; CI optimization follows
+it as the final qualification layer.
 
 | Order | Branch | Scope |
 | --- | --- | --- |
@@ -22,11 +23,13 @@ specifically the release PR, including version, release notes and operator docs.
 | 7 | `beta/2/07-process-controls` | Exact GTID stops and acknowledged status/stop/reload |
 | 8 | `beta/2/08-distribution` | Checksummed installer, tested production image and GHCR promotion |
 | 9 | `beta/2/09-release` | Release `0.1.0-beta.2`, notes, install guide and README |
+| 10 | `beta/2/10-ci-performance` | Cached builds, shared artifacts and parallel integration qualification |
 
 The first PR targets `main`. Creating dependent PRs does not itself register a
 native GitHub stack: register the ordered PR numbers using the
 [stack API](https://docs.github.com/en/rest/pulls/stacks#create-a-pull-request-stack).
-Beta.2 PRs #11–#19 are registered as native stack #20.
+Beta.2 PRs #11–#19 are registered as native stack #20. After pushing the CI
+branch, `open-prs.sh` creates its PR above #19 and appends it to the same stack.
 
 Review and merge from the bottom using GitHub's stack controls, waiting for green
 checks. Merging a higher layer also merges its unmerged predecessors. GitHub

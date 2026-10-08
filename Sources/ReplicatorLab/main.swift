@@ -24,6 +24,7 @@ func main() throws -> Int32 {
                     [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
                     [--sample-seconds N] [--timeout N]
         Specialized and compatibility entry points:
+          build-inputs # source/fixture digest for prebuilt CI images
           native-suite [--positioning auto|file-position|both]
           native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
                        [--native-engine MyISAM|InnoDB] [--native-init-automatic]
@@ -47,6 +48,10 @@ func main() throws -> Int32 {
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
+    if command == "build-inputs" {
+        try require(args.isEmpty,"build-inputs accepts no arguments")
+        print(try LabBuild.inputDigest(root:root)); return 0
+    }
     if command == "demo" { try LabDemo.run(root:root,arguments:args); return 0 }
     if command == "test" { try LabTests.run(root:root,arguments:args); return 0 }
     if command.hasPrefix("demo-") || command.hasPrefix("reverse-demo-") {

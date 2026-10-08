@@ -1,9 +1,12 @@
 import Foundation
 
-enum LabBuild {
+public enum LabBuild {
+    public static func inputDigest(root: URL) throws -> String {
+        try DDLCoverageEvidence.digest(DDLCoverageEvidence.inputs(root:root))
+    }
     static func prepare(root: URL, build: Bool, coverage: Bool, demo: Bool = false) throws -> String {
         let runner=ProcessRunner(root:root), tag=coverage ? CodeCoverage.image : (demo ? "mysql-replicator-packaging:lab-demo" : "mysql-replicator-packaging:lab")
-        let digest=try DDLCoverageEvidence.digest(DDLCoverageEvidence.inputs(root:root))
+        let digest=try inputDigest(root:root)
         let labels=["--label",DDLCoverageEvidence.imageLabel+"="+digest]
         if build {
             if coverage { try CodeCoverage.build(runner,labels:labels) }

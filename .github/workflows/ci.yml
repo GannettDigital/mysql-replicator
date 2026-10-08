@@ -17,7 +17,7 @@ concurrency:
 jobs:
   unit-tests:
     name: Unit Tests & Catalog Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -30,6 +30,16 @@ jobs:
         with:
           swift-version: '6.2.1'
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .build/code-coverage
+            rust/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
       - name: Check release version consistency
         run: python3 tools/release_version.py
 
@@ -49,43 +59,166 @@ jobs:
           if-no-files-found: error
 
       - name: Verify DDL coverage catalog
-        run: make ddl-catalog-check
+        run: .build/code-coverage/debug/replicator-lab ddl-catalog check
 
-  packaging-and-smoke:
-    name: Debian Packaging & Integration Smoke
+  lab-tools:
+    name: Build shared lab runner
     runs-on: ubuntu-24.04
+    outputs:
+      inputs: ${{ steps.bundle.outputs.inputs }}
+      matrix: ${{ steps.bundle.outputs.matrix }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
         with:
           swift-version: '6.2.1'
-
-      - name: Build and verify Linux release packages
-        run: make release-artifacts
-
-      - name: Build and verify the production image from the release archive
-        run: make release-image
-
-      - name: Upload Linux release artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/cache@v4
         with:
-          name: linux-release-packages
+          path: .build/ci-lab
+          key: lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v1-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v1-${{ hashFiles('Package.resolved') }}-
+      - name: Build and bundle lab with its runtime libraries
+        id: bundle
+        run: |
+          swift build --scratch-path .build/ci-lab --product replicator-lab --force-resolved-versions
+          python3 tools/ci_lab.py --bundle .build/ci-lab/debug/replicator-lab
+      - uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: ci-lab
           path: |
-            artifacts/release/
+            artifacts/ci/lab.tar.gz
+            artifacts/ci/lab.sha256
+          compression-level: 0
+          retention-days: 7
           if-no-files-found: error
 
+  build-images:
+    name: Build ${{ matrix.image }} once
+    needs: lab-tools
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [release, coverage]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Restore/save mount contents as well as Docker layers. A gha layer cache
+      # alone does not persist SwiftPM/Cargo RUN --mount=type=cache directories.
+      # Post steps run in reverse order: extract mounts before saving this cache.
+      - uses: actions/cache@v4
+        with:
+          path: .ci-cache
+          key: docker-${{ matrix.image }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'packaging/Probe/Package.resolved', '**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            docker-${{ matrix.image }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'packaging/Probe/Package.resolved', '**/Cargo.lock') }}-
+      - uses: reproducible-containers/buildkit-cache-dance@e475a9cbcb5052f85fd3830f1266fa0c91ef8595
+        with:
+          dockerfile: ${{ matrix.image == 'release' && 'docker/packaging/Dockerfile' || 'docker/coverage/Dockerfile' }}
+          cache-dir: .ci-cache
+      - name: Build and verify Linux packages
+        if: matrix.image == 'release'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/packaging/Dockerfile
+          target: release-export
+          platforms: linux/amd64
+          outputs: type=local,dest=artifacts/release
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,scope=release,mode=max
+      - name: Export the tested release runtime
+        if: matrix.image == 'release'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/packaging/Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          tags: mysql-replicator-packaging:lab
+          labels: org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
+          load: true
+      - name: Verify production image and identical integration binary
+        if: matrix.image == 'release'
+        run: |
+          make release-image
+          python3 tools/verify_release_binary.py
+      - name: Build instrumented runtime and matching LLVM exporter
+        if: matrix.image == 'coverage'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/coverage/Dockerfile
+          platforms: linux/amd64
+          tags: mysql-replicator:coverage
+          labels: org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
+          load: true
+          cache-from: type=gha,scope=coverage
+          cache-to: type=gha,scope=coverage,mode=max
+      - name: Save image for test jobs
+        env:
+          IMAGE: ${{ matrix.image == 'release' && 'mysql-replicator-packaging:lab' || 'mysql-replicator:coverage' }}
+        run: |
+          mkdir -p artifacts/ci/image
+          docker save "$IMAGE" | gzip -1 > artifacts/ci/image/image.tar.gz
+          cd artifacts/ci/image
+          sha256sum image.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: ci-image-${{ matrix.image }}
+          path: artifacts/ci/image/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.image == 'release'
+        with:
+          overwrite: true
+          name: linux-release-packages
+          path: artifacts/release/
+          compression-level: 0
+          if-no-files-found: error
+
+  integration:
+    name: Integration (${{ matrix.id }})
+    needs: [lab-tools, build-images]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.lab-tools.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-lab
+          path: artifacts/ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-image-${{ matrix.image }}
+          path: artifacts/ci/image
+      - uses: actions/download-artifact@v4
+        if: matrix.image == 'release'
+        with:
+          name: linux-release-packages
+          path: artifacts/release
+      - name: Verify and load prebuilt tools
+        run: |
+          cd artifacts/ci
+          sha256sum --check lab.sha256
+          tar -xzf lab.tar.gz
+          cd image
+          sha256sum --check SHA256SUMS
+          docker load --input image.tar.gz
       - name: Install integration test tools
         run: |
           sudo apt-get update
           sudo apt-get install -y sqlite3 openssl zlib1g libstdc++6
-
       - name: Set up MySQL 8.4 reference decoder
         run: |
-          # mysqlbinlog ships in server-core; extract it without installing a server.
-          # Match the 8.4.8 fixtures, independent of Ubuntu's default MySQL version.
           cd "$RUNNER_TEMP"
           curl --fail --show-error --location --retry 3 \
             https://repo.mysql.com/apt/ubuntu/pool/mysql-8.4-lts/m/mysql-community/mysql-community-server-core_8.4.8-1ubuntu24.04_amd64.deb \
@@ -94,60 +227,51 @@ jobs:
           dpkg-deb --extract mysql-server-core.deb mysql-reference
           "$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" --no-defaults --version
           echo "MYSQLBINLOG=$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" >> "$GITHUB_ENV"
-
-      - name: Run DML and DDL integration sample
-        run: make integration-smoke
-
-      - name: Verify integration exercised the release binary
-        run: python3 tools/verify_release_binary.py
-
-      - name: Run the same correctness smoke on both profiles
-        run: |
-          make correctness TIER=smoke ARGS="--skip-build"
-
-      - name: Qualify source and target reconnect on both profiles
-        run: make lab-test ARGS="--suite lifecycle --skip-build"
-
-      - name: Retain specialized reverse recovery qualification
-        run: |
-          docker tag mysql-replicator-packaging:lab mysql-replicator-packaging:reverse
-          make reverse-suite ARGS="--skip-build --events 0"
-
-      - name: Measure applier coverage on DML and DDL sample
-        run: make integration-smoke ARGS="--coverage"
-
-      - name: Measure shared applier coverage on both profiles
-        run: make correctness TIER=smoke ARGS="--coverage --skip-build"
-
-      - name: Qualify shared demos and measure their applier coverage on both profiles
-        run: make lab-test ARGS="--suite demo --coverage --skip-build"
-
-      - name: Upload portable integration coverage
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Run shared scenario shard
+        env:
+          SHARD: ${{ matrix.id }}
+        run: python3 tools/ci_lab.py --run "$SHARD"
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.image == 'coverage'
         with:
-          name: coverage-integration
           overwrite: true
+          name: coverage-integration-${{ matrix.id }}
           path: |
             artifacts/lab/**/code-coverage/combined/coverage.json
+            !artifacts/lab/**/evidence-*/**
           if-no-files-found: error
-
-      - name: Upload integration evidence
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: integration-evidence
+          overwrite: true
+          name: integration-evidence-${{ matrix.id }}
           path: |
             artifacts/lab/
             artifacts/reverse-suite/
           if-no-files-found: ignore
 
+  packaging-and-smoke:
+    # Preserve the required check name while the underlying work is sharded.
+    name: Debian Packaging & Integration Smoke
+    needs: [lab-tools, build-images, integration]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all builds and integration shards
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          assert all(job['result'] == 'success' for job in results.values()), results
+          PY
+
   combined-coverage:
     name: Combined Swift Coverage
-    needs: [unit-tests, packaging-and-smoke]
-    # Preserve useful partial evidence on failure, but do not call it complete.
+    needs: [lab-tools, unit-tests, packaging-and-smoke]
     if: always() && !cancelled()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -159,25 +283,22 @@ jobs:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           INTEGRATION_RESULT: ${{ needs.packaging-and-smoke.result }}
         run: |
-          # Sample + two profile smoke runs + four forward/five reverse demo sessions.
-          # Discovery excludes archived demo evidence copies; originals stay strict.
+          reports=$(python3 -c 'import json; print(sum(s["reports"] for s in json.load(open("tools/ci_matrix.json"))["include"]))')
           python3 tools/coverage_report.py --ci \
             --downloaded artifacts/coverage/downloaded \
             --unit-result "$UNIT_RESULT" \
             --integration-result "$INTEGRATION_RESULT" \
-            --expected-integration 12
+            --expected-integration "$reports"
       - uses: actions/upload-artifact@v4
         with:
-          name: combined-swift-coverage
           overwrite: true
+          name: combined-swift-coverage
           path: artifacts/coverage/combined/
           if-no-files-found: error
-
-      - name: Upload small PR summary
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: coverage-summary
           overwrite: true
+          name: coverage-summary
           path: artifacts/coverage/combined/metrics.json
           if-no-files-found: error
 
@@ -190,6 +311,16 @@ jobs:
       - uses: swift-actions/setup-swift@v2
         with:
           swift-version: '6.2.1'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .build/periphery
+            rust/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
       - name: Install pinned Periphery
         run: |
           cd "$RUNNER_TEMP"
@@ -200,4 +331,7 @@ jobs:
           unzip -q periphery.zip
           echo "$RUNNER_TEMP/periphery-3.5.1.artifactbundle/periphery-3.5.1-macos/bin" >> "$GITHUB_PATH"
       - name: Reject unused declarations
-        run: make periphery
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --locked
+          swift build --scratch-path .build/periphery --build-tests --enable-index-store --force-resolved-versions
+          periphery scan --strict --skip-build --index-store-path .build/periphery/debug/index/store

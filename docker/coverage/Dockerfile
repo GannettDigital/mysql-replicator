@@ -16,8 +16,8 @@ COPY tests tests
 COPY rust rust
 COPY tools/code_coverage.py tools/code_coverage.py
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=coverage-rust-amd64,target=/workspace/rust/target,sharing=locked \
-    --mount=type=cache,id=coverage-swift-amd64,target=/workspace/.build,sharing=locked \
+    --mount=type=cache,target=/workspace/rust/target,sharing=locked \
+    --mount=type=cache,target=/workspace/.build,sharing=locked \
     cargo build --manifest-path rust/Cargo.toml --locked \
     && rm -f .build/x86_64-unknown-linux-gnu/release/mysql-replicator \
     && swift build --product mysql-replicator --configuration release --enable-code-coverage --jobs 2 --force-resolved-versions \

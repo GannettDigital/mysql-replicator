@@ -145,10 +145,38 @@ missing collections or failed suites produce a partial report.
 CI uploads raw unit/integration collections, integration evidence, and the four
 scoped reports in `combined-swift-coverage`. It also writes a job summary and a
 small `coverage-summary` artifact. Complete CI coverage requires the unit job
-and packaging/integration job to succeed, with all three selected instrumented
-fixture reports: the integration sample plus shared smoke on both profiles.
+and packaging/integration gate to succeed, with all twelve selected instrumented
+fixture reports. Each coverage shard also checks its own expected report count.
 Other CI checks, such as reconnect tests, currently run without instrumentation.
 Weekly full qualification is separate and does not contribute to this percentage.
+
+CI builds the lab executable once, bundles its Linux runtime libraries, and
+builds the release and instrumented images in parallel. Eleven profile/suite
+shards then run with `--skip-build`, at most six at a time. Dependent operations
+within a scenario remain sequential. `tools/ci_matrix.json` defines both the
+shards and their coverage expectations; `tools/ci_lab.py` runs the same lab
+commands used locally. The existing **Debian Packaging & Integration Smoke**
+check is an aggregate gate requiring every build and shard to pass.
+
+Test jobs verify archive checksums and the lab source/fixture fingerprint, and
+release shards check that their applier matches the release archive binary.
+The instrumented image retains its matching LLVM exporter. Artifacts are scoped
+to the workflow run; individual shard evidence has a distinct artifact name.
+The release workflow still promotes the exact packages from successful main CI.
+
+SwiftPM/Cargo build caches are separated by OS, architecture, toolchain, build
+variant and dependency locks. Docker builds persist both layer caches and cache
+mount contents; caching layers alone does not preserve compiler intermediates.
+Unit coverage clears old counters and forces relinking after Rust builds.
+Periphery uses the current incremental build's index store, rather than cleaning
+and recompiling it. The packaging probe has an independent Docker stage so
+application-only edits leave it cached. Main CI populates shared caches; PR
+merge-ref caches are normally reusable only by that PR. Cold builds remain valid.
+
+Compare both cold and warm Actions runs after changing CI. Record build, image
+transfer and shard times separately: splitting jobs adds image downloads, and
+organization runner queues can dominate a large PR stack. The initial targets
+are 10–15 minutes warm and 20–30 minutes cold, subject to measurement on Actions.
 
 A separate `Coverage PR Comment` workflow updates one comment per PR, including
 fork PRs. It runs trusted default-branch code and reads only bounded JSON metadata

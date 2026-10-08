@@ -11,13 +11,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 RUN curl -fsSL https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip -o /tmp/sqlite.zip \
     && echo '1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d  /tmp/sqlite.zip' | sha256sum -c - \
     && unzip -q /tmp/sqlite.zip -d /opt && mv /opt/sqlite-amalgamation-3530400 /opt/sqlite && rm /tmp/sqlite.zip
-FROM toolchain AS build
+FROM toolchain AS probe
 WORKDIR /workspace
 COPY packaging/Probe/Package.swift packaging/Probe/Package.resolved packaging/Probe/
 RUN --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked swift package --package-path packaging/Probe resolve --force-resolved-versions
 COPY packaging/rust packaging/rust
-COPY tests tests
+COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog tests/ReplicatorLabTests/Fixtures/source-positive.binlog
 COPY packaging/Probe/Sources packaging/Probe/Sources
+COPY packaging/Makefile packaging/
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target,sharing=locked --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked make -f packaging/Makefile probe
+
+# Application edits do not invalidate the independent ABI/dependency probe.
+FROM probe AS build
+COPY tests tests
 COPY packaging/debian packaging/debian
 COPY packaging/Makefile packaging/collect_notices.py packaging/install.sh packaging/
 COPY packaging/licenses packaging/licenses

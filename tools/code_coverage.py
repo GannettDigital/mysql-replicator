@@ -192,7 +192,8 @@ def unit(root, output):
     output.mkdir(parents=True)
     environment = dict(os.environ, REPLICATOR_TEST_BINARY_DIR=str(scratch / "debug"),
                        LLVM_PROFILE_FILE=str(output / "raw/%p-%m.profraw"))
-    command = ["swift", "test", "--scratch-path", scratch, "--enable-code-coverage", "--enable-index-store"]
+    command = ["swift", "test", "--scratch-path", scratch, "--enable-code-coverage", "--enable-index-store",
+               "--force-resolved-versions"]
     status = subprocess.run([str(a) for a in command], cwd=root, env=environment).returncode
     # swift test chooses its own profile directory; include CLI subprocess profiles too.
     binaries = [scratch / "debug/mysql-replicator", scratch / "debug/replicator-lab"]
