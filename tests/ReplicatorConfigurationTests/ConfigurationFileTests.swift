@@ -22,6 +22,19 @@ final class ConfigurationFileTests: XCTestCase {
         XCTAssertFalse(config.target.explicitTableLocks); XCTAssertTrue(config.target.requireTLS)
         XCTAssertEqual(config.source.downloadCacheBytes,nil)
     }
+    func testTargetVerifyCAYAMLAndReloadIdentity() throws {
+        let original = try example()
+        let text = original.replacingOccurrences(of:"serverHostname: REPLACE_TARGET_TLS_HOSTNAME",with:"tlsVerification: verify-ca")
+        let config = try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(text.utf8))
+        try config.validate()
+        XCTAssertEqual(config.target.tlsVerification, .verifyCA)
+        XCTAssertNil(config.target.serverHostname)
+        XCTAssertEqual(config.target.caFile, "/REPLACE/target-ca.pem")
+        XCTAssertEqual(config.source.serverHostname, "REPLACE_SOURCE_TLS_HOSTNAME")
+        XCTAssertNotEqual(try ConfigurationFile.reloadIdentity(from:Data(original.utf8)),
+                          try ConfigurationFile.reloadIdentity(from:Data(text.utf8)))
+    }
+
     func testYAMLAndYMLExtensionsAndLegacyFilenameRejection() throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)

@@ -195,7 +195,7 @@ TimeoutStopSec=30min
 ```
 
 Then run `sudo systemctl daemon-reload`. Choose the limit for your workload:
-`target.ddlTimeoutSeconds` alone can be configured up to 24 hours, and draining
+`ddlTimeoutSeconds` alone can be configured up to 24 hours, and draining
 may include several operations. Thirty minutes is an example, not a universal
 safe bound. For planned maintenance, drain and verify `STOPPED` before rebooting.
 

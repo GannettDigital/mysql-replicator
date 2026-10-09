@@ -2,7 +2,6 @@ import Foundation
 import MySQLNIO
 import NIOCore
 import NIOPosix
-import NIOSSL
 import ReplicatorCodec
 
 final class TargetSession {
@@ -20,11 +19,9 @@ final class TargetSession {
         do {
             let c = configuration.target
             try c.validate()
-            var tls = TLSConfiguration.makeClientConfiguration(); tls.certificateVerification = .fullVerification
-            if let ca = c.caFile { tls.trustRoots = .file(ca) }
             let address = try c.unixSocket.map { try SocketAddress(unixDomainSocketPath:$0) }
                 ?? SocketAddress.makeAddressResolvingHost(c.host!,port:c.port!)
-            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.requireTLS ? tls : nil,serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
+            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.tlsConfiguration(),serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
         } catch {
             try? group.syncShutdownGracefully()
             let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT

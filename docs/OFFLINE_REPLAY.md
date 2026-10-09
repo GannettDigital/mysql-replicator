@@ -82,6 +82,28 @@ sets with holes, without decoding historical row values against newer schemas.
 SQLite's saved source progress takes precedence on resume. Target-local GTIDs do
 not replace this checkpoint.
 
+Target TCP connections still require TLS. The default
+`target.tlsVerification: verify-identity` verifies the CA chain and requires
+`serverHostname` to match the server certificate. For a target with an
+instance-specific CA but no certificate DNS name (such as some Cloud SQL
+instances), set these fields in your existing `target` section:
+
+```yaml
+target:
+  # Keep host, port, credentials and nativeAutoStartDisabled from your config.
+  tlsVerification: verify-ca
+  caFile: /data/server-ca.pem
+  # serverHostname can be omitted.
+```
+
+`verify-ca` requires an explicit, nonempty `caFile`; it still validates the
+certificate chain and validity period. It skips hostname matching. Trust the
+intended instance's CA: a shared CA alone does not distinguish its instances.
+If supplied, `serverHostname` is used for TLS SNI, not identity matching in this
+mode. This target setting applies to both `run` and `replay`; source TLS settings
+are unchanged. Changing TLS settings requires stopping and restarting the
+applier, rather than `ctl reload`.
+
 The reader validates file ordering, rotation, framing, CRCs, complete transaction
 boundaries, and whether the baseline covers history before the first available
 file. Missing required history, corruption, and a partial last transaction fail.

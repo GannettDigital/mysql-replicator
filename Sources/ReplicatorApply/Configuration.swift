@@ -146,10 +146,15 @@ extension ApplyTable {
     }
 }
 public struct TargetConfiguration: Decodable {
+    public enum TLSVerification: String, Decodable {
+        case verifyIdentity = "verify-identity"
+        case verifyCA = "verify-ca"
+    }
     public let host: String?
     public let port: Int?
     public let unixSocket: String?
     public let requireTLS: Bool
+    public let tlsVerification: TLSVerification
     public let username: String
     public let passwordEnvironment: String?
     public let password: String?
@@ -159,13 +164,14 @@ public struct TargetConfiguration: Decodable {
     public let explicitTableLocks: Bool
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
+    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,tlsVerification,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
         host=try c.decodeIfPresent(String.self,forKey:.host); port=try c.decodeIfPresent(Int.self,forKey:.port)
         unixSocket=try c.decodeIfPresent(String.self,forKey:.unixSocket)
         requireTLS=try c.decodeIfPresent(Bool.self,forKey:.requireTLS) ?? true
+        tlsVerification=try c.decodeIfPresent(TLSVerification.self,forKey:.tlsVerification) ?? .verifyIdentity
         username=try c.decode(String.self,forKey:.username)
         passwordEnvironment=try c.decodeIfPresent(String.self,forKey:.passwordEnvironment)
         password=try c.decodeIfPresent(String.self,forKey:.password)
@@ -183,8 +189,16 @@ public struct TargetConfiguration: Decodable {
             try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
             try require(requireTLS,"target TCP connections require TLS; only a Unix socket may disable TLS")
         }
-        if requireTLS { try require(!(serverHostname ?? "").isEmpty,"target TLS requires serverHostname") }
-        else { try require(serverHostname == nil && caFile == nil,"remove target TLS settings when requireTLS is false") }
+        if requireTLS {
+            if tlsVerification == .verifyIdentity {
+                try require(!(serverHostname ?? "").isEmpty,"target verify-identity TLS requires serverHostname")
+            } else {
+                try require(!(caFile ?? "").isEmpty,"target verify-ca TLS requires an explicit caFile")
+                try require(serverHostname == nil || !serverHostname!.isEmpty,"omit target serverHostname or provide a nonempty TLS name")
+            }
+        } else {
+            try require(serverHostname == nil && caFile == nil && tlsVerification == .verifyIdentity,"remove target TLS settings when requireTLS is false")
+        }
     }
 }
 public struct ApplyConfiguration: Decodable {

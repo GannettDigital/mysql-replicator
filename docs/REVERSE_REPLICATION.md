@@ -22,6 +22,12 @@ GTIDs. The source GTID checkpoint lives exclusively in SQLite. TLS is required
 for TCP connections. Do not configure collation translation or explicit table
 locks for this profile. GTID positioning is required.
 
+Target TLS defaults to `tlsVerification: verify-identity`, requiring a matching
+`serverHostname`. For an instance-specific CA without a certificate DNS name,
+use `target.tlsVerification: verify-ca` and an explicit `target.caFile`;
+`serverHostname` becomes optional. Certificate-chain verification remains enabled.
+See [target TLS configuration](OFFLINE_REPLAY.md) for the YAML example and scope.
+
 Load matching InnoDB tables and data externally, recording a consistent source
 GTID/file/position boundary. Preserve source character sets and collations in
 the destination definitions. MySQL 5.7 does not provide the modern optional
