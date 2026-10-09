@@ -9,18 +9,25 @@ version. macOS and Linux ARM64 binaries are not supplied; those users can
 
 ## Standalone installer
 
-After publication, download the installer from the explicit release:
+Install the newest published release, including betas:
 
 ```sh
-curl -fLO https://github.com/GannettDigital/mysql-replicator/releases/download/v0.1.0-beta.2/install.sh
-sh install.sh --version 0.1.0-beta.2
+curl -fLo install.sh https://raw.githubusercontent.com/GannettDigital/mysql-replicator/main/packaging/install.sh
+sh install.sh
 ~/.local/bin/mysql-replicator --version
 ```
 
 The installer requires Linux x86_64, `curl`, `tar` and coreutils (`sha256sum`).
-It downloads the versioned archive and checks it against the release's
+Automatic selection also requires `jq`: it chooses the most recently published
+release by publication time, including prereleases and excluding drafts. It fails
+if no release is published. For a pinned install, use
+`sh install.sh --version 0.1.0-beta.2`; this does not require `jq` or release discovery.
+The versionless installer URL follows `main`; a reviewed installer can also be
+downloaded from a specific release's assets.
+
+It downloads the selected version's archive and checks it against that release's
 `SHA256SUMS`. It installs the complete distribution, including examples and
-notices, into `~/.local/lib/mysql-replicator/0.1.0-beta.2/` and links the command
+notices, into `~/.local/lib/mysql-replicator/<version>/` and links the command
 from `~/.local/bin/`. Add that directory to `PATH`, or use the full path.
 Use `--prefix /absolute/path` to choose another prefix; no sudo is needed when
 the prefix is writable. It refuses unsupported platforms and unmanaged binaries.

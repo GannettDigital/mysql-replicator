@@ -121,6 +121,11 @@ by organization policy. Test the versioned archive download and installer withou
 GitHub credentials, and pull the GHCR image using a fresh unauthenticated Docker
 configuration. Record the registry digest in the release notes for users who pin
 images. Do not consider container publication complete until that pull works.
+Also test the README's versionless installer command (requires `jq`). It selects
+the most recently published release, including betas, then pins archive/checksum
+downloads to that tag. GitHub's `/releases/latest` excludes prereleases, so the
+README downloads the installer from `main` and the installer queries published
+release metadata. Publishing a new release requires no README version edit.
 If corporate policy prevents public GHCR, the saved image remains downloadable
 from the public release and loadable with `docker load`; document that limitation.
 
