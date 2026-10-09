@@ -19,6 +19,11 @@ test -s "$archive/third-party/manifest.json"
 test -s /usr/share/doc/mysql-replicator/third-party/manifest.json
 test ! -e /var/lib/mysql-replicator/state
 grep -q '^stateDirectory: /var/lib/mysql-replicator/state ' /etc/mysql-replicator/apply.example.yaml
+for example in run.minimal.yaml replay.minimal.yaml; do
+    test -s "$archive/$example"
+    cmp "$archive/$example" "/release/$example"
+    grep -q '^stateDirectory: /var/lib/mysql-replicator/state ' "/usr/share/doc/mysql-replicator/examples/$example"
+done
 grep -q '^User=mysql-replicator$' /lib/systemd/system/mysql-replicator.service
 grep -q '^Restart=no$' /lib/systemd/system/mysql-replicator.service
 # Check the service user can create private state, without starting replication.
@@ -53,4 +58,7 @@ chmod 0755 /installer-bin/curl
 PATH="/installer-bin:$PATH" sh /release/install.sh --version "$version" --prefix /installer-test
 cmp /installer-test/bin/mysql-replicator /usr/bin/mysql-replicator
 test -s "/installer-test/lib/mysql-replicator/$version/third-party/manifest.json"
+for example in run.minimal.yaml replay.minimal.yaml; do
+    cmp "$archive/$example" "/installer-test/lib/mysql-replicator/$version/$example"
+done
 /installer-test/bin/mysql-replicator --version

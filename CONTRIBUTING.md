@@ -231,14 +231,13 @@ artifacts produce an unavailable comparison, not a zero baseline.
 
 Coverage publication uses GitHub Actions summaries, downloadable artifacts and
 PR comments. It does not require GitHub Pages or an external hosting service.
-The README's **Coverage reports** link opens CI runs on `main`. Select a completed
-run to see the percentages in its summary; download `combined-swift-coverage`,
+Open the README's **CI** link and select a completed `main` run to see coverage
+percentages in its summary; download `combined-swift-coverage`,
 extract it, and open `index.html` locally for annotated source and LCOV reports.
 Check the report's completeness status and tested commit before using its numbers.
 Artifacts follow the repository's retention policy.
 
-The generated `runtime.svg` remains inside the report artifact; the README uses a
-results link rather than an externally hosted percentage badge. CI does not write
+The generated `runtime.svg` remains inside the report artifact. CI does not write
 generated files or commits back to the repository. PR comments become active once
 `coverage-comment.yml` is on the default branch. No Pages setting or
 `COVERAGE_PAGES_ENABLED` variable is needed.

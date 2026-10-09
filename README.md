@@ -27,7 +27,11 @@ sh install.sh
 ```
 
 Follow the [setup guide](docs/INSTALL.md) to prepare the target, snapshot boundary,
-TLS and credentials in your `apply.yaml`, then start:
+TLS and credentials in your `apply.yaml`.
+
+Short starting points: [live replication](examples/run.minimal.yaml) or
+[offline replay](examples/replay.minimal.yaml). The [full example](examples/apply.example.yaml)
+documents optional settings. Start live replication with:
 
 ```sh
 ~/.local/bin/mysql-replicator run --config ./apply.yaml --initialize

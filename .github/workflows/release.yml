@@ -77,7 +77,7 @@ jobs:
           cd artifacts/release
           sha256sum --check SHA256SUMS
           # No overwrite/clobber: a previously created release needs manual review.
-          gh release create "$GITHUB_REF_NAME" ./*.deb ./*.tar.gz SHA256SUMS install.sh apply.example.yaml LICENSE NOTICE \
+          gh release create "$GITHUB_REF_NAME" ./*.deb ./*.tar.gz SHA256SUMS install.sh apply.example.yaml run.minimal.yaml replay.minimal.yaml LICENSE NOTICE \
             --verify-tag --draft --prerelease --latest=false \
             --title "Beta release — $version" --notes-file "../../docs/releases/$version.md"
 

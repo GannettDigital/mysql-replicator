@@ -16,3 +16,4 @@ packaging/rust/target/
 
 # temp. plan files
 PLAN/demo/
+PLAN/data/
