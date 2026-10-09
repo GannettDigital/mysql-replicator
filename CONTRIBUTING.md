@@ -184,6 +184,8 @@ application-only edits leave it cached. Main CI populates shared caches; PR
 merge-ref caches are normally reusable only by that PR. Cold builds remain valid.
 
 `tools/swift_cache.py` saves nanosecond timestamps beside each Swift build cache.
+The release build applies it separately to the applier and `packaging/Probe`,
+with the probe's own package directory as the root for its input paths.
 After restoring a cache, it restores timestamps only for files whose SHA-256,
 size and permissions still match. This handles fresh source checkouts and cache
 transports that lose timestamp precision without treating changed inputs as
