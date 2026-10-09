@@ -162,6 +162,9 @@ jobs:
           tags: mysql-replicator-packaging:lab
           labels: org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
           load: true
+          # A cached package export need not populate the builder's intermediate
+          # layers. This separate target must import the external cache too.
+          cache-from: type=gha,scope=release
       - name: Verify production image and identical integration binary
         if: matrix.image == 'release'
         run: |

@@ -177,6 +177,9 @@ These archives are larger, so compare transfer time as well as compilation time.
 
 Docker builds persist both layer caches and cache mount contents; caching
 layers alone does not preserve compiler intermediates.
+Both the package export and the separate runtime-image export explicitly import
+the release layer cache; a hit on the first target does not warm every
+intermediate step needed by the second target.
 Unit coverage clears old counters and forces relinking after Rust builds.
 Periphery uses the current incremental build's index store, rather than cleaning
 and recompiling it. The packaging probe has an independent Docker stage so
