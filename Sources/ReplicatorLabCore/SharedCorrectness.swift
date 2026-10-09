@@ -92,7 +92,8 @@ public enum SharedCorrectness {
                     try forwardFailures()
                     try myisamRecovery()
                     try offline()
-                    try offlineSkipErrors()
+                    try skipErrors(offline:true)
+                    try skipErrors(offline:false)
                     try runtimeControl()
                 }
             } catch {

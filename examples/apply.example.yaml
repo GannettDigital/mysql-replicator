@@ -92,7 +92,7 @@ replicateWildIgnoreTable: []
 # Filtered groups still advance GTIDs; existing target rows are not deleted.
 # DDL spanning included and excluded tables blocks for explicit resolution.
 
-# Optional replay-only error policy; default codes: [] stops on every error.
+# Optional error policy for run and replay; default codes: [] stops on every error.
 # Skip the WHOLE GTID, never just one row. See docs/OFFLINE_REPLAY.md for supported codes.
 # skipErrors:
 #   codes: ['ddl.unsupported_alter', 'mysql.1062'] # Example; 1062 needs confirmed InnoDB rollback.

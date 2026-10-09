@@ -78,6 +78,7 @@ specific refusals are not silently reused with different expectations.
 | `dml-refusals` | Forward `matrix-reject-*`: incompatible metadata, generated values and decoder refusals, with target effects and unchanged checkpoint checks |
 | `discovery` | `ddl-index-resume`: saved indexed schema, resumed DML and external index-drift refusal |
 | `offline` | `offline-replay`: finite fetch, external raw files, replay/resume without source credentials, native comparison, and support-bundle extraction |
+| `policy` | `live-skip-errors`: live capture with optional audit, DDL skip, InnoDB rollback/resume, exact GTID stop and MyISAM refusal |
 | `offline` | `offline-skip-errors`: optional per-GTID audit, DDL skip-and-continue, InnoDB duplicate rollback/resume and MyISAM duplicate refusal |
 | `offline` | `runtime-control`: exact GTID stop/resume, live/offline reload, refusal of checkpoint changes, and acknowledged stop while target writes are blocked |
 | `failures` | `forward-failures`: restricted grants, target SQL errors, uncertain DDL, skip refusal, trigger policies and generated-value divergence |

@@ -253,7 +253,7 @@ public struct ApplyConfiguration: Decodable {
         try batchPolicy.validate()
         try reconnectPolicy.validate()
         try targetReconnectPolicy.validate(endpoint:"target")
-        try skipErrorPolicy.validate(offline:offline)
+        try skipErrorPolicy.validate()
     }
 }
 

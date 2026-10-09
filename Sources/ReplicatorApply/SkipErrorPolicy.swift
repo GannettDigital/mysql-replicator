@@ -22,8 +22,7 @@ public struct SkipErrorPolicy: Decodable {
         codes=try c.decodeIfPresent([ApplyErrorCode].self,forKey:.codes) ?? []
         recordSkippedTransactions=try c.decodeIfPresent(Bool.self,forKey:.recordSkippedTransactions) ?? true
     }
-    func validate(offline: Bool) throws {
-        try require(offline || codes.isEmpty,"skipErrors is supported only by replay")
+    func validate() throws {
         try require(Set(codes).count == codes.count && !codes.contains(.targetSQL),"skipErrors requires distinct, supported error codes; target.sql is not skippable")
     }
     enum Boundary { case beforeWrites, rolledBack }

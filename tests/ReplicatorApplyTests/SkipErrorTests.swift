@@ -10,14 +10,16 @@ extension ApplyTests {
     private func skipPolicy(_ codes: [String], audit: Bool = true) throws -> SkipErrorPolicy {
         try JSONDecoder().decode(SkipErrorPolicy.self,from:JSONSerialization.data(withJSONObject:["codes":codes,"recordSkippedTransactions":audit]))
     }
-    func testSkipErrorPolicyRequiresExplicitKnownCodesAndReplay() throws {
+    func testSkipErrorPolicyRequiresExplicitKnownCodesInRunAndReplay() throws {
         XCTAssertTrue(try config().skipErrorPolicy.codes.isEmpty)
         XCTAssertTrue(try config().skipErrorPolicy.recordSkippedTransactions)
         let c=try config(skipErrors:["codes":["mysql.1062"],"recordSkippedTransactions":false])
-        XCTAssertThrowsError(try c.validate())
+        XCTAssertNoThrow(try c.validate())
         XCTAssertNoThrow(try c.validate(offline:true))
         for codes in [["all"],["target.sql"],["mysql.1062","mysql.1062"]] {
-            XCTAssertThrowsError(try config(skipErrors:["codes":codes]).validate(offline:true))
+            for offline in [false,true] {
+                XCTAssertThrowsError(try config(skipErrors:["codes":codes]).validate(offline:offline))
+            }
         }
         let policy=try skipPolicy(["mysql.1062","ddl.unsupported_statement"])
         XCTAssertNil(policy.match(ApplyError("duplicate key"),at:.rolledBack))

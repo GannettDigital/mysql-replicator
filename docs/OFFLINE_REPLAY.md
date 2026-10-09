@@ -114,10 +114,11 @@ the live source is caught up. Keep archive files immutable while replay runs.
 
 ## Stop, resume, and failures
 
-### Continue past selected errors during replay testing
+### Continue past selected errors
 
-Normal replay stops on errors. To survey an archive on a disposable or otherwise
-reconcilable target, explicitly list supported errors in the top-level policy:
+Both live `run` and offline `replay` stop on errors by default. To continue past
+selected errors on a target you can reconcile, explicitly list supported errors
+in the top-level policy:
 
 ```yaml
 skipErrors:
@@ -128,7 +129,7 @@ skipErrors:
 ```
 
 `codes` defaults to `[]`. Unknown codes and `all` are rejected. A nonempty policy
-is accepted only by `replay`; changing it requires a stop/edit/restart.
+works in both `run` and `replay`; changing it requires a stop/edit/restart.
 
 | Code | Eligible failure |
 | --- | --- |
