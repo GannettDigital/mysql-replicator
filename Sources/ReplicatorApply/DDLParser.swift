@@ -87,7 +87,7 @@ struct DDLParser {
         if take("UNSIGNED") { type += " unsigned" }
         let parsed: DMLColumnType
         do { parsed = try DMLColumnType(type) }
-        catch { throw ApplyError("unsupported DDL column type: \(type)") }
+        catch { throw ApplyError("unsupported DDL column type: \(type)",code:.unsupportedColumnType) }
         var column = ApplyColumn(name:name,type:type,nullable:true,collation:nil)
         var charsetEnd: Int?
         var primary = false, seen: Set<String> = []
@@ -219,7 +219,7 @@ struct DDLParser {
                 let table = try name(); result = conditional ? .dropIfPresent(table) : .drop(table)
             }
         } else if take("TRUNCATE") { _ = take("TABLE"); result = .truncate(try name()) }
-        else { throw ApplyError("unsupported DDL statement") }
+        else { throw ApplyError("unsupported DDL statement",code:.unsupportedDDL) }
         try end(); return result
     }
     mutating func end() throws {
@@ -314,7 +314,7 @@ struct DDLParser {
         if take("REORGANIZE") { try expect("PARTITION"); let names = try partitionNames(); try expect("INTO"); return .partition(.reorganize(names,try partitionItems(method:"",expression:""))) }
         if take("COALESCE") { try expect("PARTITION"); return .partition(.coalesce(try number())) }
         if take("EXCHANGE") { try expect("PARTITION"); let partition = try identifier(); try expect("WITH"); try expect("TABLE"); let table = try name(); if take("WITH") { try expect("VALIDATION") }; return .partition(.exchange(partition,table)) }
-        throw ApplyError("unsupported ALTER TABLE operation")
+        throw ApplyError("unsupported ALTER TABLE operation",code:.unsupportedAlter)
     }
 }
 

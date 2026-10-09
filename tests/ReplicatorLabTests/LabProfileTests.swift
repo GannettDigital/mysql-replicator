@@ -13,8 +13,12 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,78+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
+        XCTAssertEqual(cases.count,79+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
+        let skipping=try XCTUnwrap(cases.first { $0.id == "offline-skip-errors" })
+        XCTAssertEqual(skipping.family,"offline")
+        for profile in LabProfile.allCases { XCTAssertNil(skipping.reason(profile)) }
+        XCTAssertNotNil(skipping.reason(.forward,variant:.positionMinimal))
         do {
             let smoke=try LabScenario.select(tier:"smoke",family:nil,ids:[])
             XCTAssertEqual(Set(smoke.map(\.family)),Set(["database","ddl","dml","indexes","policy","rejections","filters"]))

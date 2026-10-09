@@ -6,11 +6,17 @@ import ReplicatorCodec
 let maximumCachedTables = 1024
 
 public struct ApplyError: Error, CustomStringConvertible {
-    public let description: String
-    public init(_ message: String) { description = message }
+    public let message: String
+    public let code: ApplyErrorCode?
+    public let mysqlErrorNumber: Int?
+    public let sqlState: String?
+    public var description: String { code.map { "[\($0.rawValue)] \(message)" } ?? message }
+    public init(_ message: String, code: ApplyErrorCode? = nil, mysqlErrorNumber: Int? = nil, sqlState: String? = nil) {
+        self.message=message;self.code=code;self.mysqlErrorNumber=mysqlErrorNumber;self.sqlState=sqlState
+    }
 }
-func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
-    if try !condition() { throw ApplyError(message) }
+func require(_ condition: @autoclosure () throws -> Bool, _ message: String, code: ApplyErrorCode? = nil) throws {
+    if try !condition() { throw ApplyError(message,code:code) }
 }
 func quoted(_ name: String) throws -> String {
     try require(!name.isEmpty && name.utf8.count <= 64 && !name.contains("\0") && name.unicodeScalars.allSatisfy { $0.isASCII }, "invalid SQL identifier")
@@ -223,6 +229,8 @@ public struct ApplyConfiguration: Decodable {
     public let targetReconnect: TargetReconnectPolicy?
     var targetReconnectPolicy: TargetReconnectPolicy { targetReconnect ?? .init() }
     public let sourceReconnect: SourceReconnectPolicy?
+    public let skipErrors: SkipErrorPolicy?
+    var skipErrorPolicy: SkipErrorPolicy { skipErrors ?? .init() }
     var reconnectPolicy: SourceReconnectPolicy { sourceReconnect ?? .init() }
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
@@ -245,6 +253,7 @@ public struct ApplyConfiguration: Decodable {
         try batchPolicy.validate()
         try reconnectPolicy.validate()
         try targetReconnectPolicy.validate(endpoint:"target")
+        try skipErrorPolicy.validate(offline:offline)
     }
 }
 
@@ -273,7 +282,8 @@ enum DMLPlan {
             if !event.replicationFiltered { includedEvents += 1 }
         }
         if includedEvents == 0 { return [] }
-        try require(statementEnds >= 1 && (transactional || statementEnds == 1),"only single-statement source groups are supported")
+        try require(statementEnds >= 1,"source group lacks a statement boundary")
+        try require(transactional || statementEnds == 1,"only single-statement source groups are supported",code:.multipleStatements)
         var result: [Mutation] = []
         var firstIdentity: String?
         for event in group.events where event.rowFlags != nil && !event.replicationFiltered {
@@ -281,7 +291,7 @@ enum DMLPlan {
                   let plan = tables[database + "\0" + name] else { throw ApplyError("row event outside configured scope") }
             if !event.rows.isEmpty {
                 let identity = plan.table.identity
-                if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement") }
+                if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement",code:.multipleTables) }
                 else { firstIdentity = identity }
             }
             for (index,row) in event.rows.enumerated() {

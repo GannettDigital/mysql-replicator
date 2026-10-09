@@ -38,11 +38,11 @@ extension ApplyTests {
             return PreparedDMLGroup(group:group,mutations:try DMLPlan.make(group,tables:tables()),relayEnd:store.relayLength)
         }
     }
-    func withBatchFixture(profiling: Bool = false, _ body: (StateStore,[PreparedDMLGroup]) throws -> Void) throws {
+    func withBatchFixture(profiling: Bool = false, profile: String? = nil, skipErrors: [String:Any]? = nil, _ body: (StateStore,[PreparedDMLGroup]) throws -> Void) throws {
         let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
         defer { try? FileManager.default.removeItem(at:parent) }
-        let store=try StateStore(configuration:config(parent.appendingPathComponent("state").path,applierProfiling:profiling))
+        let store=try StateStore(configuration:config(parent.appendingPathComponent("state").path,applierProfiling:profiling,profile:profile,skipErrors:skipErrors))
         try body(store,batchFixture(store))
     }
     func testBatchPreparesEveryIntentBeforeWritesAndCompletesWithTwoCommits() throws {

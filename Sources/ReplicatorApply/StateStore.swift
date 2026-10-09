@@ -47,6 +47,9 @@ final class StateStore {
     private var sequence: Int64 = 0
     private var snapshotSequence: Int64 = 0
     private var skipBoundary: BinlogCoordinate?
+    private let skipPolicy: SkipErrorPolicy
+    private var skipJournalReady = false
+    private(set) var skippedTransactionsByCode: [String:Int] = [:]
     private var schemas: [String:(Int64,ApplyTable)] = [:]
     private var inTransaction = false
     private var maintenance = false
@@ -82,6 +85,7 @@ final class StateStore {
         policy = c.policy; try policy.validate()
         compatibility = c.compatibilityPolicy; try compatibility.validate()
         replicationProfile = c.replicationProfile
+        skipPolicy = c.skipErrorPolicy
         self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
         try require(skipGTIDs == nil || !initialize,"skip requires existing state")
@@ -246,6 +250,13 @@ final class StateStore {
             try require(try completedGTIDs.covers(GTIDSet(id)),"snapshot does not cover saved applied groups")
         }
         sequence=seq; snapshotSequence=covered; transactions=tx; rows=count; ddlApplied=ddl
+        if try number("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='error_skip_counts'") != 0 {
+            skipJournalReady=true
+            for row in try query("SELECT code,transactions FROM error_skip_counts") {
+                guard let code=row[0],ApplyErrorCode(rawValue:code) != nil,let count=Int(row[1] ?? ""),count >= 0 else { throw ApplyError("invalid skipped transaction counters") }
+                skippedTransactionsByCode[code]=count
+            }
+        }
         for row in try query("SELECT id,identity,schema_json FROM schemas WHERE current=1") {
             guard let id=Int64(row[0] ?? ""), let json=row[2] else { throw ApplyError("invalid saved schema") }
             let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
@@ -446,6 +457,10 @@ final class StateStore {
                     try execute("DELETE FROM ddl_details WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM groups WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM snapshots WHERE covered_sequence<? AND created_at<?",[String(snapshotSequence),cutoff])
+                    if skipJournalReady {
+                        removed += try number("SELECT COUNT(*) FROM (SELECT gtid FROM error_skips WHERE created_at<? LIMIT 128)",[cutoff])
+                        try execute("DELETE FROM error_skips WHERE gtid IN (SELECT gtid FROM error_skips WHERE created_at<? LIMIT 128)",[cutoff])
+                    }
                     try execute("DELETE FROM schemas WHERE current=0 AND retired_at<? AND NOT EXISTS(SELECT 1 FROM row_intents WHERE schema_id=schemas.id) AND NOT EXISTS(SELECT 1 FROM ddl_intents WHERE before_schema_id=schemas.id OR after_schema_id=schemas.id)",[cutoff])
                 }
                 try checkpoint()
@@ -566,15 +581,20 @@ final class StateStore {
     }
     /// Commit only the acknowledged prefix. On crash before this commit every
     /// prepared row remains uncertain. No target write is inferred or retried.
-    func finishBatch(acknowledgedRows: [Int]) throws {
+    func finishBatch(acknowledgedRows: [Int], skipped: [Int:SkippedApplyError] = [:]) throws {
         try profile("journal.complete_batch") {
             let batch=pendingBatch
             try require(!batch.isEmpty && acknowledgedRows.count == batch.count,"completion without prepared batch")
+            try require(skipped.keys.allSatisfy { batch.indices.contains($0) },"skip outside prepared batch")
+            for (index,error) in skipped {
+                try require(replicationProfile.transactional && error.outcome == "rolledBack" && error.code == .duplicateKey && skipPolicy.codes.contains(error.code) && acknowledgedRows[index] == 0,"skip requires an authorized rolled-back InnoDB group")
+            }
+            if !skipped.isEmpty { try ensureSkipJournal() }
             var completed=0, rowCount=0, incomplete=false, next=completedGTIDs
             for (index,item) in batch.enumerated() {
                 let count=acknowledgedRows[index]
-                try require((0...item.mutations.count).contains(count) && (!incomplete || count == 0),"batch acknowledgments are not a contiguous prefix")
-                if count == item.mutations.count {
+                try require((0...item.mutations.count).contains(count) && (!incomplete || (count == 0 && skipped[index] == nil)),"batch acknowledgments are not a contiguous prefix")
+                if count == item.mutations.count || skipped[index] != nil {
                     completed+=1; rowCount+=count
                     try profile("journal.gtid") { try next.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
                 } else { incomplete=true }
@@ -586,14 +606,23 @@ final class StateStore {
                 for (index,item) in batch.enumerated() {
                     try require(try query("SELECT status FROM groups WHERE gtid=?",[item.id]) == [["PENDING"]]
                         && number("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='PENDING'",[item.id]) == Int64(item.mutations.count),"batch journal no longer matches preparation")
-                    if acknowledgedRows[index] > 0 {
+                    if let skip=skipped[index] {
+                        try recordSkip(item.group,error:skip,time:time)
+                        try execute("DELETE FROM row_intents WHERE gtid=?",[item.id])
+                        try execute("DELETE FROM groups WHERE gtid=?",[item.id])
+                    } else if acknowledgedRows[index] > 0 {
                         try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal<?",[time,item.id,String(acknowledgedRows[index])])
                     }
-                    if index < completed { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
+                    if index < completed && skipped[index] == nil { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
                 }
+                if !skipped.isEmpty { try coverSkippedPrefix(next,sequence:sequence+Int64(completed),end:end!,time:time) }
                 try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",[end?.file,end.map{String($0.position)},String(sequence+Int64(completed)),String(transactions+completed),String(rows+rowCount),active,time,String(completed),time])
             }
             completedGTIDs=next; applied=end; sequence+=Int64(completed); transactions+=completed; rows+=rowCount
+            if !skipped.isEmpty {
+                snapshotSequence=sequence
+                for error in skipped.values { skippedTransactionsByCode[error.code.rawValue,default:0] += 1 }
+            }
             if completed > 0 { groupStart=batch[completed-1].relayEnd }
             pendingGTID=active; pendingSequence=sequence+1
             pendingBatch=Array(batch.dropFirst(completed))
@@ -610,6 +639,54 @@ final class StateStore {
             try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[id,String(relayLength),timestamp()])
         }
         pendingGTID=id; pendingSequence=sequence+1
+    }
+    /// No target intent may exist. Audit (when enabled), coverage, counters and
+    /// deletion of temporary group history share one FULL SQLite transaction.
+    func skipUnwritten(_ group: CompleteTransaction, error: SkippedApplyError) throws {
+        guard let identity=group.gtid else { throw ApplyError("skip lacks source GTID") }
+        let id=identity.sid+":"+identity.sequence
+        try require(pendingBatch.isEmpty && pendingGTID == id && error.outcome == "notIssued"
+            && skipPolicy.codes.contains(error.code) && error.code != .duplicateKey && error.code != .targetSQL,"skip without matching unwritten group/policy")
+        try require(try query("SELECT sequence,source_file,start_position,end_position,status FROM groups WHERE gtid=?",[id]) == [[String(pendingSequence),group.start.file,String(group.start.position),String(group.end.position),"PENDING"]],"skip differs from journaled group")
+        try require(try number("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[id]) == 0
+            && number("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[id]) == 0,"cannot automatically skip target write intents")
+        try ensureSkipJournal()
+        var next=completedGTIDs;try next.include(sid:identity.sid,sequence:identity.sequence)
+        let time=timestamp()
+        try atomic {
+            try recordSkip(group,error:error,time:time)
+            try coverSkippedPrefix(next,sequence:pendingSequence,end:group.end,time:time)
+            try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'",[id])
+            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),time,time])
+        }
+        completedGTIDs=next;applied=group.end;sequence=pendingSequence;snapshotSequence=sequence
+        transactions+=1;skippedTransactionsByCode[error.code.rawValue,default:0]+=1
+        pendingGTID=nil;groupStart=relayLength
+    }
+    private func ensureSkipJournal() throws {
+        guard !skipJournalReady else { return }
+        try execute("CREATE TABLE IF NOT EXISTS error_skip_counts(code TEXT PRIMARY KEY,transactions INTEGER NOT NULL)")
+        try execute("CREATE TABLE IF NOT EXISTS error_skips(gtid TEXT PRIMARY KEY,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,diagnostic_json TEXT NOT NULL,source_sql TEXT,objects_json TEXT NOT NULL,created_at TEXT NOT NULL)")
+        skipJournalReady=true
+    }
+    private func recordSkip(_ group: CompleteTransaction, error: SkippedApplyError, time: String) throws {
+        try execute("INSERT OR IGNORE INTO error_skip_counts VALUES(?,0)",[error.code.rawValue])
+        try execute("UPDATE error_skip_counts SET transactions=transactions+1 WHERE code=?",[error.code.rawValue])
+        if skipPolicy.recordSkippedTransactions {
+            let diagnostic=String(decoding:try JSONEncoder().encode(error),as:UTF8.self)
+            let sql=group.events.compactMap { event -> String? in
+                if case .query(let query)=event.control { return String(decoding:query.sql,as:UTF8.self) };return nil
+            }.joined(separator:"\n")
+            let objects=Set(group.events.compactMap { event -> String? in
+                guard let database=event.database,let table=event.table else { return nil };return database+"."+table
+            }).sorted()
+            try execute("INSERT INTO error_skips VALUES(?,?,?,?,?,?,?,?)",[group.gtid!.sid+":"+group.gtid!.sequence,group.start.file,String(group.start.position),String(group.end.position),diagnostic,sql.isEmpty ? nil : sql,String(decoding:try JSONEncoder().encode(objects),as:UTF8.self),time])
+        }
+    }
+    private func coverSkippedPrefix(_ next: GTIDSet, sequence: Int64, end: BinlogCoordinate, time: String) throws {
+        // Replace the latest covering snapshot, rather than retaining one row
+        // per skip. Older normal history remains subject to existing retention.
+        try execute("UPDATE snapshots SET covered_sequence=?,gtids=?,source_file=?,source_position=?,created_at=? WHERE id=(SELECT MAX(id) FROM snapshots)",[String(sequence),next.canonical,end.file,String(end.position),time])
     }
     func intent(_ ordinal: Int,_ mutation: Mutation) throws {
         guard let schema = schemas[mutation.table.identity] else {throw ApplyError("mutation lacks discovered schema")}

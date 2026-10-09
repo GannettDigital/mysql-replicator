@@ -114,6 +114,77 @@ the live source is caught up. Keep archive files immutable while replay runs.
 
 ## Stop, resume, and failures
 
+### Continue past selected errors during replay testing
+
+Normal replay stops on errors. To survey an archive on a disposable or otherwise
+reconcilable target, explicitly list supported errors in the top-level policy:
+
+```yaml
+skipErrors:
+  codes:
+    - 'ddl.unsupported_alter'
+    - 'mysql.1062'
+  recordSkippedTransactions: false
+```
+
+`codes` defaults to `[]`. Unknown codes and `all` are rejected. A nonempty policy
+is accepted only by `replay`; changing it requires a stop/edit/restart.
+
+| Code | Eligible failure |
+| --- | --- |
+| `ddl.unsupported_statement` | Statement falls outside the DDL parser's recognized statement forms |
+| `ddl.unsupported_column_type` | DDL column type rejected by the type parser |
+| `ddl.unsupported_alter` | ALTER TABLE operation outside the recognized operations |
+| `ddl.unsupported_collation` | Unavailable DDL encoding/collation at the explicitly classified resolution checks |
+| `dml.multiple_statements` | Multi-statement DML outside the MyISAM profile |
+| `dml.multiple_tables` | Multi-table DML outside the MyISAM profile |
+| `mysql.1062` | Duplicate key in an InnoDB DML transaction, after confirmed rollback |
+
+The DDL/DML compatibility codes are eligible only before target write intents.
+They do not classify every possible parser, schema-discovery, or decoder error.
+Duplicate-key skipping rolls back the **whole source transaction**, including
+earlier successful statements, before continuing with the next GTID. MyISAM SQL
+errors, issued DDL, uncertain COMMIT, failed/unconfirmed rollback, transport
+failures, corrupt binlogs, and unlisted errors still stop replication.
+
+`recordSkippedTransactions` defaults to `true`. It stores one `error_skips` row
+per skipped GTID with positions, structured error information, available source
+SQL and table identities. Those rows follow storage history retention and may
+eventually be pruned; they are not a permanent external audit archive.
+
+Set it to **false** when hundreds of thousands or millions of skips would make
+individual records impractical. The checkpoint still includes skipped GTIDs, and
+`error_skip_counts` retains cumulative counts by code. The applier removes the
+skipped groups' temporary journal rows and updates the latest covering snapshot
+in the same SQLite transaction; it does not retain one snapshot per skip.
+Existing relay, GTID-set, and SQLite storage limits still apply. Previously
+recorded audit rows are not deleted merely by turning this option off.
+
+With auditing disabled, **plan data consistency checks and recovery using evidence
+maintained elsewhere**. Aggregate counts cannot identify which specific GTIDs
+were skipped. Relay files and unresolved crash intents can still contain GTID or
+row evidence, but are not a substitute for a complete skip audit.
+
+Progress/final summaries expose `skippedTransactionsByCode`, including counts
+from earlier invocations. As with filtered groups, `transactionsApplied` counts
+completed source groups including skips; skipped rows do not increase
+`rowsApplied`, and skipped DDL does not increase `ddlApplied`. Coverage advances
+for stop limits and resume, so a completed replay with skips is not a correctness
+claim. Skipped DDL can also cause later dependent failures; inspect the original
+rejection rather than treating every later error as an independent bug.
+
+Inspect the local counts, or detailed records when enabled, with:
+
+```sh
+sqlite3 /path/to/state/state.sqlite 'SELECT code, transactions FROM error_skip_counts;'
+sqlite3 /path/to/state/state.sqlite 'SELECT gtid, source_file, start_position, end_position, diagnostic_json FROM error_skips;'
+```
+
+These tables are created on the first automatic skip. The existing manual
+`skip` and `recovery resolve` commands retain their separate behavior.
+
+### Controlled stop and resume
+
 `--initialize` creates a new state directory for an externally prepared target.
 Omit it to resume cleanly stopped state:
 

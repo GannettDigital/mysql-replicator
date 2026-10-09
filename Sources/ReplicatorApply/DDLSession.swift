@@ -22,7 +22,7 @@ extension TargetSession {
             // Existing ASCII-only table DDL does not depend on expression
             // collation. Anything introducing literals/expressions must reject.
             let tokens = try DDLTokens.lex(source.sql,sqlMode:context.sqlMode)
-            try require(!DDLTokens.requiresConnectionCollation(tokens),"source expression collation is unavailable on MySQL 5.7: collation_connection=\(DDLQueryContextDiagnostic.collation(context.connectionCollation))")
+            try require(!DDLTokens.requiresConnectionCollation(tokens),"source expression collation is unavailable on MySQL 5.7: collation_connection=\(DDLQueryContextDiagnostic.collation(context.connectionCollation))",code:.unsupportedCollation)
         }
         if useDatabase, let db = source.database, !db.isEmpty { _ = try query("USE \(quoted(db))",textProtocol:true) }
     }

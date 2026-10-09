@@ -241,7 +241,7 @@ func main() throws {
 }
 do { try main() }
 catch {
-    let diagnostic: [String: Any]
+    var diagnostic: [String: Any]
     if CommandLine.arguments.dropFirst().first == "skip" {
         diagnostic = ["error":"skip_failed","reason":String(describing:error)]
     } else if let failure = error as? DecoderError {
@@ -257,8 +257,12 @@ catch {
     } else if let failure = error as? ApplyRunError {
         let progress = (try? JSONEncoder().encode(failure.progress)).flatMap { try? JSONSerialization.jsonObject(with:$0) }
         diagnostic = ["error":"apply_failed","reason":failure.reason,"progress":progress ?? NSNull()]
+        if let code=failure.code { diagnostic["code"]=code.rawValue }
     } else if let failure = error as? ApplyError {
         diagnostic = ["error":"apply_failed","reason":failure.description]
+        if let code=failure.code { diagnostic["code"]=code.rawValue }
+        if let number=failure.mysqlErrorNumber { diagnostic["mysqlErrorNumber"]=number }
+        if let state=failure.sqlState { diagnostic["sqlState"]=state }
     } else if let failure = error as? LiveInspectionError {
         let summary = (try? JSONEncoder().encode(failure.summary)).flatMap { try? JSONSerialization.jsonObject(with: $0) }
         diagnostic = ["error": "live_capture_failed", "reason": failure.reason, "progress": summary ?? NSNull()]

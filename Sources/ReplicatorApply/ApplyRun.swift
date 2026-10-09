@@ -24,12 +24,14 @@ public struct ApplySummary: Encodable {
     public let drainRequested: Bool
     public var stopReason: String? = nil
     public var activeBatchTransactions: Int = 0
+    public var skippedTransactionsByCode: [String:Int] = [:]
     // Crash recovery / uncertain target replay remains unsupported.
     public let automaticRecovery = false
 }
 public struct ApplyRunError: Error, CustomStringConvertible {
     public let reason: String
     public let progress: ApplySummary
+    public var code: ApplyErrorCode? = nil
     public var description: String { reason }
 }
 public enum ApplyRun {
@@ -75,7 +77,7 @@ public enum ApplyRun {
                 pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
                 sourceReconnectEnabled:archive == nil && configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
                 targetReconnectEnabled:configuration.targetReconnectPolicy.enabled,targetReconnectAttempts:targetRetry.attempts,
-                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions)
+                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions,skippedTransactionsByCode:state.skippedTransactionsByCode)
         }
         func report(_ value: ApplySummary) throws {
             control?.publish(value);try emitProgress(value)
@@ -183,6 +185,7 @@ public enum ApplyRun {
                     target.statementTrace = .init()
                     try state.begin(group)
                     control?.publish(summary("RUNNING"))
+                    var hasDDLIntent = false
                     do {
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
@@ -198,6 +201,7 @@ public enum ApplyRun {
                     let statement=try DDLStatement.from(group,profile:profile)
                     let plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+                    hasDDLIntent = true
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try checkSourceFailure()
                     try target.applyDDL(plan)
@@ -206,6 +210,11 @@ public enum ApplyRun {
                     try progress()
                     return
                     } catch {
+                        if !hasDDLIntent && target.statementTrace.phase == .notIssued && !cancellation.isCancelled,
+                           let skip=configuration.skipErrorPolicy.match(error,at:.beforeWrites) {
+                            try state.skipUnwritten(group,error:skip)
+                            try progress();return
+                        }
                         let failedQuery=group.events.compactMap { event -> QueryControl? in
                             if case .query(let query)=event.control { return query }; return nil
                         }.first
@@ -224,6 +233,10 @@ public enum ApplyRun {
                 catch {
                     try barrier()
                     try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
+                    if !cancellation.isCancelled,let skip=configuration.skipErrorPolicy.match(error,at:.beforeWrites) {
+                        try state.skipUnwritten(group,error:skip)
+                        try progress();return
+                    }
                     throw error
                 }
                 if mutations.isEmpty {
@@ -385,13 +398,14 @@ public enum ApplyRun {
           }
         } catch {
             let reason: String
+            let code=(error as? ApplyError)?.code
             if let live = error as? LiveInspectionError { reason = live.reason }
             else { reason = String(describing:error) }
             // A rejected resume/preflight must not rewrite the saved checkpoint.
-            if !initialize && !started { throw ApplyRunError(reason:reason,progress:summary("STOPPED")) }
+            if !initialize && !started { throw ApplyRunError(reason:reason,progress:summary("STOPPED"),code:code) }
             do { try state.block(reason) }
-            catch { throw ApplyRunError(reason:reason + "; additionally failed to persist BLOCKED diagnostic",progress:summary("BLOCKED")) }
-            throw ApplyRunError(reason:reason,progress:summary("BLOCKED"))
+            catch { throw ApplyRunError(reason:reason + "; additionally failed to persist BLOCKED diagnostic",progress:summary("BLOCKED"),code:code) }
+            throw ApplyRunError(reason:reason,progress:summary("BLOCKED"),code:code)
         }
     }
 }

@@ -92,6 +92,14 @@ replicateWildIgnoreTable: []
 # Filtered groups still advance GTIDs; existing target rows are not deleted.
 # DDL spanning included and excluded tables blocks for explicit resolution.
 
+# Optional replay-only error policy; default codes: [] stops on every error.
+# Skip the WHOLE GTID, never just one row. See docs/OFFLINE_REPLAY.md for supported codes.
+# skipErrors:
+#   codes: ['ddl.unsupported_alter', 'mysql.1062'] # Example; 1062 needs confirmed InnoDB rollback.
+#   recordSkippedTransactions: true # Default. false keeps counters/checkpoint but no per-GTID audit.
+# With false, plan data consistency/recovery using evidence maintained elsewhere.
+# MyISAM SQL failures and uncertain writes still block. Changes require restart.
+
 sourceReconnect:
   enabled: true                    # Live run only; replay always disables source reconnect.
   initialDelaySeconds: 1            # First retry delay; 1..300 seconds.
