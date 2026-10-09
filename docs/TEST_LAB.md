@@ -249,7 +249,23 @@ PR CI runs the same smoke, reconnect and demo cases for both profiles, retains
 specialized forward integration/reverse recovery checks, and merges shared
 applier coverage with unit coverage. `Full Profile Qualification` runs the full
 correctness and reconnect matrix weekly, on release tags, and through manual workflow dispatch.
-It uploads each profile's evidence separately. Current published CI coverage uses
+It reuses the checksummed lab runner (including Swift libraries) and release image
+from successful **main push CI at the exact checked-out commit**. All four matrix
+jobs run with `--skip-build`; they do not install Swift or compile. The bundle and
+image input fingerprints must match the checkout. The selected CI run is linked
+in the qualification summary. If CI is still running, wait for it; if its seven-day
+artifacts have expired, rerun that CI run before retrying qualification. Builds
+from another commit or a PR run are never substituted.
+
+The forward negative suites archive the native reference's error and the source
+boundary before reseeding that disposable reference past rejected transactions.
+Applier failure states remain intact. To check the recovery-to-offline transition locally:
+
+```sh
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--case myisam-recovery --case offline-replay --case runtime-control"
+```
+
+Qualification uploads each profile's evidence separately. Current published CI coverage uses
 unit tests and instrumented integration/shared smoke, not the full weekly matrix.
 See [coverage reports and publication](../CONTRIBUTING.md#code-coverage) for PR
 comments and downloading the HTML/LCOV reports linked from the README.

@@ -75,10 +75,23 @@ def runtime_libraries(listing):
     return libraries
 
 
-def run_shard(identifier):
-    shard = next(s for s in matrix()['include'] if s['id'] == identifier)
+def validate_bundle():
     if lab('build-inputs') != (BUNDLE / 'inputs.sha256').read_text().strip():
         raise ValueError('lab bundle inputs differ from this checkout')
+
+
+def run_qualification(suite, profile, variant):
+    validate_bundle()
+    env = dict(os.environ, LD_LIBRARY_PATH=str(BUNDLE / 'lib'))
+    subprocess.run([str(BUNDLE / 'replicator-lab'), 'test', '--profile', profile,
+                    '--suite', suite, '--variant', variant, '--skip-build']
+                   + (['--tier', 'full'] if suite == 'correctness' else []),
+                   cwd=ROOT, env=env, check=True)
+
+
+def run_shard(identifier):
+    shard = next(s for s in matrix()['include'] if s['id'] == identifier)
+    validate_bundle()
     if shard['suite'] == 'recovery':
         subprocess.run(['docker', 'tag', 'mysql-replicator-packaging:lab', 'mysql-replicator-packaging:reverse'], check=True)
     if shard['image'] == 'release':
@@ -99,9 +112,16 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--bundle', type=Path)
     group.add_argument('--run', choices=[s['id'] for s in matrix()['include']])
+    group.add_argument('--qualification', choices=['correctness', 'lifecycle'])
+    parser.add_argument('--profile', choices=['mysql84-to-mysql57-myisam', 'mysql57-to-mysql84-innodb'])
+    parser.add_argument('--variant', choices=['default', 'position-minimal', 'gtid-full'], default='default')
     args = parser.parse_args()
+    if args.qualification and not args.profile:
+        parser.error('--qualification requires --profile')
     if args.bundle:
         bundle(args.bundle)
+    elif args.qualification:
+        run_qualification(args.qualification, args.profile, args.variant)
     else:
         run_shard(args.run)
 

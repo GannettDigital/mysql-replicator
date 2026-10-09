@@ -53,6 +53,32 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
         with self.assertRaisesRegex(ValueError, 'reverse release'):
             ci_lab.command(dict(suite='recovery', image='coverage', profile='mysql57-to-mysql84-innodb'))
 
+    def test_qualification_uses_full_suite_variant_and_no_build(self):
+        for suite in ['correctness', 'lifecycle']:
+            for profile, variant in [('mysql84-to-mysql57-myisam', 'default'),
+                                     ('mysql84-to-mysql57-myisam', 'gtid-full'),
+                                     ('mysql84-to-mysql57-myisam', 'position-minimal'),
+                                     ('mysql57-to-mysql84-innodb', 'default')]:
+                with self.subTest(suite=suite, profile=profile, variant=variant), \
+                     patch.object(ci_lab, 'lab', return_value='same'), \
+                     patch.object(ci_lab.Path, 'read_text', return_value='same\n'), \
+                     patch.object(ci_lab.subprocess, 'run') as execute:
+                    ci_lab.run_qualification(suite, profile, variant)
+                    args = execute.call_args.args[0]
+                    self.assertEqual(args, [str(ci_lab.BUNDLE / 'replicator-lab'), 'test',
+                                            '--profile', profile, '--suite', suite,
+                                            '--variant', variant, '--skip-build']
+                                     + (['--tier', 'full'] if suite == 'correctness' else []))
+                    self.assertTrue(execute.call_args.kwargs['check'])
+
+    def test_qualification_rejects_stale_bundle_before_starting_fixtures(self):
+        with patch.object(ci_lab, 'lab', return_value='actual'), \
+             patch.object(ci_lab.Path, 'read_text', return_value='old'), \
+             patch.object(ci_lab.subprocess, 'run') as execute:
+            with self.assertRaisesRegex(ValueError, 'inputs differ'):
+                ci_lab.run_qualification('correctness', 'mysql84-to-mysql57-myisam', 'default')
+            execute.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

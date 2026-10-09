@@ -256,11 +256,8 @@ extension SharedCorrectness.Run {
                 try reporter.pass("ddl-denied")
 
             _ = try h.sql("target57","GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'")
-            // Only this disposable native reference skips rejected ranges. The
-            // target's blocked states and source events remain archived above.
-            let end=try f.boundary()
-            _ = try h.sql("native","STOP REPLICA; RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(end.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(end.file)',SOURCE_LOG_POS=\(end.position); START REPLICA")
             try SharedWorkflowCases.requirePassed(SharedWorkflowCases.failures,in:reporter.results)
+            try reseedNativeAfterRejections("forward-failures")
         }
     }
 }

@@ -55,6 +55,9 @@ tests are not a substitute for branch checks.
 2. Run the full profile qualification workflow on that exact main commit (or tag)
    and inspect its evidence. It runs full correctness, capture variants and
    lifecycle scenarios. Review offline replay/control results as part of this beta.
+   Qualification downloads the lab runner and release image from that successful
+   main CI run; no recompilation is needed. Those artifacts are retained for seven
+   days. If missing or expired, rerun CI for the same commit before qualification.
 3. Review `docs/releases/0.1.0-beta.2.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.
 4. On a representative host, qualify service/container start, acknowledged drain

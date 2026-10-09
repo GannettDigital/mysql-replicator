@@ -11,11 +11,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
+  inputs:
+    name: Reuse exact main CI builds
+    runs-on: ubuntu-24.04
+    outputs:
+      run_id: ${{ steps.select.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find successful CI with retained artifacts for this commit
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/qualification_inputs.py
+
   correctness:
     name: Full correctness (${{ matrix.profile }}, ${{ matrix.variant }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    needs: inputs
     strategy:
       fail-fast: false
       matrix:
@@ -30,9 +48,26 @@ jobs:
             variant: gtid-full
     steps:
       - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2
+      - uses: actions/download-artifact@v4
         with:
-          swift-version: '6.2.1'
+          name: ci-lab
+          path: artifacts/ci
+          run-id: ${{ needs.inputs.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-image-release
+          path: artifacts/ci/image
+          run-id: ${{ needs.inputs.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify and load prebuilt tools
+        run: |
+          cd artifacts/ci
+          sha256sum --check lab.sha256
+          tar -xzf lab.tar.gz
+          cd image
+          sha256sum --check SHA256SUMS
+          docker load --input image.tar.gz
       - name: Install fixture tools
         run: |
           sudo apt-get update
@@ -48,9 +83,15 @@ jobs:
           "$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" --no-defaults --version
           echo "MYSQLBINLOG=$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" >> "$GITHUB_ENV"
       - name: Run shared full correctness
-        run: make correctness PROFILE=${{ matrix.profile }} ARGS="--variant ${{ matrix.variant }}"
+        env:
+          PROFILE: ${{ matrix.profile }}
+          VARIANT: ${{ matrix.variant }}
+        run: python3 tools/ci_lab.py --qualification correctness --profile "$PROFILE" --variant "$VARIANT"
       - name: Run shared source and target lifecycle
-        run: make lab-test PROFILE=${{ matrix.profile }} ARGS="--suite lifecycle --variant ${{ matrix.variant }} --skip-build"
+        env:
+          PROFILE: ${{ matrix.profile }}
+          VARIANT: ${{ matrix.variant }}
+        run: python3 tools/ci_lab.py --qualification lifecycle --profile "$PROFILE" --variant "$VARIANT"
       - name: Upload qualification evidence
         if: always()
         uses: actions/upload-artifact@v4
