@@ -24,12 +24,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 # Application edits do not invalidate the independent ABI/dependency probe.
 FROM probe AS build
 COPY tests tests
-COPY packaging/debian packaging/debian
-COPY packaging/Makefile packaging/collect_notices.py packaging/install.sh packaging/
+COPY packaging/collect_notices.py packaging/
 COPY packaging/licenses packaging/licenses
-COPY tools/release_version.py tools/
+COPY tools/release_version.py tools/swift_cache.py tools/
 COPY VERSION ./
-COPY examples examples
 COPY Vendor Vendor
 COPY Package.swift Package.resolved ./
 COPY Sources Sources
@@ -51,9 +49,14 @@ FROM runtime AS demo
 COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 
 # Build and verify Debian package (.deb)
+# Packaging-only edits must not invalidate the compiler layer. Dependency
+# notices are collected above while Swift/Cargo cache mounts are available.
 FROM build AS deb
 ARG VERSION
 COPY LICENSE NOTICE ./
+COPY packaging/debian packaging/debian
+COPY packaging/install.sh packaging/
+COPY examples examples
 RUN if [ -n "$VERSION" ]; then make -f packaging/Makefile deb VERSION="$VERSION"; else make -f packaging/Makefile deb; fi
 
 # Verify .deb installation in clean Ubuntu 16.04

@@ -43,10 +43,16 @@ jobs:
       - name: Check release version consistency
         run: python3 tools/release_version.py
 
+      - name: Restore Swift input/output timestamps
+        run: python3 tools/swift_cache.py restore --scratch-path .build/code-coverage
       - name: Run unit test suites
         run: make coverage-unit
+      - name: Save successful Swift build timestamps
+        run: python3 tools/swift_cache.py save --scratch-path .build/code-coverage
 
-      - name: Test coverage report tooling
+      - name: Test CI tooling and Swift cache reuse
+        env:
+          SWIFT_CACHE_INTEGRATION: '1'
         run: python3 -m unittest discover -s tools -p 'test_*.py'
 
       - name: Upload unit coverage
@@ -81,7 +87,9 @@ jobs:
       - name: Build and bundle lab with its runtime libraries
         id: bundle
         run: |
+          python3 tools/swift_cache.py restore --scratch-path .build/ci-lab
           swift build --scratch-path .build/ci-lab --product replicator-lab --force-resolved-versions
+          python3 tools/swift_cache.py save --scratch-path .build/ci-lab
           python3 tools/ci_lab.py --bundle .build/ci-lab/debug/replicator-lab
       - uses: actions/upload-artifact@v4
         with:
@@ -333,5 +341,7 @@ jobs:
       - name: Reject unused declarations
         run: |
           cargo build --manifest-path rust/Cargo.toml --locked
+          python3 tools/swift_cache.py restore --scratch-path .build/periphery
           swift build --scratch-path .build/periphery --build-tests --enable-index-store --force-resolved-versions
+          python3 tools/swift_cache.py save --scratch-path .build/periphery
           periphery scan --strict --skip-build --index-store-path .build/periphery/debug/index/store

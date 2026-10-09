@@ -173,6 +173,23 @@ and recompiling it. The packaging probe has an independent Docker stage so
 application-only edits leave it cached. Main CI populates shared caches; PR
 merge-ref caches are normally reusable only by that PR. Cold builds remain valid.
 
+`tools/swift_cache.py` saves nanosecond timestamps beside each Swift build cache.
+After restoring a cache, it restores timestamps only for files whose SHA-256,
+size and permissions still match. This handles fresh source checkouts and cache
+transports that lose timestamp precision without treating changed inputs as
+unchanged. It covers package sources, dependency checkouts and build outputs;
+system headers/toolchains remain under SwiftPM's normal invalidation checks.
+Existing caches without this manifest work normally and acquire one after a
+successful build. Installer, Debian configuration and example changes no longer
+invalidate the release compilation layer. Rust changes still force relinking.
+
+The tooling tests exercise real compiler reuse and source/header invalidation
+on Linux CI. Run the same check locally with:
+
+```sh
+SWIFT_CACHE_INTEGRATION=1 python3 -m unittest discover -s tools -p 'test_swift_cache.py'
+```
+
 Compare both cold and warm Actions runs after changing CI. Record build, image
 transfer and shard times separately: splitting jobs adds image downloads, and
 organization runner queues can dominate a large PR stack. The initial targets
