@@ -129,7 +129,8 @@ extension SharedCorrectness.Run {
                     _ = try h.sql("native","START REPLICA")
                     _ = try h.sql("source",test.sql+"; INSERT INTO demo.mi VALUES(99,'blocked marker',9,NULL)")
                     let diagnostic=try finish(applying,label,success:false,reason:test.error)
-                    try require((diagnostic["reason"] as? String)?.hasPrefix("target SQL error ")==true,"index failure was not a target SQL error")
+                    let expectedCode=test.error == "1062" ? "mysql.1062" : "target.sql"
+                    try require(diagnostic["code"] as? String == expectedCode,"index failure has unexpected code: \(diagnostic["code"] ?? "missing")")
                     let deadline=Date().addingTimeInterval(20)
                     while try h.status()["Last_SQL_Errno"] != test.error && Date()<deadline {Thread.sleep(forTimeInterval:0.1)}
                     try require(h.status()["Last_SQL_Errno"]==test.error,"native error differs from Swift target")
