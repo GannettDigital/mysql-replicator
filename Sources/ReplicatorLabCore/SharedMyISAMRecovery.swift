@@ -31,13 +31,7 @@ extension SharedCorrectness.Run {
             return try f.runner.run(["sqlite3",f.output.appendingPathComponent("recovery-state-"+label+"/state.sqlite").path,sql]).text
         }
         func waitForReader(_ client: String) throws {
-            let deadline=Date().addingTimeInterval(30)
-            repeat {
-                if try f.sql(.source,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND COMMAND LIKE 'Binlog Dump%'") == "1" { return }
-                try require(docker(["inspect",client,"--format","{{.State.Running}}"] ).text == "true","recovery writer stopped before capture")
-                Thread.sleep(forTimeInterval:0.1)
-            } while Date()<deadline
-            throw LabError("recovery capture did not start")
+            try isolated.waitForReader(client)
         }
         try reporter.run(QualificationCase("myisam-recovery","MyISAM discovery, exact values, cache, failures and crash/replay refusal")) {
             for service in h.services {
