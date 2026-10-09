@@ -21,13 +21,7 @@ extension SharedCorrectness.Run {
         }
         func state(_ label: String, _ sql: String) throws -> String { try isolated.state(label,sql) }
         func waitForReader(_ client: String) throws {
-            let deadline=Date().addingTimeInterval(30)
-            repeat {
-                if try h.sql("source","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND COMMAND LIKE 'Binlog Dump%'") == "1" { return }
-                try require(docker(["inspect",client,"--format","{{.State.Running}}"] ).text == "true","failure fixture stopped before capture")
-                Thread.sleep(forTimeInterval:0.1)
-            } while Date()<deadline
-            throw LabError("failure fixture capture did not start")
+            try isolated.waitForReader(client)
         }
         func compatibilityBarrier(_ client: String, _ count: Int) throws { try isolated.barrier(client,count:count); try ModifyIndexCases.waitNative(h,h.boundary("source")) }
         func resetCompatibility() throws {
@@ -53,8 +47,11 @@ extension SharedCorrectness.Run {
                         let before=try h.boundary("source"),label=test.id
                         var config=configuration(label,at:before,count:2)
                         config["ddlPolicy"]=["triggers":"reject","events":"reject"]
-                        let client=try start(test,config); try waitForReader(client)
+                        let client=try start(test,config)
+                        // Both readers deliberately use the same MySQL account.
+                        // Readiness must identify this client, not count readers.
                         _ = try h.sql("native","START REPLICA")
+                        try waitForReader(client)
                         _ = try h.sql("source",session+sql+"; INSERT INTO ddlcompat.t VALUES(1,1)")
                         _ = try finish(client,label,success:false,reason:reason)
                         try ModifyIndexCases.waitNative(h,h.boundary("source")); _ = try h.sql("native","STOP REPLICA")

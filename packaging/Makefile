@@ -20,7 +20,9 @@ probe:
 	# SwiftPM does not track external Rust archives. A timestamp-only source
 	# touch can be skipped by content-based incremental builds; remove the output.
 	rm -f packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe
+	cd packaging/Probe && python3 ../../tools/swift_cache.py restore --scratch-path .build
 	swift build --package-path packaging/Probe --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native -Xlinker -L/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release
+	cd packaging/Probe && python3 ../../tools/swift_cache.py save --scratch-path .build
 	cp packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe /out/packaging-probe
 
 build:
@@ -28,7 +30,9 @@ build:
 	test -f /out/packaging-probe
 	cargo build --manifest-path rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) --target-dir packaging/rust/target -j 2
 	rm -f .build/x86_64-swift-linux-musl/release/mysql-replicator
+	python3 tools/swift_cache.py restore --scratch-path .build
 	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
+	python3 tools/swift_cache.py save --scratch-path .build
 	cp .build/x86_64-swift-linux-musl/release/mysql-replicator /out/mysql-replicator
 	file /out/packaging-probe /out/mysql-replicator > /out/evidence/elf.txt
 	readelf -h -l -d /out/packaging-probe >> /out/evidence/elf.txt

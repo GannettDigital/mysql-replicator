@@ -1,29 +1,28 @@
 # mysql-replicator
 
 [![CI](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml/badge.svg)](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml)
-[Coverage reports](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 Replicate MySQL across versions where native replication does not meet your needs.
 `mysql-replicator` reads source binary logs and applies supported INSERT, UPDATE,
 DELETE and DDL changes to a dedicated replica.
 
-**Next release: `0.1.0-beta.2`.** The primary tested profile is
-**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**. This beta also includes an
+The primary tested profile is
+**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**, alongside an
 [experimental 5.7 → 8.4 InnoDB profile](docs/REVERSE_REPLICATION.md). Initial
 data copying is external; interrupted or uncertain writes can require DBA intervention.
 See [supported behavior](PLAN/DML_APPLY.md) and [DDL compatibility](PLAN/DDL_COMPATIBILITY.md).
 
 ## Install and start
 
-Download a standalone binary from [Releases](https://github.com/GannettDigital/mysql-replicator/releases)
-when beta.2 is published. **Binaries and containers are Linux x86_64 only**;
+Download a standalone archive or Debian `.deb` package from [Releases](https://github.com/GannettDigital/mysql-replicator/releases).
+**Binaries and containers are Linux x86_64 only**;
 other platforms require a source build. No Swift, Rust, Node.js or SQLite runtime
-installation is needed:
+installation is needed. With `curl`, `jq`, `tar` and coreutils installed:
 
 ```sh
-curl -fLO https://github.com/GannettDigital/mysql-replicator/releases/download/v0.1.0-beta.2/install.sh
-sh install.sh --version 0.1.0-beta.2
+curl -fLo install.sh https://raw.githubusercontent.com/GannettDigital/mysql-replicator/main/packaging/install.sh
+sh install.sh
 ~/.local/bin/mysql-replicator --version
 ```
 
@@ -34,9 +33,21 @@ TLS and credentials in your `apply.yaml`, then start:
 ~/.local/bin/mysql-replicator run --config ./apply.yaml --initialize
 ```
 
-The installer verifies the archive checksum and preserves configuration and state.
-The setup guide also covers `.deb` packages, systemd and containers:
-`ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.2` (available after publication).
+The installer selects the newest published release, including betas, verifies its
+archive checksum and preserves configuration and state. Use `--version VERSION`
+to pin a release.
+
+For Debian/Ubuntu, download the chosen release's `.deb` and `SHA256SUMS` into a
+directory containing only that package version, then verify and install:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS
+sudo apt install ./mysql-replicator_*_amd64.deb
+```
+
+The package installs `mysql-replicator` on `PATH` and includes a systemd service.
+Follow the [Debian installation and service setup guide](docs/INSTALL.md#download-and-verify)
+for configuration, first start and clean resume. The setup guide also covers containers.
 See [offline replay and support bundles](docs/OFFLINE_REPLAY.md) to test captured
 binlogs against a prepared target and collect troubleshooting evidence.
 

@@ -25,28 +25,40 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.93.1
 
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.2.1'
-
-      - uses: actions/cache@v4
+      # Keep toolchain headers and their consuming objects in the SAME archive.
+      # setup-swift copies files on a cold install, giving headers new mtimes.
+      - name: Identify runner image
+        id: runner-image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift toolchain and build cache
+        uses: actions/cache@v4
         with:
           path: |
             .build/code-coverage
             rust/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
+            ${{ runner.tool_cache }}/swift-Ubuntu/6.2.1
+          key: unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+            unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
       - name: Check release version consistency
         run: python3 tools/release_version.py
 
+      - name: Restore Swift input/output timestamps
+        run: python3 tools/swift_cache.py restore --scratch-path .build/code-coverage
       - name: Run unit test suites
         run: make coverage-unit
+      - name: Save successful Swift build timestamps
+        run: python3 tools/swift_cache.py save --scratch-path .build/code-coverage
 
-      - name: Test coverage report tooling
+      - name: Test CI tooling and Swift cache reuse
+        env:
+          SWIFT_CACHE_INTEGRATION: '1'
         run: python3 -m unittest discover -s tools -p 'test_*.py'
 
       - name: Upload unit coverage
@@ -69,19 +81,29 @@ jobs:
       matrix: ${{ steps.bundle.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+      # Keep toolchain headers and their consuming objects in the SAME archive.
+      # setup-swift copies files on a cold install, giving headers new mtimes.
+      - name: Identify runner image
+        id: runner-image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift toolchain and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/ci-lab
+            ${{ runner.tool_cache }}/swift-Ubuntu/6.2.1
+          key: lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved') }}-
       - uses: swift-actions/setup-swift@v2
         with:
           swift-version: '6.2.1'
-      - uses: actions/cache@v4
-        with:
-          path: .build/ci-lab
-          key: lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v1-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
-          restore-keys: |
-            lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v1-${{ hashFiles('Package.resolved') }}-
       - name: Build and bundle lab with its runtime libraries
         id: bundle
         run: |
+          python3 tools/swift_cache.py restore --scratch-path .build/ci-lab
           swift build --scratch-path .build/ci-lab --product replicator-lab --force-resolved-versions
+          python3 tools/swift_cache.py save --scratch-path .build/ci-lab
           python3 tools/ci_lab.py --bundle .build/ci-lab/debug/replicator-lab
       - uses: actions/upload-artifact@v4
         with:
@@ -140,6 +162,9 @@ jobs:
           tags: mysql-replicator-packaging:lab
           labels: org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
           load: true
+          # A cached package export need not populate the builder's intermediate
+          # layers. This separate target must import the external cache too.
+          cache-from: type=gha,scope=release
       - name: Verify production image and identical integration binary
         if: matrix.image == 'release'
         run: |
@@ -308,19 +333,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93.1
-      - uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.2.1'
-      - uses: actions/cache@v4
+      # Keep toolchain headers and their consuming objects in the SAME archive.
+      # setup-swift copies files on a cold install, giving headers new mtimes.
+      - name: Identify runner image
+        id: runner-image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift toolchain and build cache
+        uses: actions/cache@v4
         with:
           path: |
             .build/periphery
             rust/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
+            ${{ runner.tool_cache }}/swift-macOS/6.2.1
+          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+            periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
       - name: Install pinned Periphery
         run: |
           cd "$RUNNER_TEMP"
@@ -333,5 +365,7 @@ jobs:
       - name: Reject unused declarations
         run: |
           cargo build --manifest-path rust/Cargo.toml --locked
+          python3 tools/swift_cache.py restore --scratch-path .build/periphery
           swift build --scratch-path .build/periphery --build-tests --enable-index-store --force-resolved-versions
+          python3 tools/swift_cache.py save --scratch-path .build/periphery
           periphery scan --strict --skip-build --index-store-path .build/periphery/debug/index/store

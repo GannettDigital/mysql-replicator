@@ -18,6 +18,33 @@ final class LabIsolatedApply {
         f.config=config; try f.installConfig(label)
         return try f.startClient(label,arguments:["run","--config","/evidence/"+label+".yaml"]+(initialize ? ["--initialize"] : []))
     }
+    func waitForReader(_ client: String) throws {
+        // The native reference and previous experiments share capture_fixture.
+        // A global connection count can observe the wrong reader, or never
+        // become one while a disconnected reader is still visible on MySQL.
+        let address=try f.docker(["inspect",client,"--format","{{(index .NetworkSettings.Networks \"\(f.h.project)_fixture\").IPAddress}}"] ).text
+        let octets=address.split(separator:".")
+        try require(octets.count == 4 && octets.allSatisfy { Int($0).map { (0...255).contains($0) } ?? false },"missing fixture client IPv4 address")
+        let deadline=Date().addingTimeInterval(30)
+        do {
+            repeat {
+                try require(f.docker(["inspect",client,"--format","{{.State.Running}}"] ).text == "true","isolated fixture stopped before capture")
+                if try f.sql(.source,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='capture_fixture' AND SUBSTRING_INDEX(HOST,':',1)='\(address)' AND COMMAND LIKE 'Binlog Dump%'") == "1" { return }
+                Thread.sleep(forTimeInterval:0.1)
+            } while Date()<deadline
+            throw LabError("isolated fixture capture did not start for \(client) (\(address))")
+        } catch {
+            // Keep the original error if collecting supplementary evidence fails.
+            if let logs=try? f.docker(["logs",client]) {
+                try? logs.stdout.write(to:f.output.appendingPathComponent(client+"-startup.ndjson"))
+                try? logs.stderr.write(to:f.output.appendingPathComponent(client+"-startup.stderr"))
+            }
+            if let processes=try? f.sql(.source,"SELECT ID,USER,HOST,COMMAND,TIME,STATE FROM information_schema.PROCESSLIST WHERE USER='capture_fixture'") {
+                try? processes.write(to:f.output.appendingPathComponent(client+"-source-processlist.tsv"),atomically:true,encoding:.utf8)
+            }
+            throw error
+        }
+    }
     func barrier(_ client: String, count: Int) throws {
         let deadline=Date().addingTimeInterval(60)
         repeat {

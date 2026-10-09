@@ -165,13 +165,46 @@ to the workflow run; individual shard evidence has a distinct artifact name.
 The release workflow still promotes the exact packages from successful main CI.
 
 SwiftPM/Cargo build caches are separated by OS, architecture, toolchain, build
-variant and dependency locks. Docker builds persist both layer caches and cache
-mount contents; caching layers alone does not preserve compiler intermediates.
+variant, runner image and dependency locks. Host jobs restore the installed
+Swift toolchain (including its tool-cache completion marker) in the same archive
+as its build outputs, before running `setup-swift`. That action copies toolchain
+files during installation, giving compiler headers fresh timestamps even when
+the Swift version is unchanged. Pairing them with the objects avoids mixing
+headers from one installation with objects from another. Each job keeps its own
+pair; a separately shared toolchain cache could race during initial population.
+The v2 host cache keys require one fresh build before warm reuse can be measured.
+These archives are larger, so compare transfer time as well as compilation time.
+
+Docker builds persist both layer caches and cache mount contents; caching
+layers alone does not preserve compiler intermediates.
+Both the package export and the separate runtime-image export explicitly import
+the release layer cache; a hit on the first target does not warm every
+intermediate step needed by the second target.
 Unit coverage clears old counters and forces relinking after Rust builds.
 Periphery uses the current incremental build's index store, rather than cleaning
 and recompiling it. The packaging probe has an independent Docker stage so
 application-only edits leave it cached. Main CI populates shared caches; PR
 merge-ref caches are normally reusable only by that PR. Cold builds remain valid.
+
+`tools/swift_cache.py` saves nanosecond timestamps beside each Swift build cache.
+The release build applies it separately to the applier and `packaging/Probe`,
+with the probe's own package directory as the root for its input paths.
+After restoring a cache, it restores timestamps only for files whose SHA-256,
+size and permissions still match. This handles fresh source checkouts and cache
+transports that lose timestamp precision without treating changed inputs as
+unchanged. It covers package sources, dependency checkouts and build outputs;
+system headers/toolchains remain under SwiftPM's normal invalidation checks.
+Existing caches without this manifest work normally and acquire one after a
+successful build. Installer, Debian configuration and example changes no longer
+invalidate the release compilation layer. Rust changes still force relinking.
+
+The tooling tests exercise real compiler reuse, paired toolchain/build archive
+restoration, and source/header invalidation on Linux CI. Run the same check
+locally with:
+
+```sh
+SWIFT_CACHE_INTEGRATION=1 python3 -m unittest discover -s tools -p 'test_swift_cache.py'
+```
 
 Compare both cold and warm Actions runs after changing CI. Record build, image
 transfer and shard times separately: splitting jobs adds image downloads, and
