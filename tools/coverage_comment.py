@@ -111,8 +111,8 @@ def comment(metrics, run, repo, baseline=None):
         if not compare:
             lines += ["", "Base comparison unavailable: requires complete reports for the exact base commit and identical test/reporting inputs."]
         lines += ["", f'Tested commit: `{metrics["commit"]}`.']
-    lines += ["", "First-party Swift only; Rust and dependencies excluded. Integration measures selected smoke suites, "
-              "not full qualification or MySQL catalog coverage. Harness uses unit tests only.", "",
+    lines += ["", "First-party Swift only; Rust and dependencies excluded. Integration measures selected smoke/demo runs. "
+              "Full correctness/reconnect tests use the release image in the same CI workflow; this is not MySQL catalog coverage. Harness uses unit tests only.", "",
               f'[CI run and downloadable HTML/LCOV reports (`combined-swift-coverage`)]({run_url})']
     return "\n".join(lines)
 

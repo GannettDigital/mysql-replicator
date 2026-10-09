@@ -16,29 +16,24 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
         with self.assertRaisesRegex(ValueError, 'no Swift runtime'):
             ci_lab.runtime_libraries('libc.so.6 => /lib/libc.so.6 (0x1)')
 
-    def test_preserves_both_profiles_and_all_existing_suite_obligations(self):
-        shards = ci_lab.matrix()['include']
-        forward = 'mysql84-to-mysql57-myisam'
-        reverse = 'mysql57-to-mysql84-innodb'
-        actual = {(s['image'], s['profile'], s['suite']) for s in shards}
-        expected = {('release', p, suite) for p in [forward, reverse] for suite in ['correctness', 'lifecycle']}
-        expected |= {('coverage', p, suite) for p in [forward, reverse] for suite in ['correctness', 'demo']}
-        expected |= {('release', forward, 'sample'), ('coverage', forward, 'sample'), ('release', reverse, 'recovery')}
-        self.assertEqual(actual, expected)
-        self.assertEqual(len({s['id'] for s in shards}), len(shards))
-        self.assertEqual(len(actual), len(shards))
-        self.assertEqual(sum(s['reports'] for s in shards), 12)
-        for shard in shards:
-            args = ci_lab.command(shard)
-            self.assertIn('--skip-build', args)
-            self.assertEqual('--coverage' in args, shard['image'] == 'coverage')
-            if shard['suite'] == 'sample':
-                self.assertEqual([args[i+1] for i, x in enumerate(args) if x == '--case'],
-                                 ['positive', 'ddl-modify-demo-varchar-120', 'ddl-index-create'])
-            elif shard['suite'] == 'correctness':
-                self.assertEqual(args[-2:], ['--tier', 'smoke'])
-            elif shard['suite'] == 'recovery':
-                self.assertEqual(args, ['reverse-suite', '--skip-build', '--events', '0'])
+    def test_full_shard_passes_profile_variant_and_exact_cases(self):
+        shard = dict(profile='mysql84-to-mysql57-myisam', variant='gtid-full',
+                     suite='correctness', image='release', tier='full', cases=['one', 'two'])
+        self.assertEqual(ci_lab.command(shard), ['test', '--profile', shard['profile'],
+                         '--suite', 'correctness', '--skip-build', '--variant', 'gtid-full',
+                         '--tier', 'full', '--case', 'one', '--case', 'two'])
+
+    def test_adapters_use_shared_entrypoint_without_unsupported_selectors(self):
+        for suite in ['native', 'recovery', 'demo']:
+            shard = dict(profile='profile', suite=suite, image='release', cases=['internal-case'])
+            self.assertEqual(ci_lab.command(shard),
+                             ['test', '--profile', 'profile', '--suite', suite, '--skip-build'])
+
+    def test_coverage_smoke_remains_instrumented(self):
+        args = ci_lab.command(dict(profile='profile', suite='correctness', image='coverage',
+                                   variant='default', tier='smoke', cases=[]))
+        self.assertIn('--coverage', args)
+        self.assertEqual(args[-2:], ['--tier', 'smoke'])
 
     def test_wrong_source_bundle_fails_before_any_docker_or_suite_commands(self):
         with patch.object(ci_lab, 'lab', return_value='actual'), \
@@ -49,35 +44,14 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
                 ci_lab.run_shard('sample')
             run.assert_not_called()
 
-    def test_specialized_recovery_cannot_silently_change_profile(self):
-        with self.assertRaisesRegex(ValueError, 'reverse release'):
-            ci_lab.command(dict(suite='recovery', image='coverage', profile='mysql57-to-mysql84-innodb'))
-
-    def test_qualification_uses_full_suite_variant_and_no_build(self):
-        for suite in ['correctness', 'lifecycle']:
-            for profile, variant in [('mysql84-to-mysql57-myisam', 'default'),
-                                     ('mysql84-to-mysql57-myisam', 'gtid-full'),
-                                     ('mysql84-to-mysql57-myisam', 'position-minimal'),
-                                     ('mysql57-to-mysql84-innodb', 'default')]:
-                with self.subTest(suite=suite, profile=profile, variant=variant), \
-                     patch.object(ci_lab, 'lab', return_value='same'), \
-                     patch.object(ci_lab.Path, 'read_text', return_value='same\n'), \
-                     patch.object(ci_lab.subprocess, 'run') as execute:
-                    ci_lab.run_qualification(suite, profile, variant)
-                    args = execute.call_args.args[0]
-                    self.assertEqual(args, [str(ci_lab.BUNDLE / 'replicator-lab'), 'test',
-                                            '--profile', profile, '--suite', suite,
-                                            '--variant', variant, '--skip-build']
-                                     + (['--tier', 'full'] if suite == 'correctness' else []))
-                    self.assertTrue(execute.call_args.kwargs['check'])
-
-    def test_qualification_rejects_stale_bundle_before_starting_fixtures(self):
-        with patch.object(ci_lab, 'lab', return_value='actual'), \
-             patch.object(ci_lab.Path, 'read_text', return_value='old'), \
-             patch.object(ci_lab.subprocess, 'run') as execute:
-            with self.assertRaisesRegex(ValueError, 'inputs differ'):
-                ci_lab.run_qualification('correctness', 'mysql84-to-mysql57-myisam', 'default')
-            execute.assert_not_called()
+    def test_wrong_matrix_fails_before_any_docker_or_suite_commands(self):
+        with patch.object(ci_lab, 'validate_bundle'), \
+             patch.object(ci_lab.Path, 'read_text', return_value='current'), \
+             patch.object(ci_lab, 'matrix', return_value={'inputs': 'old'}), \
+             patch.object(ci_lab.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'matrix inputs differ'):
+                ci_lab.run_shard('sample')
+            run.assert_not_called()
 
 
 if __name__ == '__main__':

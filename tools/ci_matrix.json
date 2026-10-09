@@ -1,13 +1,22 @@
-{"include":[
-  {"id":"release-sample","image":"release","profile":"mysql84-to-mysql57-myisam","suite":"sample","reports":0},
-  {"id":"release-forward","image":"release","profile":"mysql84-to-mysql57-myisam","suite":"correctness","reports":0},
-  {"id":"release-reverse","image":"release","profile":"mysql57-to-mysql84-innodb","suite":"correctness","reports":0},
-  {"id":"reconnect-forward","image":"release","profile":"mysql84-to-mysql57-myisam","suite":"lifecycle","reports":0},
-  {"id":"reconnect-reverse","image":"release","profile":"mysql57-to-mysql84-innodb","suite":"lifecycle","reports":0},
-  {"id":"reverse-recovery","image":"release","profile":"mysql57-to-mysql84-innodb","suite":"recovery","reports":0},
-  {"id":"coverage-sample","image":"coverage","profile":"mysql84-to-mysql57-myisam","suite":"sample","reports":1},
-  {"id":"coverage-forward","image":"coverage","profile":"mysql84-to-mysql57-myisam","suite":"correctness","reports":1},
-  {"id":"coverage-reverse","image":"coverage","profile":"mysql57-to-mysql84-innodb","suite":"correctness","reports":1},
-  {"id":"demo-forward","image":"coverage","profile":"mysql84-to-mysql57-myisam","suite":"demo","reports":4},
-  {"id":"demo-reverse","image":"coverage","profile":"mysql57-to-mysql84-innodb","suite":"demo","reports":5}
-]}
+{
+  "areas": [
+    {"name": "database", "families": ["database"]},
+    {"name": "ddl", "families": ["ddl"], "size": 4},
+    {"name": "dml", "families": ["dml"]},
+    {"name": "indexes", "families": ["indexes"], "size": 6},
+    {"name": "bootstrap", "families": ["bootstrap"], "size": 6},
+    {"name": "refusals", "families": ["policy", "rejections", "dml-refusals"]},
+    {"name": "ordered-ddl", "families": ["ordered"]},
+    {"name": "collation", "families": ["collation"]},
+    {"name": "filters-discovery", "families": ["filters", "discovery"]},
+    {"name": "failure-recovery-offline", "families": ["failures", "recovery", "offline"]}
+  ],
+  "sample": {
+    "profile": "mysql84-to-mysql57-myisam",
+    "cases": ["positive", "ddl-modify-demo-varchar-120", "ddl-index-create"]
+  },
+  "demo_reports": {
+    "mysql84-to-mysql57-myisam": 4,
+    "mysql57-to-mysql84-innodb": 5
+  }
+}

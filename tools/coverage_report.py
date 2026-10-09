@@ -109,7 +109,7 @@ def write_reports(root, output, inputs, unit_result="unknown", integration_resul
     note = ("First-party Swift line coverage only; excludes Rust and dependencies. "
             "Harness coverage uses unit tests only. Runtime combined coverage is a union, not a sum. "
             "Each view uses its own mapped executable lines; unmapped code is not measured. "
-            "The CI integration selection is smoke coverage, not full qualification or MySQL catalog coverage.")
+            "Integration line coverage measures selected smoke/demo runs. Full correctness/reconnect tests run against the release image in the same CI workflow; this percentage does not measure MySQL catalog coverage.")
     provenance = "\n".join(f'{key}: {metrics[key]}' for key in ["commit", "run_id", "run_attempt"] if metrics.get(key))
     summary = (f'{status}\n\n| Scope | Covered / mapped lines | Coverage |\n|---|---:|---:|\n'
                + '\n'.join(rows) + '\n\n' + note + '\n\n' + provenance + '\n')

@@ -147,16 +147,25 @@ scoped reports in `combined-swift-coverage`. It also writes a job summary and a
 small `coverage-summary` artifact. Complete CI coverage requires the unit job
 and packaging/integration gate to succeed, with all twelve selected instrumented
 fixture reports. Each coverage shard also checks its own expected report count.
-Other CI checks, such as reconnect tests, currently run without instrumentation.
-Weekly full qualification is separate and does not contribute to this percentage.
+The full correctness and reconnect matrix runs against the release image and
+does not contribute to this percentage. These checks run on every PR and main
+push; there is no separate release qualification workflow.
 
 CI builds the lab executable once, bundles its Linux runtime libraries, and
-builds the release and instrumented images in parallel. Eleven profile/suite
-shards then run with `--skip-build`, at most six at a time. Dependent operations
-within a scenario remain sequential. `tools/ci_matrix.json` defines both the
-shards and their coverage expectations; `tools/ci_lab.py` runs the same lab
-commands used locally. The existing **Debian Packaging & Integration Smoke**
-check is an aggregate gate requiring every build and shard to pass.
+builds the release and instrumented images in parallel. It generates the test
+matrix from the lab catalog, grouping correctness families by area and splitting
+larger areas into case chunks. Jobs name the profile, area, variant and image;
+up to 16 run concurrently with `--skip-build`. Dependent operations within a
+scenario remain sequential, including the failure/recovery/offline transition.
+`tools/ci_matrix.json` defines grouping and coverage expectations;
+`tools/ci_matrix.py` rejects missing assignments and expands prerequisites.
+`tools/ci_lab.py` runs the same shared lab commands used locally. The generated
+plan is retained in the `ci-lab` artifact. See [the test lab](docs/TEST_LAB.md)
+for local plan inspection and reproduction.
+
+The existing **Debian Packaging & Integration Smoke** check keeps its historical
+name for branch protection, but now requires every build and full-suite shard
+to pass, including native-reference DDL, recovery and demos.
 
 Test jobs verify archive checksums and the lab source/fixture fingerprint, and
 release shards check that their applier matches the release archive binary.

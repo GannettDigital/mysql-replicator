@@ -245,17 +245,38 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-PR CI runs the same smoke, reconnect and demo cases for both profiles, retains
-specialized forward integration/reverse recovery checks, and merges shared
-applier coverage with unit coverage. `Full Profile Qualification` runs the full
-correctness and reconnect matrix weekly, on release tags, and through manual workflow dispatch.
-It reuses the checksummed lab runner (including Swift libraries) and release image
-from successful **main push CI at the exact checked-out commit**. All four matrix
-jobs run with `--skip-build`; they do not install Swift or compile. The bundle and
-image input fingerprints must match the checkout. The selected CI run is linked
-in the qualification summary. If CI is still running, wait for it; if its seven-day
-artifacts have expired, rerun that CI run before retrying qualification. Builds
-from another commit or a PR run are never substituted.
+PR and main CI run the full catalog through one parallel matrix. Correctness and
+source/target reconnect run for both default profiles, plus the forward
+`position-minimal` and `gtid-full` capture variants. Demo, reverse recovery and
+the applicable native-reference DDL suite run in the same workflow. There is no
+separate weekly or release-tag qualification workflow.
+
+The lab catalog generates the matrix; `tools/ci_matrix.json` only assigns
+correctness families to areas and sets chunk sizes. New cases automatically join
+their area, while an unassigned family or suite fails planning. The generated
+`ci-lab` artifact contains `matrix.json`, including all obligations, explicit
+not-applicable entries and exact shard selections. Each applicable obligation
+has one owning shard; prerequisites can also run in dependent shards.
+
+Jobs show profile, area, capture variant and image type. Large DDL, index and
+bootstrap areas are split into case groups, with up to 16 jobs running at once.
+Each job owns a fresh fixture. Ordered scenarios and the forward
+failure → recovery → offline/control sequence stay together. CI builds the lab
+once and each applier image once, then shares checksummed artifacts with the
+whole matrix. Release jobs verify they use the packaged binary.
+
+Generate and inspect the same plan locally:
+
+```sh
+swift build --product replicator-lab
+python3 tools/ci_lab.py --plan .build/debug/replicator-lab
+jq '.include[] | {profile, variant, area, suite, cases}' artifacts/ci/matrix.json
+```
+
+Reproduce a shard with the usual `make lab-test PROFILE=...` command
+and its `ARGS="--suite ... --variant ... --case ..."` selections. Only correctness
+and lifecycle accept `--variant`; omit case selectors for lifecycle, demo and
+specialized adapters, which run their complete suite in CI.
 
 The forward negative suites archive the native reference's error and the source
 boundary before reseeding that disposable reference past rejected transactions.
@@ -265,8 +286,9 @@ Applier failure states remain intact. To check the recovery-to-offline transitio
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--case myisam-recovery --case offline-replay --case runtime-control"
 ```
 
-Qualification uploads each profile's evidence separately. Current published CI coverage uses
-unit tests and instrumented integration/shared smoke, not the full weekly matrix.
+CI uploads each shard's evidence separately. Published code coverage combines
+unit tests with instrumented smoke and demo runs. Full correctness and reconnect
+runs use the release image and do not contribute to line coverage.
 See [coverage reports and publication](../CONTRIBUTING.md#code-coverage) for PR
 comments and downloading the HTML/LCOV reports linked from the README.
 Publishing does not require GitHub Pages.

@@ -49,21 +49,18 @@ tests are not a substitute for branch checks.
 ## Qualify the release
 
 1. Require green CI on the final **main commit**, including unit/catalog checks,
-   installer/package tests, production-image checks, shared correctness smoke and
-   source/target reconnect on both profiles, coverage and Periphery. CI packages
-   the static binary once and checks integration uses those same bytes.
-2. Run the full profile qualification workflow on that exact main commit (or tag)
-   and inspect its evidence. It runs full correctness, capture variants and
-   lifecycle scenarios. Review offline replay/control results as part of this beta.
-   Qualification downloads the lab runner and release image from that successful
-   main CI run; no recompilation is needed. Those artifacts are retained for seven
-   days. If missing or expired, rerun CI for the same commit before qualification.
-3. Review `docs/releases/0.1.0-beta.2.md`, the install guide and dependency notices.
+   installer/package tests, production-image checks, full correctness and
+   source/target reconnect for both profiles and applicable capture variants,
+   offline replay/control, native-reference DDL, recovery, demos, coverage and
+   Periphery. The same suite gates PRs and main; no additional qualification
+   workflow is needed before tagging. CI packages the static binary once and
+   checks integration uses those same bytes.
+2. Review `docs/releases/0.1.0-beta.2.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.
-4. On a representative host, qualify service/container start, acknowledged drain
-   and clean resume with persistent state and the actual service identity. Docker
-   tests do not qualify a fleet's kernel, disks, systemd or Cloud SQL environment.
-5. Confirm the organization allows GHCR package publication. The publishing job
+3. For a new deployment environment, qualify service/container start, acknowledged
+   drain and clean resume on a representative host with persistent state and the
+   actual service identity. Docker tests do not qualify a fleet's kernel, disks, systemd or Cloud SQL environment.
+4. Confirm the organization allows GHCR package publication. The publishing job
    needs `packages: write`; repository linkage uses the OCI source label. Packages
    can initially be private even when the repository is public. An organization
    administrator must allow public visibility before we advertise anonymous pulls.
@@ -97,9 +94,9 @@ git push origin v0.1.0-beta.2
 The maintainer pushes the tag when ready. `release.yml` requires main ancestry,
 matching `VERSION`, and a successful main push CI run for that SHA. It downloads
 that run's tested artifacts, verifies checksums and creates a **draft prerelease**.
-It does not push an image at this point. The tag also starts full qualification;
-review that result before publishing. If CI was still running, rerun the release
-workflow on the tag when it finishes. Existing drafts are not overwritten.
+It does not push an image or start another test suite at this point. If CI was
+still running, rerun the release workflow on the tag when it finishes. Existing
+drafts are not overwritten.
 If CI artifacts have expired, regenerate CI evidence for that exact commit; never
 substitute an untested local rebuild. Leave the release unpublished until ready.
 
