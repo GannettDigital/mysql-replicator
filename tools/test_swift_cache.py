@@ -137,6 +137,54 @@ let package = Package(name: "Probe", targets: [.executableTarget(name: "Probe"),
         self.assertEqual(subprocess.check_output([str(self.scratch / 'debug/SwiftProbe')],
                                                 text=True).strip(), 'two')
 
+    @unittest.skipUnless(os.environ.get('SWIFT_CACHE_INTEGRATION') == '1',
+                         'opt-in real Swift compiler round trip')
+    def test_toolchain_and_objects_must_be_restored_together(self):
+        # Use an external header to model a toolchain installation without
+        # changing any files in the developer's actual compiler installation.
+        with tempfile.TemporaryDirectory() as directory:
+            area = Path(directory).resolve()
+            package = area / 'package'
+            source = package / 'Sources/Probe/main.c'
+            source.parent.mkdir(parents=True)
+            toolchain = area / 'toolchain'
+            toolchain.mkdir()
+            header = toolchain / 'value.h'
+            header.write_text('#define VALUE "old"\n')
+            stamp = header.stat().st_mtime_ns
+            (package / 'Package.swift').write_text('''// swift-tools-version:6.1
+import PackageDescription
+let package = Package(name: "Probe", targets: [.executableTarget(name: "Probe")])
+''')
+            source.write_text('#include <stdio.h>\n#include "' + str(header) +
+                              '"\nint main(void) { puts(VALUE); }\n')
+            scratch = package / '.build'
+
+            def build():
+                return subprocess.run(['swift', 'build', '--package-path', str(package)],
+                                      check=True, text=True, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT).stdout
+
+            self.assertIn('Compiling', build())
+            swift_cache.save(package, scratch)
+            archive = area / 'cache.tar'
+            # Native pax tar preserves nanoseconds, as actions/cache does.
+            subprocess.run(['tar', '--format=pax', '-cf', str(archive), '-C', str(area),
+                            'package/.build', 'toolchain'], check=True)
+            os.utime(header, ns=(stamp, stamp + 1_000_000_000))
+            swift_cache.restore(package, scratch)
+            self.assertIn('Compiling', build(), 'project cache alone cannot fix toolchain mtimes')
+            shutil.rmtree(scratch)
+            shutil.rmtree(toolchain)
+            subprocess.run(['tar', '-xf', str(archive), '-C', str(area)], check=True)
+            self.assertEqual(header.stat().st_mtime_ns, stamp)
+            self.assertNotIn('Compiling', build(), 'matching toolchain and objects should be reused')
+            # Actual compiler-header changes must still affect the executable.
+            header.write_text('#define VALUE "new"\n')
+            self.assertIn('Compiling', build())
+            self.assertEqual(subprocess.check_output([str(scratch / 'debug/Probe')],
+                                                    text=True).strip(), 'new')
+
 
 if __name__ == '__main__':
     unittest.main()

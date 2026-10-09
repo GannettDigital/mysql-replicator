@@ -25,21 +25,27 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.93.1
 
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.2.1'
-
-      - uses: actions/cache@v4
+      # Keep toolchain headers and their consuming objects in the SAME archive.
+      # setup-swift copies files on a cold install, giving headers new mtimes.
+      - name: Identify runner image
+        id: runner-image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift toolchain and build cache
+        uses: actions/cache@v4
         with:
           path: |
             .build/code-coverage
             rust/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
+            ${{ runner.tool_cache }}/swift-Ubuntu/6.2.1
+          key: unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+            unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
       - name: Check release version consistency
         run: python3 tools/release_version.py
 
@@ -75,15 +81,23 @@ jobs:
       matrix: ${{ steps.bundle.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+      # Keep toolchain headers and their consuming objects in the SAME archive.
+      # setup-swift copies files on a cold install, giving headers new mtimes.
+      - name: Identify runner image
+        id: runner-image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift toolchain and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/ci-lab
+            ${{ runner.tool_cache }}/swift-Ubuntu/6.2.1
+          key: lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved') }}-
       - uses: swift-actions/setup-swift@v2
         with:
           swift-version: '6.2.1'
-      - uses: actions/cache@v4
-        with:
-          path: .build/ci-lab
-          key: lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v1-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
-          restore-keys: |
-            lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v1-${{ hashFiles('Package.resolved') }}-
       - name: Build and bundle lab with its runtime libraries
         id: bundle
         run: |
@@ -316,19 +330,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93.1
-      - uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.2.1'
-      - uses: actions/cache@v4
+      # Keep toolchain headers and their consuming objects in the SAME archive.
+      # setup-swift copies files on a cold install, giving headers new mtimes.
+      - name: Identify runner image
+        id: runner-image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore Swift toolchain and build cache
+        uses: actions/cache@v4
         with:
           path: |
             .build/periphery
             rust/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
+            ${{ runner.tool_cache }}/swift-macOS/6.2.1
+          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+            periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.2.1'
       - name: Install pinned Periphery
         run: |
           cd "$RUNNER_TEMP"
