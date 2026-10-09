@@ -16,7 +16,7 @@ coverage-unit:
 
 # Explicit inputs prevent old integration runs from inflating the report.
 coverage-report:
-	python3 tools/code_coverage.py merge $(INPUTS)
+	python3 tools/coverage_report.py $(ARGS) $(INPUTS)
 
 periphery:
 	cargo build --manifest-path rust/Cargo.toml --locked
@@ -44,21 +44,13 @@ test-asan: codec
 live-suite:
 	swift run replicator-lab live-suite $(ARGS)
 
-.PHONY: dml-suite
-dml-suite:
-	swift run replicator-lab dml-suite $(ARGS)
-
-.PHONY: ddl-suite
-ddl-suite:
-	swift run replicator-lab ddl-suite $(ARGS)
+.PHONY: reverse-suite
+reverse-suite:
+	swift run replicator-lab reverse-suite $(ARGS)
 
 .PHONY: integration-smoke
 integration-smoke:
-	swift run replicator-lab ddl-suite --positioning gtid --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
-
-.PHONY: benchmark
-benchmark:
-	swift run replicator-lab benchmark $(ARGS)
+	swift run replicator-lab test --profile mysql84-to-mysql57-myisam --case positive --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
 
 .PHONY: native-ddl-suite
 native-ddl-suite:
@@ -78,18 +70,7 @@ ddl-catalog-upstream-check:
 ddl-catalog-scan:
 	@swift run replicator-lab ddl-catalog scan $(ARGS)
 
-.PHONY: demo-up demo-start demo-status demo-compare demo-sql demo-fail demo-down demo-suite
-demo-up demo-start demo-status demo-compare demo-fail demo-down demo-suite:
-	swift run replicator-lab $@ $(ARGS)
-
-demo-sql:
-	swift run replicator-lab demo-sql "$(FILE)"
-
-.PHONY: benchmark-capture
-benchmark-capture:
-	swift run replicator-lab benchmark-capture $(ARGS)
-
-.PHONY: release-check release-artifacts
+.PHONY: release-check release-artifacts release-image
 release-check:
 	python3 tools/release_version.py
 	python3 -m unittest discover -s tools -p 'test_*.py'
@@ -97,3 +78,26 @@ release-check:
 # Docker only: export is gated by installation and archive tests.
 release-artifacts: release-check
 	docker build --platform linux/amd64 --target release-export -f docker/packaging/Dockerfile --output type=local,dest=artifacts/release .
+
+# Uses the already verified archive, tests the runtime image, and saves its bytes.
+release-image:
+	python3 tools/release_image.py
+
+.PHONY: reverse-correctness
+reverse-correctness:
+	swift run replicator-lab reverse-correctness $(ARGS)
+
+# Canonical profile-driven lab commands. Specialized targets above retain their scope.
+PROFILE ?= all
+TIER ?= full
+.PHONY: correctness lab-test lab-list lab-demo lab-benchmark
+correctness:
+	swift run replicator-lab test --profile $(PROFILE) --suite correctness --tier $(TIER) $(ARGS)
+lab-test:
+	swift run replicator-lab test --profile $(PROFILE) $(ARGS)
+lab-list:
+	@swift run replicator-lab test --profile $(PROFILE) --suite all --list $(ARGS)
+lab-demo:
+	swift run replicator-lab demo $(ACTION) --profile $(PROFILE) $(ARGS)
+lab-benchmark:
+	swift run replicator-lab benchmark --profile $(PROFILE) $(ARGS)

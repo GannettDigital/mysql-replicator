@@ -1,8 +1,7 @@
 import Foundation
 
-/// First evidence slice: named schema/data assertions. This deliberately never
-/// emits full scenario verification; boundary/binlog/history contracts still need
-/// dedicated instrumentation. Explicit bundles, including failures, are retained.
+/// Named assertions with input/runtime provenance. Case passes alone never
+/// qualify an entire MySQL scenario.
 enum DDLCoverageEvidence {
     static let imageLabel = "org.mysql-replicator.coverage-inputs"
     static let contractPaths = ["tests/DDLCoverage/catalog.json", "tests/DDLCoverage/profiles.json", "tests/DDLCoverage/upstream.json"]
@@ -61,7 +60,7 @@ enum DDLCoverageEvidence {
     static func runtime(_ h: NativeHarness, image: String, profileID: String, inventory: DDLCoverage.Inventory, inputDigest: String) throws -> [String: Any] {
         let runner = h.runner
         let label = try runner.run(["docker", "image", "inspect", image, "--format", "{{index .Config.Labels \"\(imageLabel)\"}}" ]).text
-        try require(label == inputDigest, "runtime image inputs differ; rerun ddl-suite without --skip-build")
+        try require(label == inputDigest, "runtime image inputs differ; rerun profile correctness without --skip-build")
         guard let profile = inventory.profiles.profiles.first(where: { $0.id == profileID }) else { throw LabError("missing coverage profile") }
         var servers: [[String: Any]] = []
         for service in h.services {
@@ -90,7 +89,7 @@ enum DDLCoverageEvidence {
                 "context_limit": "Client/server settings sampled before workload; per-event applier-session context is not qualified by this evidence slice."]
     }
 
-    static func save(root: URL, output: URL, profile: String, inputs: [String: String], contracts: [String: String], runtime: [String: Any], results: [[String: Any]]) throws {
+    static func save(root: URL, output: URL, profile: String, inputs: [String: String], contracts: [String: String], runtime: [String: Any], results: [[String: Any]], producer: String = "legacy") throws {
         let unchanged = try self.inputs(root: root) == inputs && hashes(root: root, paths: contractPaths) == contracts
         try writeJSON(runtime, to: output.appendingPathComponent("coverage-runtime.json"))
         var artifacts = ["result.json", "cases.json", "coverage-runtime.json"]
@@ -102,7 +101,7 @@ enum DDLCoverageEvidence {
         let runner = ProcessRunner(root: root)
         let hostDigest = try harnessDigest(root: root)
         let bundle: [String: Any] = ["schema_version": 1, "kind": "ddl_named_assertions_partial_v1", "run_id": output.lastPathComponent,
-            "created_at": ISO8601DateFormatter().string(from: Date()), "suite": "ddl-suite", "profile": profile,
+            "producer": producer, "created_at": ISO8601DateFormatter().string(from: Date()), "suite": "ddl-suite", "profile": profile,
             "git_revision": try runner.run(["git", "rev-parse", "HEAD"]).text,
             "git_dirty": !(try runner.run(["git", "status", "--porcelain"]).text.isEmpty),
             "inputs": inputs, "contract_hashes": contracts, "inputs_unchanged": unchanged,
@@ -122,6 +121,7 @@ enum DDLCoverageEvidence {
         let passed: Bool
         let cases: [[String: Any]]
         let origin: String
+        var producer: String = "legacy"
     }
     static func object(_ url: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: url)
@@ -132,6 +132,8 @@ enum DDLCoverageEvidence {
     static func load(_ manifest: URL, currentInputs: [String: String], contracts: [String: String], inventory: DDLCoverage.Inventory, harnessDigest: String? = nil) throws -> Bundle {
         let root = manifest.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
         let data = try object(manifest)
+        let producer=data["producer"] as? String ?? "legacy"
+        try require(["legacy","shared-correctness"].contains(producer),"unsupported evidence producer")
         try require(data["schema_version"] as? Int == 1 && data["kind"] as? String == "ddl_named_assertions_partial_v1" && data["suite"] as? String == "ddl-suite", "unsupported coverage bundle")
         guard let profile = data["profile"] as? String, DDLCoverageCases.swiftProfiles.contains(profile),
               let recordedInputs = data["inputs"] as? [String: String], !recordedInputs.isEmpty,
@@ -165,6 +167,7 @@ enum DDLCoverageEvidence {
             guard let id = test["id"] as? String, seen.insert(id).inserted,
                   let entry = DDLCoverageCases.registry.first(where: { $0.suite == "ddl-suite" && $0.test.id == id }), entry.profiles.contains(profile),
                   let status = test["status"] as? String, ["running", "passed", "failed"].contains(status) else { throw LabError("unknown, duplicate or invalid evidence case") }
+            if producer == "shared-correctness" { try require(SharedCatalogSupport.caseIDs.contains(id),"shared bundle contains an unmigrated case") }
             var assertionIDs = Set<String>()
             for assertion in test["assertions"] as? [[String: Any]] ?? [] {
                 guard let name = assertion["id"] as? String, DDLCoverageCases.assertions(for: id).contains(name), assertionIDs.insert(name).inserted,
@@ -173,7 +176,7 @@ enum DDLCoverageEvidence {
             }
         }
         return Bundle(profile: profile, stale: !unchanged || recordedInputs != currentInputs || recordedContracts != contracts || (harnessDigest != nil && harnessDigest != hostDigest),
-                      passed: result["result"] as? String == "passed" && result["cleanup"] as? String == "passed", cases: cases, origin: manifest.path)
+                      passed: result["result"] as? String == "passed" && result["cleanup"] as? String == "passed", cases: cases, origin: manifest.path, producer: producer)
     }
 
     static func evaluate(_ scenario: DDLCatalog.Scenario, profile: String, bundle: Bundle?) -> [String: Any] {
@@ -182,7 +185,7 @@ enum DDLCoverageEvidence {
         if let bundle {
             if bundle.stale { status = "stale" }
             else if let contracts = DDLCoverageCases.evidenceContracts[scenario.id] {
-                let bindings = scenario.bindings.filter { $0.profiles.contains(profile) && !$0.assertionIds.isEmpty }
+                let bindings = scenario.bindings.filter { $0.profiles.contains(profile) && $0.acceptedProducers.contains(bundle.producer) && !$0.assertionIds.isEmpty }
                 let byID = Dictionary(uniqueKeysWithValues: bundle.cases.compactMap { row in (row["id"] as? String).map { ($0, row) } })
                 let caseIDs = Set(bindings.flatMap(\.caseIds))
                 let parentIDs = Set(bindings.compactMap(\.completionCaseId))
@@ -230,7 +233,7 @@ enum DDLCoverageEvidence {
         report["evidence_status"] = bundles.isEmpty ? "not_loaded" : "partial_assertion_evidence_loaded"
         report["qualification_note"] = "Named assertions only; no full scenario verification. MODIFY/index cases include binlog/boundary/history; other scenarios and per-event context retain gaps."
         report["assertion_summary"] = ["passed": passed, "required": required, "partial_scenario_profiles": partial, "verified_scenario_profiles": 0]
-        report["selected_evidence"] = bundles.map { ["profile": $0.profile, "path": $0.origin] }
+        report["selected_evidence"] = bundles.map { ["profile": $0.profile, "path": $0.origin, "producer":$0.producer] }
         return report
     }
 }

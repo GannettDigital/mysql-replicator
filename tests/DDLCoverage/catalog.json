@@ -516,7 +516,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -648,7 +652,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -780,7 +788,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -925,7 +937,11 @@
             "following-dml"
           ],
           "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -1060,7 +1076,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -1200,7 +1220,11 @@
             "following-dml"
           ],
           "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -1332,7 +1356,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -1476,7 +1504,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -1619,7 +1651,11 @@
           ],
           "assertion_ids": [],
           "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract.",
-          "completion_case_id": "ddl"
+          "completion_case_id": "ddl",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -3404,7 +3440,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -3616,7 +3656,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -3844,7 +3888,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -4058,7 +4106,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -4288,7 +4340,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -4500,7 +4556,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -4712,7 +4772,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -5486,7 +5550,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound."
+          "note": "Named metadata/data assertions only. Per-scenario binlog, checkpoint and schema-history evidence remains unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -6321,7 +6389,11 @@
             "following-dml"
           ],
           "completion_case_id": "ddl",
-          "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound."
+          "note": "Named schema/data assertions are matched to exact case IDs in DDLCoverageCases.evidenceContracts; parent and run cleanup must pass. This is partial evidence; binlog/boundary/history assertions remain unbound.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         }
       ],
       "gaps": [
@@ -8240,7 +8312,11 @@
             "schema-effects",
             "following-dml"
           ],
-          "note": "Both named assertions require every one of the six cases; source warnings and database/table metadata are observed."
+          "note": "Both named assertions require every one of the six cases; source warnings and database/table metadata are observed.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -8983,7 +9059,11 @@
             "source-boundary",
             "schema-history"
           ],
-          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only."
+          "note": "Every named case in this group must pass; scoped metadata/rows/binlog/boundary/history assertions only.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -9209,7 +9289,11 @@
             "source-boundary",
             "schema-history"
           ],
-          "note": "All named cases must pass structural/binlog/checkpoint/history checks; rename/drop make no following-DML claim."
+          "note": "All named cases must pass structural/binlog/checkpoint/history checks; rename/drop make no following-DML claim.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "ddl-suite",
@@ -9231,7 +9315,11 @@
           "assertion_ids": [
             "following-dml"
           ],
-          "note": "Only explicitly declared row probes are counted; full three-operation sequences are representative, not repeated per DDL."
+          "note": "Only explicitly declared row probes are counted; full three-operation sequences are representative, not repeated per DDL.",
+          "producers": [
+            "legacy",
+            "shared-correctness"
+          ]
         },
         {
           "suite": "native-ddl-suite",
@@ -9347,6 +9435,11 @@
     },
     {
       "suite": "ddl-suite",
+      "case_id": "ddl-compat-constraints",
+      "reason": "Bounded PRIMARY/UNIQUE constraint syntax regression on both shared profiles, with per-step index/row oracles and durable checkpoint checks. Aggregate success does not independently qualify all broader index catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
       "case_id": "ddl-compat-database",
       "reason": "Bounded compatibility regression with per-step source/native/5.7 row oracles and durable checkpoint checks. See DDLCompatibilityCases.swift and PLAN/DDL_COMPATIBILITY.md; aggregate success does not qualify every assertion of the broader catalog feature."
     },
@@ -9419,6 +9512,21 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-collation-collision",
       "reason": "Opt-in collation mapping rejection regression: source NO PAD keys collide on the PAD SPACE target, which retains pending intent and the prior checkpoint."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup-initial",
+      "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup-changed",
+      "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-collation-cleanup-removed",
+      "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
     }
   ]
 }

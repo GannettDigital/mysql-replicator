@@ -3,6 +3,7 @@
 .swiftpm
 .upstream
 artifacts
+.ci-cache
 rust/target
 packaging/Probe/.build
 packaging/rust/target

@@ -69,7 +69,8 @@ def render(report, root, output):
     (output / "coverage.lcov").write_text(lcov_text(report["files"]))
     covered = sum(n > 0 for lines in report["files"].values() for n in lines.values())
     total = sum(len(lines) for lines in report["files"].values())
-    summary = f"Swift line coverage: {covered}/{total} ({100 * covered / total if total else 0:.2f}%)"
+    percent = f"{100 * covered / total:.2f}%" if total else "unavailable"
+    summary = f"{report.get('scope', 'Swift line coverage')}: {covered}/{total} ({percent})"
     modules = {}
     runtime = []
     for path, lines in report["files"].items():
@@ -77,7 +78,8 @@ def render(report, root, output):
         modules.setdefault(parts[1] if len(parts) > 2 else "Sources", []).extend(lines.values())
         if not path.startswith("Sources/ReplicatorLab"):
             runtime.extend(lines.values())
-    modules["Runtime (excluding lab)"] = runtime
+    if runtime:
+        modules["Runtime (excluding lab)"] = runtime
     module_rows, markdown = [], ["| Scope | Covered lines | Coverage |", "|---|---:|---:|"]
     for name, counts in sorted(modules.items()):
         hits, size = sum(n > 0 for n in counts), len(counts)
@@ -122,10 +124,11 @@ def export(root, output, label, binaries, profiles):
     render(report, root, output)
 
 
-def merge(root, output, inputs):
+def load_reports(root, inputs):
     sources = source_hashes(root)
-    merged = {"version": 1, "inputs": [], "sources": sources, "files": {}, "covered_by": {}}
+    reports = []
     seen = set()
+    labels = set()
     for path in inputs:
         path = path / "coverage.json" if path.is_dir() else path
         if path.resolve() in seen:
@@ -134,9 +137,21 @@ def merge(root, output, inputs):
         report = json.loads(path.read_text())
         if report.get("version") != 1 or report["sources"] != sources:
             raise ValueError(f"source mismatch or unsupported report: {path}; rerun coverage for this checkout")
-        overlap = set(merged["inputs"]) & set(report["inputs"])
+        overlap = labels & set(report["inputs"])
         if overlap:
             raise ValueError(f"duplicate coverage inputs: {sorted(overlap)}")
+        labels.update(report["inputs"])
+        reports.append(report)
+    if not reports:
+        raise ValueError("no coverage inputs")
+    return reports
+
+
+def combine(reports, sources, scope=None):
+    merged = {"version": 1, "inputs": [], "sources": sources, "files": {}, "covered_by": {}}
+    if scope:
+        merged["scope"] = scope
+    for report in reports:
         merged["inputs"].extend(report["inputs"])
         for file, lines in report["files"].items():
             dest = merged["files"].setdefault(file, {})
@@ -145,6 +160,11 @@ def merge(root, output, inputs):
                 dest[number] = dest.get(number, 0) + count
                 if count > 0:
                     attribution.setdefault(number, []).extend(report["covered_by"][file][number])
+    return merged
+
+
+def merge(root, output, inputs):
+    merged = combine(load_reports(root, inputs), source_hashes(root))
     if not merged["files"]:
         raise ValueError("no coverage inputs")
     render(merged, root, output)
@@ -172,7 +192,8 @@ def unit(root, output):
     output.mkdir(parents=True)
     environment = dict(os.environ, REPLICATOR_TEST_BINARY_DIR=str(scratch / "debug"),
                        LLVM_PROFILE_FILE=str(output / "raw/%p-%m.profraw"))
-    command = ["swift", "test", "--scratch-path", scratch, "--enable-code-coverage", "--enable-index-store"]
+    command = ["swift", "test", "--scratch-path", scratch, "--enable-code-coverage", "--enable-index-store",
+               "--force-resolved-versions"]
     status = subprocess.run([str(a) for a in command], cwd=root, env=environment).returncode
     # swift test chooses its own profile directory; include CLI subprocess profiles too.
     binaries = [scratch / "debug/mysql-replicator", scratch / "debug/replicator-lab"]

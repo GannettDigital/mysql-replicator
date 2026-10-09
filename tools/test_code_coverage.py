@@ -2,12 +2,40 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import code_coverage as coverage
 
 
 class CoverageTests(unittest.TestCase):
+    def test_cached_unit_build_keeps_objects_but_discards_counters_and_relinks(self):
+        debug = self.root / '.build/code-coverage/debug'
+        debug.mkdir(parents=True)
+        cached = debug / 'cached.o'
+        cached.write_bytes(b'compiler intermediate')
+        (debug / 'old.profraw').write_bytes(b'old counters')
+        products = [debug / name for name in ['mysql-replicator', 'replicator-lab', 'Suite.xctest']]
+        for product in products:
+            product.write_bytes(b'old executable')
+        output = self.root / 'artifacts/coverage/unit'
+        output.mkdir(parents=True)
+        (output / 'old.profraw').write_bytes(b'old subprocess counters')
+
+        def rebuild(args, **kwargs):
+            self.assertIn('--force-resolved-versions', args)
+            self.assertEqual(cached.read_bytes(), b'compiler intermediate')
+            self.assertFalse(list(self.root.rglob('*.profraw')))
+            self.assertFalse(any(p.exists() for p in products))
+            for product in products:
+                product.write_bytes(b'new executable')
+            return SimpleNamespace(returncode=0)
+
+        with patch.object(coverage, 'run'), patch.object(coverage.subprocess, 'run', side_effect=rebuild), \
+             patch.object(coverage, 'export') as export:
+            coverage.unit(self.root, output)
+        export.assert_called_once()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

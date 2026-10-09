@@ -7,55 +7,60 @@ func main() throws -> Int32 {
     if command == "--help" {
         print("""
         replicator-lab: repository automation (run from the repository root)
-          native-suite [--positioning auto|file-position|both]
-          native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
-                       [--native-engine MyISAM|InnoDB] [--native-init-automatic]
-          ubuntu-smoke [--skip-build]
-          live-suite [--skip-build]
-          dml-suite [--skip-build] [--slice all|basic|matrix|extended] [--positioning both|gtid|file-position] [--list]
-          ddl-suite [--skip-build] [--slice all|basic|modify-index|database|ordered|filters|compatibility]
-                    [--case ID ...] [--positioning both|gtid|file-position] [--list]
-          native-ddl-suite
-          benchmark-capture [--skip-build] [--events N] [--rate N] [--decoder-profile on|off]
-          benchmark [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
+          test --profile all|mysql84-to-mysql57-myisam|mysql57-to-mysql84-innodb
+               [--suite correctness|lifecycle|recovery|demo|native|all]
+               [--tier smoke|full] [--family FAMILY]
+               [--case ID ...] [--variant default|position-minimal|gtid-full|all]
+               [--list] [--skip-build] [--coverage]
+          demo up|start|stop|status|compare|sql|fail|skip|inspect|resolve|down|legacy-down --profile PROFILE
+               up [--skip-build] [--coverage]; sql FILE; skip GTID; compare [--expect-blocked]
+          benchmark --profile PROFILE [--mode backlog|streaming|capture] [--workload insert|multi-table-transaction] [--events N] [--skip-build]
+        Forward streaming options (--mode streaming):
+                    [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
                     [--target-transport tcp-tls|unix-tls|unix]
                     [--insert-rows N] [--overlap-preparation on|off] [--flush-on-table-change on|off]
                     [--explicit-table-locks on|off]
                     [--batch-transactions N] [--decoder-profile on|off] [--applier-profile on|off]
                     [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
                     [--sample-seconds N] [--timeout N]
+        Specialized and compatibility entry points:
+          build-inputs # source/fixture digest for prebuilt CI images
+          native-suite [--positioning auto|file-position|both]
+          native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
+                       [--native-engine MyISAM|InnoDB] [--native-init-automatic]
+          ubuntu-smoke [--skip-build]
+          live-suite [--skip-build]
+          native-ddl-suite
           ddl-catalog check
           ddl-catalog report [--format markdown|json] [--evidence PATH ...]
           ddl-catalog upstream-check [--mysql-source PATH]
           ddl-catalog scan [--mysql-source PATH]
-          demo-up [--skip-build]    # prepare stack/config and an idle applier container
-          demo-start               # launch mysql-replicator inside the running container
-          demo-status              # containers, native status, live SQLite and diagnostics
-          demo-sql FILE            # execute a SQL file on the demo source
-          demo-compare [--expect-blocked]
-          demo-fail                # run prepared failure and verify both appliers stopped
-          demo-down                # archive evidence and delete only this disposable stack
-          demo-suite [--skip-build]
           upstream-tests
           package-deb [--output DIR] [--skip-build] [--skip-verification]
+          reverse-correctness [--skip-build] [--slice all|database|ddl|dml|indexes|policy|rejections]
+          reverse-suite [--skip-build] [--events N] # 5.7 InnoDB → 8.4 InnoDB
           verify-evidence <case-evidence-directory>
         native-suite verifies positive and expected rejection cases; smoke retains
         nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
-        Source ON/ON and targets OFF_PERMISSIVE/WARN are fixed for qualification.
+        Legacy forward qualification fixes source ON/ON and targets OFF_PERMISSIVE/WARN.
         """)
         return 0
     }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
-    if command.hasPrefix("demo-") {
-        try DemoSession.run(root: root, command: command, arguments: args); return 0
+    if command == "build-inputs" {
+        try require(args.isEmpty,"build-inputs accepts no arguments")
+        print(try LabBuild.inputDigest(root:root)); return 0
+    }
+    if command == "demo" { try LabDemo.run(root:root,arguments:args); return 0 }
+    if command == "test" { try LabTests.run(root:root,arguments:args); return 0 }
+    if command.hasPrefix("demo-") || command.hasPrefix("reverse-demo-") {
+        throw LabError("use demo ACTION --profile PROFILE, or test --suite demo --profile PROFILE; see docs/TEST_LAB.md")
     }
     if command == "benchmark-capture" {
-        try CaptureBenchmark.run(root:root,arguments:args); return 0
+        throw LabError("use benchmark --profile mysql84-to-mysql57-myisam --mode capture")
     }
-    if command == "benchmark" {
-        try PerformanceBenchmark.run(root: root, arguments: args); return 0
-    }
+    if command == "benchmark" { try LabBenchmark.run(root:root,arguments:args); return 0 }
     if command == "ddl-catalog" {
         try DDLCoverage.run(root: root, arguments: args); return 0
     }
@@ -63,11 +68,18 @@ func main() throws -> Int32 {
         try require(args.isEmpty,"native-ddl-suite accepts no arguments")
         try NativeDDLQualification.run(root:root); return 0
     }
-    if command == "dml-suite" || command == "ddl-suite" {
-        let ddl = command == "ddl-suite"
-        let selection = try SuiteSelection(arguments: args, ddl: ddl)
-        if selection.list { selection.describe(ddl: ddl); return 0 }
-        try DMLQualification.run(root: root, build: selection.build, ddl: ddl, selection: selection)
+    if command == "reverse-correctness" {
+        try SharedCorrectness.run(root:root,arguments:args); return 0
+    }
+    if command == "reverse-suite" {
+        let build = !args.contains("--skip-build")
+        args.removeAll { $0 == "--skip-build" }
+        var events = 100
+        if !args.isEmpty {
+            guard args.count == 2, args[0] == "--events", let n = Int(args[1]) else { throw LabError("reverse-suite accepts --skip-build and --events N") }
+            events = n
+        }
+        try ReverseQualification.run(root:root,build:build,events:events)
         return 0
     }
     if command == "live-suite" {

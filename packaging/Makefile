@@ -10,10 +10,9 @@ export CC_x86_64_unknown_linux_musl := clang
 export AR_x86_64_unknown_linux_musl := llvm-ar
 export CFLAGS_x86_64_unknown_linux_musl := $(PACKAGING_CFLAGS)
 VERSION ?= $(shell python3 tools/release_version.py --debian)
-RELEASE_VERSION := $(shell cat VERSION)
-.PHONY: build
-build:
-	python3 tools/release_version.py
+RELEASE_VERSION = $(shell cat VERSION)
+.PHONY: probe build
+probe:
 	mkdir -p /out/native /out/evidence
 	clang $(PACKAGING_CFLAGS) -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -c /opt/sqlite/sqlite3.c -o /out/native/sqlite3.o
 	llvm-ar rcs /out/native/libsqlite3.a /out/native/sqlite3.o
@@ -23,6 +22,10 @@ build:
 	rm -f packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe
 	swift build --package-path packaging/Probe --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native -Xlinker -L/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release
 	cp packaging/Probe/.build/x86_64-swift-linux-musl/release/packaging-probe /out/packaging-probe
+
+build:
+	python3 tools/release_version.py
+	test -f /out/packaging-probe
 	cargo build --manifest-path rust/Cargo.toml --locked --release --target $(PACKAGING_TARGET) --target-dir packaging/rust/target -j 2
 	rm -f .build/x86_64-swift-linux-musl/release/mysql-replicator
 	REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/$(PACKAGING_TARGET)/release swift build --product mysql-replicator --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
@@ -93,8 +96,8 @@ release: deb
 	cp -R /out/third-party /out/archive/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64/
 	tar -C /out/archive -czf /out/release/mysql-replicator-$(RELEASE_VERSION)-linux-x86_64.tar.gz mysql-replicator-$(RELEASE_VERSION)-linux-x86_64
 	cp /out/deb/*.deb /out/release/
-	cp examples/apply.example.yaml LICENSE NOTICE /out/release/
+	cp examples/apply.example.yaml LICENSE NOTICE packaging/install.sh /out/release/
 	cp -R /out/evidence /out/release/build-evidence
 	tar -C /out/release -czf /out/release/build-evidence.tar.gz build-evidence
 	rm -rf /out/release/build-evidence
-	cd /out/release && sha256sum *.deb *.tar.gz apply.example.yaml LICENSE NOTICE > SHA256SUMS
+	cd /out/release && sha256sum *.deb *.tar.gz apply.example.yaml LICENSE NOTICE install.sh > SHA256SUMS

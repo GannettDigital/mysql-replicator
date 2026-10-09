@@ -1,13 +1,35 @@
 # DDL coverage catalog
 
+Historical profile IDs describe qualification contracts, independent of the
+runner that supplies their evidence. Bindings may explicitly accept the
+`shared-correctness` producer as well as `legacy`; omitted `producers` means
+legacy only. Database creation and MODIFY/index are the first migrated bindings.
+Shared historical runs export a checksummed `catalog/coverage-evidence.json`
+bundle, with the same runtime/settings/input validation and per-assertion rules.
+Ordinary shared case passes and reverse/default runs cannot qualify these slots.
+See [capture variants](../../docs/TEST_LAB.md#capture-variants-and-catalog-evidence).
+
 This implements steps 1–2 and the first partial-evidence slice of step 3 of the
 [catalog plan](../../PLAN/DDL_COVERAGE_CATALOG.md). The catalog is an offline,
-reviewable checklist. It contains 61 scoped scenarios, 29 features across families
-A–F, four fixture profiles and 29 pinned research references. The shared registry
-contains 113 executable case declarations: 88 from `ddl-suite` and 25 from
-`native-ddl-suite`. Baseline, setup/cleanup and extra research regressions have explicit non-catalog classifications.
+reviewable checklist. It contains 63 scoped scenarios, 29 features across families
+A–F, four fixture profiles and 30 pinned research references. The shared registry
+contains 185 executable case declarations: 137 under the logical `ddl-suite` contract ID and 48 under
+`native-ddl-suite`. The former is now produced by shared profile correctness;
+its old CLI runner has been removed. Baseline, setup/cleanup and extra research regressions have explicit non-catalog classifications.
 All family inventories remain partial; broader feature rows must be split during
 upstream/fleet review. These counts are not the size of the MySQL DDL language.
+
+The [profile-driven lab](../../docs/TEST_LAB.md) shares correctness scenarios across
+both topologies. This catalog's current profile IDs remain forward-specific
+variants; its named assertion evidence is not inferred from shared-suite passes.
+
+The [2026-10-07 migration measurement](../../PLAN/TEST_SUITE_COVERAGE_MIGRATION.md)
+records 730 required assertion/profile obligations, of which 68 have named
+bindings. It also found three executed collation-policy helper cases missing from
+the registry. Those dependent phases are now declared and classified explicitly;
+they remain part of the complete collation workflow, not independently selectable
+tests. Fresh evidence is required after the repair. Counts in the dated
+implementation increments below describe their historical snapshots.
 
 ## Commands available now
 
@@ -73,9 +95,10 @@ capability and Swift policy rejection are separate outcomes, not one supported f
 
 Without selected evidence, every in-scope scenario reports **unverified**, including those with
 previously passing integration cases. This preserves the historical test results
-while requiring fresh per-assertion/build/profile evidence. Three lifecycle
-scenarios now bind `schema-effects` and `following-dml`; all other assertion
-bindings remain empty. An aggregate case pass never supplies them automatically. Unknown outcomes and unresolved settings remain gaps.
+while requiring fresh per-assertion/build/profile evidence. Fourteen scenarios
+have named assertion bindings; the MODIFY/index scenarios also bind binlog,
+boundary and schema-history assertions. Other required assertions remain unbound.
+An aggregate case pass never supplies them automatically. Unknown outcomes and unresolved settings remain gaps.
 
 ## Editing workflow
 
@@ -201,22 +224,27 @@ The final test log and offline coverage report are retained in
 
 ## Named assertion evidence and before/after comparison
 
-Run `make ddl-suite` to build the labelled Ubuntu runtime and execute both Swift
-profiles. The six new named steps test empty-table TRUNCATE followed by binary
-INSERT, primary-key/NULL UPDATE and DELETE, plus UPDATE/DELETE after rename.
-The suite retains existing checks and now writes observed schema/data values for
-named assertions. Each completed profile produces `coverage-evidence.json` beside
-`result.json`, `cases.json` and `coverage-runtime.json`.
-
-Use the explicit paths printed by that run (one bundle per profile):
+Run the shared forward correctness suite in each historical capture variant.
+Named assertion bundles are written under the fixture's `catalog/` directory;
+result and per-case observations remain beside it. Use one complete bundle per
+historical profile, with the exact paths printed by the run:
 
 ```sh
-make ddl-catalog-report ARGS='--format json' > before.json
-make ddl-suite
-make ddl-catalog-report ARGS='--format json --evidence artifacts/ddl-suite/POSITION_RUN/coverage-evidence.json --evidence artifacts/ddl-suite/GTID_RUN/coverage-evidence.json' > after.json
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--variant position-minimal"
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--variant gtid-full --skip-build"
+make ddl-catalog-report ARGS='--format json --evidence POSITION_FIXTURE/catalog/coverage-evidence.json --evidence GTID_FIXTURE/catalog/coverage-evidence.json' > after.json
 ```
 
-`POSITION_RUN` and `GTID_RUN` are placeholders for the actual run directories.
+`POSITION_FIXTURE` and `GTID_FIXTURE` are the actual directories beneath
+`artifacts/lab/`. The shared producer retains the 68 previously evidenced named
+obligations out of 730; the other 662 remain explicit unresolved obligations.
+Default/reverse results cannot fill these historical forward profile slots.
+The producer preserves input/runtime provenance and assertion checksums; do not
+combine passing subsets from different runs or import stale-checkout evidence.
+
+The following records the earlier named-assertion milestone, before MODIFY/index
+expanded the denominator from 690 to 730:
+
 Compare `assertion_summary` and each scenario's `profile_evidence`: these show
 passed/required assertions, missing assertion IDs and partial profile counts.
 The catalog has 690 required assertion/profile obligations across 144 scenario /
@@ -295,7 +323,7 @@ the conditional/LIKE implementation was committed as `90d6ae4`.
 plus explicit/inherited unsupported-collation and permission-denied failures.
 Each accepted case checks database defaults, following table metadata/local engine,
 DML and retained seed data. Cases run before the existing ordered table-DDL stream
-in `make ddl-suite`; grant setup names the new schemas without creating them.
+in the shared `database` family; failure cases run in `forward-failures`.
 Database-only intents store metadata in `ddl_intents.database_json` (SQLite format
 4), with no table-schema IDs. The existing retention policy covers these intents.
 
@@ -338,12 +366,12 @@ and zero fully verified combinations (previously 48/690, 24 and zero). See the
 
 ## Selected execution
 
-Use `make ddl-suite ARGS='--list'`, `--slice modify-index`, or a named
-`--case ddl-modify-demo-varchar-120` to execute a subset; add
-`--positioning gtid` to use one profile. See
-[commands, prerequisites and build reuse](../../PLAN/INCREMENTAL_CHECKS.md).
-Selected runs keep the same checksummed evidence format. Their `result.json`
-records `selection.full_suite=false`; omitted cases never supply assertions.
-The three wildcard-filter/checkpoint cases are explicitly classified as
+Use `make lab-list`, `--family indexes`, or a named
+`--case ddl-modify-demo-varchar-120` to select shared scenarios. Add
+`--variant gtid-full` for one historical forward profile. See the
+[profile test lab](../../docs/TEST_LAB.md) for dependencies, prerequisites and build reuse.
+Selected runs retain checksummed evidence and explicit requested cases/family;
+omitted cases never supply assertions. Wildcard-filter/checkpoint cases remain
 non-DDL-grammar regressions, so their passes do not inflate DDL coverage.
-The registry now contains 165 cases; the 63 DDL scenarios remain unchanged.
+The registry contains 185 declarations and 63 DDL scenarios. Logical catalog IDs
+remain stable even when their original CLI runner is gone.

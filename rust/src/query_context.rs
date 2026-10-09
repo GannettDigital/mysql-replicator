@@ -25,7 +25,28 @@ fn decode(bytes: &[u8]) -> Checked<QueryContext> {
     ensure(bytes.len() <= 65535, LIMIT, "query status limit")?;
     let mut out=QueryContext::default();
     let mut consumed=0;
-    for variable in StatusVarsIterator::new(bytes) {
+    while consumed < bytes.len() {
+        // mysql_common does not skip each name's NUL terminator, and its
+        // iterator interprets the over-limit sentinel as a count of names.
+        // This field only schedules native parallel workers; validate framing
+        // here without depending on the decoded (unused) database names.
+        if bytes[consumed]==12 {
+            ensure(out.present & (1<<12)==0,MALFORMED,"duplicate query status")?;
+            let count=*bytes.get(consumed+1).ok_or((MALFORMED,"truncated updated databases"))?;
+            ensure(count!=0 && (count<=16 || count==254),MALFORMED,"invalid updated database count")?;
+            consumed+=2;
+            if count!=254 {
+                for _ in 0..count {
+                    let end=bytes[consumed..].iter().position(|b| *b==0)
+                        .ok_or((MALFORMED,"truncated updated databases"))?;
+                    consumed+=end+1;
+                }
+            }
+            out.present |= 1<<12;
+            continue;
+        }
+        let variable=StatusVarsIterator::new(&bytes[consumed..]).next()
+            .ok_or((UNSUPPORTED,"unknown or truncated query status"))?;
         // The pinned mysql_common iterator correctly bounds Q_MICROSECONDS to
         // three bytes, but get_value() tries to read a u32 and rejects it. Keep
         // the upstream framing and decode that one 24-bit value here.
@@ -53,7 +74,7 @@ fn decode(bytes: &[u8]) -> Checked<QueryContext> {
             StatusVarVal::TableMapForUpdate(_) => (9,9),
             StatusVarVal::MasterDataWritten(_) => (10,5),
             StatusVarVal::Invoker {username,hostname} => (11,3+username.as_bytes().len()+hostname.as_bytes().len()),
-            StatusVarVal::UpdatedDbNames(names) => (12,2+names.iter().map(|n|n.as_bytes().len()+1).sum::<usize>()),
+            StatusVarVal::UpdatedDbNames(_) => unreachable!("updated databases decoded above"),
             StatusVarVal::Microseconds(v) => {ensure(v<=999999,MALFORMED,"invalid query microseconds")?;out.microseconds=v;(13,4)},
             StatusVarVal::CommitTs(_) | StatusVarVal::CommitTs2(_) => return Err((UNSUPPORTED,"unsupported query commit timestamp")),
             StatusVarVal::ExplicitDefaultsForTimestamp(v) => {out.explicit_defaults_timestamp=v as u32;(16,2)},
@@ -83,6 +104,20 @@ pub unsafe extern "C" fn rc_query_context_decode(bytes:*const u8,length:u64,out:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn updated_databases_skip_each_terminator_and_preserve_following_fields() {
+        let data=b"\x0c\x02rejected\0mysql\0\x10\x01";
+        let context=decode(data).unwrap();
+        assert_eq!(context.present,(1<<12)|(1<<16));
+        assert_eq!(context.explicit_defaults_timestamp,1);
+        for end in 1..17 { assert!(decode(&data[..end]).is_err()); }
+        assert!(decode(b"\x0c\x01db\0\x0c\x01db\0").is_err());
+        assert!(decode(b"\x0c\x02db\0other").is_err());
+        assert!(decode(b"\x0c\x00").is_err());
+        assert!(decode(b"\x0c\xff").is_err());
+        let sentinel=decode(&[12,254,16,1]).unwrap();
+        assert_eq!(sentinel.explicit_defaults_timestamp,1);
+    }
     #[test]
     fn context_is_complete_and_duplicates_and_truncation_fail() {
         let data=[1,0,0,0,0,0,0,0,0,4,45,0,224,0,255,0,18,45,0];

@@ -11,7 +11,10 @@ and block; this does not introduce automatic DDL replay or crash recovery.
 - CREATE/ADD/MODIFY/CHANGE definitions for the existing DML types: integer
   widths, DECIMAL, DATE/YEAR/TIME/DATETIME/TIMESTAMP, CHAR/VARCHAR,
   BINARY/VARBINARY, TEXT/BLOB families, ENUM and SET. ENUM/SET DML still requires
-  source `binlog_row_metadata=FULL` to validate ordered labels.
+  source `binlog_row_metadata=FULL` to validate ordered labels in the forward profile.
+  DDL rejects ENUM/SET labels outside the Unicode BMP before target execution:
+  MySQL's COLUMN_TYPE metadata replaces these characters with `?`, so definition
+  equality cannot be verified reliably. CHAR/VARCHAR/TEXT emoji data is unaffected.
 - Literal and NULL defaults, CURRENT_TIMESTAMP defaults/ON UPDATE, integer
   AUTO_INCREMENT, inline secondary BTREE indexes, ALTER SET/DROP DEFAULT,
   common comma-separated column/index operations, and replacement primary keys.

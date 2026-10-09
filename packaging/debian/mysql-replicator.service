@@ -11,6 +11,7 @@ Group=mysql-replicator
 WorkingDirectory=/var/lib/mysql-replicator
 EnvironmentFile=-/etc/mysql-replicator/credentials
 ExecStart=/usr/bin/mysql-replicator run --config /etc/mysql-replicator/apply.yaml
+ExecReload=/usr/bin/mysql-replicator ctl reload --config /etc/mysql-replicator/apply.yaml
 # Uncertain writes and interrupted state require operator investigation.
 Restart=no
 # Let SIGTERM drain the current work; do not turn a slow clean stop into SIGKILL.

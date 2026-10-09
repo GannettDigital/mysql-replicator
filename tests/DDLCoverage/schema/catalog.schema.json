@@ -317,6 +317,18 @@
         "note": {
           "type": "string",
           "minLength": 1
+        },
+        "producers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "shared-correctness"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
       },
       "required": [

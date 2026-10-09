@@ -13,6 +13,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", exact: "2.90.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.37.0"),
         .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2"),
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2"),
     ],
     targets: [
         .systemLibrary(name: "CReplicatorCodec"),
@@ -23,6 +24,7 @@ let package = Package(
                 .linkedLibrary("dl", .when(platforms: [.linux])),
                 .linkedLibrary("m", .when(platforms: [.linux]))]),
         .target(name: "ReplicatorCapture", dependencies: ["ReplicatorCodec",
+            .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "MySQLNIO", package: "mysql-nio"),
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),

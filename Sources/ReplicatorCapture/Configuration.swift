@@ -29,7 +29,8 @@ public struct CaptureConfiguration: Decodable {
     public let start: Start
     public let tables: [Table]?
     public let nonBlocking: Bool?
-    public let stopAfterTransactions: Int?
+    public var stopAfterTransactions: Int?
+    public var stopAfterGTIDs: String? = nil
     public let idleTimeoutSeconds: Int?
     public let maximumEventBytes: UInt32?
     /// Optional detailed worker-local decoder timings; absent/false keeps coarse timings only.
@@ -44,11 +45,13 @@ public struct CaptureConfiguration: Decodable {
             serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
+            stopAfterGTIDs:stopAfterGTIDs,
             idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
     }
 
-    public func validate() throws -> DumpStart {
-        try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source")
+    public func validate(connection: Bool = true) throws -> DumpStart {
+        _ = try StopConditions(transactions:stopAfterTransactions,gtids:stopAfterGTIDs)
+        if connection { try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source") }
         guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
               !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,

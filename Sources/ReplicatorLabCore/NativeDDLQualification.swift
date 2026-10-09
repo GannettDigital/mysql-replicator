@@ -2,12 +2,13 @@ import Foundation
 
 /// Native observations precede changes to Swift's supported DDL contract.
 public enum NativeDDLQualification {
-    public static func run(root: URL) throws {
-        for restricted in [false,true] { try runCase(root:root,restricted:restricted) }
+    public static func run(root: URL,onEvidence: ((URL)->Void)? = nil) throws {
+        for restricted in [false,true] { try runCase(root:root,restricted:restricted,onEvidence:onEvidence) }
     }
-    private static func runCase(root: URL,restricted: Bool) throws {
+    private static func runCase(root: URL,restricted: Bool,onEvidence: ((URL)->Void)?) throws {
         var config=NativeCase();config.transaction=false
         let h=NativeHarness(root:root,config:config,artifactCategory:"native-ddl-suite")
+        onEvidence?(h.output)
         try FileManager.default.createDirectory(at:h.output,withIntermediateDirectories:true)
         h.composeEnvironment=["FIXTURE_DISABLED_ENGINES":restricted ? "InnoDB" : ""]
         var report:[String:Any]=["result":"failed","restricted":restricted,"swift_apply":"not_exercised"]

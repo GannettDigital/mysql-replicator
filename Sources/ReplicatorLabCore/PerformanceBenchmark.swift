@@ -138,12 +138,12 @@ public enum PerformanceBenchmark {
     public static func run(root: URL, arguments: [String]) throws {
         let options = try PerformanceOptions(arguments: arguments)
         // A unique category isolates this run from the interactive demo and other benchmarks.
-        let session = DemoSession.Session(root: root, category: "performance/" + runID())
+        let session = ForwardBenchmarkFixture(root: root, category: "performance/" + runID())
         let runner = ProcessRunner(root: root)
         let loadTag = "mysql-replicator-benchmark:sysbench"
         var loadContainer: String?
         var failure: Error?
-        var report: [String: Any] = ["schema_version": 2, "result": "failed", "options": try jsonObject(options),
+        var report: [String: Any] = ["schema_version": 2, "result": "failed", "options": try jsonObject(options), "profile":LabProfile.forward.rawValue,"mode":"streaming","topology":LabProfile.forward.topology,
             "scope": "shared-host source8.4/native8.4/target5.7; release x86_64 applier; no production capacity claim",
             "timing": "monotonic host polling; source statement latency is not replication latency"]
         var output: URL?
@@ -154,7 +154,7 @@ public enum PerformanceBenchmark {
             }
             let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, showInstructions: false, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling, insertRows:options.insertRows, overlapPreparation:options.overlapPreparation, flushOnTableChange:options.flushOnTableChange, explicitTableLocks:options.explicitTableLocks)
+            try session.up(build: options.build, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling, insertRows:options.insertRows, overlapPreparation:options.overlapPreparation, flushOnTableChange:options.flushOnTableChange, explicitTableLocks:options.explicitTableLocks)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
@@ -367,13 +367,13 @@ public enum PerformanceBenchmark {
         return lines.joined(separator:"\n") + "\n"
     }
 
-    private static func counters(_ session: DemoSession.Session) throws -> (transactions: Int, rows: Int, lifecycle: String) {
+    private static func counters(_ session: ForwardBenchmarkFixture) throws -> (transactions: Int, rows: Int, lifecycle: String) {
         let parts = try session.state("SELECT transactions_applied||'|'||rows_applied||'|'||lifecycle FROM state").components(separatedBy: "|")
         guard parts.count == 3, let transactions = Int(parts[0]), let rows = Int(parts[1]) else { throw LabError("invalid benchmark SQLite counters") }
         return (transactions, rows, parts[2])
     }
 
-    static func prepareLoadTLS(_ session: DemoSession.Session) throws {
+    static func prepareLoadTLS(_ session: ForwardBenchmarkFixture) throws {
         // sysbench 1.0.20's MySQL driver uses these three fixed filenames in cwd.
         // Supply a fixture client certificate, signed by the existing fixture CA.
         let tls = session.h.output.appendingPathComponent("tls")
@@ -388,13 +388,13 @@ public enum PerformanceBenchmark {
         }
     }
 
-    private static func nativeHealthy(_ session: DemoSession.Session) throws {
+    private static func nativeHealthy(_ session: ForwardBenchmarkFixture) throws {
         let status = try session.h.status()
         try require(status["Replica_IO_Running"] == "Yes" && status["Replica_SQL_Running"] == "Yes" && status["Last_IO_Errno"] == "0" && status["Last_SQL_Errno"] == "0", "native replication stopped; see native-status.txt")
     }
 
     /// Compare ordered exact values in bounded pages after both appliers catch up.
-    private static func verifyRows(_ session: DemoSession.Session, tables: [String]) throws {
+    private static func verifyRows(_ session: ForwardBenchmarkFixture, tables: [String]) throws {
         var totals: [String:Int] = [:]
         for table in tables {
             var cursor: UInt64 = 0, rows = 0

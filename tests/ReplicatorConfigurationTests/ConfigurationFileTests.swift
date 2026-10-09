@@ -133,4 +133,25 @@ final class ConfigurationFileTests: XCTestCase {
             }
         }
     }
+    func testReloadIdentityAllowsOnlyLimitsAndIncludesCredentialChanges() throws {
+        let original=try example()
+        let identity=try ConfigurationFile.reloadIdentity(from:Data(original.utf8))
+        let changed=original.replacingOccurrences(of:"source:\n",with:"source:\n  stopAfterGTIDs: '00000000-0000-0000-0000-000000000001:1-20'\n  stopAfterTransactions: 100\n")
+        XCTAssertEqual(try ConfigurationFile.reloadIdentity(from:Data(changed.utf8)),identity)
+        let config=try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(changed.utf8))
+        try config.validate()
+        XCTAssertEqual(config.source.stopAfterTransactions,100)
+        XCTAssertEqual(config.source.resuming(file:nil,position:nil,executedGTIDs:"").stopAfterGTIDs,config.source.stopAfterGTIDs)
+        for change in [original.replacingOccurrences(of:"port: 3306",with:"port: 3307"),
+                       original.replacingOccurrences(of:"passwordEnvironment: REPLICATOR_SOURCE_PASSWORD",with:"password: changed-secret"),
+                       original+"\nunknownSetting: changed\n"] {
+            XCTAssertNotEqual(try ConfigurationFile.reloadIdentity(from:Data(change.utf8)),identity)
+        }
+        XCTAssertThrowsError(try StopConditions(transactions:nil,gtids:""))
+        XCTAssertThrowsError(try StopConditions(transactions:nil,gtids:"invalid"))
+        let sid="00000000-0000-0000-0000-000000000001",other="00000000-0000-0000-0000-000000000002"
+        let limits=try StopConditions(transactions:nil,gtids:sid+":2,"+other+":3")
+        XCTAssertNil(limits.reason(transactions:2,executed:try GTIDSet(sid+":1-20")))
+        XCTAssertEqual(limits.reason(transactions:3,executed:try GTIDSet(sid+":1-20,"+other+":1-3")),"gtidsSatisfied")
+    }
 }

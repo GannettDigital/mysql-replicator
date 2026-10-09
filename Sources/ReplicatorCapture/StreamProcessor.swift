@@ -18,6 +18,8 @@ final class StreamProcessor {
     let config: CaptureConfiguration
     let excluded: GTIDSet
     var completeGTIDs: GTIDSet
+    let stopConditions: StopConditions
+    var stopReason: String? { stopConditions.reason(transactions:transactionCount,executed:completeGTIDs) }
     let includeRaw: Bool
     let allowDDL: Bool
     let ignoreTable: ((String, String) -> Bool)?
@@ -51,6 +53,7 @@ final class StreamProcessor {
         self.config = config; self.includeRaw = includeRaw
         self.excluded = try GTIDSet(config.start.executedGTIDs)
         self.completeGTIDs = self.excluded
+        self.stopConditions = try StopConditions(transactions:config.stopAfterTransactions,gtids:config.stopAfterGTIDs)
         self.emitEvent = emitEvent; self.emitTransaction = emitTransaction
     }
     var lastCompleteBoundary: BinlogCoordinate? { assembler?.lastCompleteBoundary }
@@ -229,5 +232,12 @@ final class StreamProcessor {
         try check(announced == nil && assembler != nil, "dump ended before format context")
         try assembler!.finish()
         finished = true
+    }
+    /// Only the archive reader calls this, after checksum and complete-group
+    /// validation. Historical covered rows need no target schema lookup.
+    func skipArchivedGroup(to boundary: BinlogCoordinate) throws {
+        guard let assembler, let cursor, cursor.file == boundary.file else { throw CaptureError("archive exclusion without format context") }
+        try assembler.advanceExcludedRange(to:boundary)
+        self.cursor=boundary
     }
 }

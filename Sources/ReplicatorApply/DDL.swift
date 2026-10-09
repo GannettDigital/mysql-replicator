@@ -9,7 +9,7 @@ struct TableName: Equatable {
     var sql: String {get throws {try quoted(database)+"."+quoted(table)}}
 }
 enum ColumnPlacement: Equatable {case last, first, after(String)}
-enum DDLEngine: Equatable {case omitted,defaultEngine,myISAM}
+enum DDLEngine: Equatable {case omitted,defaultEngine,myISAM,innoDB}
 struct CreateDatabase: Equatable {
     let name:String
     let ifNotExists:Bool
@@ -48,16 +48,17 @@ enum DDLStatement: Equatable {
         case .modify(let t,_,_),.indexes(let t,_),.add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
     }
-    static func parse(_ query: QueryControl) throws -> DDLStatement {
+    static func parse(_ query: QueryControl, profile: ReplicationProfile = .mysql84To57MyISAM) throws -> DDLStatement {
         try require(query.errorCode == 0,"DDL source query reported an error")
         try DDLPolicy.rejectProhibited(query)
         var parser=try DDLParser(query.sql,database:query.database,sqlMode:query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode)
+        parser.engine = profile.targetContract.engine
         return try parser.parse()
     }
-    static func from(_ group: CompleteTransaction) throws -> DDLStatement {
+    static func from(_ group: CompleteTransaction, profile: ReplicationProfile = .mysql84To57MyISAM) throws -> DDLStatement {
         try require(group.outcome == .statement && group.gtid != nil && !group.anonymous && group.events.count == 2,"DDL requires a standalone named-GTID query group")
         guard case .gtid = group.events[0].control,case .query(let query)=group.events[1].control else {throw ApplyError("invalid DDL event group")}
-        return try parse(query)
+        return try parse(query,profile:profile)
     }
 }
 struct PreparedDDL {
@@ -104,7 +105,7 @@ extension TargetSession {
             rows=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(context.defaultUTF8MB4Collation))]).0
             // 5.7 cannot set default_collation_for_utf8mb4. Preserve the SQL;
             // refuse a semantic mismatch instead of inserting a COLLATE rewrite.
-            let actual=try scalar("SELECT DEFAULT_COLLATE_NAME AS v FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME='utf8mb4'")
+            let actual=try contract.defaultUTF8MB4Collation(self)
             try require(rows.first?.column("COLLATION_NAME")?.string==actual,"source default utf8mb4 collation is unsupported by target: default_collation_for_utf8mb4=\(DDLQueryContextDiagnostic.collation(context.defaultUTF8MB4Collation)), target default=\(actual ?? "unavailable"); no collation substitution")
         } else {
             rows=try query("SELECT CHARACTER_SET_NAME,DEFAULT_COLLATE_NAME AS COLLATION_NAME FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME=?",[.init(string:charset!)]).0
@@ -138,6 +139,7 @@ extension TargetSession {
         try invalidateStatements()
         try writerExclusion()
         let context=try QuerySessionContext(query:source)
+        try contract.configureDDL(self,context:context)
         // Restore expression/literal semantics from the source query context.
         // DDL stays a drained, journaled barrier even for stored objects.
         try require([8,33,45,46,83,192,224,255].contains(context.clientCharset),"unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
@@ -192,11 +194,11 @@ extension TargetSession {
             }
         case .create(let table,let engine),.createIfAbsent(let table,let engine):
             if let before {after=before;break}
-            if engine != .myISAM {
-                try require(try scalar("SELECT @@SESSION.default_storage_engine AS v")=="MyISAM","DDL requires target default_storage_engine=MyISAM")
+            if engine == .omitted || engine == .defaultEngine {
+                try require(try scalar("SELECT @@SESSION.default_storage_engine AS v")==contract.engine,"DDL requires target default_storage_engine=\(contract.engine)")
             }
             if engine == .defaultEngine {
-                try require(try scalar("SELECT @@SESSION.default_tmp_storage_engine AS v")=="MyISAM","ENGINE='DEFAULT' requires qualified target temporary-engine default")
+                try require(try scalar("SELECT @@SESSION.default_tmp_storage_engine AS v")==contract.engine,"ENGINE='DEFAULT' requires qualified target temporary-engine default")
             }
             let parent=try databaseEncoding(name.database)
             let encoding=try resolveEncoding(charset:table.defaultCharacterSet,collation:table.defaultCollation,parent:parent,context:context)

@@ -33,6 +33,44 @@ final class SchemaChangeTests: XCTestCase {
     func testUnsupportedOptionsCannotFallThroughToSQL() throws {
         for sql in ["CREATE INDEX ix ON t(name DESC)","CREATE FULLTEXT INDEX ix ON t(name)","CREATE INDEX ix ON t((id+1))","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))"] {XCTAssertThrowsError(try parse(sql),sql)}
     }
+    func testUniqueConstraintNamesMatchMySQLIndexNames() throws {
+        let aux=TableName(database:"poc",table:"aux")
+        let key=ApplyIndex(name:"val_uni",unique:true,parts:[ApplyIndexPart(column:"val",prefix:nil)])
+        XCTAssertEqual(try parse("ALTER TABLE aux ADD CONSTRAINT val_uni UNIQUE(val);"),.indexes(aux,.add(key)))
+        for (definition,name) in [
+            ("CONSTRAINT val_uni UNIQUE(val)","val_uni"),
+            ("CONSTRAINT `odd``name` UNIQUE KEY(val)","odd`name"),
+            ("CONSTRAINT ignored UNIQUE INDEX val_uni(val)","val_uni"),
+            ("CONSTRAINT UNIQUE(val)","val"),
+            ("CONSTRAINT val_uni UNIQUE USING BTREE(val)","val_uni"),
+            ("UNIQUE USING BTREE(val)","val")
+        ] {
+            let expected=ApplyIndex(name:name,unique:true,parts:key.parts)
+            XCTAssertEqual(try parse("ALTER TABLE aux ADD "+definition),.indexes(aux,.add(expected)))
+            guard case .create(let table,_)=try parse("CREATE TABLE aux(id INT PRIMARY KEY,val INT,"+definition+")") else {return XCTFail("not CREATE")}
+            XCTAssertEqual(table.secondaryIndexes,[expected])
+        }
+        XCTAssertEqual(try parse("ALTER TABLE t ADD CONSTRAINT ix UNIQUE KEY(name(8),id)"),
+                       try parse("ALTER TABLE t ADD UNIQUE KEY ix(name(8),id)"))
+        XCTAssertEqual(try parse("ALTER TABLE t DROP KEY old, ADD CONSTRAINT ix UNIQUE(name(8),id)"),
+                       try parse("ALTER TABLE t DROP KEY old, ADD UNIQUE ix(name(8),id)"))
+        for prefix in ["CONSTRAINT", "CONSTRAINT pk"] {
+            XCTAssertEqual(try parse("ALTER TABLE t ADD \(prefix) PRIMARY KEY(id)"),try parse("ALTER TABLE t ADD PRIMARY KEY(id)"))
+            XCTAssertEqual(try parse("CREATE TABLE t(id INT, \(prefix) PRIMARY KEY(id))"),try parse("CREATE TABLE t(id INT, PRIMARY KEY(id))"))
+        }
+        // A quoted keyword remains a column name, not a constraint prefix.
+        XCTAssertEqual(try parse("ALTER TABLE t ADD `CONSTRAINT` INT"),.add(TableName(database:"poc",table:"t"),ApplyColumn(name:"CONSTRAINT",type:"int",nullable:true,collation:nil),.last))
+    }
+    func testConstraintPrefixDoesNotAdmitUnsupportedConstraints() throws {
+        for definition in ["CONSTRAINT fk FOREIGN KEY(id) REFERENCES other(id)","CONSTRAINT chk CHECK(id>0)","CONSTRAINT c INDEX ix(id)","CONSTRAINT c val INT","CONSTRAINT","CONSTRAINT c UNIQUE(id) INVISIBLE"] {
+            for sql in ["ALTER TABLE t ADD "+definition,"CREATE TABLE t(id INT PRIMARY KEY,"+definition+")"] {
+                XCTAssertThrowsError(try parse(sql),sql)
+            }
+        }
+        XCTAssertThrowsError(try parse("ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY(id) REFERENCES other(id)")) {
+            XCTAssertTrue(String(describing:$0).contains("foreign keys are unsupported"))
+        }
+    }
     func testIndexModelRejectsUnsupportedShapeAndPreservesPrimaryRowIdentity() throws {
         let key=ApplyIndex(name:"ix",unique:false,parts:[ApplyIndexPart(column:"name",prefix:10)])
         let indexed=try IndexChange.add(key).applying(to:table)
@@ -70,14 +108,14 @@ final class SchemaChangeTests: XCTestCase {
             try state.bindTargetIdentity(f.target);try state.running()
             try f.apply(f.helper.groups()[0],to:state);try state.stopped()
         }
-        try f.write(path,"DROP TABLE ddl_details; DROP TABLE compatibility; DROP TABLE ddl_skips; UPDATE schemas SET schema_json=json_remove(schema_json,'$.secondaryIndexes'); PRAGMA user_version=4")
+        try f.write(path,"DROP TABLE replication_profile; DROP TABLE ddl_details; DROP TABLE compatibility; DROP TABLE ddl_skips; UPDATE schemas SET schema_json=json_remove(schema_json,'$.secondaryIndexes'); PRAGMA user_version=4")
         let db=path.appendingPathComponent("state.sqlite")
         let before=try f.helper.sqlite(db,"SELECT * FROM state")
         let history=try f.helper.sqlite(db,"SELECT * FROM schemas")
         let groups=try f.helper.sqlite(db,"SELECT * FROM groups")
         let intents=try f.helper.sqlite(db,"SELECT * FROM row_intents")
         do {let state=try StateStore(configuration:c,initialize:false);XCTAssertEqual(state.transactions,1)}
-        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["8"]])
+        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["9"]])
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM state"),before)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM schemas"),history)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM groups"),groups)

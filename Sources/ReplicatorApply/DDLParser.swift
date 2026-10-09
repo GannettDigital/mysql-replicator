@@ -5,6 +5,7 @@ import Foundation
 struct DDLParser {
     var tokens: [DDLToken]
     var index = 0
+    var engine = "MyISAM"
     let database: String?
     var compatibility = CompatibilityPolicy()
     var defaultUTF8MB4Collation: UInt32 = 255
@@ -65,6 +66,7 @@ struct DDLParser {
         if ["enum","set"].contains(base) {
             let labels = try parenthesized()
             try require(!labels.isEmpty && labels.enumerated().allSatisfy { $0.offset % 2 == 0 ? $0.element.literal != nil : $0.element.keyword == "," } && labels.count % 2 == 1,"invalid ENUM/SET labels")
+            try require(labels.allSatisfy { $0.literal?.unicodeScalars.allSatisfy { $0.value <= 0xffff } ?? true },"DDL ENUM/SET supplementary-plane labels cannot be verified from MySQL COLUMN_TYPE metadata")
             // information_schema escapes backslash/control bytes independently
             // of the creation session's NO_BACKSLASH_ESCAPES mode.
             type += "("+labels.map { token in
@@ -131,14 +133,24 @@ struct DDLParser {
         } while take(",")
         try expect(")"); return parts
     }
-    mutating func indexDefinition() throws -> ApplyIndex {
+    mutating func constraintName() throws -> String? {
+        guard take("CONSTRAINT") else { return nil }
+        let name = ["PRIMARY","UNIQUE","FOREIGN","CHECK"].contains(where:isNext) ? nil : try identifier()
+        try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
+        try require(!isNext("CHECK"),"CHECK constraints are unsupported by the DDL contract")
+        try require(isNext("PRIMARY") || isNext("UNIQUE"),"unsupported DDL constraint: expected PRIMARY KEY or UNIQUE")
+        return name
+    }
+    mutating func indexDefinition(constraintName: String? = nil) throws -> ApplyIndex {
         let unique = take("UNIQUE")
         if unique { _ = take("KEY") || take("INDEX") } else { try require(take("INDEX") || take("KEY"),"expected INDEX or KEY") }
-        let explicitName = isNext("(") ? nil : try identifier()
+        let explicitName = isNext("(") || isNext("USING") ? nil : try identifier()
         let using = take("USING"); if using { try expect("BTREE") }
         let parts = try keyParts()
         if take("USING") { try require(!using,"duplicate index type"); try expect("BTREE") }
-        return ApplyIndex(name:explicitName ?? parts[0].column,unique:unique,parts:parts)
+        // Both MySQL versions prefer an explicit index name over the constraint
+        // symbol, then default to the first indexed column.
+        return ApplyIndex(name:explicitName ?? constraintName ?? parts[0].column,unique:unique,parts:parts)
     }
     mutating func databaseDefinition(conditional: Bool = false) throws -> CreateDatabase {
         var charsetEnd: Int?
@@ -229,9 +241,11 @@ struct DDLParser {
     mutating func createTable(_ name: TableName,conditional: Bool) throws -> DDLStatement {
         try expect("("); var columns: [ApplyColumn] = [], key: [String]?, indexes: [ApplyIndex] = []
         repeat {
+            let constraint = try constraintName()
+            try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
             if take("PRIMARY") {
                 try expect("KEY"); let parts = try keyParts(); try require(key == nil && parts.allSatisfy{$0.prefix == nil},"invalid DDL primary key"); key = parts.map(\.column)
-            } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition()) }
+            } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition(constraintName:constraint)) }
             else {
                 let (column,primary) = try column(); columns.append(column)
                 try require(columns.count <= 256,"DDL column limit exceeded")
@@ -245,10 +259,10 @@ struct DDLParser {
             let option: String
             if take("ENGINE") {
                 _ = take("="); option = "engine"
-                if take("MYISAM") { engine = .myISAM }
-                else if index < tokens.count && tokens[index].literal?.uppercased() == "MYISAM" { index += 1; engine = .myISAM }
+                if take(self.engine.uppercased()) { engine = self.engine == "MyISAM" ? .myISAM : .innoDB }
+                else if index < tokens.count && tokens[index].literal?.uppercased() == self.engine.uppercased() { index += 1; engine = self.engine == "MyISAM" ? .myISAM : .innoDB }
                 else if index < tokens.count && tokens[index].literal?.uppercased() == "DEFAULT" { index += 1; engine = .defaultEngine }
-                else { throw ApplyError("explicit engine is outside the MyISAM DDL contract (no engine rewriting)") }
+                else { throw ApplyError("explicit engine is outside the \(self.engine) DDL contract (no engine rewriting)") }
             } else if take("AUTO_INCREMENT") { _ = take("="); _ = try number(); option = "auto_increment" }
             else {
                 _ = take("DEFAULT")
@@ -268,8 +282,9 @@ struct DDLParser {
     }
     mutating func alterAction() throws -> AlterAction {
         if take("ADD") {
+            let constraint = try constraintName()
             if take("PRIMARY") { try expect("KEY"); let parts = try keyParts(); try require(parts.allSatisfy{$0.prefix == nil},"primary prefix unsupported"); return .primaryKey(parts.map(\.column)) }
-            if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { return .indexes(.add(try indexDefinition())) }
+            if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
             if take("PARTITION") { return .partition(.add(try partitionItems(method:"",expression:""))) }
             _ = take("COLUMN"); let (c,primary) = try column(); try require(!primary,"ADD inline primary key is unsupported; use ADD PRIMARY KEY")
             try require(c.nullable || c.defaultValue != nil || c.isGenerated,"ADD NOT NULL requires an explicit default or generated expression")

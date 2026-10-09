@@ -1,4 +1,4 @@
--- Run once, on SOURCE only, after demo-up and demo-start.
+-- Run once, on SOURCE only, after demo up and demo start with the forward profile.
 -- Each mutation is autocommit: this matches the qualified GTID -> MyISAM path.
 SET NAMES utf8mb4;
 SET autocommit=1;

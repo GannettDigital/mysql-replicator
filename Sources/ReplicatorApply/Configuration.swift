@@ -188,6 +188,8 @@ public struct TargetConfiguration: Decodable {
     }
 }
 public struct ApplyConfiguration: Decodable {
+    public let profile: ReplicationProfile?
+    var replicationProfile: ReplicationProfile { profile ?? .mysql84To57MyISAM }
     /// Detailed worker-local applier timings, disabled unless explicitly enabled.
     public let applierProfiling: Bool?
     public let version: Int
@@ -210,15 +212,20 @@ public struct ApplyConfiguration: Decodable {
     var reconnectPolicy: SourceReconnectPolicy { sourceReconnect ?? .init() }
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
-    public func validate() throws {
+    public func validate(offline: Bool = false) throws {
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
-        _ = try source.validate()
+        _ = try source.validate(connection:!offline)
         try target.validate()
         try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
         try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
         try (ddlPolicy ?? DDLPolicy()).validate()
         try compatibilityPolicy.validate()
+        if replicationProfile.transactional {
+            try require(!target.explicitTableLocks,"InnoDB profile cannot use explicit table locks")
+            try require(source.mode == "gtid","InnoDB profile requires GTID positioning")
+            try require(compatibilityPolicy.collations.isEmpty,"reverse profile preserves source collations; translation is not supported")
+        }
         _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()
         try batchPolicy.validate()
@@ -234,8 +241,8 @@ struct Mutation {
     let rowIndex: Int
 }
 enum DMLPlan {
-    /// Validate the entire group before the first mutation. One source statement
-    /// may span several row events/rows, but multi-statement groups are rejected.
+    /// Validate the entire group before the first mutation. The MyISAM contract
+    /// permits one statement/table; transactional targets preserve whole groups.
     static func make(_ group: CompleteTransaction, tables: [ApplyTable]) throws -> [Mutation] {
         var plans: [String:DMLTablePlan] = [:]
         for table in tables {
@@ -244,7 +251,7 @@ enum DMLPlan {
         }
         return try make(group,tables:plans)
     }
-    static func make(_ group: CompleteTransaction, tables: [String:DMLTablePlan]) throws -> [Mutation] {
+    static func make(_ group: CompleteTransaction, tables: [String:DMLTablePlan], transactional: Bool = false) throws -> [Mutation] {
         try require(group.outcome == .committed && group.gtid != nil && !group.anonymous,"unsupported transaction identity/outcome")
         var statementEnds = 0, includedEvents = 0
         for event in group.events where event.rowFlags != nil {
@@ -252,7 +259,7 @@ enum DMLPlan {
             if !event.replicationFiltered { includedEvents += 1 }
         }
         if includedEvents == 0 { return [] }
-        try require(statementEnds == 1,"only single-statement source groups are supported")
+        try require(statementEnds >= 1 && (transactional || statementEnds == 1),"only single-statement source groups are supported")
         var result: [Mutation] = []
         var firstIdentity: String?
         for event in group.events where event.rowFlags != nil && !event.replicationFiltered {
@@ -260,7 +267,7 @@ enum DMLPlan {
                   let plan = tables[database + "\0" + name] else { throw ApplyError("row event outside configured scope") }
             if !event.rows.isEmpty {
                 let identity = plan.table.identity
-                if let firstIdentity { try require(firstIdentity == identity,"initial applier requires a single-table DML statement") }
+                if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement") }
                 else { firstIdentity = identity }
             }
             for (index,row) in event.rows.enumerated() {

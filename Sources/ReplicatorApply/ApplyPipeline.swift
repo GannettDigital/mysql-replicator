@@ -33,7 +33,7 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     func checkFailure(allowSourceReconnect: Bool = false, allowDrain: Bool = false) throws {
         condition.lock(); defer { condition.unlock() }
         if let failure {
-            if allowDrain && failure is ApplyDrainRequested { return }
+            if allowDrain && (failure is ApplyDrainRequested || failure is ApplyReloadRequested) { return }
             // A source-only interruption cannot cancel already-journaled SQL.
             // The consumer still receives the failure and discards queued work.
             if allowSourceReconnect, let live = failure as? LiveInspectionError, live.isRetryableSourceFailure { return }
@@ -93,14 +93,37 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     }
 }
 
+/// The decoder waits only on schema barriers. The consumer owns target access;
+/// cancellation must release a producer waiting after a consumer-side failure.
+final class ApplySchemaRequest {
+    let event: DecodedEvent
+    private let condition = NSCondition()
+    private var result: Result<[ColumnInterpretation],Error>?
+    init(_ event: DecodedEvent) { self.event = event }
+    func complete(_ result: Result<[ColumnInterpretation],Error>) {
+        condition.lock(); defer { condition.unlock() }
+        self.result = result; condition.broadcast()
+    }
+    func wait(cancellation: CaptureCancellation) throws -> [ColumnInterpretation] {
+        condition.lock(); defer { condition.unlock() }
+        while result == nil {
+            if cancellation.isCancelled { throw CaptureCancelled() }
+            _ = condition.wait(until:Date().addingTimeInterval(0.05))
+        }
+        return try result!.get()
+    }
+}
+
 enum ApplyMessage {
     case event(LiveRecord)
     case transaction(CompleteTransaction)
+    case schema(ApplySchemaRequest)
     case idle
     var cost: Int {
         switch self {
         case .event(let record): return 256 + (record.event?.retainedByteCost ?? record.rawBase64?.utf8.count ?? 0)
         case .transaction(let group): return 1024 + group.events.reduce(0) { $0 + $1.retainedByteCost }
+        case .schema(let request): return 256 + request.event.retainedByteCost
         case .idle: return 1
         }
     }
@@ -109,8 +132,9 @@ enum ApplyMessage {
 
 /// Capture/decoding/assembly run on the producer. The consumer owns relay,
 /// SQLite and DML preparation, and may dispatch one durable batch to a separate
-/// target executor. Wire metadata determines decode types; schema validation
-/// and durable intents precede any writes.
+/// target executor. Modern wire metadata determines decode types; legacy maps
+/// request a schema interpretation from the consumer at an ordered barrier.
+/// Schema validation and durable intents precede any writes.
 final class ApplyPipeline {
     let queue = ApplyQueue<ApplyMessage>()
     func run(cancellation: CaptureCancellation, producerTimings: StageTimings,

@@ -32,3 +32,25 @@ chmod 0640 /etc/mysql-replicator/apply.yaml
 dpkg -i /release/*.deb
 cmp /tmp/operator-config /etc/mysql-replicator/apply.yaml
 su -s /bin/sh mysql-replicator -c 'test -r /etc/mysql-replicator/apply.yaml'
+# Run the actual installer and static binary against this build's release assets.
+# Only the download transport is replaced; no network publication is needed.
+mkdir /installer-bin
+cat > /installer-bin/curl <<'SH'
+#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        https://github.com/GannettDigital/mysql-replicator/releases/download/v*) url=$1; shift ;;
+        --output) output=$2; shift 2 ;;
+        --retry) shift 2 ;;
+        --fail|--show-error|--location) shift ;;
+        *) exit 2 ;;
+    esac
+done
+cp "/release/${url##*/}" "$output"
+SH
+chmod 0755 /installer-bin/curl
+PATH="/installer-bin:$PATH" sh /release/install.sh --version "$version" --prefix /installer-test
+cmp /installer-test/bin/mysql-replicator /usr/bin/mysql-replicator
+test -s "/installer-test/lib/mysql-replicator/$version/third-party/manifest.json"
+/installer-test/bin/mysql-replicator --version
