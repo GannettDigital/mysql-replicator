@@ -27,11 +27,12 @@ extension ApplyTests {
         XCTAssertNil(policy.match(TargetConnectionFailure(description:"connection lost"),at:.rolledBack))
     }
     func testSkipErrorCodesComeFromParserAndPlanner() throws {
-        let parser=DDLTests()
         for (sql,code) in [("ALTER TABLE items ENABLE KEYS",ApplyErrorCode.unsupportedAlter),
                            ("CREATE TABLE items(id INT PRIMARY KEY,v VECTOR)",.unsupportedColumnType),
                            ("ANALYZE TABLE items",.unsupportedDDL)] {
-            XCTAssertThrowsError(try parser.parse(sql)) { XCTAssertEqual(($0 as? ApplyError)?.code,code) }
+            XCTAssertThrowsError(try DDLStatement.parse(QueryControl(database:"poc",sql:Data(sql.utf8),errorCode:0,statusVariables:Data()))) {
+                XCTAssertEqual(($0 as? ApplyError)?.code,code)
+            }
         }
         let groups=try groups()
         let combined=CompleteTransaction(start:groups[0].start,end:groups[1].end,gtid:groups[0].gtid,anonymous:false,outcome:.committed,events:groups[0].events+groups[1].events)
