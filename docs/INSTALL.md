@@ -64,6 +64,10 @@ config/state paths; the following paths and account are created by the `.deb`.
 
 ## Prepare replication
 
+For a short starting configuration, use [run.minimal.yaml](../examples/run.minimal.yaml)
+for live replication or [replay.minimal.yaml](../examples/replay.minimal.yaml) for
+offline replay. The [full example](../examples/apply.example.yaml) documents all options.
+
 The default profile is **8.4 InnoDB → 5.7 MyISAM**. Beta.2 also includes the
 experimental [5.7 → 8.4 InnoDB profile](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.2/docs/REVERSE_REPLICATION.md), selected with
 `profile: mysql57-to-mysql84-innodb`. Both have shared correctness and reconnect

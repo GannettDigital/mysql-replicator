@@ -1,4 +1,5 @@
 # Shared YAML configuration for run, fetch, replay and support-bundle.
+# Short starting points: run.minimal.yaml and replay.minimal.yaml in this directory.
 # Copy to apply.yaml and replace REPLACE_* values. Initial data/schema copying is external.
 # Commented options are inactive. Defaults are shown unless labeled "example".
 # Relative paths resolve from the process working directory, not this YAML file.

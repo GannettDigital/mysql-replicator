@@ -9,8 +9,10 @@ Database cloning, restoration, and upgrades happen outside these commands. Suppl
 the complete source GTID set corresponding to the target's existing data in
 `source.start.executedGTIDs`. Replay does not establish or verify that snapshot.
 
-Use the normal [apply configuration](../examples/apply.example.yaml), selecting
-the appropriate `profile`, and add:
+For replay alone, start with [replay.minimal.yaml](../examples/replay.minimal.yaml).
+For fetch and support bundles too, use the full
+[apply configuration](../examples/apply.example.yaml), selecting the appropriate
+`profile`, and add:
 
 ```yaml
 archive:
