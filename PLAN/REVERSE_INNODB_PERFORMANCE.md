@@ -942,3 +942,41 @@ Validation: 27 focused lab tests passed; host and Linux release builds passed;
 three reverse 10K runs, the forward 1K profiler repeat, and the reverse 1K shutdown
 check passed row/schema/checkpoint validation. The broader applier correctness
 qualification deferred during the earlier performance work remains pending.
+
+## Correctness rerun after performance work (2026-10-10)
+
+Profiling was committed as `ecfd207` before qualification. The full Swift run
+initially found 17 failed assertions in four tests that still assumed explicit
+BEGIN/COMMIT for single-statement groups. The updated tests exercise autocommit
+success, duplicate rejection and lost responses, while retaining multi-statement
+COMMIT-loss and failed-rollback coverage. The full rerun passed **384 Swift tests**;
+the Rust suite passed **8 tests**.
+
+The full shared correctness run used the default capture variant on all three
+profiles. Initial report: `artifacts/lab/20261010T074743Z-b585ae17/result.json`.
+It recorded 289 passed obligations, three failures and five unrun obligations:
+
+- Forward `forward-failures` lost its Docker-daemon connection; the five later
+  forward obligations were not reached.
+- Both MySQL 5.7-source `runtime-control` cases used the new default eight-slot
+  queue, which had already accepted all six transactions before a reload asked
+  to stop at the third. The reload fixture now explicitly uses one prepared
+  slot, keeping the new stop boundary ahead of issued work. Runtime semantics
+  are unchanged: reload cannot rewind already-issued transactions.
+
+Targeted control reruns passed for both 5.7-source profiles:
+`artifacts/lab/20261010T163919Z-4848fc33/result.json` and
+`artifacts/lab/20261010T163920Z-d1302fff/result.json`.
+These are incremental reruns after test/fixture-only updates, not a claim that
+the original full invocation was green. The separate lifecycle/demo suites and
+additional capture variants are outside this rerun's scope.
+
+The six targeted forward obligations also passed:
+`artifacts/lab/20261010T163845Z-67e300f7/result.json`. Across the full run and these
+explicit reruns, all **297 applicable default-variant correctness obligations**
+have passed evidence: 109 forward, 94 reverse InnoDB and 94 MySQL 5.7 MyISAM.
+The other 33 obligations are declared not applicable to their selected profiles.
+All four integration reports used the same applier binary SHA-256:
+`5f71f310c10dc97acaf2bbe08ead4955d637108483fc19e3bd5749589a6fda1a`.
+Logs and a provenance-preserving merged outcome list are saved under
+`artifacts/correctness-20261010/summary.json`; original failures remain available.
