@@ -18,7 +18,8 @@ public struct CaptureConfiguration: Decodable {
     public let username: String
     public let passwordEnvironment: String?
     public let password: String?
-    public let serverHostname: String
+    public let requireTLS: Bool
+    public let serverHostname: String?
     public let caFile: String?
     public let serverID: UInt32
     public let sourceUUID: String
@@ -41,7 +42,7 @@ public struct CaptureConfiguration: Decodable {
     /// Keep connection/protocol options, replacing only the authoritative boundary.
     public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil) -> CaptureConfiguration {
         CaptureConfiguration(version:version,host:host,port:port,username:username,
-            passwordEnvironment:passwordEnvironment,password:password,serverHostname:serverHostname,caFile:caFile,
+            passwordEnvironment:passwordEnvironment,password:password,requireTLS:requireTLS,serverHostname:serverHostname,caFile:caFile,
             serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
@@ -52,8 +53,13 @@ public struct CaptureConfiguration: Decodable {
     public func validate(connection: Bool = true) throws -> DumpStart {
         _ = try StopConditions(transactions:stopAfterTransactions,gtids:stopAfterGTIDs)
         if connection { try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source") }
+        if requireTLS {
+            guard !(serverHostname ?? "").isEmpty else { throw CaptureError("source verified TLS requires serverHostname") }
+        } else {
+            guard serverHostname == nil && caFile == nil else { throw CaptureError("remove source serverHostname and caFile when requireTLS is false") }
+        }
         guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
-              !serverHostname.isEmpty, serverID > 0, UUID(uuidString: sourceUUID) != nil,
+              serverID > 0, UUID(uuidString: sourceUUID) != nil,
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
               (1...300).contains(idleTimeoutSeconds ?? 15),
               (23...16*1024*1024).contains(maximumEventBytes ?? 4*1024*1024),
@@ -72,6 +78,39 @@ public struct CaptureConfiguration: Decodable {
         } else if mode != "gtid" || start.file != nil || start.position != nil { throw CaptureError("file-position requires both fields; GTID mode permits neither") }
         let set = try GTIDSet(start.executedGTIDs)
         return mode == "gtid" ? .gtid(set) : .position(file: start.file!, position: start.position!)
+    }
+}
+
+extension CaptureConfiguration {
+    enum CodingKeys: String, CodingKey {
+        case version, host, port, username, passwordEnvironment, password, requireTLS, serverHostname, caFile
+        case serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions, stopAfterGTIDs
+        case idleTimeoutSeconds, maximumEventBytes, decoderProfiling, downloadCacheBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        host = try c.decode(String.self, forKey: .host)
+        port = try c.decode(Int.self, forKey: .port)
+        username = try c.decode(String.self, forKey: .username)
+        passwordEnvironment = try c.decodeIfPresent(String.self, forKey: .passwordEnvironment)
+        password = try c.decodeIfPresent(String.self, forKey: .password)
+        requireTLS = try c.decodeIfPresent(Bool.self, forKey: .requireTLS) ?? true
+        serverHostname = try c.decodeIfPresent(String.self, forKey: .serverHostname)
+        caFile = try c.decodeIfPresent(String.self, forKey: .caFile)
+        serverID = try c.decode(UInt32.self, forKey: .serverID)
+        sourceUUID = try c.decode(String.self, forKey: .sourceUUID)
+        mode = try c.decode(String.self, forKey: .mode)
+        start = try c.decode(Start.self, forKey: .start)
+        tables = try c.decodeIfPresent([Table].self, forKey: .tables)
+        nonBlocking = try c.decodeIfPresent(Bool.self, forKey: .nonBlocking)
+        stopAfterTransactions = try c.decodeIfPresent(Int.self, forKey: .stopAfterTransactions)
+        stopAfterGTIDs = try c.decodeIfPresent(String.self, forKey: .stopAfterGTIDs)
+        idleTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .idleTimeoutSeconds)
+        maximumEventBytes = try c.decodeIfPresent(UInt32.self, forKey: .maximumEventBytes)
+        decoderProfiling = try c.decodeIfPresent(Bool.self, forKey: .decoderProfiling)
+        downloadCacheBytes = try c.decodeIfPresent(Int.self, forKey: .downloadCacheBytes)
     }
 }
 

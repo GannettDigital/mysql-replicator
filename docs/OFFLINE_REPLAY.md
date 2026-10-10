@@ -84,7 +84,7 @@ sets with holes, without decoding historical row values against newer schemas.
 SQLite's saved source progress takes precedence on resume. Target-local GTIDs do
 not replace this checkpoint.
 
-Target TCP connections still require TLS. The default
+Target TCP connections use TLS by default. The default
 `target.tlsVerification: verify-identity` verifies the CA chain and requires
 `serverHostname` to match the server certificate. For a target with an
 instance-specific CA but no certificate DNS name (such as some Cloud SQL
@@ -105,6 +105,12 @@ If supplied, `serverHostname` is used for TLS SNI, not identity matching in this
 mode. This target setting applies to both `run` and `replay`; source TLS settings
 are unchanged. Changing TLS settings requires stopping and restarting the
 applier, rather than `ctl reload`.
+
+To disable target TLS, set `target.requireTLS: false`. Remove `tlsVerification`,
+`serverHostname`, and `caFile` from the target section. This works with TCP and
+Unix sockets. The connection does not encrypt replication data.
+See [connection settings](INSTALL.md#connection-security). Replay does not connect
+to the source, regardless of its TLS settings.
 
 The reader validates file ordering, rotation, framing, CRCs, complete transaction
 boundaries, and whether the baseline covers history before the first available

@@ -46,11 +46,16 @@ extension ApplyTests {
         XCTAssertNil(local.host)
         XCTAssertNil(local.tlsConfiguration())
         XCTAssertTrue(local.explicitTableLocks)
+        let tcp = try decode(["host":"127.0.0.1","port":3306,"requireTLS":false])
+        try tcp.validate()
+        XCTAssertFalse(tcp.requireTLS)
+        XCTAssertNil(tcp.tlsConfiguration())
+        XCTAssertNil(tcp.serverHostname)
         let encrypted = try decode(["unixSocket":"/run/mysqld/mysqld.sock","serverHostname":"target57"])
         try encrypted.validate()
         XCTAssertTrue(encrypted.requireTLS)
         for options: [String:Any] in [
-            ["host":"127.0.0.1","port":3306,"requireTLS":false],
+            ["host":"127.0.0.1","port":3306,"requireTLS":false,"serverHostname":"target"],
             ["unixSocket":"/run/mysql.sock","host":"target57","port":3306,"requireTLS":false],
             ["unixSocket":"relative.sock","requireTLS":false],
             ["unixSocket":"/run/mysql\0.sock","requireTLS":false],

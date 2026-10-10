@@ -1,7 +1,6 @@
 import Foundation
 import NIOCore
 import NIOPosix
-import NIOSSL
 import MySQLNIO
 import ReplicatorCodec
 
@@ -16,9 +15,7 @@ public enum ArchiveFetch {
         guard !FileManager.default.fileExists(atPath:directory.path) else { throw CaptureError("fetch requires a new archive directory; incomplete downloads are never overwritten") }
         let group=MultiThreadedEventLoopGroup(numberOfThreads:1); defer { try? group.syncShutdownGracefully() }
         func connect() throws -> MySQLConnection {
-            var tls=TLSConfiguration.makeClientConfiguration(); tls.certificateVerification = .fullVerification
-            if let ca=source.caFile { tls.trustRoots = .file(ca) }
-            return try MySQLConnection.connect(to:SocketAddress.makeAddressResolvingHost(source.host,port:source.port),username:source.username,database:"",password:password,tlsConfiguration:tls,serverHostname:source.serverHostname,requireTLS:true,handshakeTimeout:.seconds(10),on:group.next()).wait()
+            return try MySQLConnection.connect(to:SocketAddress.makeAddressResolvingHost(source.host,port:source.port),username:source.username,database:"",password:password,tlsConfiguration:source.tlsConfiguration(),serverHostname:source.serverHostname,requireTLS:source.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
         }
         func query(_ c:MySQLConnection,_ sql:String) throws -> [MySQLRow] {
             let timer=c.eventLoop.scheduleTask(in:.seconds(30)) { _ = c.close() }; defer { timer.cancel() }

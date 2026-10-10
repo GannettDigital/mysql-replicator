@@ -199,7 +199,6 @@ public struct TargetConfiguration: Decodable {
             try require(path.hasPrefix("/") && !path.utf8.contains(0) && path.utf8.count <= 103,"target unixSocket must be an absolute path of at most 103 UTF-8 bytes without NUL")
         } else {
             try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
-            try require(requireTLS,"target TCP connections require TLS; only a Unix socket may disable TLS")
         }
         if requireTLS {
             if tlsVerification == .verifyIdentity {
