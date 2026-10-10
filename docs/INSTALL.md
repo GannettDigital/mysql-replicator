@@ -5,7 +5,7 @@ archive, plus a container image. Swift, Rust and SQLite runtimes do not need sep
 The packaged executable is tested in an Ubuntu 16.04 container and CI on Ubuntu
 24.04; this is not qualification of every Linux distribution, kernel or systemd
 version. macOS and Linux ARM64 binaries are not supplied; those users can
-[build from source](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/CONTRIBUTING.md).
+[build from source](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/CONTRIBUTING.md).
 
 ## Standalone installer
 
@@ -21,7 +21,7 @@ The installer requires Linux x86_64, `curl`, `tar` and coreutils (`sha256sum`).
 Automatic selection also requires `jq`: it chooses the most recently published
 release by publication time, including prereleases and excluding drafts. It fails
 if no release is published. For a pinned install, use
-`sh install.sh --version 0.1.0-beta.3`; this does not require `jq` or release discovery.
+`sh install.sh --version 0.1.0-beta.4`; this does not require `jq` or release discovery.
 The versionless installer URL follows `main`; a reviewed installer can also be
 downloaded from a specific release's assets.
 
@@ -47,12 +47,12 @@ an existing version is never overwritten. Resume without `--initialize`.
 ## Download and verify
 
 Download the `.deb` or `linux-x86_64.tar.gz` and `SHA256SUMS` from the
-[versioned release](https://github.com/GannettDigital/mysql-replicator/releases/tag/v0.1.0-beta.3).
+[versioned release](https://github.com/GannettDigital/mysql-replicator/releases/tag/v0.1.0-beta.4).
 Assets appear only after publication. From the download directory:
 
 ```sh
 sha256sum --ignore-missing --check SHA256SUMS
-sudo apt install ./mysql-replicator_0.1.0~beta.3-1_amd64.deb
+sudo apt install ./mysql-replicator_0.1.0~beta.4-1_amd64.deb
 ```
 
 The checksum check must report `OK` for the downloaded package. Checksums verify
@@ -64,27 +64,26 @@ config/state paths; the following paths and account are created by the `.deb`.
 
 ## Prepare replication
 
-For a short starting configuration, use [run.minimal.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/examples/run.minimal.yaml)
-for live replication or [replay.minimal.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/examples/replay.minimal.yaml) for
-offline replay. The [full example](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/examples/apply.example.yaml) documents all options. The standalone archive includes all three templates beside
+For a short starting configuration, use [run.minimal.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/examples/run.minimal.yaml)
+for live replication or [replay.minimal.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/examples/replay.minimal.yaml) for
+offline replay. The [full example](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/examples/apply.example.yaml) documents all options. The standalone archive includes all three templates beside
 the binary; Debian puts the minimal templates in
 `/usr/share/doc/mysql-replicator/examples/` and the full template in
 `/etc/mysql-replicator/apply.example.yaml`.
 
-The default profile is **8.4 InnoDB → 5.7 MyISAM**. The release also includes the
-experimental [5.7 → 8.4 InnoDB profile](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/docs/REVERSE_REPLICATION.md), selected with
-`profile: mysql57-to-mysql84-innodb`. Both have shared correctness and reconnect
-tests using 8.4.8 and 5.7.42; this is not Cloud SQL qualification. Provision a dedicated target, copy the initial schema/data externally,
-and record the matching source GTID set or binlog file/offset. Do not use an
-arbitrary current GTID set after an unrelated snapshot.
+The default profile is **8.4 InnoDB → 5.7 MyISAM**. This release also includes:
 
-Source builds also offer [5.7 InnoDB → 5.7 MyISAM](MYSQL57_MYISAM.md), selected
-with `profile: mysql57-to-mysql57-myisam`. They also offer
-[5.7 InnoDB → 5.7 InnoDB](MYSQL57_INNODB.md) with
-`profile: mysql57-to-mysql57-innodb`. These profiles are not in beta.3 binaries.
+- [5.7 InnoDB → 8.4 InnoDB](REVERSE_REPLICATION.md): `profile: mysql57-to-mysql84-innodb`.
+- [5.7 InnoDB → 5.7 MyISAM](MYSQL57_MYISAM.md): `profile: mysql57-to-mysql57-myisam`.
+- [5.7 InnoDB → 5.7 InnoDB](MYSQL57_INNODB.md): `profile: mysql57-to-mysql57-innodb`.
 
-Follow [source/target preconditions and supported behavior](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/PLAN/DML_APPLY.md)
-and the comments in [apply.example.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/examples/apply.example.yaml). Configure
+The shared tests use MySQL 8.4.8 and 5.7.42. They do not qualify a Cloud SQL
+deployment. Provision a dedicated target. Copy the initial schema and data with
+an external tool. Record the matching source GTID set or binlog file and offset.
+Do not use a current GTID set with an unrelated snapshot.
+
+Follow [source/target preconditions and supported behavior](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/PLAN/DML_APPLY.md)
+and the comments in [apply.example.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/examples/apply.example.yaml). Configure
 ROW/FULL/CRC32 binlogs, the required GTID settings, account privileges, connection security,
 and disable native replication autostart on the target. No native channel or
 other writer may operate on that target. The program checks these preconditions.
@@ -166,12 +165,12 @@ Installation does not start or enable replication. The service runs as the
 `systemctl reload mysql-replicator` uses the acknowledged local control command
 to reload only `source.stopAfterTransactions` and `source.stopAfterGTIDs`.
 For status, run `sudo -u mysql-replicator mysql-replicator ctl status --config
-/etc/mysql-replicator/apply.yaml`. See [process controls](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/docs/OFFLINE_REPLAY.md#controlling-a-running-process)
+/etc/mysql-replicator/apply.yaml`. See [process controls](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/docs/OFFLINE_REPLAY.md#controlling-a-running-process)
 for reload restrictions, timeouts, and direct `ctl stop` usage.
 If a stop stalls, investigate before killing it; SIGKILL may leave uncertain writes.
 A machine reboot or process crash is not a clean stop. Safe connection failures
 can reconnect within the running process; `BLOCKED` or interrupted state requires
-operator investigation. See [target reconnect and drain](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/PLAN/TARGET_RECONNECT.md).
+operator investigation. See [target reconnect and drain](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.4/PLAN/TARGET_RECONNECT.md).
 
 ## Container
 
@@ -192,7 +191,7 @@ docker run --name mysql-replicator --platform linux/amd64 \
   --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,noexec,size=64m \
   --mount "type=bind,src=$(pwd)/config,dst=/config,readonly" \
   --mount "type=bind,src=$(pwd)/replica-data,dst=/data" \
-  ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.3 \
+  ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.4 \
   run --config /config/apply.yaml --initialize
 ```
 
@@ -218,9 +217,9 @@ to wait indefinitely after SIGTERM. Investigate a stalled drain before forcing i
 Keep state on persistent storage and leave automatic container restart disabled.
 
 For offline container installation, download the release's
-`mysql-replicator-0.1.0-beta.3-linux-x86_64-image.tar.gz` and `SHA256SUMS`, verify the
-checksum, then `docker load --input mysql-replicator-0.1.0-beta.3-linux-x86_64-image.tar.gz`.
-The loaded image is named `mysql-replicator-release:0.1.0-beta.3`; substitute that
+`mysql-replicator-0.1.0-beta.4-linux-x86_64-image.tar.gz` and `SHA256SUMS`, verify the
+checksum, then `docker load --input mysql-replicator-0.1.0-beta.4-linux-x86_64-image.tar.gz`.
+The loaded image is named `mysql-replicator-release:0.1.0-beta.4`; substitute that
 name in the command above. To build your own image, the ordinary binary archive
 can also be extracted and copied into a Linux x86_64 container; preserve its notices.
 
