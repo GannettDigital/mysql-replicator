@@ -8,11 +8,13 @@ public enum ReplicationProfile: String, Codable, CaseIterable {
     case mysql57To84InnoDB = "mysql57-to-mysql84-innodb"
     case mysql57To57MyISAM = "mysql57-to-mysql57-myisam"
 
+    case mysql57To57InnoDB = "mysql57-to-mysql57-innodb"
+
     var transactional: Bool { targetContract.transactional }
     public var sourceContract: SourceContract {
         switch self {
         case .mysql84To57MyISAM: return .mysql84
-        case .mysql57To84InnoDB, .mysql57To57MyISAM: return .mysql57
+        case .mysql57To84InnoDB, .mysql57To57MyISAM, .mysql57To57InnoDB: return .mysql57
         }
     }
 }

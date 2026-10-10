@@ -25,6 +25,27 @@ final class LabProfileTests: XCTestCase {
         XCTAssertNoThrow(try LabTestOptions(["--profile",profile.rawValue,"--suite","recovery","--coverage"]))
         XCTAssertThrowsError(try LabBenchmark.Options(["--profile",profile.rawValue,"--workload","multi-table-transaction"]))
     }
+    func testMySQL57InnoDBUsesSharedTransactionalSuites() throws {
+        let profile=LabProfile.mysql57InnoDB
+        XCTAssertEqual(profile.sourceVersion,.mysql57)
+        XCTAssertEqual(profile.targetVersion,.mysql57)
+        XCTAssertEqual(profile.nativeVersion,.mysql57)
+        XCTAssertTrue(profile.transactionalTarget)
+        XCTAssertFalse(profile.hasOptionalMetadata)
+        XCTAssertFalse(profile.supportsPositionCapture)
+        XCTAssertEqual(profile.service(.source),"source")
+        XCTAssertEqual(profile.service(.target),"target57")
+        for scenario in LabScenario.correctness {
+            XCTAssertEqual(scenario.reason(profile),scenario.reason(.reverse),scenario.id)
+        }
+        XCTAssertEqual(LabLifecycle.fields(profile).compactMap { $0["status"] as? String },
+                       LabLifecycle.fields(.reverse).compactMap { $0["status"] as? String })
+        XCTAssertEqual(LabDemoQualification.scenarios.filter { $0.applies(profile) }.map(\.id),
+                       LabDemoQualification.scenarios.filter { $0.applies(.reverse) }.map(\.id))
+        XCTAssertEqual(LabTests.adapter(profile:profile,suite:"recovery")["status"] as? String,"not_run")
+        XCTAssertNoThrow(try LabBenchmark.Options(["--profile",profile.rawValue,"--workload","multi-table-transaction"]))
+    }
+
     func testServerDialectDoesNotDependOnEngine() {
         let boundary=Boundary(file:"binlog.000003",position:123,gtids:"")
         for profile in LabProfile.allCases {

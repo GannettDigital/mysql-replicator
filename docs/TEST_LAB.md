@@ -16,13 +16,14 @@ contract; it does not mean every feature of those MySQL versions is supported.
 | `mysql84-to-mysql57-myisam` | 8.4 InnoDB | 5.7 MyISAM | 8.4 MyISAM |
 | `mysql57-to-mysql84-innodb` | 5.7 InnoDB | 8.4 InnoDB | 5.7 InnoDB |
 | `mysql57-to-mysql57-myisam` | 5.7 InnoDB | 5.7 MyISAM | 5.7 MyISAM |
+| `mysql57-to-mysql57-innodb` | 5.7 InnoDB | 5.7 InnoDB | 5.7 InnoDB |
 
 Partition experiments explicitly use an InnoDB native reference on all profiles
 to preserve the same fixture; 8.4 cannot create the corresponding MyISAM table. Both MyISAM temporary-table LIKE cases
 also declare a MyISAM source template explicitly. These exceptions are checked
 before metadata comparison. The actual servers, settings, image IDs,
 and applier binary hash are recorded. The native reference is a behavior/control
-comparison; its version matches the source. In the 5.7 → 5.7 profile, all three servers use 5.7.
+comparison; its version matches the source. In the 5.7 → 5.7 profiles, all three servers use 5.7.
 
 ## List and run
 
@@ -60,10 +61,10 @@ comparison; arbitrary data/DDL differences are not normalized away.
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
-after the changes on all profiles. Foreign keys and CHECK constraints remain
-outside the supported DDL contract.
+after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.
+InnoDB profiles support foreign keys with the limits below.
 
-The `foreign-keys` family applies to the 5.7 → 8.4 InnoDB profile. It compares
+The `foreign-keys` family applies to both InnoDB target profiles. It compares
 parent/child rows, constraint metadata and supporting indexes with native 5.7
 replication, exercises cascades, composite references, ordered DDL and restart,
 and checks exclusions, rollback and offline recovery relationship evidence.

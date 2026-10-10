@@ -133,7 +133,7 @@ public enum LabTests {
         switch suite {
         case "recovery":
             try require(profile.transactionalTarget,"forward recovery must use the shared runner")
-            try ReverseQualification.run(root:root,build:build,events:0,onEvidence:onEvidence)
+            try ReverseQualification.run(root:root,build:build,profile:profile,events:0,onEvidence:onEvidence)
         case "native": try NativeDDLQualification.run(root:root,onEvidence:onEvidence)
         default: throw LabError("unknown adapter suite")
         }

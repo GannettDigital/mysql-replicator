@@ -8,14 +8,16 @@ public enum LabProfile: String, CaseIterable, Codable {
 
     case mysql57MyISAM = "mysql57-to-mysql57-myisam"
 
+    case mysql57InnoDB = "mysql57-to-mysql57-innodb"
+
     enum Role: String, CaseIterable { case source, native, target }
 
     var transactionalTarget: Bool { targetEngine == "InnoDB" }
-    var targetEngine: String { self == .reverse ? "InnoDB" : "MyISAM" }
+    var targetEngine: String { (self == .reverse || self == .mysql57InnoDB) ? "InnoDB" : "MyISAM" }
     var sourceVersion: LabMySQLVersion {
         switch self {
         case .forward: return .mysql84
-        case .reverse, .mysql57MyISAM: return .mysql57
+        case .reverse, .mysql57MyISAM, .mysql57InnoDB: return .mysql57
         }
     }
     var targetVersion: LabMySQLVersion { self == .reverse ? .mysql84 : .mysql57 }
@@ -27,6 +29,7 @@ public enum LabProfile: String, CaseIterable, Codable {
         case .forward: return "docker/dml/compose.yaml"
         case .reverse: return "docker/reverse/compose.yaml"
         case .mysql57MyISAM: return "docker/mysql57-myisam/compose.yaml"
+        case .mysql57InnoDB: return "docker/mysql57-innodb/compose.yaml"
         }
     }
     var evidenceVariable: String {
@@ -34,6 +37,7 @@ public enum LabProfile: String, CaseIterable, Codable {
         case .forward: return "REPLICATOR_DML_EVIDENCE_VOLUME"
         case .reverse: return "REPLICATOR_REVERSE_EVIDENCE_VOLUME"
         case .mysql57MyISAM: return "REPLICATOR_MYSQL57_EVIDENCE_VOLUME"
+        case .mysql57InnoDB: return "REPLICATOR_MYSQL57_INNODB_EVIDENCE_VOLUME"
         }
     }
     func service(_ role: Role) -> String {

@@ -16,6 +16,7 @@ The test suite checks these profiles:
 | `mysql84-to-mysql57-myisam` | MySQL 8.4 InnoDB | MySQL 5.7 MyISAM | Not supported |
 | [`mysql57-to-mysql84-innodb`](docs/REVERSE_REPLICATION.md) | MySQL 5.7 InnoDB | MySQL 8.4 InnoDB | Supported with [limits](PLAN/MYSQL57_FOREIGN_KEYS.md) |
 | [`mysql57-to-mysql57-myisam`](docs/MYSQL57_MYISAM.md) | MySQL 5.7 InnoDB | MySQL 5.7 MyISAM | Not supported |
+| [`mysql57-to-mysql57-innodb`](docs/MYSQL57_INNODB.md) | MySQL 5.7 InnoDB | MySQL 5.7 InnoDB | Supported with [limits](PLAN/MYSQL57_FOREIGN_KEYS.md) |
 
 Set `profile` in your YAML configuration to select a profile. Other combinations
 are not tested. See [DML support](PLAN/DML_APPLY.md) and

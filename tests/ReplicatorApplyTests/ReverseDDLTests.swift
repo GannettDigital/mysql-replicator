@@ -9,8 +9,12 @@ final class ReverseDDLTests: XCTestCase {
             try DDLStatement.parse(QueryControl(database:"poc",sql:Data("CREATE TABLE t(id INT PRIMARY KEY) ENGINE=\(engine)".utf8),errorCode:0,statusVariables:Data()),profile:profile)
         }
         for engine in ["InnoDB","'InnoDB'"] {
-            guard case .create(_,let selected)=try parse(engine,.mysql57To84InnoDB) else { return XCTFail("missing CREATE") }
-            XCTAssertEqual(selected,.innoDB)
+            for profile in ReplicationProfile.allCases where profile.transactional {
+                guard case .create(_,let selected)=try parse(engine,profile) else { return XCTFail("missing CREATE") }
+                XCTAssertEqual(selected,.innoDB)
+                XCTAssertThrowsError(try parse("MyISAM",profile))
+                XCTAssertThrowsError(try parse("MEMORY",profile))
+            }
             XCTAssertThrowsError(try parse(engine,.mysql84To57MyISAM))
             XCTAssertThrowsError(try parse(engine,.mysql57To57MyISAM))
         }
