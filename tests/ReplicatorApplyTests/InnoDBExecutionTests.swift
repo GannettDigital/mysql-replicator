@@ -27,7 +27,40 @@ extension ApplyTests {
             try store.running(); try store.stopped()
         }
         XCTAssertNoThrow(try StateStore(configuration:selected,initialize:false))
-        for other in [ReplicationProfile.mysql84To57MyISAM,.mysql57To84InnoDB] {
+        for other in [ReplicationProfile.mysql84To57MyISAM,.mysql57To84InnoDB,.mysql57To57InnoDB] {
+            XCTAssertThrowsError(try StateStore(configuration:config(path,profile:other.rawValue),initialize:false)) {
+                XCTAssertTrue(String(describing:$0).contains("profile differs"))
+            }
+        }
+    }
+
+    func testMySQL57InnoDBUsesLegacyMetadataAndPinsItsOwnState() throws {
+        let profile=ReplicationProfile.mysql57To57InnoDB, contract=profile.targetContract
+        XCTAssertTrue(profile.sourceContract.requiresHistoricalSchema)
+        XCTAssertTrue(profile.transactional)
+        XCTAssertEqual(contract.versionPrefix,"5.7.")
+        XCTAssertEqual(contract.statusSQL,"SHOW SLAVE STATUS")
+        XCTAssertEqual(contract.engine,"InnoDB")
+        XCTAssertEqual(contract.gtidMode,"ON")
+        XCTAssertEqual(contract.gtidConsistency,"ON")
+        XCTAssertEqual(contract.ddlSQLMode(0x1003ff00),0x1003ff00)
+        XCTAssertEqual(try contract.columnDefault("0x6869",type:"varbinary(20)"),"0x6869")
+        XCTAssertNil(contract.columnExtra("",defaultValue:nil,type:"int"))
+        XCTAssertNoThrow(try config(profile:profile.rawValue).validate())
+        XCTAssertThrowsError(try config(profile:profile.rawValue,mode:"file-position").validate())
+        XCTAssertThrowsError(try config(collations:["utf8mb4_0900_ai_ci":"utf8mb4_unicode_ci"],profile:profile.rawValue).validate())
+        let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:parent) }
+        let path=parent.appendingPathComponent("state").path
+        let selected=try config(path,profile:profile.rawValue)
+        do {
+            let store=try StateStore(configuration:selected)
+            try store.bindTargetIdentity("11111111-1111-1111-1111-111111111111")
+            try store.running(); try store.stopped()
+        }
+        XCTAssertNoThrow(try StateStore(configuration:selected,initialize:false))
+        for other in ReplicationProfile.allCases where other != profile {
             XCTAssertThrowsError(try StateStore(configuration:config(path,profile:other.rawValue),initialize:false)) {
                 XCTAssertTrue(String(describing:$0).contains("profile differs"))
             }

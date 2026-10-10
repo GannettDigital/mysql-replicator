@@ -1,16 +1,17 @@
 # MySQL 5.7 foreign keys and reverse replication
 
-Status: implemented for the qualified subset in `mysql57-to-mysql84-innodb`.
+Status: implemented for the qualified subset in `mysql57-to-mysql84-innodb`
+and `mysql57-to-mysql57-innodb`.
 Validation results are recorded below.
 
 ## Scope and current behavior
 
 Both MySQL 5.7 and 8.4 support foreign keys on InnoDB. Support is restricted to
 relationships whose effects can be preserved by the target.
-The intended topology is 5.7 InnoDB → external applier → 8.4 InnoDB, compared
-against a native 5.7 InnoDB replica of the same source.
+Both profiles use a 5.7 InnoDB source and a native 5.7 InnoDB reference.
+The external target is 8.4 or 5.7 InnoDB, as selected by the profile.
 
-The reverse target contract discovers both outgoing and incoming relationships.
+The InnoDB target contract discovers both outgoing and incoming relationships.
 Each saved table schema includes its complete connected relationship component,
 including ordered columns and update/delete rules. Target sessions enable
 `foreign_key_checks`; checks-disabled row events and DDL are rejected. MyISAM

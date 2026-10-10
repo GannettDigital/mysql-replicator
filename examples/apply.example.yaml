@@ -11,6 +11,7 @@ version: 2                          # Required config format; do not add tables/
 #   mysql84-to-mysql57-myisam: MySQL 8.4 source -> MySQL 5.7 MyISAM target (default).
 #   mysql57-to-mysql84-innodb: MySQL 5.7 source -> MySQL 8.4 InnoDB target.
 #   mysql57-to-mysql57-myisam: MySQL 5.7 source -> MySQL 5.7 MyISAM target.
+#   mysql57-to-mysql57-innodb: MySQL 5.7 source -> MySQL 5.7 InnoDB target.
 profile: mysql84-to-mysql57-myisam   # Select a source version and target version/engine from the list above.
 stateDirectory: ./replica-state     # Required for run/replay/support-bundle/ctl; new with --initialize.
                                     # Reuse after a clean stop; saved progress wins over source.start.
