@@ -40,23 +40,16 @@ struct DMLExecution {
                 attemptedEnd = cursor
                 try require(!cancellation.isCancelled,"apply cancelled")
                 let first = rows[cursor].1
-                var end = cursor+1, bytes = insertBytes(first)
-                if first.row.operation == "insert" {
-                    while end < rows.count && end-cursor < maximumInsertRows {
-                        let next = rows[end].1, cost = insertBytes(next)
+                let count = insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in
+                        let end = cursor+offset
+                        guard end < rows.count else { return nil }
                         // Coalesce across source groups only when both groups
                         // contain one row. With explicit locks enabled, larger
                         // groups keep their lock until their last chunk.
-                        if rows[end].0 != rows[cursor].0 && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1) { break }
-                        guard next.row.operation == "insert", next.table == first.table,
-                              bytes <= maximumInsertBytes-cost else { break }
-                        bytes += cost; end += 1
-                    }
-                    // Powers of two bound prepared statement shapes per table.
-                    var size = 1
-                    while size*2 <= end-cursor { size *= 2 }
-                    end = cursor+size
+                        if rows[end].0 != rows[cursor].0 && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1) { return nil }
+                        return rows[end].1
                 }
+                let end = cursor+count
                 attemptedEnd = end
                 if acknowledged[rows[cursor].0] == 0 { try lock(first.table) }
                 if end-cursor == 1 { try write(first) }
@@ -102,6 +95,36 @@ struct DMLExecution {
                 diagnostic:.init(reason:String(describing:error),statement:statement,rows:spans,ddlGTID:nil,ddlSQL:nil),
                 discardUnwritten:error is TargetConnectionFailure && statement.phase == .notIssued && wholeGroups)
         }
+    }
+
+    /// Count target writes, not source SQL statements. UPDATE/DELETE image checks
+    /// precede the write under our exclusive-writer contract. Generated-column
+    /// checks follow the write and must remain rollbackable.
+    static func canAutocommit(_ group: PreparedDMLGroup, maximumInsertRows: Int, maximumInsertBytes: Int) -> Bool {
+        guard let first = group.mutations.first else { return false }
+        if first.row.operation == "delete" { return group.mutations.count == 1 }
+        guard !first.table.columns.contains(where: { $0.isGenerated }) else { return false }
+        if first.row.operation == "update" { return group.mutations.count == 1 }
+        guard first.row.operation == "insert" else { return false }
+        return insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in
+            offset < group.mutations.count ? group.mutations[offset] : nil
+        } == group.mutations.count
+    }
+
+    private static func insertChunkCount(_ first: Mutation, maximumInsertRows: Int, maximumInsertBytes: Int,
+                                         next: (Int) -> Mutation?) -> Int {
+        guard first.row.operation == "insert" else { return 1 }
+        var count = 1, bytes = insertBytes(first)
+        while count < maximumInsertRows, let mutation = next(count) {
+            let cost = insertBytes(mutation)
+            guard mutation.row.operation == "insert", mutation.table == first.table,
+                  bytes <= maximumInsertBytes-cost else { break }
+            bytes += cost; count += 1
+        }
+        // Powers of two bound prepared statement shapes per table.
+        var size = 1
+        while size*2 <= count { size *= 2 }
+        return size
     }
 
     /// Conservative bound for both prepare SQL and execute parameters. Count

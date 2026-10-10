@@ -127,7 +127,7 @@ batch:
   maximumInsertBytes: 1048576       # 1 MiB; 1 KiB..4 MiB, also capped by target max_allowed_packet.
   overlapPreparation: true          # Prepare the next batch while the single executor runs.
   flushOnTableChange: false         # true ends a batch whenever its table changes.
-  maximumTransactions: 32           # Complete source groups per batch; 1..256.
+  maximumTransactions: 8           # Complete source groups per batch; 1..256.
   maximumRows: 4096                 # Collection threshold; 1..65536 rows.
   maximumWireBytes: 8388608         # 8 MiB collection threshold; 1 KiB..32 MiB.
   maximumDelayMilliseconds: 25      # Flush nonempty batch after 1..1000 ms.

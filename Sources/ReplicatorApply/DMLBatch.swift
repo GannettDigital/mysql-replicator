@@ -7,7 +7,7 @@ public struct BatchPolicy: Decodable {
     public var maximumInsertBytes = 1024*1024
     public var overlapPreparation = true
     public var flushOnTableChange = false
-    public var maximumTransactions = 32
+    public var maximumTransactions = 8
     public var maximumRows = 4096
     public var maximumWireBytes = 8*1024*1024
     public var maximumDelayMilliseconds = 25

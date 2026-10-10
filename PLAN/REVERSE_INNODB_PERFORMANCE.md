@@ -303,8 +303,8 @@ whether source SQL used explicit BEGIN: a large source INSERT can be split into
 multiple target statements. Multi-statement plans and post-write validation that
 requires rollback retain explicit transactions. Lost autocommit responses must
 be treated as uncertain commits, and known statement failures need appropriate
-rollback/skip classification. This is the next proposed execution change; it is
-not part of the schema-cache implementation.
+rollback/skip classification. This was the proposed execution change at the
+schema-cache checkpoint; its performance experiment follows below.
 
 ### Cache validation
 
@@ -330,3 +330,106 @@ incompatible-setting rejection. Evidence:
 
 Local comparison data and validation logs are collected under
 `artifacts/schema-cache-20261009/`.
+
+## Autocommit experiment and prepared-batch follow-up
+
+The schema-cache/profiling checkpoint was committed as `f427997`. The subsequent
+uncommitted experiment removes explicit BEGIN/COMMIT around groups with one
+target write. Single-row INSERT, UPDATE and DELETE qualify. INSERT chunks qualify
+only when the existing chunk planner can execute the entire source group in one
+statement. That planner is shared with normal execution, including row/byte limits
+and power-of-two prepared-statement shapes. Source transactions remain separate.
+
+UPDATE/DELETE retain their pre-write image and key checks under the existing
+exclusive-writer contract. INSERT/UPDATE on generated columns retain explicit
+transactions because their post-write value checks must be able to roll back.
+Groups needing multiple target writes also retain explicit transactions.
+
+Autocommit success acknowledges the group even if cancellation arrives while the
+request is running. A lost response remains `commitUncertain`; sending a later
+ROLLBACK cannot prove that the write did not commit. A received MySQL 1062 on an
+issued ordinary InnoDB mutation establishes statement rollback and can use the
+existing authorized skip policy. Post-response validation failure retains the
+intent and reports `committed`, without advancing the source checkpoint.
+
+### Performance first
+
+Per the requested order, this experiment has been built and benchmarked, but its
+unit-test expectations and broader correctness qualification are still pending.
+The benchmark itself checks final rows/schema and the source checkpoint. These
+results do not qualify failure handling, generated columns, or UPDATE/DELETE
+autocommit; the measured workload is 10,000 single-row INSERT transactions.
+
+All runs below used sequential native/external backlog replay with no concurrent
+lab tests. Native remains MySQL 5.7 InnoDB; the external target is MySQL 8.4 InnoDB.
+The first run enabled only applier profiling; the others disabled both detailed
+profilers. The row/byte/age limits and durability settings were unchanged.
+
+| Execution | Journal batch limit | Native seconds | External seconds | Target SQL seconds | Target SQL requests |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Autocommit, initial profiled run | 8 | 12.264 | 41.473 | 22.090 | 10,026 |
+| Autocommit, profiling off | 8 | 12.663 | 29.923 | 15.711 | 10,026 |
+| Fresh committed BEGIN/COMMIT baseline | 8 | 12.669 | 36.248 | 21.009 | 30,026 |
+| Autocommit, repeat with slower native too | 8 | 24.068 | 41.561 | 22.721 | 10,026 |
+| Autocommit, existing application batch default | 32 | 12.381 | 25.425 | 14.819 | 10,026 |
+
+The first profiling-off run and fresh baseline have nearly identical native
+timings. That comparison suggests about 17% lower elapsed time and 25% lower
+target SQL time. The slower repeat shows considerable host variability, so these
+are observations, not a stable throughput guarantee. The request reduction is
+consistent across all runs. The target's `Com_commit` delta becomes zero because
+there are no explicit COMMIT commands; it still commits and binlogs 10,000 target
+transactions. Target binlog boundaries and GTID sets are in each result.
+
+With the existing batch limit of 32, execution batches fell from 1,250 to 313,
+SQLite commits from 2,530 to 656, and progress reports from 1,251 to 314. All source
+transactions still commit separately in MySQL. No production default changed.
+
+Evidence under `artifacts/lab-benchmark/mysql57-to-mysql84-innodb/`:
+
+- `20261010T052526Z-78104c67-auto-transaction-innodb`: initial INSERT-only prototype,
+  before extending eligibility to UPDATE/DELETE.
+- `20261010T052833Z-2d66c45c-auto-transaction-innodb`: profiling off, batch eight.
+- `20261010T053329Z-83113103-auto-transaction-innodb`: repeat, batch eight.
+- `20261010T053608Z-b78bd0b4-auto-transaction-innodb`: batch 32.
+
+The fresh baseline is in the isolated `f427997` worktree at
+`../autocommit-baseline/artifacts/lab-benchmark/mysql57-to-mysql84-innodb/20261010T053050Z-4db46549-auto-transaction-innodb/`.
+Combined local evidence is in `artifacts/autocommit-performance-20261009/`.
+
+### Keep the target worker busy
+
+The current overlap covers decoding and row planning, but not all journal work.
+`ApplyRun` joins the prior executor, records its completion, emits progress,
+syncs the next relay prefix, persists its intents, and only then starts the next
+executor. `StateStore.beginBatch` requires no pending GTID, enforcing this serial
+handoff. At batch 32, target execution took 15.796 seconds, while the consumer's
+aggregate elapsed time was 19.030 seconds; full benchmark time was 25.425 seconds.
+These scopes overlap and are not a complete wall-time decomposition. In
+particular, the difference must not all be labeled CPU or startup cost.
+
+The next proposed increment is a bounded queue of durably prepared batches,
+initially one executing and one ready:
+
+1. Keep SQLite ownership on the coordinator. Record future intents and sync
+   their relay data while the target worker executes an earlier batch.
+2. Let the target worker consume ready batches in order and return completion
+   results. Keep its connection, statement cache and timings worker-local.
+3. Track multiple outstanding batches in the state store, assigning unique
+   sequence numbers and advancing the applied checkpoint only through the
+   acknowledged prefix. Preparing a batch must never advance applied progress.
+4. Persist earlier completions while target execution continues. On failure,
+   stop later work and preserve all outstanding intents and known outcomes;
+   never infer success or retry an uncertain write.
+5. Drain the queue for DDL/schema barriers. Account for every queued group when
+   enforcing transaction/GTID stop limits, cancellation, and reconnect behavior.
+6. Measure queue starvation, writer idle time, durable preparation/completion,
+   and steady-state replay wall time separately from process startup/shutdown.
+
+This queue is not implemented by the autocommit experiment. It changes the
+outstanding-intent model and needs crash/stop/skip tests before qualification.
+
+The autocommit checkpoint sets the application and benchmark journal batch
+defaults to eight, as requested. The measured batch-32 run remains an explicit
+experiment. Correctness qualification remains deferred until performance work
+is complete.
