@@ -5,8 +5,9 @@ struct LabScenario {
     let test: QualificationCase
     let family: String
     var dependencies: [String] = []
-    var reverseOnly = false
-    var forwardOnlyReason: String?
+    var requiresTransactionalTarget = false
+    var source84OnlyReason: String?
+    var requiresMyISAMTarget = false
     var intent: String = "apply"
     var smoke = false
     var id: String { test.id }
@@ -14,10 +15,11 @@ struct LabScenario {
         if let reason=variant.reason(profile) { return reason }
         if ["offline-replay","offline-skip-errors","runtime-control"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
         if id == "live-skip-errors" && variant == .positionMinimal { return "Skip/resume fixture uses exact GTID stop boundaries; use default or gtid-full variants." }
-        if profile == .reverse, let reason=forwardOnlyReason { return reason }
+        if profile.sourceVersion != .mysql84, let reason=source84OnlyReason { return reason }
         if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
         if variant == .positionMinimal && id == "ddl-compat-types" { return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full." }
-        return reverseOnly && profile == .forward ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal is qualified by myisam-recovery." : nil
+        if requiresMyISAMTarget && profile.transactionalTarget { return "MyISAM partial persistence and fail-stop contract; InnoDB rollback/retry uses transactional recovery." }
+        return requiresTransactionalTarget && !profile.transactionalTarget ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal is qualified by myisam-recovery." : nil
     }
     func fields(_ profile: LabProfile, variant: LabVariant = .standard) -> [String:Any] {
         var value=test.fields
@@ -41,7 +43,7 @@ struct LabScenario {
             item.smoke=test.test.id == "database-explicit"
             return item
         }
-        cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],reverseOnly:true))
+        cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",smoke:$0.id == "composite") }
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
@@ -60,14 +62,14 @@ struct LabScenario {
         ]
         cases.append(.init(test:DDLCoverageCases.group,family:"ordered"))
         cases += [DDLCompatibilityCases.collationCleanup,DDLCompatibilityCases.collationCollision].map {
-            .init(test:$0,family:"collation",forwardOnlyReason:"Requires 8.4 source 0900/NO PAD collations and 5.7 mapping; these collations do not exist on a 5.7 source.")
+            .init(test:$0,family:"collation",source84OnlyReason:"Requires 8.4 source 0900/NO PAD collations and 5.7 mapping; these collations do not exist on a 5.7 source.")
         }
         cases.append(.init(test:DDLCoverageCases.positive,family:"dml",smoke:true))
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("bootstrap-matrix-"+$0.id,"Discover bootstrapped DML schema: "+$0.id),family:"bootstrap") }
-        cases += DMLCompatibilityCases.rejections.map { .init(test:.init("matrix-reject-"+$0.id,"Refuse incompatible bootstrapped metadata: "+$0.id),family:"dml-refusals",forwardOnlyReason:"Historical 8.4 metadata and 5.7 MyISAM effect contract; reverse optional-label and rollback expectations require separate assertions.",intent:"reject with unchanged durable progress") }
+        cases += DMLCompatibilityCases.rejections.map { .init(test:.init("matrix-reject-"+$0.id,"Refuse incompatible bootstrapped metadata: "+$0.id),family:"dml-refusals",source84OnlyReason:"Requires 8.4 optional TABLE_MAP metadata; 5.7 omits signedness and labels, and uses the target baseline schema.",intent:"reject with unchanged durable progress") }
         cases.append(.init(test:ModifyIndexCases.resume,family:"discovery"))
-        cases.append(.init(test:.init("forward-failures","Forward DDL/policy failures retain pending evidence and blocked following writes"),family:"failures",forwardOnlyReason:"Historical 8.4 to 5.7 MyISAM grants, index limits and native error codes.",intent:"per-case apply or fail-stop"))
-        cases.append(.init(test:.init("myisam-recovery","MyISAM discovery, exact values, cache, failures and crash/replay refusal"),family:"recovery",forwardOnlyReason:"MyISAM partial persistence and native 1837 contract; InnoDB rollback/retry is qualified by the reverse recovery suite.",intent:"per-case apply or fail-stop"))
+        cases.append(.init(test:.init("forward-failures","Forward DDL/policy failures retain pending evidence and blocked following writes"),family:"failures",source84OnlyReason:"Historical 8.4 to 5.7 MyISAM grants, index limits and native error codes.",intent:"per-case apply or fail-stop"))
+        cases.append(.init(test:.init("myisam-recovery","MyISAM discovery, exact values, cache, failures and crash/replay refusal"),family:"recovery",requiresMyISAMTarget:true,intent:"per-case apply or fail-stop"))
         return cases
     }
     static func select(tier: String, family: String?, ids: Set<String>) throws -> [LabScenario] {

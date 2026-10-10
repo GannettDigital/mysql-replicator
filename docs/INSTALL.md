@@ -78,6 +78,9 @@ tests using 8.4.8 and 5.7.42; this is not Cloud SQL qualification. Provision a d
 and record the matching source GTID set or binlog file/offset. Do not use an
 arbitrary current GTID set after an unrelated snapshot.
 
+Source builds also offer [5.7 InnoDB → 5.7 MyISAM](MYSQL57_MYISAM.md), selected
+with `profile: mysql57-to-mysql57-myisam`. This profile is not in beta.3 binaries.
+
 Follow [source/target preconditions and supported behavior](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/PLAN/DML_APPLY.md)
 and the comments in [apply.example.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/examples/apply.example.yaml). Configure
 ROW/FULL/CRC32 binlogs, the required GTID settings, account privileges, verified TLS,

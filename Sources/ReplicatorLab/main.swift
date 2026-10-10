@@ -7,7 +7,7 @@ func main() throws -> Int32 {
     if command == "--help" {
         print("""
         replicator-lab: repository automation (run from the repository root)
-          test --profile all|mysql84-to-mysql57-myisam|mysql57-to-mysql84-innodb
+          test --profile all|\(LabProfile.allCases.map(\.rawValue).joined(separator:"|"))
                [--suite correctness|lifecycle|recovery|demo|native|all]
                [--tier smoke|full] [--family FAMILY]
                [--case ID ...] [--variant default|position-minimal|gtid-full|all]

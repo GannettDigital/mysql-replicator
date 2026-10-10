@@ -4,7 +4,7 @@ extension SharedCorrectness.Run {
     /// Engine-specific contract: partial MyISAM persistence and refused replay.
     /// The InnoDB recovery suite has different rollback/retry expectations.
     func myisamRecovery() throws {
-        guard f.profile == .forward && selects("myisam-recovery") else { return }
+        guard !f.profile.transactionalTarget && selects("myisam-recovery") else { return }
         try resetNativeEngine()
         try f.awaitNative()
         let h=f.h, isolated=LabIsolatedApply(f)
@@ -38,7 +38,7 @@ extension SharedCorrectness.Run {
                 let engine=service == "source" ? "InnoDB" : "MyISAM"
                 _ = try h.sql(service,"SET sql_log_bin=0; DROP DATABASE IF EXISTS poc; CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(engine); INSERT INTO poc.items VALUES(1,'updated',1),(3,'final-three',18446744073709551615)")
             }
-            _ = try h.sql("native","STOP REPLICA")
+            _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
             // Existing-state refusal reuses this clean initialized checkpoint.
             // It is separate from the independently qualified basic DML oracle.
             for service in h.services { _ = try h.sql(service,"SET sql_log_bin=0; CREATE TABLE poc.recovery_marker(id INT PRIMARY KEY)") }
@@ -46,7 +46,7 @@ extension SharedCorrectness.Run {
             let initialized=try isolated.start("recovery-existing",config:positiveConfig)
             _ = try h.sql("source","INSERT INTO poc.recovery_marker VALUES(1)")
             _ = try isolated.finish(initialized,label:"recovery-existing",config:positiveConfig)
-            _ = try h.sql("native","START REPLICA"); try f.awaitNative(); _ = try h.sql("native","STOP REPLICA")
+            _ = try h.sql("native",f.profile.nativeVersion.startReplica); try f.awaitNative(); _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 // Additional accepted shapes: multi-row statement and key change.
                 let edgeStart = try h.boundary("source"), edgeNativeStart = try h.boundary("native"), edgeTargetStart = try h.boundary("target57")
                 let edge = try start(SharedWorkflowCases.recovery("multirow"),configuration("multirow",at:edgeStart,count:3)); try waitForReader(edge)
@@ -56,10 +56,10 @@ extension SharedCorrectness.Run {
                 let edgeReads = (edgeResult["stageTimings"] as? [String:[String:Any]])?["target.read"]?["count"] as? Int
                 try require(edgeReads == 4,"expected three UPDATE/DELETE reads and one new-key absence check")
                 let edgeEnd = try h.boundary("source")
-                _ = try h.sql("native","START REPLICA")
-                let wait = try h.sql("native","SELECT SOURCE_POS_WAIT('\(edgeEnd.file)',\(edgeEnd.position),30)")
+                _ = try h.sql("native",f.profile.nativeVersion.startReplica)
+                let wait = try h.sql("native","SELECT \(f.profile.nativeVersion.positionWait)('\(edgeEnd.file)',\(edgeEnd.position),30)")
                 try require(wait != "NULL" && wait != "-1" && h.rows("native") == Fixture.final,"native multirow/key-change differs")
-                _ = try h.sql("native","STOP REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 let expectedEdges = [RowOperation("insert",after:["10","ten","10"]),RowOperation("insert",after:["11","eleven","18446744073709551615"]),RowOperation("update",before:["11","eleven","18446744073709551615"],after:["12","twelve","18446744073709551615"]),RowOperation("delete",before:["10","ten","10"]),RowOperation("delete",before:["12","twelve","18446744073709551615"])]
                 for (service,from,to) in [("source",edgeStart,edgeEnd),("native",edgeNativeStart,try h.boundary("native")),("target57",edgeTargetStart,try h.boundary("target57"))] {
                     try Comparison.operations(h.capture(service,start:from,end:to),expected:expectedEdges)
@@ -75,7 +75,7 @@ extension SharedCorrectness.Run {
                 }
                 let exactConfig = configuration("exact-values",at:try h.boundary("source"),count:3)
                 let exact = try start(SharedWorkflowCases.recovery("exact-values"),exactConfig); try waitForReader(exact)
-                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.startReplica)
                 func verifyExact(_ count: Int,_ expected: String) throws {
                     let end = Date().addingTimeInterval(15)
                     // Use process progress for a live barrier. A host SQLite
@@ -89,7 +89,7 @@ extension SharedCorrectness.Run {
                     while try appliedCount() != count && Date() < end { Thread.sleep(forTimeInterval:0.1) }
                     try require(appliedCount() == count,"exact value apply did not reach barrier")
                     let boundary = try h.boundary("source")
-                    let reached = try h.sql("native","SELECT SOURCE_POS_WAIT('\(boundary.file)',\(boundary.position),15)")
+                    let reached = try h.sql("native","SELECT \(f.profile.nativeVersion.positionWait)('\(boundary.file)',\(boundary.position),15)")
                     try require(reached != "NULL" && reached != "-1","exact value native barrier failed")
                     for service in h.services {
                         let actual = try h.sql(service,"SELECT id,u,b,IFNULL(HEX(t),'NULL'),IFNULL(HEX(v),'NULL') FROM poc.exact_values ORDER BY id")
@@ -104,7 +104,7 @@ extension SharedCorrectness.Run {
                 _ = try h.sql("source","DELETE FROM poc.exact_values WHERE id=9223372036854775807")
                 try verifyExact(3,"0\t4294967295\t18446744073709551615\tNULL") // ProcessRunner trims the final tab.
                 _ = try finish(exact,"exact-values",success:true)
-                _ = try h.sql("native","STOP REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 try reporter.pass("exact-values")
                 report["exact_values"] = "integer_extremes_utf8_binary_null_empty_passed"
                 // One process discovers two new names and a non-leading key.
@@ -113,18 +113,18 @@ extension SharedCorrectness.Run {
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.ordered_a(payload VARCHAR(30) NULL,k BIGINT UNSIGNED PRIMARY KEY) ENGINE=\(engine); CREATE TABLE poc.ordered_b(flag INT NOT NULL,blob_value VARBINARY(10) NULL,k INT PRIMARY KEY) ENGINE=\(engine)")
                 }
                 let discovery=try start(SharedWorkflowCases.recovery("discovery"),configuration("discovery",at:try h.boundary("source"),count:4)); try waitForReader(discovery)
-                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.startReplica)
                 _ = try h.sql("source","INSERT INTO poc.ordered_a VALUES('first',18446744073709551615); INSERT INTO poc.ordered_b VALUES(-1,0x00FF,17); UPDATE poc.ordered_a SET payload='changed' WHERE k=18446744073709551615; DELETE FROM poc.ordered_b WHERE k=17")
                 _ = try finish(discovery,"discovery",success:true)
                 let discoveryEnd=try h.boundary("source")
-                let discoveryWait=try h.sql("native","SELECT SOURCE_POS_WAIT('\(discoveryEnd.file)',\(discoveryEnd.position),15)")
+                let discoveryWait=try h.sql("native","SELECT \(f.profile.nativeVersion.positionWait)('\(discoveryEnd.file)',\(discoveryEnd.position),15)")
                 try require(discoveryWait != "NULL" && discoveryWait != "-1","discovery native barrier failed")
                 for service in h.services {
                     try require(h.sql(service,"SELECT payload,k FROM poc.ordered_a") == "changed\t18446744073709551615","discovered ordered columns differ")
                     try require(h.sql(service,"SELECT COUNT(*) FROM poc.ordered_b") == "0","discovered second table differs")
                 }
                 try require(state("discovery","SELECT COUNT(*) FROM schemas") == "2","schema discovery was not persisted")
-                _ = try h.sql("native","STOP REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 try reporter.pass("discovery")
                 report["automatic_discovery"]="multiple_tables_nonleading_keys"
                 // The sampled fleet exceeds the former 64-table ceiling.
@@ -137,9 +137,9 @@ extension SharedCorrectness.Run {
                 try waitForReader(capacity)
                 _ = try h.sql("source",(0..<160).map { "INSERT INTO poc.capacity_\($0) VALUES(1,\($0))" }.joined(separator:";"))
                 _ = try finish(capacity,"table-capacity",success:true)
-                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.startReplica)
                 try ModifyIndexCases.waitNative(h,try h.boundary("source"))
-                _ = try h.sql("native","STOP REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 let capacityRows = (0..<160).map { "SELECT id,v FROM poc.capacity_\($0)" }.joined(separator:" UNION ALL ")
                 for service in h.services {
                     try require(h.sql(service,"SELECT COUNT(*),SUM(v) FROM ("+capacityRows+") t") == "160\t12720","many-table rows differ")
@@ -161,9 +161,9 @@ extension SharedCorrectness.Run {
                 resumeSource["stopAfterTransactions"] = 4; resumeConfig["source"] = resumeSource
                 let resumedComposite = try start(SharedWorkflowCases.recovery("composite-resume"),resumeConfig,initialize:false)
                 _ = try finish(resumedComposite,"composite-resume",success:true)
-                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.startReplica)
                 try ModifyIndexCases.waitNative(h,try h.boundary("source"))
-                _ = try h.sql("native","STOP REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 for service in h.services {
                     try require(h.sql(service,"SELECT id,report_date,payload,score FROM poc.composite_renamed") == "7\t2026-01-03\tnew\tNULL","composite resume data differs")
                 }
@@ -222,11 +222,11 @@ extension SharedCorrectness.Run {
                     let table=label == "absent-schema" ? "absent_schema" : "incompatible_schema"
                     _ = try h.sql("source","SET SESSION sql_log_bin=0; CREATE TABLE poc.\(table)(k INT UNSIGNED PRIMARY KEY) ENGINE=InnoDB")
                     if label == "incompatible-schema" {
-                        _ = try h.sql("target57","CREATE TABLE poc.\(table)(k INT PRIMARY KEY) ENGINE=MyISAM")
+                        _ = try h.sql("target57","CREATE TABLE poc.\(table)(k "+(f.profile.hasOptionalMetadata ? "INT" : "SMALLINT")+" PRIMARY KEY) ENGINE=MyISAM")
                     }
                     let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
                     _ = try h.sql("source","INSERT INTO poc.\(table) VALUES(1)")
-                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "requires a primary key" : "signedness")
+                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "requires a primary key" : (f.profile.hasOptionalMetadata ? "signedness" : "type"))
                     try require(state(label,"SELECT transactions_applied FROM state") == "0","invalid schema advanced checkpoint")
                     try reporter.pass(label)
                 }
@@ -234,7 +234,7 @@ extension SharedCorrectness.Run {
                 _ = try finish(start(SharedWorkflowCases.recovery("existing"),positiveConfig),"existing",success:false,reason:"state directory must be new")
                 try reporter.pass("existing")
                 let afterSchemaFailures=try h.boundary("source")
-                _ = try h.sql("native","CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(afterSchemaFailures.file)',SOURCE_LOG_POS=\(afterSchemaFailures.position)")
+                _ = try h.sql("native",f.profile.nativeVersion.position(afterSchemaFailures))
                 // Before-image mismatch must publish no applied transaction.
                 _ = try h.sql("target57","UPDATE poc.items SET value='drift' WHERE id=1")
                 let beforeMismatch = try h.rows("target57")
@@ -248,14 +248,14 @@ extension SharedCorrectness.Run {
                 // allowed to reject the shape before its first target write.
                 let rejectedRows = try h.rows("target57")
                 let multiple = try start(SharedWorkflowCases.recovery("multistatement"),configuration("multistatement",at:try h.boundary("source"),count:1)); try waitForReader(multiple)
-                _ = try h.sql("native","START REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.startReplica)
                 _ = try h.sql("source","BEGIN; INSERT INTO poc.items VALUES(99,'reject',99); UPDATE poc.items SET value='not-applied' WHERE id=1; COMMIT")
                 _ = try finish(multiple,"multistatement",success:false,reason:"single-statement")
                 let failedEnd = try h.boundary("source")
-                _ = try h.sql("native","SELECT SOURCE_POS_WAIT('\(failedEnd.file)',\(failedEnd.position),10)")
+                _ = try h.sql("native","SELECT \(f.profile.nativeVersion.positionWait)('\(failedEnd.file)',\(failedEnd.position),10)")
                 try require(h.status()["Last_SQL_Errno"] == "1837","native rejection differs")
                 try require(h.rows("target57") == rejectedRows && state("multistatement","SELECT transactions_applied FROM state") == "0","unsupported group partially applied")
-                _ = try h.sql("native","STOP REPLICA")
+                _ = try h.sql("native",f.profile.nativeVersion.stopReplica)
                 try reporter.pass("multistatement")
                 // Native channel exclusion is checked even before source capture.
                 _ = try h.sql("target57","CHANGE MASTER TO MASTER_HOST='source',MASTER_USER='invalid-fixture',MASTER_PASSWORD='invalid',MASTER_CONNECT_RETRY=1,MASTER_SSL=1; START SLAVE IO_THREAD")

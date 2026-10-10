@@ -29,7 +29,7 @@ enum LabLifecycle {
             if test.id == "target-drain-resume" { row["dependencies"]=["target-drain"] }
             if test.id == "target-uncertain-resume" { row["dependencies"]=["target-uncertain"] }
             if test.id == "target-uncertain" {
-                row["interruption"]=profile == .reverse ? "UPDATE second row blocked; first row provisional" : "INSERT blocked by MyISAM table lock"
+                row["interruption"]=profile.transactionalTarget ? "UPDATE second row blocked; first row provisional" : "INSERT blocked by MyISAM table lock"
             }
             return row
         }
@@ -50,7 +50,7 @@ enum LabLifecycle {
                 try f.prepare(build:false)
                 // Match the server's persisted restart default throughout this
                 // integer-only workload; optional FULL metadata is tested elsewhere.
-                if f.profile == .forward && f.variant == .standard { _ = try f.sql(.source,"SET PERSIST binlog_row_metadata=MINIMAL") }
+                if f.profile.hasOptionalMetadata && f.variant == .standard { _ = try f.sql(.source,"SET PERSIST binlog_row_metadata=MINIMAL") }
                 try f.recordRuntime()
                 try f.awaitNative(); try native(start:false)
                 // A stopped native dump connection can linger on the source.
@@ -98,7 +98,7 @@ enum LabLifecycle {
             try reporter.run(LabLifecycle.cases.first { $0.id == id }!,body)
         }
         func native(start: Bool) throws {
-            _ = try f.sql(.native,(start ? "START " : "STOP ")+(f.profile == .reverse ? "SLAVE" : "REPLICA"))
+            _ = try f.sql(.native,start ? f.profile.nativeVersion.startReplica : f.profile.nativeVersion.stopReplica)
         }
         func server(_ role: LabProfile.Role, start: Bool) throws {
             _ = try f.h.compose(start ? ["up","-d","--wait","--wait-timeout","120",f.profile.service(role)] : ["stop","-t","30",f.profile.service(role)],timeout:150)
@@ -315,7 +315,7 @@ enum LabLifecycle {
                 try waitProgress(client) { $0["transactionsApplied"] as? Int == 1 }
                 // InnoDB holds only the second row, allowing the first UPDATE to
                 // succeed provisionally. MyISAM holds the whole table instead.
-                let lock=f.profile == .reverse ? "START TRANSACTION; SELECT id FROM lifecycle.target_uncertain WHERE id=1 FOR UPDATE" : "LOCK TABLES lifecycle.target_uncertain WRITE"
+                let lock=f.profile.transactionalTarget ? "START TRANSACTION; SELECT id FROM lifecycle.target_uncertain WHERE id=1 FOR UPDATE" : "LOCK TABLES lifecycle.target_uncertain WRITE"
                 _ = try f.h.compose(["exec","-d","-e","MYSQL_PWD=fixture-root-only",f.profile.service(.target),"mysql","--no-defaults","-uroot","-e",lock+"; DO SLEEP(120)"])
                 let deadline=Date().addingTimeInterval(30)
                 while try f.sql(.target,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(120)'") != "1" {
@@ -323,13 +323,13 @@ enum LabLifecycle {
                 }
                 // MyISAM UPDATE checks its before-image first; the table lock
                 // would block that read rather than an issued mutation.
-                let mutation=f.profile == .reverse ? "UPDATE lifecycle.target_uncertain SET v=v+10 ORDER BY id" : "INSERT INTO lifecycle.target_uncertain VALUES(2,2),(3,3)"
-                let operation=f.profile == .reverse ? "UPDATE" : "INSERT INTO"
+                let mutation=f.profile.transactionalTarget ? "UPDATE lifecycle.target_uncertain SET v=v+10 ORDER BY id" : "INSERT INTO lifecycle.target_uncertain VALUES(2,2),(3,3)"
+                let operation=f.profile.transactionalTarget ? "UPDATE" : "INSERT INTO"
                 _ = try f.sql(.source,mutation)
                 while try f.sql(.target,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO LIKE '\(operation) %'") != "1" {
                     try require(Date() < deadline,"target mutation was not submitted"); Thread.sleep(forTimeInterval:0.05)
                 }
-                if f.profile == .reverse {
+                if f.profile.transactionalTarget {
                     while try f.sql(.target,"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SELECT v FROM lifecycle.target_uncertain WHERE id=0") != "10" {
                         try require(Date() < deadline,"first InnoDB write was not observed before disconnect"); Thread.sleep(forTimeInterval:0.05)
                     }
@@ -343,14 +343,14 @@ enum LabLifecycle {
                 try checkpoint(label,"BLOCKED",1,2)
                 let diagnostic=try state(label,"SELECT diagnostic_json FROM target_failure")
                 try require(diagnostic.contains("possiblyExecuted") && diagnostic.contains("target_uncertain"),"missing mutation evidence")
-                if f.profile == .reverse {
+                if f.profile.transactionalTarget {
                     let progress=failed["progress"] as? [String:Any], failure=progress?["targetFailure"] as? [String:Any]
                     try require(failure?["transactionOutcome"] as? String == "rollbackUnconfirmed","lost target connection must not claim a confirmed rollback")
                     try require(try state(label,"SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "2","failed transaction lost pending row evidence")
                 }
                 try require(try f.sql(.target,"SELECT id,v FROM lifecycle.target_uncertain ORDER BY id") == "0\t0\n1\t1","lost reply was replayed or left provisional InnoDB writes committed")
                 try native(start:true); try f.awaitNative(); try native(start:false)
-                let expected=f.profile == .reverse ? "0\t10\n1\t11" : "0\t0\n1\t1\n2\t2\n3\t3"
+                let expected=f.profile.transactionalTarget ? "0\t10\n1\t11" : "0\t0\n1\t1\n2\t2\n3\t3"
                 for role: LabProfile.Role in [.source,.native] { try require(try f.sql(role,"SELECT id,v FROM lifecycle.target_uncertain ORDER BY id") == expected,"native failed the source-accepted transaction") }
             }
             try scenario("target-uncertain-resume") {

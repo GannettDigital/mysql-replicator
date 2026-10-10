@@ -245,8 +245,10 @@ public struct ApplyConfiguration: Decodable {
         try compatibilityPolicy.validate()
         if replicationProfile.transactional {
             try require(!target.explicitTableLocks,"InnoDB profile cannot use explicit table locks")
-            try require(source.mode == "gtid","InnoDB profile requires GTID positioning")
             try require(compatibilityPolicy.collations.isEmpty,"reverse profile preserves source collations; translation is not supported")
+        }
+        if replicationProfile.sourceContract.requiresHistoricalSchema {
+            try require(source.mode == "gtid","MySQL 5.7 source profiles require GTID positioning")
         }
         _ = try TableFilter(replicateWildIgnoreTable ?? [])
         try policy.validate()

@@ -12,6 +12,7 @@ final class ReverseDDLTests: XCTestCase {
             guard case .create(_,let selected)=try parse(engine,.mysql57To84InnoDB) else { return XCTFail("missing CREATE") }
             XCTAssertEqual(selected,.innoDB)
             XCTAssertThrowsError(try parse(engine,.mysql84To57MyISAM))
+            XCTAssertThrowsError(try parse(engine,.mysql57To57MyISAM))
         }
         XCTAssertThrowsError(try parse("MyISAM",.mysql57To84InnoDB))
         XCTAssertThrowsError(try parse("MEMORY",.mysql57To84InnoDB))
@@ -35,7 +36,7 @@ final class ReverseDDLTests: XCTestCase {
     }
     func testSupplementaryEnumAndSetLabelsRejectBeforeExecution() throws {
         for type in ["ENUM","SET"] {
-            for profile: ReplicationProfile in [.mysql84To57MyISAM,.mysql57To84InnoDB] {
+            for profile in ReplicationProfile.allCases {
                 let query=QueryControl(database:"poc",sql:Data("CREATE TABLE t(id INT PRIMARY KEY,v \(type)('🙂'))".utf8),errorCode:0,statusVariables:Data())
                 XCTAssertThrowsError(try DDLStatement.parse(query,profile:profile)) {
                     XCTAssertTrue(String(describing:$0).contains("supplementary-plane labels"))
@@ -49,6 +50,7 @@ final class ReverseDDLTests: XCTestCase {
         let skipped=try DDLPolicy().skippedQuery(cleanup,profile:.mysql57To84InnoDB)
         XCTAssertEqual(skipped?.reason,"row replication temporary-table cleanup")
         XCTAssertEqual(skipped?.sql,String(decoding:cleanup.sql,as:UTF8.self))
+        XCTAssertEqual(try DDLPolicy().skippedQuery(cleanup,profile:.mysql57To57MyISAM)?.reason,skipped?.reason)
         XCTAssertNil(try DDLPolicy().skippedQuery(cleanup,profile:.mysql84To57MyISAM))
         XCTAssertNil(try DDLPolicy().skippedQuery(query("DROP TABLE IF EXISTS a"),profile:.mysql57To84InnoDB))
         XCTAssertThrowsError(try DDLPolicy().skippedQuery(query("DROP TEMPORARY TABLE a"),profile:.mysql57To84InnoDB))

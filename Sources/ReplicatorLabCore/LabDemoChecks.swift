@@ -42,9 +42,9 @@ extension LabDemo.Session {
         try require(checkpoint() == previous?["checkpoint"] as? String, "Swift advanced its checkpoint past the last successful comparison")
         let h=fixture!.h
         let end = try fixture!.boundary()
-        _ = try h.sql("native", "SELECT SOURCE_POS_WAIT('\(end.file)',\(end.position),5)")
+        _ = try h.sql("native", "SELECT \(profile.nativeVersion.positionWait)('\(end.file)',\(end.position),5)")
         let native = try h.status()
-        try require(native["Replica_SQL_Running"] == "No" && native["Last_SQL_Errno"] == "3161", "native did not reject explicit InnoDB with error 3161")
+        try require(native[profile.nativeVersion.sqlRunningField] == "No" && native["Last_SQL_Errno"] == "3161", "native did not reject explicit InnoDB with error 3161")
         var results: [String: [String: String]] = [:]
         for service in h.services {
             let table = try h.sql(service, "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='demo' AND TABLE_NAME='explicit_innodb'")

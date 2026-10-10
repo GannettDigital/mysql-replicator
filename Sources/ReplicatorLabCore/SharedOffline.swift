@@ -5,7 +5,7 @@ extension SharedCorrectness.Run {
         guard selects("offline-replay") else { return }
         try reporter.run(QualificationCase("offline-replay","Fetch and external mysqlbinlog archives replay DDL/DML, resume without source credentials, and produce a support bundle")) {
             try resetNativeEngine();try f.awaitNative()
-            if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
+            if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
             let seed="SET sql_log_bin=0; DROP DATABASE IF EXISTS offline_poc; CREATE DATABASE offline_poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE offline_poc.aux(id INT PRIMARY KEY,val INT); INSERT INTO offline_poc.aux VALUES(1,10)"
             for role in LabProfile.Role.allCases { _ = try f.sql(role,seed) }
             let begin=try f.boundary(), original=f.config
@@ -37,7 +37,7 @@ extension SharedCorrectness.Run {
             // acquire its physical files directly as an independent raw archive.
             let container=try f.h.compose(["ps","-q",f.profile.service(.source)]).text
             let external=f.output.appendingPathComponent("external-raw")
-            if f.profile == .reverse {
+            if f.profile.sourceVersion == .mysql57 {
                 _ = try f.h.compose(["exec","-T",f.profile.service(.source),"mkdir","/tmp/offline-raw"])
                 _ = try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(.source),"mysqlbinlog","--no-defaults","--read-from-remote-server","--host=127.0.0.1","--user=root","--raw","--to-last-log","--result-file=/tmp/offline-raw/",begin.file])
                 _ = try f.docker(["cp",container+":/tmp/offline-raw",external.path])

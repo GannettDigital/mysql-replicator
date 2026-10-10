@@ -65,7 +65,7 @@ make lab-demo PROFILE=mysql84-to-mysql57-myisam ACTION=start
 ```
 
 Use the [test lab guide](docs/TEST_LAB.md) to issue SQL, compare replicas, or select
-`mysql57-to-mysql84-innodb`. Clean up with the same profile and `ACTION=down`.
+`mysql57-to-mysql84-innodb` or [5.7 → 5.7 MyISAM](docs/MYSQL57_MYISAM.md). Clean up with the same profile and `ACTION=down`.
 Run shared smoke tests with `make correctness TIER=smoke`.
 The [forward workbook](PLAN/DEMO_WORKBOOK.md) and
 [reverse workbook](PLAN/REVERSE_DEMO_WORKBOOK.md) use the same profile-based commands for detailed experiments.

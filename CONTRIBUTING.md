@@ -55,7 +55,7 @@ make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"
 ```
 
 That adapter retains evidence under `artifacts/reverse-suite/` and omits its old
-embedded benchmark. Both profiles exercise the same demo lifecycle and applicable
+embedded benchmark. All profiles exercise the same demo lifecycle and applicable
 workbook scenarios with `make lab-test ARGS="--suite demo"`. Use `make lab-benchmark`
 for comparable measurements; see [reverse replication](docs/REVERSE_REPLICATION.md)
 for bootstrap and offline recovery.
@@ -270,7 +270,7 @@ make correctness ARGS="--case positive"
 # DDL qualification with GTID positioning:
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--family indexes --variant gtid-full"
 
-# Shared full DML/DDL correctness on both profiles:
+# Shared full DML/DDL correctness on all profiles:
 make correctness
 
 # Debian packaging smoke test on Ubuntu 16.04:

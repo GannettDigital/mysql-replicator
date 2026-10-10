@@ -7,14 +7,24 @@ enum LabDemoQualification {
         let test: QualificationCase
         let family: String
         var dependencies: [String] = []
-        var profile: LabProfile? = nil
+        enum Requirement { case myisam, transactional, position, gtid }
+        var requirement: Requirement? = nil
+        func applies(_ profile: LabProfile) -> Bool {
+            switch requirement {
+            case .myisam: return !profile.transactionalTarget
+            case .transactional: return profile.transactionalTarget
+            case .position: return profile.supportsPositionCapture
+            case .gtid: return !profile.supportsPositionCapture
+            case nil: return true
+            }
+        }
         var id: String { test.id }
         func fields(_ selectedProfile: LabProfile) -> [String:Any] {
             var row=test.fields
             row["profile"]=selectedProfile.rawValue; row["suite"]="demo"; row["family"]=family
             row["dependencies"]=dependencies; row["variant"]="default"
-            row["status"]=profile == nil || profile == selectedProfile ? "not_run" : "not_applicable"
-            if let profile, profile != selectedProfile { row["reason"]="This scenario qualifies "+profile.rawValue+" engine/version behavior." }
+            row["status"]=applies(selectedProfile) ? "not_run" : "not_applicable"
+            if !applies(selectedProfile) { row["reason"]="This scenario requires different engine or capture-position capabilities." }
             return row
         }
     }
@@ -23,16 +33,16 @@ enum LabDemoQualification {
         .init(test:.init("demo-start-idle","Manual start and 35 seconds of idle heartbeats"),family:"lifecycle",dependencies:["demo-prepared"]),
         .init(test:.init("demo-success","Workbook database/table DDL and exact DML/schema/counters"),family:"workbook",dependencies:["demo-start-idle"]),
         .init(test:.init("demo-container-repair","Repair missing shell without resetting data or checkpoint"),family:"lifecycle"),
-        .init(test:.init("demo-fail-stop","Explicit InnoDB DDL blocks MyISAM and native without advancing"),family:"failure",dependencies:["demo-success"],profile:.forward),
-        .init(test:.init("demo-skip-and-resume","Exact DDL skip, refused broad skip, queued/fresh rows and repeat resume"),family:"failure",dependencies:["demo-fail-stop"],profile:.forward),
-        .init(test:.init("demo-modify-index","Workbook MODIFY and indexes preserve rows after skip"),family:"workbook",dependencies:["demo-skip-and-resume"],profile:.forward),
+        .init(test:.init("demo-fail-stop","Explicit InnoDB DDL blocks MyISAM and native without advancing"),family:"failure",dependencies:["demo-success"],requirement:.myisam),
+        .init(test:.init("demo-skip-and-resume","Exact DDL skip, refused broad skip, queued/fresh rows and repeat resume"),family:"failure",dependencies:["demo-fail-stop"],requirement:.myisam),
+        .init(test:.init("demo-modify-index","Workbook MODIFY and indexes preserve rows after skip"),family:"workbook",dependencies:["demo-skip-and-resume"],requirement:.myisam),
         .init(test:.init("demo-idle-sigint","Idle SIGINT exits zero and preserves baseline checkpoint"),family:"resume"),
         .init(test:.init("demo-resume-baseline-gtid","Saved baseline overrides YAML; queued DDL/DML executes once"),family:"resume",dependencies:["demo-idle-sigint"]),
         .init(test:.init("demo-applied-sigterm","SIGTERM preserves the applied checkpoint and counters"),family:"resume"),
-        .init(test:.init("demo-resume-applied-position","Saved file position overrides YAML; schema and counters survive repeated resume"),family:"resume",dependencies:["demo-applied-sigterm"],profile:.forward),
-        .init(test:.init("demo-resume-applied-gtid","Saved applied GTIDs override YAML; schema and counters survive repeated resume"),family:"resume",dependencies:["demo-applied-sigterm"],profile:.reverse),
-        .init(test:.init("demo-reverse-workbook","Reverse composite-PK transaction and repaired-shell resume"),family:"workbook",profile:.reverse),
-        .init(test:.init("demo-reverse-recovery","Blocked status, transaction rollback, audited retry and following comparison"),family:"failure",dependencies:["demo-reverse-workbook"],profile:.reverse)
+        .init(test:.init("demo-resume-applied-position","Saved file position overrides YAML; schema and counters survive repeated resume"),family:"resume",dependencies:["demo-applied-sigterm"],requirement:.position),
+        .init(test:.init("demo-resume-applied-gtid","Saved applied GTIDs override YAML; schema and counters survive repeated resume"),family:"resume",dependencies:["demo-applied-sigterm"],requirement:.gtid),
+        .init(test:.init("demo-reverse-workbook","Reverse composite-PK transaction and repaired-shell resume"),family:"workbook",requirement:.transactional),
+        .init(test:.init("demo-reverse-recovery","Blocked status, transaction rollback, audited retry and following comparison"),family:"failure",dependencies:["demo-reverse-workbook"],requirement:.transactional)
     ]
     static func select(family: String?, ids: Set<String>) throws -> [Scenario] {
         try require(ids.isSubset(of:Set(scenarios.map(\.id))),"unknown demo cases")
@@ -108,7 +118,7 @@ enum LabDemoQualification {
                     try require(try s.state("SELECT transactions_applied||'|'||ddl_applied||'|'||rows_applied FROM state") == "8|3|6","workbook counters differ")
                     try require(try f.sql(.target,"SELECT id,value,quantity,IFNULL(note,'NULL') FROM demo.items ORDER BY id") == "1\tupdated\t11\tafter DDL\n3\tthird\t30\tNULL","workbook data differs")
                 }
-                if profile == .forward { try forwardFailure(s) }
+                if !profile.transactionalTarget { try forwardFailure(s) }
             }
         }
         func repair() throws {
@@ -198,8 +208,8 @@ enum LabDemoQualification {
         func detached(idle: Bool) throws {
             try session(idle ? "idle-resume" : "position-resume") { s in
                 let f=s.fixture!, id=idle ? "demo-idle-sigint" : "demo-applied-sigterm"
-                let mode=idle || profile == .reverse ? "gtid" : "file-position"
-                let resumeID=idle ? "demo-resume-baseline-gtid" : (profile == .reverse ? "demo-resume-applied-gtid" : "demo-resume-applied-position")
+                let mode=idle || !profile.supportsPositionCapture ? "gtid" : "file-position"
+                let resumeID=idle ? "demo-resume-baseline-gtid" : (!profile.supportsPositionCapture ? "demo-resume-applied-gtid" : "demo-resume-applied-position")
                 try check(id) {
                     try configureStart(s,mode:mode,boundary:f.boundary())
                     try s.start()

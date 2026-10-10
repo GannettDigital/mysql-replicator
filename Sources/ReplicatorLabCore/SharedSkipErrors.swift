@@ -7,7 +7,7 @@ extension SharedCorrectness.Run {
         guard selects(id) else { return }
         try reporter.run(QualificationCase(id,"Skip whole groups, bound optional audit and respect engine outcomes in "+command)) {
             try resetNativeEngine();try f.awaitNative()
-            if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata=FULL") }
+            if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata=FULL") }
             let seed="SET sql_log_bin=0; DROP DATABASE IF EXISTS skip_poc; CREATE DATABASE skip_poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE skip_poc.items(id INT PRIMARY KEY,val INT)"
             for role in LabProfile.Role.allCases { _ = try f.sql(role,seed) }
             let begin=try f.boundary(),original=f.config
@@ -41,11 +41,11 @@ extension SharedCorrectness.Run {
                 _ = try f.sql(.target,seed+"; INSERT INTO skip_poc.items VALUES(4,400)")
                 f.config["stateDirectory"]="/evidence/"+label
                 f.config["skipErrors"]=["codes":["ddl.unsupported_alter","mysql.1062"],"recordSkippedTransactions":audit]
-                if f.profile == .reverse { source["stopAfterTransactions"]=3 }
+                if f.profile.transactionalTarget { source["stopAfterTransactions"]=3 }
                 else { source.removeValue(forKey:"stopAfterTransactions") }
                 f.config["source"]=source
-                var result=try invoke(label,command,initialize:true,success:f.profile == .reverse)
-                if f.profile == .reverse {
+                var result=try invoke(label,command,initialize:true,success:f.profile.transactionalTarget)
+                if f.profile.transactionalTarget {
                     try require(result["transactionsApplied"] as? Int == 3,"skip stop limit did not count complete groups")
                     source.removeValue(forKey:"stopAfterTransactions");f.config["source"]=source
                     result=try invoke(label+"-resume",command)
@@ -61,7 +61,7 @@ extension SharedCorrectness.Run {
                 _ = try f.docker(["cp",f.helper+":/evidence/"+label,f.output.path])
                 let db=f.output.appendingPathComponent(label+"/state.sqlite").path
                 let counts=try f.runner.run(["sqlite3",db,"SELECT COUNT(*) FROM error_skips; SELECT SUM(transactions) FROM error_skip_counts"]).text
-                let skipped=f.profile == .reverse ? 2 : 1
+                let skipped=f.profile.transactionalTarget ? 2 : 1
                 try require(counts == "\(audit ? skipped : 0)\n\(skipped)","optional audit retained incorrect rows: "+counts)
             }
         }

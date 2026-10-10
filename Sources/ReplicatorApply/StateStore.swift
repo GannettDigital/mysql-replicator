@@ -165,7 +165,7 @@ final class StateStore {
         if version >= 9 {
             try require(try query("SELECT profile FROM replication_profile WHERE id=1") == [[replicationProfile.rawValue]],"replication profile differs from saved state")
         } else {
-            try require(replicationProfile == .mysql84To57MyISAM,"legacy state belongs to the MyISAM profile; reverse replication requires a new baseline")
+            try require(replicationProfile == .mysql84To57MyISAM,"legacy state belongs to mysql84-to-mysql57-myisam; another profile requires a new baseline")
         }
         if version >= 8 {
             let saved = try query("SELECT policy_json FROM compatibility WHERE id=1")
