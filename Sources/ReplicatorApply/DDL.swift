@@ -64,10 +64,11 @@ enum DDLStatement: Equatable {
 struct PreparedDDL {
     let statement: DDLStatement
     let before: ApplyTable?
-    let after: ApplyTable?
+    var after: ApplyTable?
     var sql: String
     var database:PreparedDatabaseDDL? = nil
     var additional: [SchemaTransition] = []
+    var afterAlternatives: [ApplyTable]? = nil
     var preservesSchema: Bool {
         switch statement {
         case .createIfAbsent, .createLike(_,_,true): return before != nil && before == after
@@ -139,6 +140,7 @@ extension TargetSession {
         try invalidateStatements()
         try writerExclusion()
         let context=try QuerySessionContext(query:source)
+        try require(!contract.transactional || context.foreignKeyChecks,"source DDL with foreign_key_checks=0 is unsupported")
         try contract.configureDDL(self,context:context)
         // Restore expression/literal semantics from the source query context.
         // DDL stays a drained, journaled barrier even for stored objects.
@@ -202,7 +204,7 @@ extension TargetSession {
             }
             let parent=try databaseEncoding(name.database)
             let encoding=try resolveEncoding(charset:table.defaultCharacterSet,collation:table.defaultCollation,parent:parent,context:context)
-            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context)},primaryKeyColumns:table.primaryKeyColumns,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation,secondaryIndexes:table.secondaryIndexes,partitions:table.partitions)
+            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context)},primaryKeyColumns:table.primaryKeyColumns,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation,secondaryIndexes:table.secondaryIndexes,partitions:table.partitions,foreignKeys:table.foreignKeys)
         case .createLike:
             if let before {after=before}
             else {
@@ -232,7 +234,7 @@ extension TargetSession {
             after=try altering(before!,actions:[.drop(column)],context:context)
         case .rename(_,let destination):
             try require(!(try tableExists(destination)),"DDL RENAME destination exists")
-            after=ApplyTable(database:destination.database,table:destination.table,columns:before!.columns,primaryKeyColumns:before!.primaryKeyColumns,defaultCharacterSet:before!.defaultCharacterSet,defaultCollation:before!.defaultCollation,secondaryIndexes:before!.secondaryIndexes,partitions:before!.partitions)
+            after=before!.renamed(to:destination)
         case .drop,.dropIfPresent: after=nil
         case .truncate: after=before
         }
@@ -241,7 +243,7 @@ extension TargetSession {
         // The outer preparation layer applies only authorized encoding edits.
         let sql=String(decoding:source.sql,as:UTF8.self)
         try setDDLSession(context,source:source)
-        return PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional)
+        return try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional))
     }
     func prepareDatabaseDDL(_ statement:DDLStatement,definition:CreateDatabase,source:QueryControl,context:QuerySessionContext) throws -> PreparedDDL {
         let exists=try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:definition.name)]) != "0"
@@ -267,7 +269,7 @@ extension TargetSession {
         // with suppress_use=true. It is not an instruction to USE a missing DB.
         return PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),database:PreparedDatabaseDDL(name:definition.name,before:before,after:after,serverCollation:serverCollation))
     }
-    func applyDDL(_ plan: PreparedDDL) throws {
+    func applyDDL(_ plan: inout PreparedDDL) throws {
         try unlock()
         try invalidateStatements()
         try writerExclusion()
@@ -295,7 +297,11 @@ extension TargetSession {
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
         _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
         try resetDMLSession()
-        if let after=plan.after {try require(try readSchema(database:after.database,name:after.table)==after,"DDL target after-schema mismatch")}
+        if let after=plan.after {
+            let actual = try readSchema(database:after.database,name:after.table)
+            try require(actual == after || plan.afterAlternatives?.contains(actual) == true,"DDL target after-schema mismatch")
+            plan.after = actual
+        }
         if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}
         if case .truncate=plan.statement {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","TRUNCATE did not empty the table")}
         if plan.after?.identity != name.identity {try require(!(try tableExists(name)),"DDL source table remains after rename/drop")}

@@ -30,7 +30,7 @@ final class ReverseDDLTests: XCTestCase {
     }
     func testForeignKeyDDLHasAnExplicitDiagnostic() throws {
         let query=QueryControl(database:"poc",sql:Data("CREATE TABLE t(id INT PRIMARY KEY,n INT,FOREIGN KEY(n) REFERENCES parent(id))".utf8),errorCode:0,statusVariables:Data())
-        XCTAssertThrowsError(try DDLStatement.parse(query,profile:.mysql57To84InnoDB)) {
+        XCTAssertThrowsError(try DDLStatement.parse(query,profile:.mysql84To57MyISAM)) {
             XCTAssertTrue(String(describing:$0).contains("foreign keys are unsupported"))
         }
     }

@@ -3,6 +3,7 @@
     {"name": "database", "families": ["database"]},
     {"name": "ddl", "families": ["ddl"], "size": 4},
     {"name": "dml", "families": ["dml"]},
+    {"name": "foreign-keys", "families": ["foreign-keys"]},
     {"name": "indexes", "families": ["indexes"], "size": 6},
     {"name": "bootstrap", "families": ["bootstrap"], "size": 6},
     {"name": "refusals", "families": ["policy", "rejections", "dml-refusals"]},

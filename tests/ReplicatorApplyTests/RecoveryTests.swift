@@ -5,8 +5,15 @@ import Foundation
 @testable import ReplicatorCapture
 
 extension ResumeTests {
-    private func recoveryFixture(completed: Int = 0, block: Bool = true) throws -> (URL,ApplyConfiguration,[PreparedDMLGroup]) {
+    private func recoveryFixture(completed: Int = 0, block: Bool = true, foreignKeys: Bool = false) throws -> (URL,ApplyConfiguration,[PreparedDMLGroup]) {
         let path=try directory(), c=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue)
+        var table = try helper.tables()[0]
+        if foreignKeys {
+            table.foreignKeys = [
+                ApplyForeignKey(name:"child_fk",database:table.database,table:"child",columns:["parent_id"],referencedDatabase:table.database,referencedTable:table.table,referencedColumns:table.primaryKeyColumns,onDelete:"CASCADE"),
+                ApplyForeignKey(name:"grand_fk",database:table.database,table:"grandchild",columns:["child_id"],referencedDatabase:table.database,referencedTable:"child",referencedColumns:["id"],onDelete:"CASCADE")
+            ]
+        }
         var groups: [PreparedDMLGroup] = []
         do {
             let store=try StateStore(configuration:c)
@@ -16,15 +23,23 @@ extension ResumeTests {
             let format=try BinlogDecoder().decode(Data(binlog[4..<4+Int(size)]),at:4,includeRaw:true)
             try store.append(.init(kind:"formatContext",file:"binlog.000003",observedPosition:String(format.nextPosition),event:format,rawBase64:nil))
             for group in try helper.groups() {
-                try store.schema(helper.tables()[0],event:group.events.first{$0.eventType == 19}!,coordinate:group.start)
+                try store.schema(table,event:group.events.first{$0.eventType == 19}!,coordinate:group.start)
                 for event in group.events { try store.append(.init(kind:"event",file:group.start.file,observedPosition:String(event.nextPosition),event:event,rawBase64:nil)) }
-                groups.append(.init(group:group,mutations:try DMLPlan.make(group,tables:helper.tables()),relayEnd:store.relayLength))
+                groups.append(.init(group:group,mutations:try DMLPlan.make(group,tables:[table]),relayEnd:store.relayLength))
             }
             try store.beginBatch(groups)
             if completed > 0 { try store.finishBatch(acknowledgedRows:groups.enumerated().map { $0.offset < completed ? $0.element.mutations.count : 0 }) }
             if block { try store.block("simulated uncertain COMMIT") }
         }
         return (path,c,groups)
+    }
+    func testUncertainCommitEvidenceIncludesIndirectCascadeTables() throws {
+        let (_,configuration,_) = try recoveryFixture(foreignKeys:true)
+        let report = try Recovery.inspect(configuration:configuration)
+        XCTAssertEqual(report.pending.first?.foreignKeyRelationships.map(\.table),["child","grandchild"])
+        let json = String(decoding:try JSONEncoder().encode(report),as:UTF8.self)
+        XCTAssertTrue(json.contains("foreignKeyRelationships"))
+        XCTAssertTrue(json.contains("implicit cascade row images are not present"))
     }
     func testRecoveryInspectsRowsAndRejectsActiveWriter() throws {
         let (_,c,groups)=try recoveryFixture()

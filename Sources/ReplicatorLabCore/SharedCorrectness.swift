@@ -43,7 +43,7 @@ public enum SharedCorrectness {
             var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"variant":f.variant.rawValue,"slice":slice,
                 "scope":"Shared replicated and bootstrapped DML, ordered DDL, collation, failure and discovery fixtures; explicit capture variant. Native reference is profile-specific.",
                 "adaptations":["Source-version session settings and explicit temporary-table engine are declared in the fixtures", "Source/target/native table engines are checked before comparing normalized metadata"],
-                "not_covered":["Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner", "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage"]]
+                "not_covered":["Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner", "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage"]]
             var failure: Error?
             let catalogInputs=try DDLCoverageEvidence.inputs(root:f.h.root)
             let catalogContracts=try DDLCoverageEvidence.hashes(root:f.h.root,paths:DDLCoverageEvidence.contractPaths)
@@ -63,6 +63,7 @@ public enum SharedCorrectness {
                 if slice == "all" || slice == "dml" { try dml() }
                 if slice == "all" || slice == "indexes" { try indexes() }
                 if slice == "all" || slice == "policy" { try policies() }
+                if slice == "all" { try foreignKeys() }
                 try applier.drain()
                 _ = try f.docker(["cp",f.helper+":/evidence/state",f.output.path])
                 let state=f.output.appendingPathComponent("state/state.sqlite").path
@@ -82,6 +83,7 @@ public enum SharedCorrectness {
                 report["steps"]=observation
                 if slice == "all" || slice == "rejections" { try rejections() }
                 if slice == "all" {
+                    try foreignKeySafety()
                     try basicDML()
                     try bootstrapDML()
                     try dmlRefusals()
@@ -196,6 +198,7 @@ public enum SharedCorrectness {
                 }.joined(separator:"\n")
                 let columns=try sql("SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION",preserveWhitespace:true)
                 snapshot["columns"]=try ReverseSchemaComparison.columns(columns,mysql84:f.profile.version(role) == "8.4")
+                snapshot["foreignKeys"]=try sql("SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION")
                 snapshot["indexes"]=try sql("SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX")
                 snapshot["partitions"]=try ReverseSchemaComparison.partitions(sql("SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION",preserveWhitespace:true))
                 let tables=snapshot["tables"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }.filter { $0.count >= 2 && $0[1] == "BASE TABLE" }.map { $0[0] }

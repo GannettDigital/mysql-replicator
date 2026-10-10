@@ -39,9 +39,9 @@ enum RecoveryRelay {
                 _ = try probe.decode(format,at:4)
                 let identity = try probe.decode(raw,at:4+UInt64(format.count),filterTable:true)
                 let candidates = schemas[(identity.database ?? "")+"\0"+(identity.table ?? "")] ?? []
-                // Reverse profile currently rejects DDL; differing historical
-                // versions must never be silently interpreted as today's table.
-                if let table = candidates.first, candidates.allSatisfy({$0 == table}) {
+                // Relationship/index changes do not change row decoding. Refuse
+                // ambiguous column history rather than use today's layout.
+                if let table = candidates.first, candidates.allSatisfy({$0.columns == table.columns && $0.primaryKeyColumns == table.primaryKeyColumns}) {
                     schema = TableSchema(offset:offset,eventSHA256:identity.sha256,database:table.database,table:table.table,tableID:identity.tableID!,columns:table.columns.map(\.interpretation))
                 } else { filtered = true }
             }
@@ -79,6 +79,9 @@ enum RecoveryRelay {
             try require(decodedRows[i] == groups[i].rows.count,"pending journal does not cover every source row")
             groups[i].rows.sort { $0.ordinal < $1.ordinal }
             groups[i].expectations = try Recovery.fold(groups[i].rows)
+            var relationships: [String:ApplyForeignKey] = [:]
+            for row in groups[i].rows { for key in row.schema.foreignKeys { relationships[key.identity] = key } }
+            groups[i].foreignKeyRelationships = ForeignKeyGraph.sorted(Array(relationships.values))
         }
     }
 }

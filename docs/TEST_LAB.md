@@ -56,6 +56,14 @@ CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
 after the changes on all profiles. Foreign keys and CHECK constraints remain
 outside the supported DDL contract.
 
+The `foreign-keys` family applies to the 5.7 → 8.4 InnoDB profile. It compares
+parent/child rows, constraint metadata and supporting indexes with native 5.7
+replication, exercises cascades, composite references, ordered DDL and restart,
+and checks exclusions, rollback and offline recovery relationship evidence.
+It runs as its own parallel CI area. Use
+`make correctness PROFILE=mysql57-to-mysql84-innodb ARGS="--family foreign-keys"`.
+MyISAM profiles retain `reject-foreign-key`.
+
 The `filters` family runs wildcard exclusions, saved-state resume and included-DDL
 refusal on all profiles. It keeps the independent native/target binlog oracle as
 well as row, checkpoint and intent checks. MySQL 8.4 `mysqlbinlog` must be on PATH

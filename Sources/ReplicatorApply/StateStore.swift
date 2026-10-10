@@ -514,7 +514,7 @@ final class StateStore {
         let databaseJSON=try plan.database.map{String(decoding:try JSONEncoder().encode($0),as:UTF8.self)}
         guard case .query(let source) = event.control else { throw ApplyError("DDL intent lacks source query") }
         let contextJSON = try DDLQueryContextDiagnostic(query:source).map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
-        let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after)] : [])
+        let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,afterAlternatives:plan.afterAlternatives)] : [])
         let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)
         let transitionsJSON = String(decoding:try JSONEncoder().encode(transitions),as:UTF8.self)
         try atomic {

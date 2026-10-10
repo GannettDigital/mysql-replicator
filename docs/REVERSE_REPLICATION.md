@@ -42,8 +42,13 @@ outside the Unicode BMP are rejected: MySQL COLUMN_TYPE metadata replaces them
 with `?`, preventing reliable definition verification. Ordinary utf8mb4 text can
 still contain supplementary characters such as emoji. Composite keys,
 PK updates, multiple source statements and multiple tables per transaction are
-supported in this profile. Target triggers and foreign keys (including incoming
-references/cascades) are rejected. Supported database/table DDL, generated columns,
+supported in this profile. Target triggers are rejected. InnoDB foreign keys
+support complete primary/unique parent keys, composite references, RESTRICT/NO
+ACTION, CASCADE and SET NULL. Self-references, cycles, nonunique/partial parent
+keys and checks-disabled source events remain unsupported. Bootstrap must preserve
+matching source relationships; filters cannot split a connected relationship.
+See [foreign-key scope](../PLAN/MYSQL57_FOREIGN_KEYS.md) for DDL limits and tests.
+Supported database/table DDL, generated columns,
 partitions, views and stored routines use the same ordered, journaled DDL path as
 the forward profile. Explicit table engines must be InnoDB; omitted engines use
 the target's InnoDB default. Trigger definitions follow the configured skip/reject
@@ -57,7 +62,8 @@ translation. Existing databases must therefore have matching defaults at bootstr
 The source must use explicit TIMESTAMP defaults (`explicit_defaults_for_timestamp=ON`).
 
 The source needs its normal replication privileges. The target needs DML and
-schema visibility privileges, including explicit TRIGGER visibility and
+schema visibility privileges, including explicit global REFERENCES (complete incoming FK
+discovery), explicit TRIGGER visibility and
 REPLICATION CLIENT to exclude native replication. DDL also needs the corresponding
 CREATE/ALTER/DROP/index/view/routine privileges. Preserving source DEFINER clauses
 may need `SET_ANY_DEFINER` on 8.4; stored functions with binary logging have additional
@@ -69,12 +75,15 @@ privileges, network access and failover must still be tested on Cloud SQL.
 ## Transaction and failure behavior
 
 The coordinator synchronizes relay files and persists write intents before the
-worker starts any target transaction. Each source transaction uses its own
-START TRANSACTION/COMMIT. Multi-row INSERT chunks never cross source transaction
-boundaries. SQLite completion can still be batched after acknowledged commits.
+worker starts any target transaction. A source transaction that fits one target
+statement uses autocommit; other transactions use START TRANSACTION/COMMIT.
+Multi-row INSERT chunks never cross source transaction boundaries. InnoDB performs
+foreign-key checks and cascades within that boundary. SQLite completion can still
+be batched after acknowledged commits.
 
-Successful individual statements are provisional until COMMIT succeeds. On a
-statement failure, the worker attempts ROLLBACK and records `rolledBack` or
+Inside an explicit transaction, successful individual statements are provisional
+until COMMIT succeeds. On a statement failure, the worker attempts ROLLBACK and
+records `rolledBack` or
 `rollbackUnconfirmed` in `targetFailure.transactionOutcome`. A failed COMMIT
 response is recorded as `commitUncertain`; a subsequent ROLLBACK cannot prove
 that COMMIT failed, so it is not used to infer the outcome. Subsequent source

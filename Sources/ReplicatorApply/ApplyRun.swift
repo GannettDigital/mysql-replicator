@@ -234,12 +234,12 @@ public enum ApplyRun {
                         try progress(); return
                     }
                     let statement=try DDLStatement.from(group,profile:profile)
-                    let plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
+                    var plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     hasDDLIntent = true
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try checkSourceFailure()
-                    try target.applyDDL(plan)
+                    try target.applyDDL(&plan)
                     planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
                     try state.complete(group,rowCount:0,ddl:plan)
                     try progress()

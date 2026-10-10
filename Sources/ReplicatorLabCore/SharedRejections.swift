@@ -8,7 +8,7 @@ extension SharedCorrectness.Run {
             ("enum-non-bmp","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n ENUM('🙂')) CHARACTER SET utf8mb4","supplementary-plane labels"),
             ("set-non-bmp","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n SET('🙂')) CHARACTER SET utf8mb4","supplementary-plane labels"),
             ("engine","CREATE TABLE rejected.bad(id INT PRIMARY KEY) ENGINE="+(f.profile.transactionalTarget ? "MyISAM" : "InnoDB"),"outside the "+f.profile.targetEngine+" DDL contract"),
-            ("foreign-key","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n INT,FOREIGN KEY(n) REFERENCES rejected.parent(id)) ENGINE=InnoDB","unsupported"),
+            ("foreign-key","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n INT,FOREIGN KEY(n) REFERENCES rejected."+(f.profile.transactionalTarget ? "bad" : "parent")+"(id)) ENGINE=InnoDB","unsupported"),
             ("event","CREATE EVENT rejected.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO rejected.parent VALUES(99,99)","DDL policy rejects events"),
             ("trigger","CREATE TRIGGER rejected.tr BEFORE INSERT ON rejected.parent FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers"),
             ("float","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n FLOAT)","unsupported"),
