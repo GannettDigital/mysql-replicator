@@ -360,6 +360,34 @@ and native/target binlog boundaries. `apply.detail.transaction.begin` and
 `apply.detail.transaction.commit` include the SQL round trip; `capture.schema_wait`
 measures time waiting for historical schema interpretation in the apply loop.
 
+For server-side SQL profiling, add `--server-profile on` (backlog mode only;
+default off). This enables timed Performance Schema statements, SQL stages,
+transactions and waits on the disposable native and target servers. It writes
+`server-profile-{native,target}.json`, sorted `.tsv` reports, and instrument
+settings. Target foreground counters use the `apply_fixture` user, retaining
+results after disconnect; native foreground counters use its new SQL/worker
+threads. File I/O is server-wide and includes background redo work. Background
+waits include idle time. These are nested elapsed timers, not additive CPU costs;
+file `misc` includes sync and other operations, not just fsync. Autocommit commit
+work appears inside INSERT execution and server commit stages, not a separate
+client COMMIT. No durability settings change.
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --applier-profile off --server-profile off"
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--skip-build --events 10000 --applier-profile off --server-profile on"
+```
+
+Compare profiling off/on to assess overhead. Statement and stage names differ
+between native row replication and SQL clients, and the reverse reference is
+MySQL 5.7 while the external target is 8.4. The gap between client `target.sql`
+and server statement time includes scheduling, protocol and transport overhead;
+it is not a direct measurement of network latency. `target.connect`,
+`capture.resolve`, `capture.connect` and `capture.preflight` separately time
+connection and source setup before useful replay work. `capture.shutdown.receiver`,
+`capture.shutdown.connection` and `capture.shutdown.event_loop` measure teardown
+in the final apply timings. Snapshot queries run outside
+the timed replay windows and use the separate root observer account.
+
 The application and benchmark default to eight source transactions per execution
 batch. `batch.maximumPreparedBatches` accepts 1..16 and defaults to eight. It bounds
 all submitted batches, including completed batches awaiting a checkpoint. One

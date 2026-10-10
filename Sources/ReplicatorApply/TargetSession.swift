@@ -21,7 +21,8 @@ final class TargetSession {
             try c.validate()
             let address = try c.unixSocket.map { try SocketAddress(unixDomainSocketPath:$0) }
                 ?? SocketAddress.makeAddressResolvingHost(c.host!,port:c.port!)
-            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.tlsConfiguration(),serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
+            let loop=group.next()
+            connection = try timings.measure("target.connect") { try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.tlsConfiguration(),serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:loop).wait() }
         } catch {
             try? group.syncShutdownGracefully()
             let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT

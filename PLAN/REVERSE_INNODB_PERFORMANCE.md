@@ -793,3 +793,152 @@ Evidence:
 `artifacts/decoder-hot-path-performance-20261010/` collects all five results,
 runtime provenance, stage timings, build/test/benchmark logs and `comparison.json`.
 The test-lab guide and C header describe the updated probe and raw-byte contracts.
+
+## InnoDB server SQL profile (2026-10-10)
+
+The shared backlog benchmark now accepts `--server-profile on|off` (default off).
+The profiler enables timed Performance Schema statements, SQL stages,
+transactions and waits on the disposable native and target fixtures. It records
+before/after snapshots, validated deltas, sorted TSV summaries and the enabled
+instrument/consumer settings. It does not alter durability or replication logic.
+Target foreground measurements use `apply_fixture` user aggregates, so they
+survive the connection closing. Native measurements use the SQL/worker threads
+created after the initial STOP. File measurements cover the whole fixture server,
+including redo background threads. Observer queries use root and run outside the
+replay wall timers. File snapshots necessarily cover slightly wider windows;
+background waits can include idle time. Nested measurements must not be added.
+MyISAM writes do not necessarily register transaction instruments; validation
+requires timed foreground table activity for all profiles and transaction
+activity for InnoDB.
+
+### Paired 10K reverse runs
+
+Both use 10,000 single-row INSERT source transactions, batch size eight, prepared
+queue eight, decoder/applier detail profiling off, TCP/TLS and unchanged durable
+binlog/InnoDB settings. The runtime binary is identical in both runs:
+`88a153efae0fdbcf87b04d189999ea41d2dc21cc06707abd24cef4b3ac75993b`.
+
+| Measurement | Server profiling off | Server profiling on |
+| --- | ---: | ---: |
+| Native 5.7 replay | 13.408s | 13.347s |
+| External 8.4 replay | 22.835s | 23.454s |
+| Client `target.sql` | 15.850s / 10,026 calls | 16.447s / 10,026 calls |
+| Active apply queue window | 16.952s | 17.578s |
+| Queue idle | 0.0319s | 0.0321s |
+
+Both passed source/native/target row and schema comparison plus GTID checkpoint
+validation. The instrumented run was 2.7% slower in total and 3.8% slower inside
+`target.sql`; a single pair does not isolate instrumentation overhead from run
+variation. These runs were materially faster per SQL call than the earlier 25K
+samples, so compare the paired evidence rather than attributing that difference
+to this instrumentation-only change.
+
+### Where SQL time goes
+
+Profiled target measurements:
+
+| Measurement | Count | Seconds |
+| --- | ---: | ---: |
+| Server prepared-statement execute | 10,026 | 13.521 |
+| Server prepared-statement prepare | 23 | 0.066 |
+| Handler commit stage (inside execution) | 10,011 | 10.128 |
+| SQL update stage | 10,000 | 1.505 |
+| Closing tables stage | 10,026 | 0.733 |
+| Opening tables stage | 10,047 | 0.415 |
+| Table handler I/O | 10,000 | 0.676 |
+| Binlog file MISC (global) | 10,000 | 5.749 |
+| Redo file MISC (global) | 19,989 | 2.620 |
+
+The handler-commit stage accounts for roughly 75% of server execution time.
+This includes the autocommit commit: there is no separate client COMMIT request.
+File MISC includes sync/open/close/etc., so it is not an exact fsync counter.
+Almost all measured redo file MISC time was on the background log-flusher thread
+(2.618s), which explains why client-thread-only waits would miss it. Native 5.7
+also pays durability costs: its binlog MISC was 5.104s and redo MISC 4.683s; native
+transaction instrumentation measured 12.333s. Native row-event execution does not
+use the same statement/stage labels as client SQL. For example, its large
+`Reading event from the relay log` stage must not be interpreted as disk-read time.
+
+The target reports zero statement reprepares. Twenty-three prepares for 10,026
+executes confirms that repeated statement preparation is not a leading cost.
+Opening-table stage counts are not cache-miss counts: only 35 opened tables and
+16 opened definitions were reported for the user, including startup discovery.
+Handler prepare/commit counters can count engine protocol operations and must not
+be mistaken for source transaction counts.
+
+Client `target.sql` minus server Execute and Prepare is approximately 2.861s
+(0.285ms per client call). This is a residual across different timer boundaries:
+it includes client scheduling, protocol, transport and completion overhead, not
+just network latency. No low-level client wire-phase attribution is claimed.
+Target foreground idle (9.157s) includes setup and between-command waiting; it is
+not the apply queue's idle time and must not be added to SQL execution.
+
+### Implications for overlap
+
+The unprofiled active apply window (16.952s) is only 1.102s above its SQL time
+(15.850s). Preparation is already mostly overlapped. The other 5.883s of the
+22.835s external wall time is outside that queue window, including startup,
+control and shutdown. It cannot all be treated as serial per-transaction work.
+Connection/source-preflight timers are added to investigate that boundary:
+`target.connect`, `capture.resolve`, `capture.connect`, `capture.preflight`.
+
+The main server-side opportunity is amortizing durable commit cost across
+concurrent independent transactions, while preserving source transaction
+boundaries and dependency ordering. Increasing the existing preparation queue
+cannot do that by itself. Table-hash workers would not speed this particular
+single-table workload. Cross-transaction coalescing would change semantics and
+is not part of this work. Client overhead and startup can be investigated
+separately, without changing durability. The native reference is still MySQL
+5.7 and the target MySQL 8.4, so the comparison does not isolate applier overhead
+from server-version differences.
+
+Evidence (under this worktree's `artifacts/lab-benchmark/`):
+
+- Off: `mysql57-to-mysql84-innodb/20261010T073213Z-0555d590-auto-transaction-innodb`.
+- On: `mysql57-to-mysql84-innodb/20261010T073403Z-42abfc2e-auto-transaction-innodb`.
+- Each contains `result.json`, `runtime.json`, `stage-timings.json`, logs and state;
+  the on run also contains `server-profile-{native,target}.{json,tsv}` and
+  instrument settings. Snapshots are taken before final row verification.
+
+### Connection timing follow-up
+
+A second profiled 10K reverse run passed with native 12.867s, external 22.736s,
+SQL 15.823s and active apply window 16.888s. The new timers measured target
+connection 0.081s, source connection 0.025s, source DNS resolution 0.0004s and four
+source preflight queries totaling 0.010s. Thus connection setup does not explain
+the five-second gap. `pipeline.wait` included one 4.950s wait. Separate source
+receiver-join, connection-close and event-loop-shutdown timers were added to
+locate this remaining delay; close behavior is unchanged.
+
+Evidence: `mysql57-to-mysql84-innodb/20261010T074000Z-19aa6b79-auto-transaction-innodb`.
+
+The corrected profiler also passed a 1K forward (8.4 native / 5.7 MyISAM target)
+check: `mysql84-to-mysql57-myisam/20261010T074153Z-dc97977b-auto-autocommit-myisam`.
+The first forward attempt correctly collected counters but failed the profiler's
+overly strict transaction-activity assertion; it is retained at
+`mysql84-to-mysql57-myisam/20261010T073627Z-a594645e-auto-autocommit-myisam`.
+The successful repeat validates the engine-specific assertion correction.
+
+The final 1K reverse check passed and directly measured the suspected teardown
+cost: one source connection close took **5.004991s** (both close calls combined:
+5.006670s), receiver join 0.052801s, event-loop shutdown 0.006970s. The pipeline's
+largest wait was 4.976301s. External wall time was 7.962s, active queue window
+2.108s and target SQL 2.130s (the latter also includes startup queries outside the
+queue window). Evidence:
+`mysql57-to-mysql84-innodb/20261010T074326Z-ed1b0f0b-auto-transaction-innodb`.
+
+This localizes a roughly five-second cost to source connection teardown, not
+preparation or connection establishment. It is consistent with the default
+five-second TLS shutdown timeout in the pinned NIOSSL `TLSConfiguration.swift`.
+The capture connection has automatic reads disabled for bounded downloading and
+is closed after the receiver is joined. Whether the peer fails to send a TLS
+close notification or the client fails to read it remains to be established.
+The next bounded optimization is this source-stream close path, preserving
+receiver joining, error propagation and checkpoint ordering. No close behavior
+or TLS timeout was changed in this increment. Removing the delay would improve
+bounded-run/drain latency, not steady-state transactions per second.
+
+Validation: 27 focused lab tests passed; host and Linux release builds passed;
+three reverse 10K runs, the forward 1K profiler repeat, and the reverse 1K shutdown
+check passed row/schema/checkpoint validation. The broader applier correctness
+qualification deferred during the earlier performance work remains pending.

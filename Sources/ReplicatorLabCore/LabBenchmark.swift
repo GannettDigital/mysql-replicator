@@ -7,7 +7,7 @@ public enum LabBenchmark {
         var mode="backlog", workload="insert"
         var build=true, events=1000
         var decoderProfiling=false, applierProfiling=true, batchTransactions=8
-        var preparedBatches=8
+        var preparedBatches=8, serverProfiling=false
         var forwardedArguments: [String]=[]
         init(_ arguments: [String]) throws {
             var args=arguments
@@ -33,9 +33,10 @@ public enum LabBenchmark {
                 else if flag == "--workload" { workload=value }
                 else if flag == "--batch-transactions", let n=Int(value) { batchTransactions=n }
                 else if flag == "--prepared-batches", let n=Int(value) { preparedBatches=n }
-                else if flag == "--decoder-profile" || flag == "--applier-profile" {
+                else if flag == "--decoder-profile" || flag == "--applier-profile" || flag == "--server-profile" {
                     try require(["on","off"].contains(value),flag+" must be on or off")
                     if flag == "--decoder-profile" { decoderProfiling=value == "on" }
+                    else if flag == "--server-profile" { serverProfiling=value == "on" }
                     else { applierProfiling=value == "on" }
                 }
                 else { throw LabError("unknown benchmark option: "+flag) }
@@ -56,7 +57,7 @@ public enum LabBenchmark {
         let image=try LabBuild.prepare(root:root,build:build,coverage:false)
         let f=LabFixture(root:root,category:"lab-benchmark/"+profile.rawValue,image:image,profile:profile)
         var result: [String:Any]=["result":"failed","profile":profile.rawValue,"topology":profile.topology,"mode":mode,"workload":workload,"events":events,
-            "decoder_profiling":options.decoderProfiling,"applier_profiling":options.applierProfiling,"batch_transactions":options.batchTransactions,"prepared_batches":options.preparedBatches,
+            "server_profiling":options.serverProfiling,"decoder_profiling":options.decoderProfiling,"applier_profiling":options.applierProfiling,"batch_transactions":options.batchTransactions,"prepared_batches":options.preparedBatches,
             "timing":"Sequential backlog replay; monotonic host wall time includes startup/control overhead. Different target versions and engines are recorded, not normalized."]
         var failure: Error?
         do {
@@ -74,9 +75,14 @@ public enum LabBenchmark {
             try require(try f.sql(.source,"SELECT COUNT(*),SUM(counter) FROM reverse_poc.aux") == "\(events)\t\(Int64(events)*Int64(events-1)/2)","source workload count/sum differs")
             let nativeBefore=try f.counters(profile.service(.native)), targetBefore=try f.counters(profile.service(.target))
             let nativeStart=try f.boundary(.native), targetStart=try f.boundary(.target)
+            if options.serverProfiling {
+                for role: LabProfile.Role in [.native,.target] { try ServerSQLProfile.enable(f,role:role) }
+            }
+            let nativeProfileBefore=options.serverProfiling ? try ServerSQLProfile.capture(f,role:.native) : [:]
             let start=ProcessInfo.processInfo.systemUptime
             _ = try f.sql(.native,profile.nativeVersion.startReplica)
             try f.awaitNative(); let nativeSeconds=ProcessInfo.processInfo.systemUptime-start
+            if options.serverProfiling { try ServerSQLProfile.save(f,role:.native,before:nativeProfileBefore,after:ServerSQLProfile.capture(f,role:.native)) }
             let nativeAfter=try f.counters(profile.service(.native))
             let nativeEnd=try f.boundary(.native)
             var source=f.config["source"] as! [String:Any]; source["stopAfterTransactions"]=events
@@ -84,12 +90,14 @@ public enum LabBenchmark {
             f.config["applierProfiling"]=options.applierProfiling
             f.config["batch"]=["maximumTransactions":options.batchTransactions,"maximumPreparedBatches":options.preparedBatches]
             try f.installConfig()
+            let targetProfileBefore=options.serverProfiling ? try ServerSQLProfile.capture(f,role:.target) : [:]
             let applyStart=ProcessInfo.processInfo.systemUptime
             let client=try f.startClient("benchmark",arguments:["run","--config","/evidence/apply.yaml","--initialize"])
             let exit=try f.runner.run(["docker","wait",client],timeout:1800).text
             let seconds=ProcessInfo.processInfo.systemUptime-applyStart, logs=try f.docker(["logs",client])
             try (logs.stdout+logs.stderr).write(to:f.output.appendingPathComponent("applier.ndjson"))
             try require(exit == "0","benchmark applier failed; inspect applier.ndjson")
+            if options.serverProfiling { try ServerSQLProfile.save(f,role:.target,before:targetProfileBefore,after:ServerSQLProfile.capture(f,role:.target)) }
             let targetAfter=try f.counters(profile.service(.target))
             let targetEnd=try f.boundary(.target)
             guard let last=logs.stderr.split(separator:10).last,
