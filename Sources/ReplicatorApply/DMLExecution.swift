@@ -11,17 +11,27 @@ struct DMLExecution {
         var diagnostic: TargetFailureDiagnostic? = nil
         var discardUnwritten = false
         var skipped: [Int:SkippedApplyError] = [:]
-        func record(in state: StateStore) throws {
+        func record(in state: StateStore) throws { try Self.record([self],in:state) }
+        /// Coalesce only ordered completions already published by the worker.
+        /// A failed outcome must be last; later tickets must remain pending.
+        static func record(_ outcomes: [Outcome], in state: StateStore) throws {
+            try require(!outcomes.isEmpty && outcomes.dropLast().allSatisfy { $0.failure == nil },"invalid batch completion window")
+            let last=outcomes.last!
+            var acknowledged: [Int]=[], skipped: [Int:SkippedApplyError]=[:]
+            for outcome in outcomes {
+                for (index,error) in outcome.skipped { skipped[acknowledged.count+index]=error }
+                acknowledged.append(contentsOf:outcome.acknowledged)
+            }
             do {
-                try state.finishBatch(acknowledgedRows:acknowledged,skipped:skipped)
-                if let diagnostic { try state.recordTargetFailure(diagnostic) }
-                if discardUnwritten { try state.discardUnwrittenPending() }
+                try state.finishBatch(acknowledgedRows:acknowledged,skipped:skipped,batchCount:outcomes.count)
+                if let diagnostic=last.diagnostic { try state.recordTargetFailure(diagnostic) }
+                if last.discardUnwritten { try state.discardUnwrittenPending() }
             }
             catch {
-                if let failure { throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)") }
+                if let failure=last.failure { throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)") }
                 throw error
             }
-            if let failure { throw failure }
+            if let failure=last.failure { throw failure }
         }
     }
     static func run(_ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,

@@ -128,7 +128,8 @@ batch:
   overlapPreparation: true          # Prepare and journal ahead while the single target worker runs.
   flushOnTableChange: false         # true ends a batch whenever its table changes.
   maximumTransactions: 8            # Complete source groups per batch; 1..256.
-  maximumPreparedBatches: 2         # Durable batches outstanding, including execution; 1..2. Requires overlapPreparation.
+  maximumPreparedBatches: 8         # Durable batches outstanding, including execution; 1..16. Requires overlapPreparation.
+                                   # Prepare up to half this many batches per relay sync/SQLite commit.
   maximumRows: 4096                 # Collection threshold; 1..65536 rows.
   maximumWireBytes: 8388608         # 8 MiB collection threshold; 1 KiB..32 MiB.
   maximumDelayMilliseconds: 25      # Flush nonempty batch after 1..1000 ms.

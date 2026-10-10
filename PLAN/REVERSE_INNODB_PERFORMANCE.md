@@ -437,8 +437,8 @@ is complete.
 ## Bounded prepared-batch queue
 
 Autocommit and the default batch size of eight were committed as `a974f0b`.
-The following uncommitted increment implements the prepared-batch proposal above.
-`batch.maximumPreparedBatches` accepts one or two, defaulting to two. The bound
+Queue checkpoint `36300ec` implements the prepared-batch proposal above.
+At that checkpoint, `batch.maximumPreparedBatches` accepted one or two, defaulting to two. The bound
 includes the executing batch and completed batches awaiting coordinator
 acknowledgment. `overlapPreparation: false` uses one slot and waits at each handoff.
 
@@ -561,6 +561,102 @@ comparison/profile runs, runtime provenance, stage timings, benchmark logs, the
 host build log and `comparison.json`. All runs used the binary hash recorded
 above. No runtime code changed between these measurements.
 
+## Shared durable preparation windows
+
+The queue work was committed as `36300ec` before this follow-up. Simply deepening
+the queue cannot fix a producer that is slower than its consumer. This increment
+amortizes preparation costs while building more work ahead of execution:
+
+- `maximumPreparedBatches` now accepts 1..16. The application and backlog benchmark
+  default to eight, as requested; `maximumTransactions` remains eight.
+- Collect up to half the queue capacity in one preparation window. At defaults,
+  that is four execution batches / 32 source transactions, with the existing row,
+  wire-byte, age and optional table-switch limits applied to the whole window.
+  One oversized source group still runs alone. One/two-slot configurations keep
+  single-batch preparation windows.
+- Sync the relay and commit all window intents in one FULL SQLite transaction
+  before submitting any window batch for target execution. Keep each source GTID,
+  execution batch boundary, row intent and relay boundary distinct.
+- Reap already-published completions together in one checkpoint transaction.
+  Stop collection at the first failed outcome. Retain later unissued intents,
+  preserve partial-prefix accounting, and keep existing failure/skip semantics.
+- Keep the target worker serial. MyISAM INSERTs cannot combine across execution
+  batches; InnoDB still commits each source transaction separately. DDL/schema,
+  drain, reload and reconnect paths continue to drain or discard the appropriate
+  submitted/unjournaled work. Larger queues do not advance applied progress early.
+
+Eight slots bound durably outstanding work to at most 64 source transactions
+with the default execution batch size; completed but uncheckpointed batches count
+against that bound. An additional preparation window can be collected in memory.
+The age limit prevents waiting indefinitely for a full window on a quiet source.
+
+### 25K comparison
+
+Each run used 25,000 single-row INSERT source transactions, execution batches of
+up to eight, and both detailed profilers disabled. Runs were sequential and all
+passed source/native/target row and schema comparisons and final checkpoint checks.
+All enqueued batches executed; none were left unissued. Age-based flushing can
+produce partial windows/batches, so execution counts need not be exactly 3,125.
+
+| Profile / run | Slots | Native seconds | External seconds | Target SQL seconds | Worker idle seconds | Preparation calls | SQLite commits | Relay syncs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| forward, window | 8 | 19.707 | 31.128 | 5.417 | 18.767 | 786 | 1615 | 787 |
+| forward, comparison | 2 | 18.932 | 38.911 | 7.191 | 24.647 | 3125 | 5801 | 3126 |
+| reverse, first | 8 | 30.651 | 70.119 | 61.259 | 0.078 | 782 | 3945 | 783 |
+| 5.7 MyISAM | 8 | 18.505 | 29.999 | 4.336 | 18.700 | 783 | 1611 | 784 |
+| reverse, comparison | 2 | 31.226 | 77.477 | 68.409 | 0.085 | 3125 | 6294 | 3126 |
+| reverse, default repeat | 8 | 31.034 | 70.384 | 61.441 | 0.081 | 783 | 3947 | 784 |
+
+The forward comparison uses one binary. Eight slots reduced full replay wall time
+from 38.911 to 31.128 seconds (20%), target idle from 24.647 to 18.767 seconds
+(24%), and durable preparation from 11.805 to 5.200 seconds. Relay sync count fell
+about 75%, and SQLite commits about 72%. Native elapsed time was 18.932 versus
+19.707 seconds. Target SQL time also fell, so do not attribute the whole wall-time
+improvement solely to less idle time. SQL request counts were 3,149 with two slots
+and 3,173 with eight; timer-driven smaller chunks account for the extra requests.
+
+Forward capture decoding remained 17.56 seconds with eight slots (18.18 with two).
+Preparing in windows reduces overhead but does not eliminate target starvation:
+the target still consumes this MyISAM workload faster than the rest of the
+pipeline produces it. There is no claim that deeper buffering alone will keep
+it continuously busy or match pure target SQL time.
+
+The 5.7-to-5.7 MyISAM confirmation passed at 30.00 seconds external versus 18.51
+native. Its earlier two-slot checkpoint run was 33.34 seconds external, but that
+is not a same-binary comparison.
+
+Reverse InnoDB was slower in absolute terms than earlier measurements: eight-slot
+runs took 70.12 and 70.38 seconds, with 61.26 and 61.44 seconds in target SQL.
+The final same-binary two-slot comparison took 77.48 seconds, including 68.41
+seconds in target SQL; native times were 31.23 and 31.03 seconds. Eight slots were
+about 9% faster in that comparison. Both had less than 0.1 seconds of worker idle,
+so starvation does not explain the longer absolute InnoDB times. These runs do
+not establish the cause of the elevated SQL latency or reproduce the earlier
+51-second reverse result. Preserve all samples rather than claiming stable
+absolute throughput or a confirmed absence of every regression.
+
+The first four measurements used binary SHA-256:
+`31e81ee4047802844c6d58e96b7bf55c83327a5aac106b68a97e86a1379ebeb6`.
+The final reverse pair used the rebuilt default-eight binary:
+`2c4791b66d5f8e5412c08484ee7739fc31e31e038fb5986dc61dbf7cfd5fc737`.
+Between those builds, the application/harness defaults, example and default/bounds
+unit assertions changed; the preparation/execution implementation did not.
+The last run omitted `--prepared-batches`, confirming the harness default is eight.
+
+Evidence under `artifacts/lab-benchmark/<profile>/`:
+
+- `20261010T062729Z-50a344ab-auto-autocommit-myisam`: `mysql84-to-mysql57-myisam`, 8 slots.
+- `20261010T062952Z-77da0b27-auto-autocommit-myisam`: `mysql84-to-mysql57-myisam`, 2 slots.
+- `20261010T063235Z-e23351fa-auto-transaction-innodb`: `mysql57-to-mysql84-innodb`, 8 slots.
+- `20261010T063544Z-220a0a24-auto-autocommit-myisam`: `mysql57-to-mysql57-myisam`, 8 slots.
+- `20261010T064611Z-1da0bcc3-auto-transaction-innodb`: `mysql57-to-mysql84-innodb`, 2 slots.
+- `20261010T064926Z-cf5a849b-auto-transaction-innodb`: `mysql57-to-mysql84-innodb`, 8 slots.
+
+`artifacts/preparation-window-performance-20261009/` collects the six passing
+results, runtime provenance, stage timings, logs and `comparison.json`. Host and
+Linux builds passed. The example config and test-lab guide describe the new
+preparation window. This follow-up remains uncommitted.
+
 ### Deferred correctness qualification
 
 No unit, lifecycle, recovery, or broad correctness suite has been run for this
@@ -572,3 +668,12 @@ failure while another batch executes; generated-column rollback; before-image
 checks; and DDL/reconnect/drain/reload/GTID-stop barriers. Run these against the
 shared profiles, including live and offline replay. Retain the one-slot mode as a
 performance comparison and conservative scheduling option.
+
+Additional window-specific qualification: atomic multi-batch preparation and
+rollback, coalesced completion across batch boundaries, shifted skip indexes,
+partial final batch with an untouched prepared tail, capacity and collection
+age/byte/row limits, failure while publishing a window, and stop/reload/reconnect
+with completed-but-uncheckpointed tickets. Configuration assertions now cover the
+default of eight and rejection of zero/17 slots; these assertions have not yet
+been run. Broad correctness qualification remains deferred per the requested
+performance-first order.

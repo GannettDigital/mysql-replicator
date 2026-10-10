@@ -134,9 +134,14 @@ public enum ApplyRun {
                     guard let outcome = timings.measure("apply.execution_wait",{ executor.join() }) else {
                         throw ApplyError("prepared batch was not executed after an earlier failure")
                     }
-                    if let diagnostic=outcome.diagnostic { targetFailure=diagnostic }
-                    try outcome.record(in:state)
-                    activeBatchTransactions -= outcome.acknowledged.count
+                    var outcomes=[outcome]
+                    while outcomes.last!.failure == nil && executor.ready {
+                        guard let next=executor.join() else { throw ApplyError("missing prepared batch outcome") }
+                        outcomes.append(next)
+                    }
+                    if let diagnostic=outcomes.last!.diagnostic { targetFailure=diagnostic }
+                    try DMLExecution.Outcome.record(outcomes,in:state)
+                    activeBatchTransactions -= outcomes.reduce(0) { $0+$1.acknowledged.count }
                     try progress()
                 } catch {
                     // A checkpoint failure can race a later, already-durable
@@ -152,22 +157,37 @@ public enum ApplyRun {
             // Always join before target destruction, diagnostics or a journal
             // error path. Main-thread failures stop further target statements.
             defer { executionStop.cancel(); executor.cancelAndWait() }
-            let batch = DMLBatch(policy:configuration.batchPolicy,onFlush:{ reason in timings.measure("apply.batch.flush." + reason) {} }) { groups in
-                while executor.full { try finishOneExecution() }
+            // Collect up to half the durable queue per preparation window,
+            // leaving room to journal ahead of the currently executing window.
+            // Row, byte, age, table and DDL boundaries still bound collection.
+            let transactionsPerBatch=configuration.batchPolicy.maximumTransactions
+            var preparationPolicy=configuration.batchPolicy
+            preparationPolicy.maximumTransactions *= max(1,executor.capacity/2)
+            let batch = DMLBatch(policy:preparationPolicy,onFlush:{ reason in timings.measure("apply.batch.flush." + reason) {} }) { groups in
+                let batches=stride(from:0,to:groups.count,by:transactionsPerBatch).map {
+                    Array(groups[$0..<min($0+transactionsPerBatch,groups.count)])
+                }
+                // Reap published completions together, sharing one SQLite commit.
+                if executor.ready { try finishOneExecution() }
+                while executor.available < batches.count { try finishOneExecution() }
                 try checkSourceFailure()
-                try timings.measure("apply.batch.prepare") { try state.beginBatch(groups) }
+                try timings.measure("apply.batch.prepare") { try state.beginBatches(batches) }
                 activeBatchTransactions += groups.count
                 control?.publish(summary("RUNNING"))
-                executor.start {
-                    targetTimings.measure("apply.batch.execute") {
-                        target.execute(groups,cancellation:executionStop,maximumInsertBytes:byteLimit,checkSourceFailure:checkSourceFailure)
+                for prepared in batches {
+                    executor.start {
+                        targetTimings.measure("apply.batch.execute") {
+                            target.execute(prepared,cancellation:executionStop,maximumInsertBytes:byteLimit,checkSourceFailure:checkSourceFailure)
+                        }
                     }
                 }
                 if !configuration.batchPolicy.overlapPreparation { try finishExecution() }
             }
             func barrier(_ reason: String = "barrier") throws { try batch.flush(reason:reason); try finishExecution() }
             func maintainExecution() throws {
-                while executor.ready { try finishOneExecution() }
+                // Successful tickets may wait until the next preparation window
+                // or barrier. Failure is handled promptly, without issuing more SQL.
+                if executor.failed { try finishExecution() }
                 if !executor.active { try target.checkConnection(); try target.releaseExpiredLock() }
             }
             func event(_ record: LiveRecord) throws {

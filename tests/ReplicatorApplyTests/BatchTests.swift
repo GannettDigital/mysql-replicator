@@ -194,9 +194,10 @@ extension ApplyTests {
         }
     }
     func testBatchPolicyRejectsUnboundedSettings() throws {
-        for json in ["{\"maximumTransactions\":0}","{\"maximumTransactions\":257}","{\"maximumRows\":0}","{\"maximumWireBytes\":0}","{\"maximumDelayMilliseconds\":1001}"] {
+        for json in ["{\"maximumTransactions\":0}","{\"maximumTransactions\":257}","{\"maximumRows\":0}","{\"maximumWireBytes\":0}","{\"maximumDelayMilliseconds\":1001}","{\"maximumPreparedBatches\":0}","{\"maximumPreparedBatches\":17}"] {
             XCTAssertThrowsError(try JSONDecoder().decode(BatchPolicy.self,from:Data(json.utf8)).validate())
         }
         XCTAssertEqual(try config().batchPolicy.maximumTransactions,8)
+        XCTAssertEqual(try config().batchPolicy.maximumPreparedBatches,8)
     }
 }

@@ -7,7 +7,7 @@ public enum LabBenchmark {
         var mode="backlog", workload="insert"
         var build=true, events=1000
         var decoderProfiling=false, applierProfiling=true, batchTransactions=8
-        var preparedBatches=2
+        var preparedBatches=8
         var forwardedArguments: [String]=[]
         init(_ arguments: [String]) throws {
             var args=arguments
@@ -42,7 +42,7 @@ public enum LabBenchmark {
             }
             try require((1...100000).contains(events),"events must be 1...100000")
             try require((1...256).contains(batchTransactions),"batch-transactions must be 1...256")
-            try require((1...2).contains(preparedBatches),"prepared-batches must be 1 or 2")
+            try require((1...16).contains(preparedBatches),"prepared-batches must be 1...16")
             try require(["insert","multi-table-transaction"].contains(workload),"unknown backlog workload")
             try require(workload == "insert" || profile.transactionalTarget,"multi-table transactions are outside the MyISAM apply contract")
         }

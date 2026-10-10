@@ -45,6 +45,7 @@ final class StateStore {
     private var pendingSequence: Int64 = 0
     private var pendingBatch: [PreparedDMLGroup] = []
     private var pendingBatchSizes: [Int] = []
+    private let maximumPreparedBatches: Int
     private var sequence: Int64 = 0
     private var snapshotSequence: Int64 = 0
     private var skipBoundary: BinlogCoordinate?
@@ -87,6 +88,7 @@ final class StateStore {
         compatibility = c.compatibilityPolicy; try compatibility.validate()
         replicationProfile = c.replicationProfile
         skipPolicy = c.skipErrorPolicy
+        maximumPreparedBatches = c.batchPolicy.overlapPreparation ? c.batchPolicy.maximumPreparedBatches : 1
         self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
         try require(skipGTIDs == nil || !initialize,"skip requires existing state")
@@ -550,12 +552,15 @@ final class StateStore {
         targetUUID=uuid.lowercased()
     }
     func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
-    /// One synced relay prefix and one FULL SQLite commit precede every target
-    /// write in the batch. Existing tables retain each source group's identity.
-    func beginBatch(_ batch: [PreparedDMLGroup]) throws {
+    func beginBatch(_ batch: [PreparedDMLGroup]) throws { try beginBatches([batch]) }
+    /// One relay sync and one FULL SQLite commit prepare an ordered window.
+    /// Each execution batch and source group retains its identity and boundary.
+    func beginBatches(_ batches: [[PreparedDMLGroup]]) throws {
         try profile("journal.prepare_batch") {
-            try require((pendingGTID == nil || !pendingBatch.isEmpty) && pendingBatchSizes.count < 2
-                        && !batch.isEmpty && batch.count <= 256,"invalid pending DML batch")
+            try require((pendingGTID == nil || !pendingBatch.isEmpty) && !batches.isEmpty
+                        && pendingBatchSizes.count+batches.count <= maximumPreparedBatches
+                        && batches.allSatisfy { !$0.isEmpty && $0.count <= 256 },"invalid pending DML batch")
+            let batch=batches.flatMap { $0 }
             var seen=completedGTIDs, relayStart=pendingBatch.last?.relayEnd ?? groupStart
             for item in pendingBatch { try seen.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
             for item in batch {
@@ -579,15 +584,17 @@ final class StateStore {
                 }
                 try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[pendingGTID ?? batch[0].id,String(relayLength),time])
             }
-            pendingBatch.append(contentsOf:batch); pendingBatchSizes.append(batch.count)
+            pendingBatch.append(contentsOf:batch); pendingBatchSizes.append(contentsOf:batches.map(\.count))
             pendingGTID=pendingBatch[0].id; pendingSequence=sequence+1
         }
     }
     /// Commit only the acknowledged prefix. On crash before this commit every
     /// prepared row remains uncertain. No target write is inferred or retried.
-    func finishBatch(acknowledgedRows: [Int], skipped: [Int:SkippedApplyError] = [:]) throws {
+    func finishBatch(acknowledgedRows: [Int], skipped: [Int:SkippedApplyError] = [:], batchCount: Int = 1) throws {
         try profile("journal.complete_batch") {
-            try require(pendingBatchSizes.first == acknowledgedRows.count && !acknowledgedRows.isEmpty,"completion without prepared batch")
+            try require(batchCount > 0 && batchCount <= pendingBatchSizes.count
+                        && pendingBatchSizes.prefix(batchCount).reduce(0,+) == acknowledgedRows.count
+                        && !acknowledgedRows.isEmpty,"completion without prepared batch")
             let batch=Array(pendingBatch.prefix(acknowledgedRows.count))
             try require(skipped.keys.allSatisfy { batch.indices.contains($0) },"skip outside prepared batch")
             for (index,error) in skipped {
@@ -630,8 +637,11 @@ final class StateStore {
             if completed > 0 { groupStart=batch[completed-1].relayEnd }
             pendingGTID=active; pendingSequence=sequence+1
             pendingBatch=Array(pendingBatch.dropFirst(completed))
-            pendingBatchSizes[0] -= completed
-            if pendingBatchSizes[0] == 0 { pendingBatchSizes.removeFirst() }
+            var remaining=completed
+            while let first=pendingBatchSizes.first, remaining >= first {
+                remaining -= first; pendingBatchSizes.removeFirst()
+            }
+            if remaining > 0 { pendingBatchSizes[0] -= remaining }
             if sequence-snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
         }
     }

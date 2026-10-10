@@ -8,7 +8,7 @@ public struct BatchPolicy: Decodable {
     public var overlapPreparation = true
     public var flushOnTableChange = false
     public var maximumTransactions = 8
-    public var maximumPreparedBatches = 2
+    public var maximumPreparedBatches = 8
     public var maximumRows = 4096
     public var maximumWireBytes = 8*1024*1024
     public var maximumDelayMilliseconds = 25
@@ -31,7 +31,7 @@ public struct BatchPolicy: Decodable {
         try require((1...128).contains(maximumInsertRows) && (1024...4*1024*1024).contains(maximumInsertBytes),"invalid multi-row INSERT limits")
         try require((1...256).contains(maximumTransactions) && (1...65536).contains(maximumRows)
             && (1024...32*1024*1024).contains(maximumWireBytes) && (1...1000).contains(maximumDelayMilliseconds),"invalid DML batch limits")
-        try require((1...2).contains(maximumPreparedBatches),"maximumPreparedBatches must be 1 or 2")
+        try require((1...16).contains(maximumPreparedBatches),"maximumPreparedBatches must be 1...16")
     }
 }
 

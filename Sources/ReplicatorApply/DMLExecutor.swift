@@ -32,11 +32,16 @@ final class DMLExecutor {
     private var lastCompletion: UInt64?
 
     init(capacity: Int = 1) {
-        precondition((1...2).contains(capacity))
+        precondition((1...16).contains(capacity))
         self.capacity=capacity
     }
     var active: Bool { !tickets.isEmpty }
-    var full: Bool { tickets.count >= capacity }
+    var available: Int { capacity-tickets.count }
+    var full: Bool { available == 0 }
+    var failed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
+    }
     var ready: Bool { tickets.first.map { $0.done.wait(timeout:.now()) == .success } ?? false }
     var snapshot: ApplyQueueSnapshot {
         lock.lock(); defer { lock.unlock() }

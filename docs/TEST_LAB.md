@@ -352,23 +352,37 @@ make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --deco
 ```
 
 Repeat with `--skip-build --applier-profile off --decoder-profile off` to measure
-without detailed profiling. `--batch-transactions 32` changes the SQLite journal
-batch limit; InnoDB still commits each source transaction separately. The 25 ms
-batch age limit can produce smaller batches. Results include `stage-timings.json`,
+without detailed profiling. `--batch-transactions 32` changes the execution batch
+limit and scales the journal preparation window; InnoDB still commits each source
+transaction separately. The 25 ms age limit can produce smaller batches. Results include `stage-timings.json`,
 optional `applier-profile.tsv` / `decoder-profile.tsv`, server durability settings,
 and native/target binlog boundaries. `apply.detail.transaction.begin` and
 `apply.detail.transaction.commit` include the SQL round trip; `capture.schema_wait`
 measures time waiting for historical schema interpretation in the apply loop.
 
-The application and benchmark default to eight source transactions per journal
-batch. `batch.maximumPreparedBatches` defaults to two (one executing and one
-prepared); setting it to one retains overlap of row planning but serializes
-durable batch preparation with completion. `batch.overlapPreparation: false`
-also disables coordinator planning overlap at batch handoff and uses one slot.
-For a backlog comparison with the same binary, use `--prepared-batches 1` and
-`--prepared-batches 2`, keeping `--batch-transactions 8` and profiling settings
-unchanged. This controls the durable queue depth, not the number of target
-connections or source transactions committed together.
+The application and benchmark default to eight source transactions per execution
+batch. `batch.maximumPreparedBatches` accepts 1..16 and defaults to eight. It bounds
+all submitted batches, including completed batches awaiting a checkpoint. One
+slot retains overlap of row planning but serializes durable preparation with
+completion. `batch.overlapPreparation: false` also disables coordinator planning
+overlap at batch handoff and uses one slot.
+
+With four or more slots, the coordinator collects a preparation window of up to
+half the queue capacity, shares one relay sync and one FULL SQLite commit across
+that window, then submits its execution batches in order. For example, eight
+slots and eight transactions per execution batch can prepare four batches (32
+source transactions) together. The existing row, byte, age and table-change
+limits apply to the whole preparation window; a single oversized source group
+still runs alone. DDL, schema, stop and reconnect barriers retain their ordering.
+Published completions can also share one SQLite checkpoint commit. Larger queues
+increase the bounded set of durable intents that can remain pending after a crash.
+
+For a backlog comparison with the same binary, use `--prepared-batches 2` and
+`--prepared-batches 8`, keeping `--batch-transactions 8` and profiling settings
+unchanged. This controls durable preparation and queue depth, not the number of
+target connections or InnoDB source transactions committed together. MyISAM
+INSERT coalescing remains bounded by each execution batch. Timer and size limits
+can produce smaller batches.
 
 The final summary's `applyQueue` reports the current target session's queue
 capacity, maximum outstanding batches, executed/unissued batch counts, and
