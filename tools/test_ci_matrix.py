@@ -39,6 +39,20 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(second['cases'], ['create', 'drop'])
         self.assertEqual(len(result['include']), len({s['id'] for s in result['include']}))
 
+    def test_expanded_coverage_adds_runs_without_replacing_release_obligations(self):
+        baseline = self.generate()
+        measured = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=True)
+        self.assertEqual(baseline['inventory'], measured['inventory'])
+        self.assertEqual(baseline['obligations'], measured['obligations'])
+        self.assertTrue(all(s in measured['include'] for s in baseline['include']))
+        self.assertGreater(measured['coverage_reports'], baseline['coverage_reports'])
+        for s in measured['include']:
+            if s not in baseline['include']:
+                self.assertEqual(s['image'], 'coverage')
+                self.assertIn(s['suite'], ['correctness', 'lifecycle'])
+                original = next(b for b in baseline['include'] if b['id'] == s['id'].replace('coverage-', 'release-', 1))
+                self.assertEqual(original['cases'], s['cases'])
+
     def test_new_case_and_variant_automatically_enter_ci(self):
         self.rows += [row('new-case'), row('new-mode', variant='new-variant')]
         result = self.generate()

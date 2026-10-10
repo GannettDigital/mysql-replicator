@@ -498,3 +498,10 @@ failure group do not apply. Streaming/capture benchmarks remain 8.4-only; the
 shared backlog benchmark supports all profiles.
 
 See [5.7 MyISAM setup](MYSQL57_MYISAM.md) for deployment boundaries.
+
+## CI cost and coverage reports
+
+See [CI measurements](CI_MEASUREMENTS.md) for case and shard timing, profile
+catalog results, expanded line coverage, and isolated cold/warm build comparisons.
+The same catalog drives normal and expanded CI. Release-binary checks remain in
+both plans. These measurements do not change the supported profiles or assertions.

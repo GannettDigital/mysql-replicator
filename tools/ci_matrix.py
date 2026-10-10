@@ -6,7 +6,7 @@ def key(row):
     return (row['profile'], row.get('variant', 'default'), row['suite'], row['id'])
 
 
-def generate(catalogs, policy):
+def generate(catalogs, policy, expanded_coverage=False):
     inventory = {}
     for catalog in catalogs:
         for item in catalog['scenarios']:
@@ -94,6 +94,14 @@ def generate(catalogs, policy):
     for image in ('release', 'coverage'):
         add(sample['profile'], 'default', 'correctness', 'sample', sample['cases'],
             image=image, reports=int(image == 'coverage'), count=False)
+    # Keep release-binary obligations intact. These extra runs measure the same
+    # shared scenarios with instrumentation; adapters have no coverage contract.
+    if expanded_coverage:
+        for shard in list(shards):
+            if shard['image'] == 'release' and shard['suite'] in ('correctness', 'lifecycle') and shard['area'] != 'sample':
+                measured = dict(shard, id=shard['id'].replace('release-', 'coverage-', 1),
+                                image='coverage', reports=1)
+                shards.append(measured)
     # Start the longest stateful suites early to avoid a serial tail after the
     # shorter case chunks finish. GitHub may further limit runner concurrency.
     priority = {'failure-recovery-offline': 0, 'native-ddl': 1, 'demo': 2, 'reconnect': 3}
@@ -102,5 +110,5 @@ def generate(catalogs, policy):
         raise ValueError('duplicate shard identifiers')
     if len(shards) > 256:
         raise ValueError('CI matrix exceeds GitHub limit of 256 jobs')
-    return dict(include=shards, coverage_reports=sum(s['reports'] for s in shards),
+    return dict(coverage_mode='expanded' if expanded_coverage else 'selected', include=shards, coverage_reports=sum(s['reports'] for s in shards),
                 obligations=len(applicable), inventory=list(inventory.values()))

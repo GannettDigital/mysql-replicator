@@ -50,6 +50,7 @@ public enum LabTests {
                         for i in indices where rows[i]["status"] as? String == "not_run" {
                             let observed=run.reporter.results.first { $0["id"] as? String == rows[i]["id"] as? String }
                             rows[i]["status"]=observed?["status"] ?? "not_run"; rows[i]["evidence"]=run.output.path
+                            if let seconds=observed?["seconds"] { rows[i]["seconds"]=seconds }
                             if let detail=observed?["error"] { rows[i]["error"]=detail }
                         }
                         if let error { throw error }
@@ -72,6 +73,7 @@ public enum LabTests {
                             let observed=reporter.results.first { $0["id"] as? String == rows[i]["id"] as? String }
                             rows[i]["status"]=observed?["status"] ?? "not_run"
                             rows[i]["evidence"]=output.path
+                            if let seconds=observed?["seconds"] { rows[i]["seconds"]=seconds }
                             if let detail=observed?["error"] { rows[i]["error"]=detail }
                         }
                         if let error { throw error }

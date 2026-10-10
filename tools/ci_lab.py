@@ -36,7 +36,8 @@ def plan(query):
                                 '--variant', 'all', '--list'))
                 for suite in ('correctness', 'lifecycle')]
     catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
-    result = generate(catalogs, json.loads((ROOT / 'tools/ci_matrix.json').read_text()))
+    result = generate(catalogs, json.loads((ROOT / 'tools/ci_matrix.json').read_text()),
+                      expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true')
     result['inputs'] = query('build-inputs').strip()
     destination = ROOT / 'artifacts/ci/matrix.json'
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +97,12 @@ def validate_bundle():
 
 
 def run_shard(identifier):
+    from ci_measurements import record_shard
+    with record_shard(ROOT, identifier):
+        _run_shard(identifier)
+
+
+def _run_shard(identifier):
     validate_bundle()
     manifest = matrix()
     if manifest['inputs'] != (BUNDLE / 'inputs.sha256').read_text().strip():

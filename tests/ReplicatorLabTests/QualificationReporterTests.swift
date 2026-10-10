@@ -22,6 +22,7 @@ final class QualificationReporterTests: XCTestCase {
             XCTAssertFalse(messages.contains { $0.hasPrefix("passed") })
         }
         XCTAssertEqual(reporter.results[0]["status"] as? String, "passed")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(reporter.results[0]["seconds"] as? Double), 0)
         XCTAssertEqual(messages, ["starting " + test.description, "passed " + test.description])
     }
 
@@ -44,6 +45,8 @@ final class QualificationReporterTests: XCTestCase {
         }
         let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("cases.json"))) as! [[String: Any]]
         XCTAssertEqual(saved.compactMap { $0["status"] as? String }, ["failed", "failed"])
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(saved[0]["seconds"] as? Double),
+                                    try XCTUnwrap(saved[1]["seconds"] as? Double))
         XCTAssertEqual(saved[1]["parent_id"] as? String, "ddl")
         XCTAssertEqual(saved[1]["source_file"] as? String, child.file)
         XCTAssertEqual(saved[1]["source_line"] as? UInt, child.line)

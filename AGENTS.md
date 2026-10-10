@@ -30,3 +30,12 @@ Shared fixtures enable automatic bundles when the applier enters `BLOCKED`.
 
 Bundles can contain row data, SQL and logs. Do not put their contents in public
 comments. See [the test lab guide](docs/TEST_LAB.md) for the artifact layout.
+
+# Inspect CI measurements
+
+Read `ci-measurement-report/summary.md` and `report.json` before inspecting full
+CI logs. These files identify missing shards and slow jobs. Use the failed case's
+support bundle to debug replication errors. Do not repeatedly poll full logs.
+Use [docs/CI_MEASUREMENTS.md](docs/CI_MEASUREMENTS.md) for measurement scope and
+cold/warm comparison rules. Do not remove a test because its line coverage overlaps
+another test. Check its profile, catalog obligations and assertions first.
