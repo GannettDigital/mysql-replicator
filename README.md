@@ -41,7 +41,7 @@ sh install.sh
 ```
 
 Follow the [setup guide](docs/INSTALL.md) to prepare the target and record the
-source position for the initial data copy. Configure TLS and credentials in
+source position for the initial data copy. Configure connection security and credentials in
 `apply.yaml`.
 
 Use the short example for [live replication](examples/run.minimal.yaml) or

@@ -13,7 +13,7 @@ permissions:
 # Each invocation has its own cache namespace. A retry starts a new pair.
 jobs:
   cold:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci-cache-study')
+    if: github.event_name == 'workflow_dispatch' || (contains(github.event.pull_request.labels.*.name, 'ci-cache-study') && (github.event.action != 'labeled' || github.event.label.name == 'ci-cache-study'))
     strategy:
       fail-fast: false
       matrix:
