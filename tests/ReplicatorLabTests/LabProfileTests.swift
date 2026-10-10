@@ -195,12 +195,19 @@ final class LabProfileTests: XCTestCase {
         XCTAssertThrowsError(try LabBenchmark.Options([]))
         let backlog=try LabBenchmark.Options(["--profile",reverse,"--events","100","--workload","multi-table-transaction"])
         XCTAssertEqual(backlog.mode,"backlog"); XCTAssertEqual(backlog.events,100)
+        XCTAssertEqual(backlog.batchTransactions,8)
+        XCTAssertFalse(backlog.serverProfiling)
+        XCTAssertTrue(backlog.applierProfiling); XCTAssertFalse(backlog.decoderProfiling)
+        let profiled=try LabBenchmark.Options(["--profile",reverse,"--decoder-profile","on","--applier-profile","off","--batch-transactions","32","--server-profile","on"])
+        XCTAssertTrue(profiled.serverProfiling)
+        XCTAssertTrue(profiled.decoderProfiling); XCTAssertFalse(profiled.applierProfiling)
+        XCTAssertEqual(profiled.batchTransactions,32)
         for mode in ["streaming","capture"] {
             let options=try LabBenchmark.Options(["--mode",mode,"--profile",forward,"--threads","2"])
             XCTAssertEqual(options.forwardedArguments,["--threads","2"])
             XCTAssertThrowsError(try LabBenchmark.Options(["--mode",mode,"--profile",reverse]))
         }
-        for args in [["--mode","invalid"],["--mode","backlog","--mode","capture"],["--events","0"],["--threads","2"],["--workload","multi-table-transaction"]] {
+        for args in [["--mode","invalid"],["--mode","backlog","--mode","capture"],["--events","0"],["--threads","2"],["--workload","multi-table-transaction"],["--batch-transactions","0"],["--batch-transactions","257"],["--decoder-profile","yes"],["--applier-profile","yes"],["--server-profile","yes"]] {
             XCTAssertThrowsError(try LabBenchmark.Options(["--profile",forward]+args))
         }
     }

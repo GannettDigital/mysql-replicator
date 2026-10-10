@@ -44,6 +44,8 @@ final class StateStore {
     private(set) var pendingGTID: String?
     private var pendingSequence: Int64 = 0
     private var pendingBatch: [PreparedDMLGroup] = []
+    private var pendingBatchSizes: [Int] = []
+    private let maximumPreparedBatches: Int
     private var sequence: Int64 = 0
     private var snapshotSequence: Int64 = 0
     private var skipBoundary: BinlogCoordinate?
@@ -86,6 +88,7 @@ final class StateStore {
         compatibility = c.compatibilityPolicy; try compatibility.validate()
         replicationProfile = c.replicationProfile
         skipPolicy = c.skipErrorPolicy
+        maximumPreparedBatches = c.batchPolicy.overlapPreparation ? c.batchPolicy.maximumPreparedBatches : 1
         self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
         try require(skipGTIDs == nil || !initialize,"skip requires existing state")
@@ -520,7 +523,7 @@ final class StateStore {
         }
     }
     func append(_ record: LiveRecord) throws {
-        let bytes: Data = try profile("relay.base64") {
+        let bytes: Data = try record.rawBytes ?? profile("relay.base64") {
             guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
             return bytes
         }
@@ -549,12 +552,17 @@ final class StateStore {
         targetUUID=uuid.lowercased()
     }
     func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
-    /// One synced relay prefix and one FULL SQLite commit precede every target
-    /// write in the batch. Existing tables retain each source group's identity.
-    func beginBatch(_ batch: [PreparedDMLGroup]) throws {
+    func beginBatch(_ batch: [PreparedDMLGroup]) throws { try beginBatches([batch]) }
+    /// One relay sync and one FULL SQLite commit prepare an ordered window.
+    /// Each execution batch and source group retains its identity and boundary.
+    func beginBatches(_ batches: [[PreparedDMLGroup]]) throws {
         try profile("journal.prepare_batch") {
-            try require(pendingGTID == nil && !batch.isEmpty && batch.count <= 256,"invalid pending DML batch")
-            var seen=completedGTIDs, relayStart=groupStart
+            try require((pendingGTID == nil || !pendingBatch.isEmpty) && !batches.isEmpty
+                        && pendingBatchSizes.count+batches.count <= maximumPreparedBatches
+                        && batches.allSatisfy { !$0.isEmpty && $0.count <= 256 },"invalid pending DML batch")
+            let batch=batches.flatMap { $0 }
+            var seen=completedGTIDs, relayStart=pendingBatch.last?.relayEnd ?? groupStart
+            for item in pendingBatch { try seen.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
             for item in batch {
                 guard let id=item.group.gtid else { throw ApplyError("batch lacks source GTID") }
                 try require(!item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,"invalid DML batch relay boundary")
@@ -566,25 +574,28 @@ final class StateStore {
             try timings.measure("relay.sync") { try relay!.synchronize() }
             let time=timestamp()
             try atomic {
-                var start=groupStart
+                var start=pendingBatch.last?.relayEnd ?? groupStart
                 for (index,item) in batch.enumerated() {
-                    try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+Int64(index)+1),item.id,item.group.start.file,String(item.group.start.position),String(item.group.end.position),String(start),String(item.relayEnd),time])
+                    try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+Int64(pendingBatch.count+index)+1),item.id,item.group.start.file,String(item.group.start.position),String(item.group.end.position),String(start),String(item.relayEnd),time])
                     for (ordinal,row) in item.mutations.enumerated() {
                         try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[item.id,String(ordinal),row.eventOffset,String(row.rowIndex),String(schemas[row.table.identity]!.0),time])
                     }
                     start=item.relayEnd
                 }
-                try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[batch[0].id,String(relayLength),time])
+                try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[pendingGTID ?? batch[0].id,String(relayLength),time])
             }
-            pendingBatch=batch; pendingGTID=batch[0].id; pendingSequence=sequence+1
+            pendingBatch.append(contentsOf:batch); pendingBatchSizes.append(contentsOf:batches.map(\.count))
+            pendingGTID=pendingBatch[0].id; pendingSequence=sequence+1
         }
     }
     /// Commit only the acknowledged prefix. On crash before this commit every
     /// prepared row remains uncertain. No target write is inferred or retried.
-    func finishBatch(acknowledgedRows: [Int], skipped: [Int:SkippedApplyError] = [:]) throws {
+    func finishBatch(acknowledgedRows: [Int], skipped: [Int:SkippedApplyError] = [:], batchCount: Int = 1) throws {
         try profile("journal.complete_batch") {
-            let batch=pendingBatch
-            try require(!batch.isEmpty && acknowledgedRows.count == batch.count,"completion without prepared batch")
+            try require(batchCount > 0 && batchCount <= pendingBatchSizes.count
+                        && pendingBatchSizes.prefix(batchCount).reduce(0,+) == acknowledgedRows.count
+                        && !acknowledgedRows.isEmpty,"completion without prepared batch")
+            let batch=Array(pendingBatch.prefix(acknowledgedRows.count))
             try require(skipped.keys.allSatisfy { batch.indices.contains($0) },"skip outside prepared batch")
             for (index,error) in skipped {
                 try require(replicationProfile.transactional && error.outcome == "rolledBack" && error.code == .duplicateKey && skipPolicy.codes.contains(error.code) && acknowledgedRows[index] == 0,"skip requires an authorized rolled-back InnoDB group")
@@ -599,7 +610,7 @@ final class StateStore {
                     try profile("journal.gtid") { try next.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
                 } else { incomplete=true }
             }
-            let active=completed < batch.count ? batch[completed].id : nil
+            let active=completed < pendingBatch.count ? pendingBatch[completed].id : nil
             let end=completed > 0 ? batch[completed-1].group.end : applied
             let time=timestamp()
             try atomic {
@@ -625,7 +636,12 @@ final class StateStore {
             }
             if completed > 0 { groupStart=batch[completed-1].relayEnd }
             pendingGTID=active; pendingSequence=sequence+1
-            pendingBatch=Array(batch.dropFirst(completed))
+            pendingBatch=Array(pendingBatch.dropFirst(completed))
+            var remaining=completed
+            while let first=pendingBatchSizes.first, remaining >= first {
+                remaining -= first; pendingBatchSizes.removeFirst()
+            }
+            if remaining > 0 { pendingBatchSizes[0] -= remaining }
             if sequence-snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
         }
     }
@@ -799,7 +815,7 @@ final class StateStore {
             try execute("DELETE FROM groups WHERE status='PENDING'")
             try execute("UPDATE state SET active_gtid=NULL,updated_at=? WHERE id=1",[timestamp()])
         }
-        pendingGTID=nil; pendingBatch=[]
+        pendingGTID=nil; pendingBatch=[]; pendingBatchSizes=[]
     }
     func recordTargetFailure(_ diagnostic: TargetFailureDiagnostic) throws {
         let data=try JSONEncoder().encode(diagnostic)

@@ -7,12 +7,13 @@ public struct BatchPolicy: Decodable {
     public var maximumInsertBytes = 1024*1024
     public var overlapPreparation = true
     public var flushOnTableChange = false
-    public var maximumTransactions = 32
+    public var maximumTransactions = 8
+    public var maximumPreparedBatches = 8
     public var maximumRows = 4096
     public var maximumWireBytes = 8*1024*1024
     public var maximumDelayMilliseconds = 25
     public init() {}
-    enum CodingKeys: String, CodingKey { case maximumInsertRows,maximumInsertBytes,overlapPreparation,flushOnTableChange,maximumTransactions,maximumRows,maximumWireBytes,maximumDelayMilliseconds }
+    enum CodingKeys: String, CodingKey { case maximumInsertRows,maximumInsertBytes,overlapPreparation,flushOnTableChange,maximumTransactions,maximumPreparedBatches,maximumRows,maximumWireBytes,maximumDelayMilliseconds }
     public init(from decoder: Decoder) throws {
         self.init()
         let c = try decoder.container(keyedBy:CodingKeys.self)
@@ -21,6 +22,7 @@ public struct BatchPolicy: Decodable {
         overlapPreparation = try c.decodeIfPresent(Bool.self,forKey:.overlapPreparation) ?? overlapPreparation
         flushOnTableChange = try c.decodeIfPresent(Bool.self,forKey:.flushOnTableChange) ?? flushOnTableChange
         maximumTransactions = try c.decodeIfPresent(Int.self,forKey:.maximumTransactions) ?? maximumTransactions
+        maximumPreparedBatches = try c.decodeIfPresent(Int.self,forKey:.maximumPreparedBatches) ?? maximumPreparedBatches
         maximumRows = try c.decodeIfPresent(Int.self,forKey:.maximumRows) ?? maximumRows
         maximumWireBytes = try c.decodeIfPresent(Int.self,forKey:.maximumWireBytes) ?? maximumWireBytes
         maximumDelayMilliseconds = try c.decodeIfPresent(Int.self,forKey:.maximumDelayMilliseconds) ?? maximumDelayMilliseconds
@@ -29,6 +31,7 @@ public struct BatchPolicy: Decodable {
         try require((1...128).contains(maximumInsertRows) && (1024...4*1024*1024).contains(maximumInsertBytes),"invalid multi-row INSERT limits")
         try require((1...256).contains(maximumTransactions) && (1...65536).contains(maximumRows)
             && (1024...32*1024*1024).contains(maximumWireBytes) && (1...1000).contains(maximumDelayMilliseconds),"invalid DML batch limits")
+        try require((1...16).contains(maximumPreparedBatches),"maximumPreparedBatches must be 1...16")
     }
 }
 

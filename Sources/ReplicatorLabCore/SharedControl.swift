@@ -72,10 +72,12 @@ extension SharedCorrectness.Run {
                 }
             }
             // Reload while the first batch is actually issued and blocked.
+            // Keep fewer issued transactions than the new stop boundary: a
+            // reload cannot rewind an already-issued durable queue.
             _ = try f.sql(.target,seed)
             source.removeValue(forKey:"stopAfterGTIDs");source.removeValue(forKey:"stopAfterTransactions")
             f.config["source"]=source;f.config["stateDirectory"]="/evidence/control-reload"
-            var batch=f.config["batch"] as? [String:Any] ?? [:];batch["maximumTransactions"]=1;f.config["batch"]=batch
+            var batch=f.config["batch"] as? [String:Any] ?? [:];batch["maximumTransactions"]=1;batch["maximumPreparedBatches"]=1;f.config["batch"]=batch
             try blockWrites()
             let replay=try start("control-reload")
             try awaitStatus("control-reload",active:true)

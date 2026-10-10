@@ -11,17 +11,27 @@ struct DMLExecution {
         var diagnostic: TargetFailureDiagnostic? = nil
         var discardUnwritten = false
         var skipped: [Int:SkippedApplyError] = [:]
-        func record(in state: StateStore) throws {
+        func record(in state: StateStore) throws { try Self.record([self],in:state) }
+        /// Coalesce only ordered completions already published by the worker.
+        /// A failed outcome must be last; later tickets must remain pending.
+        static func record(_ outcomes: [Outcome], in state: StateStore) throws {
+            try require(!outcomes.isEmpty && outcomes.dropLast().allSatisfy { $0.failure == nil },"invalid batch completion window")
+            let last=outcomes.last!
+            var acknowledged: [Int]=[], skipped: [Int:SkippedApplyError]=[:]
+            for outcome in outcomes {
+                for (index,error) in outcome.skipped { skipped[acknowledged.count+index]=error }
+                acknowledged.append(contentsOf:outcome.acknowledged)
+            }
             do {
-                try state.finishBatch(acknowledgedRows:acknowledged,skipped:skipped)
-                if let diagnostic { try state.recordTargetFailure(diagnostic) }
-                if discardUnwritten { try state.discardUnwrittenPending() }
+                try state.finishBatch(acknowledgedRows:acknowledged,skipped:skipped,batchCount:outcomes.count)
+                if let diagnostic=last.diagnostic { try state.recordTargetFailure(diagnostic) }
+                if last.discardUnwritten { try state.discardUnwrittenPending() }
             }
             catch {
-                if let failure { throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)") }
+                if let failure=last.failure { throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)") }
                 throw error
             }
-            if let failure { throw failure }
+            if let failure=last.failure { throw failure }
         }
     }
     static func run(_ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
@@ -40,23 +50,16 @@ struct DMLExecution {
                 attemptedEnd = cursor
                 try require(!cancellation.isCancelled,"apply cancelled")
                 let first = rows[cursor].1
-                var end = cursor+1, bytes = insertBytes(first)
-                if first.row.operation == "insert" {
-                    while end < rows.count && end-cursor < maximumInsertRows {
-                        let next = rows[end].1, cost = insertBytes(next)
+                let count = insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in
+                        let end = cursor+offset
+                        guard end < rows.count else { return nil }
                         // Coalesce across source groups only when both groups
                         // contain one row. With explicit locks enabled, larger
                         // groups keep their lock until their last chunk.
-                        if rows[end].0 != rows[cursor].0 && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1) { break }
-                        guard next.row.operation == "insert", next.table == first.table,
-                              bytes <= maximumInsertBytes-cost else { break }
-                        bytes += cost; end += 1
-                    }
-                    // Powers of two bound prepared statement shapes per table.
-                    var size = 1
-                    while size*2 <= end-cursor { size *= 2 }
-                    end = cursor+size
+                        if rows[end].0 != rows[cursor].0 && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1) { return nil }
+                        return rows[end].1
                 }
+                let end = cursor+count
                 attemptedEnd = end
                 if acknowledged[rows[cursor].0] == 0 { try lock(first.table) }
                 if end-cursor == 1 { try write(first) }
@@ -104,6 +107,36 @@ struct DMLExecution {
         }
     }
 
+    /// Count target writes, not source SQL statements. UPDATE/DELETE image checks
+    /// precede the write under our exclusive-writer contract. Generated-column
+    /// checks follow the write and must remain rollbackable.
+    static func canAutocommit(_ group: PreparedDMLGroup, maximumInsertRows: Int, maximumInsertBytes: Int) -> Bool {
+        guard let first = group.mutations.first else { return false }
+        if first.row.operation == "delete" { return group.mutations.count == 1 }
+        guard !first.table.columns.contains(where: { $0.isGenerated }) else { return false }
+        if first.row.operation == "update" { return group.mutations.count == 1 }
+        guard first.row.operation == "insert" else { return false }
+        return insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in
+            offset < group.mutations.count ? group.mutations[offset] : nil
+        } == group.mutations.count
+    }
+
+    private static func insertChunkCount(_ first: Mutation, maximumInsertRows: Int, maximumInsertBytes: Int,
+                                         next: (Int) -> Mutation?) -> Int {
+        guard first.row.operation == "insert" else { return 1 }
+        var count = 1, bytes = insertBytes(first)
+        while count < maximumInsertRows, let mutation = next(count) {
+            let cost = insertBytes(mutation)
+            guard mutation.row.operation == "insert", mutation.table == first.table,
+                  bytes <= maximumInsertBytes-cost else { break }
+            bytes += cost; count += 1
+        }
+        // Powers of two bound prepared statement shapes per table.
+        var size = 1
+        while size*2 <= count { size *= 2 }
+        return size
+    }
+
     /// Conservative bound for both prepare SQL and execute parameters. Count
     /// the escaped identifier prefix per row too: deliberately overestimates it.
     static func insertBytes(_ mutation: Mutation) -> Int {
@@ -117,31 +150,4 @@ struct DMLExecution {
             }
         }
     }
-}
-
-/// At most one target batch executes while the coordinator collects the next
-/// bounded batch. No StateStore access occurs on this queue. join() is mandatory
-/// before touching the target session, checkpointing or reporting its timings.
-final class DMLExecutor {
-    private let queue = DispatchQueue(label:"mysql-replicator.target")
-    private let done = DispatchGroup()
-    private var outcome: DMLExecution.Outcome?
-    private(set) var active = false
-    var ready: Bool { active && done.wait(timeout:.now()) == .success }
-    func start(_ work: @escaping () -> DMLExecution.Outcome) {
-        precondition(!active)
-        active = true; done.enter()
-        queue.async {
-            self.outcome = work()
-            self.done.leave()
-        }
-    }
-    func join() -> DMLExecution.Outcome? {
-        guard active else { return nil }
-        done.wait()
-        active = false
-        let result = outcome; outcome = nil
-        return result
-    }
-    deinit { done.wait() }
 }

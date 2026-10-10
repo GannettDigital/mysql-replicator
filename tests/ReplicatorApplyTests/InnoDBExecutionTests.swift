@@ -70,7 +70,7 @@ extension ApplyTests {
         XCTAssertEqual(try request.wait(cancellation:.init()),[.signed,.utf8])
     }
 
-    func testInnoDBKeepsSourceTransactionsSeparateAndAcknowledgesOnlyCommits() throws {
+    func testInnoDBAutocommitKeepsSourceTransactionsSeparate() throws {
         try withBatchFixture { store,groups in
             try store.beginBatch(groups)
             var operations: [String] = []
@@ -78,7 +78,7 @@ extension ApplyTests {
                 begin:{ operations.append("begin") },commit:{ operations.append("commit") },rollback:{ XCTFail("unexpected rollback") },
                 write:{ _ in operations.append("write") },insert:{ _ in XCTFail("cross-transaction INSERT") },resetTrace:{},trace:{ .init() })
             XCTAssertNil(result.failure)
-            XCTAssertEqual(operations,Array(repeating:["begin","write","commit"],count:4).flatMap{$0})
+            XCTAssertEqual(operations,Array(repeating:"write",count:4))
             try result.record(in:store)
             XCTAssertEqual(store.transactions,4)
         }
@@ -97,19 +97,54 @@ extension ApplyTests {
         }
     }
     func testInnoDBCommitLossDoesNotAcknowledgeOrRollbackUncertainTransaction() throws {
-        try withBatchFixture { store,groups in
+        try withBatchFixture { store,input in
+            let groups=input.map { PreparedDMLGroup(group:$0.group,mutations:$0.mutations+$0.mutations,relayEnd:$0.relayEnd) }
             try store.beginBatch(groups)
             var commits = 0, writes = 0
-            let result = InnoDBExecution.run(groups,cancellation:.init(),maximumInsertRows:32,maximumInsertBytes:1024*1024,
+            let result = InnoDBExecution.run(groups,cancellation:.init(),maximumInsertRows:1,maximumInsertBytes:1024*1024,
                 begin:{},commit:{ commits += 1; if commits == 2 { throw TargetConnectionFailure(description:"lost COMMIT response") } },
                 rollback:{ XCTFail("ROLLBACK cannot disprove a prior COMMIT") },
                 write:{ _ in writes += 1 },insert:{ _ in },resetTrace:{},trace:{ .init(phase:.possiblyExecuted,sql:"COMMIT") })
+            XCTAssertEqual(result.acknowledged,[2,0,0,0])
+            XCTAssertEqual(result.diagnostic?.transactionOutcome,"commitUncertain")
+            XCTAssertEqual(writes,4)
+            XCTAssertThrowsError(try result.record(in:store))
+            XCTAssertEqual(store.transactions,1)
+            XCTAssertEqual(store.pendingGTID,groups[1].id)
+        }
+    }
+
+    func testInnoDBAutocommitLostResponseRetainsUncertainIntent() throws {
+        try withBatchFixture { store,groups in
+            try store.beginBatch(groups)
+            var writes=0
+            let result=InnoDBExecution.run(groups,cancellation:.init(),maximumInsertRows:32,maximumInsertBytes:1024*1024,
+                begin:{ XCTFail("unexpected BEGIN") },commit:{ XCTFail("unexpected COMMIT") },
+                rollback:{ XCTFail("ROLLBACK cannot disprove an autocommit write") },
+                write:{ _ in writes+=1; if writes == 2 { throw TargetConnectionFailure(description:"lost write response") } },
+                insert:{ _ in XCTFail("cross-transaction INSERT") },resetTrace:{},trace:{ .init(phase:.possiblyExecuted,sql:"INSERT") })
             XCTAssertEqual(result.acknowledged,[1,0,0,0])
             XCTAssertEqual(result.diagnostic?.transactionOutcome,"commitUncertain")
             XCTAssertEqual(writes,2)
             XCTAssertThrowsError(try result.record(in:store))
             XCTAssertEqual(store.transactions,1)
             XCTAssertEqual(store.pendingGTID,groups[1].id)
+        }
+    }
+
+    func testInnoDBMultipleStatementsRetainExplicitTransactionBoundaries() throws {
+        try withBatchFixture { store,input in
+            let groups=input.map { PreparedDMLGroup(group:$0.group,mutations:$0.mutations+$0.mutations,relayEnd:$0.relayEnd) }
+            try store.beginBatch(groups)
+            var operations: [String]=[]
+            let result=InnoDBExecution.run(groups,cancellation:.init(),maximumInsertRows:1,maximumInsertBytes:1024*1024,
+                begin:{ operations.append("begin") },commit:{ operations.append("commit") },rollback:{ XCTFail("unexpected rollback") },
+                write:{ _ in operations.append("write") },insert:{ _ in XCTFail("unexpected chunk") },resetTrace:{},trace:{ .init() })
+            XCTAssertNil(result.failure)
+            XCTAssertEqual(operations,Array(repeating:["begin","write","write","commit"],count:4).flatMap{$0})
+            XCTAssertEqual(result.acknowledged,[2,2,2,2])
+            try result.record(in:store)
+            XCTAssertEqual(store.transactions,4); XCTAssertEqual(store.rows,8)
         }
     }
 

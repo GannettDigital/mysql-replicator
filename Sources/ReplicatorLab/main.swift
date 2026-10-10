@@ -15,6 +15,9 @@ func main() throws -> Int32 {
           demo up|start|stop|status|compare|sql|fail|skip|inspect|resolve|down|legacy-down --profile PROFILE
                up [--skip-build] [--coverage]; sql FILE; skip GTID; compare [--expect-blocked]
           benchmark --profile PROFILE [--mode backlog|streaming|capture] [--workload insert|multi-table-transaction] [--events N] [--skip-build]
+        Backlog options (--mode backlog):
+                    [--batch-transactions N] [--prepared-batches N]
+                    [--decoder-profile on|off] [--applier-profile on|off] [--server-profile on|off]
         Forward streaming options (--mode streaming):
                     [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
                     [--target-transport tcp-tls|unix-tls|unix]

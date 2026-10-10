@@ -10,8 +10,8 @@ import ReplicatorCodec
 final class CaptureTests: XCTestCase {
     let sid = "8ba09bde-bc41-11f1-8272-ba06e9024a03"
     var root: URL { URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
-    func config(_ mode: String = "file-position", decoderProfiling: Bool? = nil) throws -> CaptureConfiguration {
-        var object: [String: Any] = ["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"TEST_PASSWORD",
+    func config(_ mode: String = "file-position", decoderProfiling: Bool? = nil, version: Int = 1) throws -> CaptureConfiguration {
+        var object: [String: Any] = ["version":version,"host":"source","port":3306,"username":"capture","passwordEnvironment":"TEST_PASSWORD",
             "serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":mode,
             "start":["file":"binlog.000003","position":1589,"executedGTIDs":sid + ":1-10"],
             "tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]]
@@ -72,10 +72,10 @@ final class CaptureTests: XCTestCase {
             for (_,frame) in frames { try p.consume(frame) }
             try p.finish()
             XCTAssertEqual(p.transactionCount,4)
-            XCTAssertEqual(timings.snapshot["capture.decode"]?.count,1+UInt64(frames.count)+4*maps)
+            XCTAssertEqual(timings.snapshot["capture.decode"]?.count,1+UInt64(frames.count)+maps)
             if enabled {
-                XCTAssertEqual(timings.snapshot["decode.call.probe_format"]?.count,2*maps)
-                XCTAssertEqual(timings.snapshot["decode.call.probe_identity"]?.count,maps)
+                XCTAssertNil(timings.snapshot["decode.call.probe_format"])
+                XCTAssertNil(timings.snapshot["decode.call.probe_identity"])
                 XCTAssertEqual(timings.snapshot["decode.call.probe_metadata"]?.count,maps)
                 XCTAssertEqual(timings.snapshot["decode.call.event"]?.count,UInt64(frames.count))
             } else {

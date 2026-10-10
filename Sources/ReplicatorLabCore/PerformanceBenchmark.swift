@@ -12,7 +12,7 @@ public struct PerformanceOptions: Codable {
     public var tableRun = 1
     var tableNames: [String] { (0..<tables).map { $0 == 0 ? "bench" : "bench_\($0)" } }
     public var targetTransport = "tcp-tls"
-    public var batchTransactions = 32
+    public var batchTransactions = 8
     public var insertRows = 32
     public var overlapPreparation = true
     public var flushOnTableChange = false

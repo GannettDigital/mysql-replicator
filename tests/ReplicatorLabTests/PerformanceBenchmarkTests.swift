@@ -97,7 +97,7 @@ final class PerformanceBenchmarkTests: XCTestCase {
         XCTAssertEqual(options.workload, "mixed")
         XCTAssertFalse(options.build)
         XCTAssertEqual(options.targetTransport,"tcp-tls")
-        XCTAssertEqual(options.batchTransactions,32)
+        XCTAssertEqual(options.batchTransactions,8)
         XCTAssertTrue(options.applierProfiling)
         XCTAssertFalse(try PerformanceOptions(arguments:["--applier-profile","off"]).applierProfiling)
         XCTAssertTrue(try PerformanceOptions(arguments:["--applier-profile","on"]).applierProfiling)

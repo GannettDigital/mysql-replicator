@@ -18,7 +18,7 @@ final class ConfigurationFileTests: XCTestCase {
         XCTAssertEqual(config.version,2); XCTAssertEqual(config.source.start.executedGTIDs,"")
         XCTAssertEqual(config.replicateWildIgnoreTable,["scratch.tmp\\_%","other.%"])
         XCTAssertEqual(config.ddlPolicy?.triggers,"skip")
-        XCTAssertEqual(config.batchPolicy.maximumTransactions,32)
+        XCTAssertEqual(config.batchPolicy.maximumTransactions,8)
         XCTAssertFalse(config.target.explicitTableLocks); XCTAssertTrue(config.target.requireTLS)
         XCTAssertEqual(config.source.downloadCacheBytes,nil)
     }

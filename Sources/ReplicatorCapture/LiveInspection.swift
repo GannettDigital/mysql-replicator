@@ -128,7 +128,7 @@ public enum LiveInspection {
     /// A single connection attempt. Reconnect is explicit using the last fully
     /// observed group or caller-supplied GTID set; no durable checkpoint exists.
     public static func run(configuration config: CaptureConfiguration, password: String,
-                           includeRaw: Bool = false, cancellation: CaptureCancellation = .init(),
+                           includeRaw: Bool = false, retainRawBytes: Bool = false, cancellation: CaptureCancellation = .init(),
                            emitEvent: @escaping (LiveRecord) throws -> Void,
                            emitTransaction: @escaping (CompleteTransaction) throws -> Void,
                            resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
@@ -136,7 +136,7 @@ public enum LiveInspection {
                            allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil,
                            sourceContract: SourceContract = .mysql84) throws -> LiveSummary {
         let start = try config.validate()
-        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
+        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, retainRawBytes: retainRawBytes, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
         var download: DownloadSnapshot?
         func summary() -> LiveSummary {
             var result = LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,
@@ -149,20 +149,20 @@ public enum LiveInspection {
         do {
             if processor.stopReason != nil { return summary() }
             let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-            defer { try? group.syncShutdownGracefully() }
+            defer { try? timings.measure("capture.shutdown.event_loop") { try group.syncShutdownGracefully() } }
             let loop = group.next()
-            let address = try sourceNetworkOperation { try SocketAddress.makeAddressResolvingHost(config.host, port: config.port) }
+            let address = try timings.measure("capture.resolve") { try sourceNetworkOperation { try SocketAddress.makeAddressResolvingHost(config.host, port: config.port) } }
             var tls = TLSConfiguration.makeClientConfiguration()
             tls.certificateVerification = .fullVerification
             if let ca = config.caFile { tls.trustRoots = .file(ca) }
-            let connection = try sourceNetworkOperation { try MySQLConnection.connect(to: address, username: config.username, database: "",
+            let connection = try timings.measure("capture.connect") { try sourceNetworkOperation { try MySQLConnection.connect(to: address, username: config.username, database: "",
                 password: password, tlsConfiguration: tls, serverHostname: config.serverHostname,
-                requireTLS: true, handshakeTimeout: .seconds(10), on: loop).wait() }
-            defer { try? connection.close().wait() }
+                requireTLS: true, handshakeTimeout: .seconds(10), on: loop).wait() } }
+            defer { try? timings.measure("capture.shutdown.connection") { try connection.close().wait() } }
             func query(_ sql: String) throws -> [MySQLRow] {
                 let timeout = loop.scheduleTask(in: .seconds(10)) { _ = connection.close() }
                 defer { timeout.cancel() }
-                return try sourceNetworkOperation { try connection.simpleQuery(sql).wait() }
+                return try timings.measure("capture.preflight") { try sourceNetworkOperation { try connection.simpleQuery(sql).wait() } }
             }
             let settings = try query("SELECT @@server_uuid AS source_uuid,@@server_id AS server_id,@@GLOBAL.gtid_mode AS gtid_mode,@@GLOBAL.enforce_gtid_consistency AS gtid_consistency,@@GLOBAL.binlog_format AS binlog_format,@@GLOBAL.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum,VERSION() AS version")
             guard let row = settings.first, row.column("source_uuid")?.string?.lowercased() == config.sourceUUID.lowercased(),
@@ -222,8 +222,8 @@ public enum LiveInspection {
                 } catch { cache.finish(.failure(error),elapsed:Double(DispatchTime.now().uptimeNanoseconds-receivedAt)/1e9) }
             }
             func joinReceiver() {
-                stop.cancel(); worker.wait()
-                try? connection.close().wait()
+                stop.cancel(); timings.measure("capture.shutdown.receiver") { worker.wait() }
+                try? timings.measure("capture.shutdown.connection") { try connection.close().wait() }
                 if let wireTimings, let snapshot = try? loop.submit({ wireTimings.snapshot }).wait() { timings.merge(snapshot) }
                 download = cache.snapshot
                 timings.merge(receiverTimings.snapshot)

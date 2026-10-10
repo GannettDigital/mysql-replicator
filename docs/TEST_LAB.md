@@ -344,6 +344,109 @@ rows/checkpoints, and record wall time, target counters and stage timings. Start
 and polling overhead are included. `--workload multi-table-transaction` is an
 explicit InnoDB-only experiment, never silently substituted for `insert`.
 
+Backlog profiling controls keep the historical defaults: `--applier-profile on`,
+`--decoder-profile off`, and `--batch-transactions 8`. For a detailed 10K run:
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --decoder-profile on"
+```
+
+Repeat with `--skip-build --applier-profile off --decoder-profile off` to measure
+without detailed profiling. `--batch-transactions 32` changes the execution batch
+limit and scales the journal preparation window; InnoDB still commits each source
+transaction separately. The 25 ms age limit can produce smaller batches. Results include `stage-timings.json`,
+optional `applier-profile.tsv` / `decoder-profile.tsv`, server durability settings,
+and native/target binlog boundaries. `apply.detail.transaction.begin` and
+`apply.detail.transaction.commit` include the SQL round trip; `capture.schema_wait`
+measures time waiting for historical schema interpretation in the apply loop.
+
+For server-side SQL profiling, add `--server-profile on` (backlog mode only;
+default off). This enables timed Performance Schema statements, SQL stages,
+transactions and waits on the disposable native and target servers. It writes
+`server-profile-{native,target}.json`, sorted `.tsv` reports, and instrument
+settings. Target foreground counters use the `apply_fixture` user, retaining
+results after disconnect; native foreground counters use its new SQL/worker
+threads. File I/O is server-wide and includes background redo work. Background
+waits include idle time. These are nested elapsed timers, not additive CPU costs;
+file `misc` includes sync and other operations, not just fsync. Autocommit commit
+work appears inside INSERT execution and server commit stages, not a separate
+client COMMIT. No durability settings change.
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --applier-profile off --server-profile off"
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--skip-build --events 10000 --applier-profile off --server-profile on"
+```
+
+Compare profiling off/on to assess overhead. Statement and stage names differ
+between native row replication and SQL clients, and the reverse reference is
+MySQL 5.7 while the external target is 8.4. The gap between client `target.sql`
+and server statement time includes scheduling, protocol and transport overhead;
+it is not a direct measurement of network latency. `target.connect`,
+`capture.resolve`, `capture.connect` and `capture.preflight` separately time
+connection and source setup before useful replay work. `capture.shutdown.receiver`,
+`capture.shutdown.connection` and `capture.shutdown.event_loop` measure teardown
+in the final apply timings. Snapshot queries run outside
+the timed replay windows and use the separate root observer account.
+
+The application and benchmark default to eight source transactions per execution
+batch. `batch.maximumPreparedBatches` accepts 1..16 and defaults to eight. It bounds
+all submitted batches, including completed batches awaiting a checkpoint. One
+slot retains overlap of row planning but serializes durable preparation with
+completion. `batch.overlapPreparation: false` also disables coordinator planning
+overlap at batch handoff and uses one slot.
+
+With four or more slots, the coordinator collects a preparation window of up to
+half the queue capacity, shares one relay sync and one FULL SQLite commit across
+that window, then submits its execution batches in order. For example, eight
+slots and eight transactions per execution batch can prepare four batches (32
+source transactions) together. The existing row, byte, age and table-change
+limits apply to the whole preparation window; a single oversized source group
+still runs alone. DDL, schema, stop and reconnect barriers retain their ordering.
+Published completions can also share one SQLite checkpoint commit. Larger queues
+increase the bounded set of durable intents that can remain pending after a crash.
+
+For a backlog comparison with the same binary, use `--prepared-batches 2` and
+`--prepared-batches 8`, keeping `--batch-transactions 8` and profiling settings
+unchanged. This controls durable preparation and queue depth, not the number of
+target connections or InnoDB source transactions committed together. MyISAM
+INSERT coalescing remains bounded by each execution batch. Timer and size limits
+can produce smaller batches.
+
+The final summary's `applyQueue` reports the current target session's queue
+capacity, maximum outstanding batches, executed/unissued batch counts, and
+worker `busySeconds`, `idleSeconds`, and `spanSeconds`. Span covers the first
+batch start through the last completed batch, excluding startup before the first
+batch and shutdown afterward. Idle includes any gap between batches, including
+source starvation and DDL barriers; it is most useful on a DML-only backlog.
+Busy includes target execution and its checks. These are elapsed durations,
+not CPU measurements. While execution is active, busy time includes only
+completed batches and idle time includes gaps preceding batches already started.
+
+The decoder caches those interpretations by database, table and wire column
+metadata. `capture.schema_cache.hit` / `.miss` report reuse; a repeated numeric
+table ID alone is insufficient. DDL, new format contexts and skipped ranges
+invalidate the cache; reconnect creates a new cache. Retention is bounded to
+1,024 table entries, with eviction causing a fresh ordered lookup. Checksums,
+table-map decoding and consumer-side schema validation still run for each map.
+The live/offline stream reuses the codec's validated format context for TABLE_MAP
+probes. With no table filter, each included map uses one metadata probe and one
+normal decode that installs the resolved schema. With a filter, an identity probe
+runs first so excluded tables can retain opaque unsupported columns. Probes do
+not advance the decoder or change its live table cache; framing/CRC and schema
+checks remain enforced. The old per-map `decode.call.probe_format` calls disappear;
+`decode.call.probe_identity` is needed only when a table-filter callback is present.
+GTID UUID text is cached for the last source SID, with byte comparison on each GTID.
+
+Apply/replay carry raw event bytes directly to the relay writer. External inspection
+output still uses Base64 when requested; the internal byte buffer is not a JSON
+field. Decoded-queue byte accounting includes that buffer. Existing relay files
+and recovery/inspection formats are unchanged.
+
+Timers from different workers overlap. Inclusive and self times are elapsed time,
+not CPU time, and must not be summed as end-to-end duration.
+See the [reverse InnoDB investigation](../PLAN/REVERSE_INNODB_PERFORMANCE.md)
+for the 10K measurements, native binlog behavior, and proposed optimization order.
+
 The historical forward sysbench streaming and blackhole capture experiments are
 available with `--mode streaming` and `--mode capture`, respectively. These are
 separate measurements and are currently unavailable for the 5.7-source profiles.
