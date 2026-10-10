@@ -137,7 +137,7 @@ final class TargetSession {
         try DMLTablePlan(table,compatibility:compatibility).validate(wire:wire,legacyMetadata:legacyMetadata)
     }
 
-    func readSchema(database: String,name: String) throws -> ApplyTable {
+    func readSchema(database: String,name: String,validateRelationships: Bool = true) throws -> ApplyTable {
         try profile("target.read_schema") {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
             let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
@@ -156,7 +156,14 @@ final class TargetSession {
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
             table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKeyColumns)
             table.partitions=try readPartitions(database:database,name:name)
-            try table.validate(); try verifySchema(table)
+            if contract.transactional && validateRelationships { table.foreignKeys = try readForeignKeys(TableName(database:database,table:name)) }
+            try table.validate()
+            if validateRelationships { try verifySchema(table) }
+            else {
+                // Related-table validation must not replace a complete prepared
+                // plan with this deliberately graph-free metadata snapshot.
+                try verifyTargetSchema(table,validateRelationships:false)
+            }
             return table
         }
     }
@@ -190,15 +197,15 @@ final class TargetSession {
     }
     func verifySchema(_ t: ApplyTable) throws {
         validatedPlans.removeValue(forKey:t.identity)
-        try timings.measure("target.schema") { try verifyTargetSchema(t) }
+        try timings.measure("target.schema") { try verifyTargetSchema(t,validateRelationships:true) }
         try require(validatedPlans.count < maximumCachedTables,"validated schema limit reached")
         validatedPlans[t.identity] = try DMLSQLPlan(t)
     }
-    private func verifyTargetSchema(_ t: ApplyTable) throws {
+    private func verifyTargetSchema(_ t: ApplyTable,validateRelationships: Bool) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         let metadata = try query("SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds).0.first
         try require(metadata?.column("ENGINE")?.string == contract.engine,"target table is absent or not \(contract.engine)")
-        try contract.validateTable(t,target:self)
+        if validateRelationships { try contract.validateTable(t,target:self) }
         // A collation uniquely determines its charset; discovery/DDL resolution
         // already validates that mapping when constructing the ApplyTable.
         try require(metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,"target table defaults differ from historical schema")

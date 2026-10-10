@@ -18,6 +18,7 @@ struct LabScenario {
         if profile.sourceVersion != .mysql84, let reason=source84OnlyReason { return reason }
         if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
         if variant == .positionMinimal && id == "ddl-compat-types" { return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full." }
+        if family == "foreign-keys" && !profile.transactionalTarget { return "Foreign keys require an InnoDB target; MyISAM DDL refusal remains qualified separately." }
         if requiresMyISAMTarget && profile.transactionalTarget { return "MyISAM partial persistence and fail-stop contract; InnoDB rollback/retry uses transactional recovery." }
         return requiresTransactionalTarget && !profile.transactionalTarget ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal is qualified by myisam-recovery." : nil
     }
@@ -47,6 +48,8 @@ struct LabScenario {
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",smoke:$0.id == "composite") }
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
+        cases.append(.init(test:.init("foreign-key-safety","Foreign-key exclusions, rollback and recovery evidence"),family:"foreign-keys",requiresTransactionalTarget:true,intent:"reject unsafe relationships; retain rollback and cascade evidence"))
+        cases.append(.init(test:.init("foreign-keys","InnoDB foreign-key DDL, cascades, composite keys and restart"),family:"foreign-keys",requiresTransactionalTarget:true))
         cases.append(.init(test:.init("offline-replay","Fetch, external raw replay, resume, and sensitive support evidence"),family:"offline"))
         cases.append(.init(test:.init("offline-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"offline",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
         cases.append(.init(test:.init("live-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"policy",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))

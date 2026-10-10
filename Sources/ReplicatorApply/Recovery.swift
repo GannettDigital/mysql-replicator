@@ -36,6 +36,7 @@ public enum Recovery {
         let relayEnd: UInt64
         var rows: [Row] = []
         var expectations: [Expectation] = []
+        var foreignKeyRelationships: [ApplyForeignKey] = []
     }
     public struct Audit: Encodable {
         let id: String
@@ -59,7 +60,7 @@ public enum Recovery {
         let targetFailure: TargetFailureDiagnostic?
         var pending: [Group]
         let audit: [Audit]
-        let interpretation = "Offline evidence only. Expectations fold exact encoded keys within each transaction; Missing initial/final images mean absent rows. Collation-equivalent keys and later pending transactions can make matches ambiguous. Reconcile the entire pending batch before retry; no target state or commit outcome is inferred."
+        let interpretation = "Offline evidence only. Expectations fold exact encoded keys within each transaction; Missing initial/final images mean absent rows. Collation-equivalent keys and later pending transactions can make matches ambiguous. Reconcile the entire pending batch before retry; no target state or commit outcome is inferred. foreignKeyRelationships identifies the connected tables that may require reconciliation; implicit cascade row images are not present in this evidence."
     }
     public struct Resolution: Encodable {
         public let kind = "recovery_resolution"

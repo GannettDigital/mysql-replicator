@@ -80,25 +80,29 @@ public struct ApplyTable: Codable, Equatable {
     public var defaultCollation: String? = nil
     public var secondaryIndexes: [ApplyIndex] = []
     public var partitions: [ApplyPartition] = []
+    /// Complete connected relationship component, including inbound cascades.
+    public var foreignKeys: [ApplyForeignKey] = []
     var identity: String { database + "\0" + table }
     var keyIndexes: [Int] { primaryKeyColumns.map { name in columns.firstIndex { $0.name == name }! } }
     var keyIndex: Int { keyIndexes[0] }
     init(database: String, table: String, columns: [ApplyColumn], primaryKey: String,
-         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = []) {
+         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
         self.init(database:database,table:table,columns:columns,primaryKeyColumns:[primaryKey],
-                  defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions)
+                  defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions,foreignKeys:foreignKeys)
     }
     init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String],
-         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = []) {
+         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
         self.database=database; self.table=table; self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
         self.defaultCharacterSet=defaultCharacterSet; self.defaultCollation=defaultCollation; self.secondaryIndexes=secondaryIndexes
-        self.partitions=partitions
+        self.partitions=partitions; self.foreignKeys=foreignKeys
     }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
     func validate() throws {
         _ = try sqlName
         try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map(\.name)).count == columns.count,"invalid column manifest")
         for c in columns { try c.validate() }
+        try require(foreignKeys.count <= 256,"foreign-key relationship limit exceeded")
+        for key in foreignKeys { try key.validate() }
         try require(partitions.count <= 8192 && Set(partitions.map(\.name)).count == partitions.count,"invalid partition manifest")
         for partition in partitions { try partition.validate() }
         try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map{$0.name.lowercased()}).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
@@ -121,7 +125,7 @@ public struct ApplyTable: Codable, Equatable {
     }
 }
 extension ApplyTable {
-    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions }
+    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions,foreignKeys }
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
@@ -134,6 +138,7 @@ extension ApplyTable {
         defaultCollation=try c.decodeIfPresent(String.self,forKey:.defaultCollation)
         secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
         partitions=try c.decodeIfPresent([ApplyPartition].self,forKey:.partitions) ?? []
+        foreignKeys=try c.decodeIfPresent([ApplyForeignKey].self,forKey:.foreignKeys) ?? []
     }
     public func encode(to encoder: Encoder) throws {
         var c=encoder.container(keyedBy:CodingKeys.self)
@@ -144,11 +149,12 @@ extension ApplyTable {
         try c.encodeIfPresent(defaultCollation,forKey:.defaultCollation)
         try c.encode(secondaryIndexes,forKey:.secondaryIndexes)
         try c.encode(partitions,forKey:.partitions)
+        if !foreignKeys.isEmpty { try c.encode(foreignKeys,forKey:.foreignKeys) }
     }
     func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil, partitions: [ApplyPartition]? = nil) -> ApplyTable {
         ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKey ?? primaryKeyColumns,
             defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
-            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()},partitions:partitions ?? self.partitions)
+            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()},partitions:partitions ?? self.partitions,foreignKeys:foreignKeys)
     }
 }
 public struct TargetConfiguration: Decodable {

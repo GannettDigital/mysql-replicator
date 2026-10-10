@@ -91,6 +91,7 @@ public struct ApplyPartition: Codable, Equatable {
 struct SchemaTransition: Codable {
     let before: ApplyTable?
     let after: ApplyTable?
+    var afterAlternatives: [ApplyTable]? = nil
 }
 
 enum PartitionChange: Equatable {
@@ -105,6 +106,8 @@ enum PartitionChange: Equatable {
 }
 
 enum AlterAction: Equatable {
+    case addForeignKey(ApplyForeignKey,String?)
+    case dropForeignKey(String)
     case add(ApplyColumn,ColumnPlacement)
     case modify(String,ApplyColumn,ColumnPlacement?)
     case drop(String)

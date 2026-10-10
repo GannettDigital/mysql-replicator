@@ -67,9 +67,7 @@ struct MySQL84InnoDBContract: TargetContract {
         _ = try target.query("SET SESSION foreign_key_checks=1,unique_checks=1")
     }
     func validateTable(_ table: ApplyTable, target: TargetSession) throws {
-        let binds: [MySQLData] = [.init(string:table.database),.init(string:table.table)]
-        // Qualify FK/cascade semantics separately before permitting them.
-        try require(try target.scalar("SELECT COUNT(*) AS v FROM information_schema.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_NAME IS NOT NULL AND ((TABLE_SCHEMA=? AND TABLE_NAME=?) OR (REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME=?))",binds+binds) == "0","InnoDB reverse profile does not yet support foreign keys or cascades")
+        try target.validateForeignKeys(table)
     }
 }
 

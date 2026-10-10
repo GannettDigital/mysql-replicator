@@ -136,9 +136,9 @@ struct DDLParser {
     mutating func constraintName() throws -> String? {
         guard take("CONSTRAINT") else { return nil }
         let name = ["PRIMARY","UNIQUE","FOREIGN","CHECK"].contains(where:isNext) ? nil : try identifier()
-        try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
+        try require(engine == "InnoDB" || !isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
         try require(!isNext("CHECK"),"CHECK constraints are unsupported by the DDL contract")
-        try require(isNext("PRIMARY") || isNext("UNIQUE"),"unsupported DDL constraint: expected PRIMARY KEY or UNIQUE")
+        try require(isNext("PRIMARY") || isNext("UNIQUE") || isNext("FOREIGN"),"unsupported DDL constraint: expected PRIMARY KEY or UNIQUE")
         return name
     }
     mutating func indexDefinition(constraintName: String? = nil) throws -> ApplyIndex {
@@ -195,7 +195,7 @@ struct DDLParser {
                 repeat {
                     if take("ALGORITHM") { _ = take("="); try require(["DEFAULT","COPY","INPLACE"].contains(try identifier().uppercased()),"unsupported ALTER algorithm") }
                     else if take("LOCK") { _ = take("="); try require(["DEFAULT","NONE","SHARED","EXCLUSIVE"].contains(try identifier().uppercased()),"unsupported ALTER lock") }
-                    else { actions.append(try alterAction()) }
+                    else { actions.append(try alterAction(table:table)) }
                 } while take(",")
                 try require(!actions.isEmpty,"ALTER requires an operation")
                 result = Self.statement(table,actions)
@@ -240,10 +240,11 @@ struct DDLParser {
     }
     mutating func createTable(_ name: TableName,conditional: Bool) throws -> DDLStatement {
         try expect("("); var columns: [ApplyColumn] = [], key: [String]?, indexes: [ApplyIndex] = []
+        var foreignKeys: [(ApplyForeignKey,String?)] = []
         repeat {
             let constraint = try constraintName()
-            try require(!isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
-            if take("PRIMARY") {
+            if isNext("FOREIGN") { foreignKeys.append(try foreignKey(table:name,constraint:constraint)) }
+            else if take("PRIMARY") {
                 try expect("KEY"); let parts = try keyParts(); try require(key == nil && parts.allSatisfy{$0.prefix == nil},"invalid DDL primary key"); key = parts.map(\.column)
             } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition(constraintName:constraint)) }
             else {
@@ -277,12 +278,14 @@ struct DDLParser {
         guard let key else { throw ApplyError("DDL CREATE requires a primary key") }
         for i in columns.indices where key.contains(columns[i].name) { columns[i].nullable = false }
         var schema = ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:key,defaultCharacterSet:charset,defaultCollation:collation,secondaryIndexes:indexes.sorted{$0.name.lowercased() < $1.name.lowercased()})
+        for (key,index) in foreignKeys { schema = try schema.addingForeignKey(key,indexName:index) }
         if take("PARTITION") { schema.partitions = try partitionDefinition() }
         return conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
     }
-    mutating func alterAction() throws -> AlterAction {
+    mutating func alterAction(table: TableName) throws -> AlterAction {
         if take("ADD") {
             let constraint = try constraintName()
+            if isNext("FOREIGN") { let (key,index) = try foreignKey(table:table,constraint:constraint); return .addForeignKey(key,index) }
             if take("PRIMARY") { try expect("KEY"); let parts = try keyParts(); try require(parts.allSatisfy{$0.prefix == nil},"primary prefix unsupported"); return .primaryKey(parts.map(\.column)) }
             if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
             if take("PARTITION") { return .partition(.add(try partitionItems(method:"",expression:""))) }
@@ -297,6 +300,7 @@ struct DDLParser {
             return .modify(old ?? c.name,c,try placement())
         }
         if take("DROP") {
+            if take("FOREIGN") { try require(engine == "InnoDB","foreign keys are unsupported by the DDL contract"); try expect("KEY"); return .dropForeignKey(try identifier()) }
             if take("PRIMARY") { try expect("KEY"); return .primaryKey(nil) }
             if take("INDEX") || take("KEY") { return .indexes(.drop(try identifier())) }
             if take("PARTITION") { return .partition(.drop(try partitionNames())) }
