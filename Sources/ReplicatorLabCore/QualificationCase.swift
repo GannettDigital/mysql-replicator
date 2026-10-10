@@ -27,7 +27,7 @@ struct QualificationCase {
 final class QualificationReporter {
     private let output: URL
     private let log: (String) -> Void
-    private var active: [(test: QualificationCase, index: Int)] = []
+    private var active: [(test: QualificationCase, index: Int, started: UInt64)] = []
     private(set) var results: [[String: Any]] = []
 
     init(output: URL, log: @escaping (String) -> Void) {
@@ -40,7 +40,7 @@ final class QualificationReporter {
         var result = test.fields
         result["status"] = "running"
         if let parent = active.last { result["parent_id"] = parent.test.id }
-        active.append((test, results.count))
+        active.append((test, results.count, DispatchTime.now().uptimeNanoseconds))
         results.append(result)
         log("starting " + test.description)
         try save()
@@ -50,6 +50,7 @@ final class QualificationReporter {
         guard let current = active.last, current.test.id == id else {
             throw LabError("qualification case completion out of order: \(id)")
         }
+        results[current.index]["seconds"] = Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
         results[current.index]["status"] = "passed"
         try save()
         active.removeLast()
@@ -89,6 +90,7 @@ final class QualificationReporter {
         let detail = String(describing: error)
         let identified = active.last.map { LabError($0.test.description + ": " + detail) }
         for current in active.reversed() {
+            results[current.index]["seconds"] = Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
             results[current.index]["status"] = "failed"
             results[current.index]["error"] = detail
             log("failed " + current.test.description + ": " + detail)

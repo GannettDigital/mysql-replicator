@@ -1,0 +1,57 @@
+name: CI Cache Study
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, "beta/**"]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+  actions: read
+
+# Each invocation has its own cache namespace. A retry starts a new pair.
+jobs:
+  cold:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci-cache-study')
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [release, coverage]
+    uses: ./.github/workflows/measure-build.yml
+    with:
+      image: ${{ matrix.image }}
+      phase: cold
+  warm:
+    needs: cold
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [release, coverage]
+    uses: ./.github/workflows/measure-build.yml
+    with:
+      image: ${{ matrix.image }}
+      phase: warm
+  report:
+    needs: [cold, warm]
+    if: always() && !cancelled() && needs.cold.result != 'skipped'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-measurement-*
+          path: artifacts/ci/cache-inputs
+      - name: Read job and step times
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > artifacts/ci/cache-jobs.json
+      - name: Compare identical cold and warm builds
+        run: python3 tools/ci_cache_study.py report --records artifacts/ci/cache-inputs --jobs artifacts/ci/cache-jobs.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-cache-comparison
+          path: artifacts/ci/cache-study/
+          if-no-files-found: error

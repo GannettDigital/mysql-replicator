@@ -1,0 +1,73 @@
+name: Measure one build
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        type: string
+        required: true
+      phase:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    name: ${{ inputs.image }} / ${{ inputs.phase }} cache
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Restore this experiment's compiler cache
+        id: mounts
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache
+          key: study-v1-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.image }}
+      - uses: reproducible-containers/buildkit-cache-dance@e475a9cbcb5052f85fd3830f1266fa0c91ef8595
+        with:
+          dockerfile: ${{ inputs.image == 'release' && 'docker/packaging/Dockerfile' || 'docker/coverage/Dockerfile' }}
+          cache-dir: .ci-cache
+      - name: Start build clock
+        run: echo "BUILD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Build Linux packages
+        if: inputs.image == 'release'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/packaging/Dockerfile
+          target: release-export
+          platforms: linux/amd64
+          outputs: type=local,dest=artifacts/release
+          no-cache: ${{ inputs.phase == 'cold' }}
+          cache-from: ${{ inputs.phase == 'warm' && format('type=gha,scope=study-{0}-{1}-release', github.run_id, github.run_attempt) || '' }}
+          cache-to: type=gha,scope=study-${{ github.run_id }}-${{ github.run_attempt }}-release,mode=max
+      - name: Build coverage runtime
+        if: inputs.image == 'coverage'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/coverage/Dockerfile
+          platforms: linux/amd64
+          tags: mysql-replicator:coverage-study
+          load: true
+          no-cache: ${{ inputs.phase == 'cold' }}
+          cache-from: ${{ inputs.phase == 'warm' && format('type=gha,scope=study-{0}-{1}-coverage', github.run_id, github.run_attempt) || '' }}
+          cache-to: type=gha,scope=study-${{ github.run_id }}-${{ github.run_attempt }}-coverage,mode=max
+      - name: Record build result
+        if: always()
+        env:
+          BUILD_IMAGE: ${{ inputs.image }}
+          BUILD_PHASE: ${{ inputs.phase }}
+          CACHE_HIT: ${{ steps.mounts.outputs.cache-hit }}
+          BUILD_STATUS: ${{ job.status }}
+        run: python3 tools/ci_cache_study.py record
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-measurement-${{ inputs.image }}-${{ inputs.phase }}
+          path: artifacts/ci/cache-study/*.json
+          if-no-files-found: error

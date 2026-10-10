@@ -1,14 +1,22 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      expanded_coverage:
+        description: Add instrumented correctness and lifecycle shards for all profiles and variants
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     # Stacked feature PRs target the preceding beta branch.
     branches: [main, "beta/**"]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -101,6 +109,8 @@ jobs:
           swift-version: '6.2.1'
       - name: Build and bundle lab with its runtime libraries
         id: bundle
+        env:
+          CI_EXPANDED_COVERAGE: ${{ inputs.expanded_coverage || contains(github.event.pull_request.labels.*.name, 'ci-expanded-coverage') }}
         run: |
           python3 tools/swift_cache.py restore --scratch-path .build/ci-lab
           swift build --scratch-path .build/ci-lab --product replicator-lab --force-resolved-versions
@@ -259,6 +269,13 @@ jobs:
         env:
           SHARD: ${{ matrix.id }}
         run: python3 tools/ci_lab.py --run "$SHARD"
+      - name: Upload shard measurements
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-measurement-${{ matrix.id }}
+          path: artifacts/ci/measurements/*.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always() && matrix.image == 'coverage'
         with:
@@ -373,3 +390,34 @@ jobs:
           swift build --scratch-path .build/periphery --build-tests --enable-index-store --force-resolved-versions
           python3 tools/swift_cache.py save --scratch-path .build/periphery
           periphery scan --strict --skip-build --index-store-path .build/periphery/debug/index/store
+
+  measurements:
+    name: Timing & Profile Coverage Report
+    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-lab
+          path: artifacts/ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-measurement-*
+          path: artifacts/ci/downloaded-measurements
+      - name: Read job and step times for this attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > artifacts/ci/jobs.json
+      - name: Report timing, catalog results and profile line coverage
+        run: |
+          python3 tools/ci_measurements.py --matrix artifacts/ci/matrix.json \
+            --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-measurement-report
+          path: artifacts/ci/report/
+          if-no-files-found: error
