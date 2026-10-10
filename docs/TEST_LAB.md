@@ -400,6 +400,20 @@ table ID alone is insufficient. DDL, new format contexts and skipped ranges
 invalidate the cache; reconnect creates a new cache. Retention is bounded to
 1,024 table entries, with eviction causing a fresh ordered lookup. Checksums,
 table-map decoding and consumer-side schema validation still run for each map.
+The live/offline stream reuses the codec's validated format context for TABLE_MAP
+probes. With no table filter, each included map uses one metadata probe and one
+normal decode that installs the resolved schema. With a filter, an identity probe
+runs first so excluded tables can retain opaque unsupported columns. Probes do
+not advance the decoder or change its live table cache; framing/CRC and schema
+checks remain enforced. The old per-map `decode.call.probe_format` calls disappear;
+`decode.call.probe_identity` is needed only when a table-filter callback is present.
+GTID UUID text is cached for the last source SID, with byte comparison on each GTID.
+
+Apply/replay carry raw event bytes directly to the relay writer. External inspection
+output still uses Base64 when requested; the internal byte buffer is not a JSON
+field. Decoded-queue byte accounting includes that buffer. Existing relay files
+and recovery/inspection formats are unchanged.
+
 Timers from different workers overlap. Inclusive and self times are elapsed time,
 not CPU time, and must not be summed as end-to-end duration.
 See the [reverse InnoDB investigation](../PLAN/REVERSE_INNODB_PERFORMANCE.md)

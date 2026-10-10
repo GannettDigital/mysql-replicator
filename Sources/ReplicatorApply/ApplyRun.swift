@@ -300,12 +300,12 @@ public enum ApplyRun {
                         return try producerTimings.measure("capture.schema_wait") { try request.wait(cancellation:stop) }
                     } : nil
                     if let archive {
-                        try archive.run(configuration:capture,cancellation:stop,
+                        try archive.run(configuration:capture,cancellation:stop,retainRawBytes:true,
                             emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
                             resolveSchema:resolver,timings:producerTimings,
                             ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
                     } else {
-                    _ = try LiveInspection.run(configuration:capture,password:sourcePassword,includeRaw:true,cancellation:stop,
+                    _ = try LiveInspection.run(configuration:capture,password:sourcePassword,retainRawBytes:true,cancellation:stop,
                         emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
                         resolveSchema:resolver,
                         timings:producerTimings,onIdle:{ try send(.idle) },allowDDL:true,

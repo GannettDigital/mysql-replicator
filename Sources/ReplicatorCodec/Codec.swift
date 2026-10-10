@@ -129,11 +129,12 @@ public final class BinlogDecoder {
     private let lock = NSLock()
     private var context: OpaquePointer?
     private var failed = false
+    private var cachedSID: (bytes: Data, text: String)?
     private let timings: StageTimings?
     /// When supplied, the collector and this decoder's lifetime belong to one worker.
     public init(maximumEventBytes: UInt32 = 4 * 1024 * 1024, timings: StageTimings? = nil) throws {
         self.timings = timings
-        guard Codec.abiVersion == 6, Codec.capabilities & 1 == 1 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 6, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -153,7 +154,15 @@ public final class BinlogDecoder {
         guard view.length != 0, let data = view.data else { return Data() }
         return Data(bytes: data, count: Int(view.length))
     }
+    /// Inspect a TABLE_MAP without advancing the stream or installing its schema.
+    /// The following decode still validates and binds the supplied interpretation.
+    public func probeTable(_ frame: Data, at offset: UInt64, filterTable: Bool = false) throws -> DecodedEvent {
+        try decode(frame,at:offset,schema:nil,includeRaw:false,filterTable:filterTable,probeTable:true)
+    }
     public func decode(_ frame: Data, at offset: UInt64, schema: TableSchema? = nil, includeRaw: Bool = false, filterTable: Bool = false) throws -> DecodedEvent {
+        try decode(frame,at:offset,schema:schema,includeRaw:includeRaw,filterTable:filterTable,probeTable:false)
+    }
+    private func decode(_ frame: Data, at offset: UInt64, schema: TableSchema?, includeRaw: Bool, filterTable: Bool, probeTable: Bool) throws -> DecodedEvent {
         lock.lock(); defer { lock.unlock() }
         let type = frame.count > 4 ? frame[frame.startIndex + 4] : nil
         if failed { throw DecoderError(code: 6, offset: offset, eventType: type, reason: "decoder is poisoned; reset and replay from FDE") }
@@ -166,6 +175,12 @@ public final class BinlogDecoder {
                 var native=rc_decode_profile()
                 let status=frame.withUnsafeBytes { raw in
                     kinds.withUnsafeBufferPointer { columns in
+                        if probeTable {
+                            if timings != nil {
+                                return rc_decoder_probe_table(context,raw.bindMemory(to:UInt8.self).baseAddress,UInt64(raw.count),offset,filterTable ? 1 : 0,&result,&native)
+                            }
+                            return rc_decoder_probe_table(context,raw.bindMemory(to:UInt8.self).baseAddress,UInt64(raw.count),offset,filterTable ? 1 : 0,&result,nil)
+                        }
                         if timings != nil {
                             return rc_decoder_feed_profiled(context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset, columns.baseAddress, UInt32(columns.count), filterTable ? 1 : 0, &result, &native)
                         }
@@ -250,8 +265,14 @@ public final class BinlogDecoder {
                 case 16: control = .xid(String(info.number))
                 case 33:
                     guard detail.count == 16 else { throw DecoderError(code: 8, offset: offset, reason: "invalid GTID SID from codec") }
-                    let hex = detail.map { String(format: "%02x", $0) }
-                    let sid = [0..<4, 4..<6, 6..<8, 8..<10, 10..<16].map { hex[$0].joined() }.joined(separator: "-")
+                    let sid: String
+                    if let cachedSID, cachedSID.bytes == detail { sid=cachedSID.text }
+                    else {
+                        var encoded=Array(detail.withUnsafeBytes { HexEncoding.lowercase($0.bindMemory(to:UInt8.self)) }.utf8)
+                        for index in [20,16,12,8] { encoded.insert(45,at:index) }
+                        sid=String(decoding:encoded,as:UTF8.self)
+                        cachedSID=(detail,sid)
+                    }
                     control = .gtid(SourceGTID(sid: sid, sequence: String(info.number), flags: info.payload_flags))
                 case 34: control = .anonymousGTID(flags: info.payload_flags)
                 case 35: control = .previousGTIDs

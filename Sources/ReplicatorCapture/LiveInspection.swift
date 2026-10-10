@@ -128,7 +128,7 @@ public enum LiveInspection {
     /// A single connection attempt. Reconnect is explicit using the last fully
     /// observed group or caller-supplied GTID set; no durable checkpoint exists.
     public static func run(configuration config: CaptureConfiguration, password: String,
-                           includeRaw: Bool = false, cancellation: CaptureCancellation = .init(),
+                           includeRaw: Bool = false, retainRawBytes: Bool = false, cancellation: CaptureCancellation = .init(),
                            emitEvent: @escaping (LiveRecord) throws -> Void,
                            emitTransaction: @escaping (CompleteTransaction) throws -> Void,
                            resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
@@ -136,7 +136,7 @@ public enum LiveInspection {
                            allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil,
                            sourceContract: SourceContract = .mysql84) throws -> LiveSummary {
         let start = try config.validate()
-        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
+        let processor = try StreamProcessor(config: config, includeRaw: includeRaw, retainRawBytes: retainRawBytes, emitEvent: emitEvent, emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL, ignoreTable: ignoreTable)
         var download: DownloadSnapshot?
         func summary() -> LiveSummary {
             var result = LiveSummary(transactions: processor.transactionCount, events: processor.eventCount,

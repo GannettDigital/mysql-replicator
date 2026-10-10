@@ -655,7 +655,7 @@ Evidence under `artifacts/lab-benchmark/<profile>/`:
 `artifacts/preparation-window-performance-20261009/` collects the six passing
 results, runtime provenance, stage timings, logs and `comparison.json`. Host and
 Linux builds passed. The example config and test-lab guide describe the new
-preparation window. This follow-up remains uncommitted.
+preparation window. The window implementation was committed as `b95b160`.
 
 ### Deferred correctness qualification
 
@@ -677,3 +677,119 @@ with completed-but-uncheckpointed tickets. Configuration assertions now cover th
 default of eight and rejection of zero/17 slots; these assertions have not yet
 been run. Broad correctness qualification remains deferred per the requested
 performance-first order.
+
+## Decoder and raw-byte handoff optimization
+
+After committing the preparation-window changes as `b95b160`, implement the three
+agreed decoder/relay improvements together, then measure the combined result:
+
+1. Cache the last source SID's UUID text after a byte comparison. Cache misses
+   use the fast lowercase hex encoder plus UUID separators, replacing sixteen
+   `String(format:)` calls per GTID. The cache has one entry and is independent
+   of schema state; a changed SID is formatted again.
+2. Add `rc_decoder_probe_table` (additive ABI 6 capability bit 2). It uses a copy
+   of the live decoder's already-validated format context. Probing checks the
+   current offset and TABLE_MAP type and performs normal frame/CRC validation,
+   without advancing the live offset or installing map state. Failure poisons
+   the live decoder. With no table filter, capture performs one strict metadata
+   probe and the normal schema-binding decode: two calls instead of five. A
+   filter callback still gets an identity-only probe first, preserving support
+   for excluding tables whose column types are unsupported. Included filtered
+   candidates then receive strict metadata validation; excluded maps stay opaque.
+   The normal final decode retains fingerprint, interpretation, and table-cache
+   resource checks. This reduces repeated parsing; it does not remove that final
+   validation/binding pass.
+3. Pass raw `Data` in `LiveRecord` from live/offline capture to the relay writer,
+   instead of converting to Base64 and immediately decoding it. The byte field
+   is excluded from JSON; external inspection retains its existing Base64 output.
+   Queue accounting includes the raw buffer. Transaction event collections no
+   longer need duplicate raw Base64 strings in apply mode. Existing relay bytes,
+   metadata, inspection and recovery formats remain unchanged.
+
+No target SQL, batch size, prepared-slot default, durability policy, or checkpoint
+ordering changed in this increment. Both detailed profilers were disabled in all
+performance runs. Each run used 25,000 single-row INSERT source transactions,
+eight source transactions per execution batch and eight prepared slots. The
+committed baseline was rerun in an isolated worktree before the optimized image
+was built; all runs were sequential on the same host.
+
+### Fresh forward comparison
+
+| Measurement | Committed baseline | Optimized |
+| --- | ---: | ---: |
+| Native elapsed seconds | 19.140 | 19.366 |
+| Replicator elapsed seconds | 30.636 | 22.625 |
+| Capture decoding seconds | 17.135 | 6.998 |
+| Relay append seconds | 4.444 | 3.179 |
+| Target SQL seconds | 5.399 | 4.043 |
+| Worker idle seconds | 18.324 | 11.633 |
+| Worker span seconds | 24.794 | 16.730 |
+| Decode calls | 225,002 | 150,002 |
+| Target SQL calls | 3,170 | 3,149 |
+
+Full replay elapsed time improved about 26%, decoding 59%, relay append 28%, and
+between-batch target idle 37%. Native times stayed close (19.14/19.37 seconds).
+Age-based partial batches explain the small SQL-count difference; the execution
+batch limit was unchanged. All three optimizations were applied together, so the
+experiment does not isolate the savings from each one. Stage times overlap and
+nest; they are not additive portions of elapsed time.
+
+Remaining idle is not eliminated. The optimized forward run recorded 15.18
+seconds in coordinator `apply.consume`, including 4.30 seconds in durable
+preparation and 3.18 seconds in relay append. Decoder queue enqueue time increased
+from 1.86 seconds in the fresh baseline to 5.00 seconds here, consistent
+with more backpressure now that decoding is faster. These counters suggest the
+coordinator/journal path merits attention if further tuning is needed; they do
+not precisely attribute every idle interval.
+
+### Profile confirmation
+
+| Optimized profile | Native seconds | Replicator seconds | Decode seconds | Target SQL seconds | Worker idle seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 8.4 to 5.7 MyISAM | 19.366 | 22.625 | 6.998 | 4.043 | 11.633 |
+| 5.7 to 5.7 MyISAM, first | 48.015 | 23.883 | 6.459 | 5.600 | 11.336 |
+| 5.7 to 8.4 InnoDB | 30.504 | 70.734 | 6.362 | 62.012 | 0.088 |
+| 5.7 to 5.7 MyISAM, repeat | 19.601 | 24.611 | 6.751 | 5.935 | 11.679 |
+
+All five runs passed final source/native/target rows, schema and checkpoint
+comparisons. Every submitted batch executed; no batch remained unissued. The
+first 5.7 MyISAM native time was an outlier; the repeat returned to about 19.60
+seconds, while replicator times were 23.88/24.61 seconds. Do not claim a stable
+2× advantage over native from the first sample.
+
+Reverse InnoDB decoding also improved to 6.36 seconds, but full replay remained
+70.73 seconds versus the preceding 70.38-second window run. About 62 seconds was
+in target SQL, with only 0.09 seconds of between-batch idle. The decoder changes
+do not resolve that profile's target-execution bottleneck. This is a comparison
+to prior evidence, not a fresh before/after InnoDB baseline.
+
+### Validation and provenance
+
+Host Swift/Rust and Linux release builds passed. Focused checks passed: 77 Swift
+decoder/capture/archive tests and eight Rust tests. Added cases check repeated,
+changed and reset UUID identities; probe/golden decode equivalence; missing FDE,
+bad offset, non-TABLE_MAP and CRC rejection with poisoned-context behavior; and
+live/archive raw-byte equivalence without raw strings in transaction collections.
+Existing schema-cache, rotation, exclusion, filtering and archive tests were also
+included. A first CLI test invocation used the worktree's missing default binary
+path; setting `REPLICATOR_TEST_BINARY_DIR` to the shared build directory resolved
+that harness setup issue, and the selected suite passed. Broad applier/lifecycle
+qualification, including the earlier queue/autocommit failure paths, remains
+pending; these focused checks do not replace it.
+
+Baseline binary SHA-256:
+`2c4791b66d5f8e5412c08484ee7739fc31e31e038fb5986dc61dbf7cfd5fc737`.
+All four optimized runs used:
+`88a153efae0fdbcf87b04d189999ea41d2dc21cc06707abd24cef4b3ac75993b`.
+
+Evidence:
+
+- `20261010T070516Z-e587de09-auto-autocommit-myisam`: `mysql84-to-mysql57-myisam`, under the isolated `artifacts/decoder-baseline/` worktree's `artifacts/lab-benchmark/`.
+- `20261010T070829Z-8f355995-auto-autocommit-myisam`: `mysql84-to-mysql57-myisam`, under this worktree's `artifacts/lab-benchmark/`.
+- `20261010T071038Z-ef097af8-auto-autocommit-myisam`: `mysql57-to-mysql57-myisam`, under this worktree's `artifacts/lab-benchmark/`.
+- `20261010T071320Z-112f4f6f-auto-transaction-innodb`: `mysql57-to-mysql84-innodb`, under this worktree's `artifacts/lab-benchmark/`.
+- `20261010T071721Z-7375e1ee-auto-autocommit-myisam`: `mysql57-to-mysql57-myisam`, under this worktree's `artifacts/lab-benchmark/`.
+
+`artifacts/decoder-hot-path-performance-20261010/` collects all five results,
+runtime provenance, stage timings, build/test/benchmark logs and `comparison.json`.
+The test-lab guide and C header describe the updated probe and raw-byte contracts.

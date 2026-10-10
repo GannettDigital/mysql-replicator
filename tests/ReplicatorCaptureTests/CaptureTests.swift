@@ -72,10 +72,10 @@ final class CaptureTests: XCTestCase {
             for (_,frame) in frames { try p.consume(frame) }
             try p.finish()
             XCTAssertEqual(p.transactionCount,4)
-            XCTAssertEqual(timings.snapshot["capture.decode"]?.count,1+UInt64(frames.count)+4*maps)
+            XCTAssertEqual(timings.snapshot["capture.decode"]?.count,1+UInt64(frames.count)+maps)
             if enabled {
-                XCTAssertEqual(timings.snapshot["decode.call.probe_format"]?.count,2*maps)
-                XCTAssertEqual(timings.snapshot["decode.call.probe_identity"]?.count,maps)
+                XCTAssertNil(timings.snapshot["decode.call.probe_format"])
+                XCTAssertNil(timings.snapshot["decode.call.probe_identity"])
                 XCTAssertEqual(timings.snapshot["decode.call.probe_metadata"]?.count,maps)
                 XCTAssertEqual(timings.snapshot["decode.call.event"]?.count,UInt64(frames.count))
             } else {

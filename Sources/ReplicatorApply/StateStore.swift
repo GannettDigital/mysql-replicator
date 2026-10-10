@@ -523,7 +523,7 @@ final class StateStore {
         }
     }
     func append(_ record: LiveRecord) throws {
-        let bytes: Data = try profile("relay.base64") {
+        let bytes: Data = try record.rawBytes ?? profile("relay.base64") {
             guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
             return bytes
         }
