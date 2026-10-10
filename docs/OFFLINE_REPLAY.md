@@ -76,7 +76,7 @@ contract come from the operator's configuration; these are not claimed as live
 source observations. Files are hashed when opened and checked before replay.
 No metadata is written into the external directory.
 
-Replay currently requires `source.mode: gtid` on both profiles. Source endpoint
+Replay currently requires `source.mode: gtid` on all profiles. Source endpoint
 fields retain the normal apply YAML shape, but are not used to connect. Source
 `password` and `passwordEnvironment` may be omitted for replay; only the target
 password is resolved. Replay excludes already-covered GTIDs locally, including
@@ -307,7 +307,7 @@ make correctness ARGS="--case offline-replay"
 make correctness ARGS="--case runtime-control"
 ```
 
-This shared scenario exercises both profiles, DDL/DML across rotation, fetch,
+This shared scenario exercises all profiles, DDL/DML across rotation, fetch,
 partial replay and resume, external raw input with unreachable source settings
 and no source password, comparison with source/native rows and schemas, and
 support-bundle extraction. The 5.7 fixture uses its native `mysqlbinlog --raw`;
@@ -320,4 +320,4 @@ extraction, credential exclusion, and evidence size limits.
 resume, offline reload during blocked target execution, live idle reload,
 rejection of checkpoint changes/past limits, and acknowledged stop during an
 active target batch. It compares final rows and schemas against source/native on
-both profiles. Unit tests also cover control socket cleanup and GTID-set holes.
+all profiles. Unit tests also cover control socket cleanup and GTID-set holes.

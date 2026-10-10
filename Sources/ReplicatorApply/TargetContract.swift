@@ -6,6 +6,7 @@ import ReplicatorCodec
 protocol TargetContract {
     var versionPrefix: String { get }
     var engine: String { get }
+    var transactional: Bool { get }
     var statusSQL: String { get }
     var gtidMode: String { get }
     var gtidConsistency: String { get }
@@ -19,6 +20,7 @@ protocol TargetContract {
 }
 
 struct MySQL57MyISAMContract: TargetContract {
+    let transactional = false
     let versionPrefix = "5.7.", engine = "MyISAM", statusSQL = "SHOW SLAVE STATUS"
     let gtidMode = "OFF_PERMISSIVE", gtidConsistency = "WARN"
     func configureDDL(_ target: TargetSession, context: QuerySessionContext) throws {}
@@ -35,6 +37,7 @@ struct MySQL57MyISAMContract: TargetContract {
 }
 
 struct MySQL84InnoDBContract: TargetContract {
+    let transactional = true
     let versionPrefix = "8.4.", engine = "InnoDB", statusSQL = "SHOW REPLICA STATUS"
     let gtidMode = "ON", gtidConsistency = "ON"
     func ddlSQLMode(_ mode: UInt64) -> UInt64 {
@@ -73,7 +76,7 @@ struct MySQL84InnoDBContract: TargetContract {
 extension ReplicationProfile {
     var targetContract: TargetContract {
         switch self {
-        case .mysql84To57MyISAM: return MySQL57MyISAMContract()
+        case .mysql84To57MyISAM, .mysql57To57MyISAM: return MySQL57MyISAMContract()
         case .mysql57To84InnoDB: return MySQL84InnoDBContract()
         }
     }

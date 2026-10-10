@@ -20,7 +20,7 @@ final class RecoveryStore {
     private let writable: Bool
     init(configuration: ApplyConfiguration, writable: Bool) throws {
         try configuration.validate(offline:true)
-        try require(configuration.replicationProfile == .mysql57To84InnoDB,"recovery currently supports only the reverse InnoDB profile")
+        try require(configuration.replicationProfile.transactional,"audited recovery requires an InnoDB target")
         self.configuration = configuration; self.writable = writable
         directory = URL(fileURLWithPath:configuration.stateDirectory)
         let fd = open(directory.appendingPathComponent("writer.lock").path,O_RDWR)

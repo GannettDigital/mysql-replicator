@@ -5,6 +5,35 @@ import Foundation
 @testable import ReplicatorCodec
 
 extension ApplyTests {
+    func testMySQL57MyISAMCombinesLegacyCaptureWithNontransactionalTarget() throws {
+        let profile=ReplicationProfile.mysql57To57MyISAM
+        XCTAssertTrue(profile.sourceContract.requiresHistoricalSchema)
+        XCTAssertEqual(profile.targetContract.engine,"MyISAM")
+        XCTAssertFalse(profile.transactional)
+        let c=try config(profile:profile.rawValue)
+        XCTAssertNoThrow(try c.validate())
+        let positional=try config(profile:profile.rawValue,mode:"file-position")
+        XCTAssertThrowsError(try positional.validate()) {
+            XCTAssertTrue(String(describing:$0).contains("MySQL 5.7 source profiles require GTID"))
+        }
+        let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:parent) }
+        let path=parent.appendingPathComponent("state").path
+        let selected=try config(path,profile:profile.rawValue)
+        do {
+            let store=try StateStore(configuration:selected)
+            try store.bindTargetIdentity("11111111-1111-1111-1111-111111111111")
+            try store.running(); try store.stopped()
+        }
+        XCTAssertNoThrow(try StateStore(configuration:selected,initialize:false))
+        for other in [ReplicationProfile.mysql84To57MyISAM,.mysql57To84InnoDB] {
+            XCTAssertThrowsError(try StateStore(configuration:config(path,profile:other.rawValue),initialize:false)) {
+                XCTAssertTrue(String(describing:$0).contains("profile differs"))
+            }
+        }
+    }
+
     func testReplicationProfileDefaultsAndStateBinding() throws {
         XCTAssertEqual(try config().replicationProfile,.mysql84To57MyISAM)
         XCTAssertThrowsError(try config(profile:"unqualified-profile"))

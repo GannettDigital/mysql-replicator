@@ -28,7 +28,7 @@ extension SharedCorrectness.Run {
                 let directory=f.output.appendingPathComponent(f.profile.service(role))
                 try FileManager.default.copyItem(at:directory.appendingPathComponent("operations.json"),to:directory.appendingPathComponent("positive-operations.json"))
             }
-            if f.profile == .forward {
+            if !f.profile.transactionalTarget {
                 try require(f.sql(.target,"SELECT @@GLOBAL.gtid_executed").isEmpty,"applier injected source GTIDs into target")
                 let reads=(result["stageTimings"] as? [String:[String:Any]])?["target.read"]?["count"] as? Int
                 try require(reads == 3,"basic DML repeated existence reads")
@@ -52,7 +52,7 @@ extension SharedCorrectness.Run {
         for test in chosen {
             let id="bootstrap-matrix-"+test.id, table="poc.matrix_"+test.id
             try reporter.run(QualificationCase(id,"Discover bootstrapped DML schema: "+test.id)) {
-                if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
+                if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
                 for role in LabProfile.Role.allCases {
                     _ = try f.sql(role,f.profile.session(role)+"USE poc; SET sql_log_bin=0; DROP TABLE IF EXISTS \(table); CREATE TABLE \(table)(\(test.definition)) ENGINE=\(f.profile.engine(role)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; "+test.setup)
                 }
@@ -86,6 +86,6 @@ extension SharedCorrectness.Run {
                 }
             }
         }
-        if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
+        if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
     }
 }

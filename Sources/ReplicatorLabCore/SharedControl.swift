@@ -5,7 +5,7 @@ extension SharedCorrectness.Run {
         guard selects("runtime-control") else { return }
         try reporter.run(QualificationCase("runtime-control","Exact GTID boundaries, live/offline reload, acknowledged drain, and checkpoint resume")) {
             try resetNativeEngine();try f.awaitNative()
-            if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
+            if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
             let seed="SET sql_log_bin=0; DROP DATABASE IF EXISTS control_poc; CREATE DATABASE control_poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE control_poc.aux(id INT PRIMARY KEY,val INT); INSERT INTO control_poc.aux VALUES(0,0)"
             for role in LabProfile.Role.allCases { _ = try f.sql(role,seed) }
             let begin=try f.boundary(),original=f.config

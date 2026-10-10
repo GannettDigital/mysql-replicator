@@ -10,6 +10,7 @@ version: 2                          # Required config format; do not add tables/
 # Supported profiles (select for the source binlog version AND target engine/version):
 #   mysql84-to-mysql57-myisam: MySQL 8.4 source -> MySQL 5.7 MyISAM target (default).
 #   mysql57-to-mysql84-innodb: MySQL 5.7 source -> MySQL 8.4 InnoDB target.
+#   mysql57-to-mysql57-myisam: MySQL 5.7 source -> MySQL 5.7 MyISAM target.
 profile: mysql84-to-mysql57-myisam
 stateDirectory: ./replica-state     # Required for run/replay/support-bundle/ctl; new with --initialize.
                                     # Reuse after a clean stop; saved progress wins over source.start.
@@ -35,7 +36,7 @@ source:
   caFile: /REPLACE/source-ca.pem    # Optional; omit to use system trust roots. Source has no verify-ca mode.
   serverID: 9100                   # Example client ID; required nonzero UInt32, unique for live capture.
   sourceUUID: REPLACE_SOURCE_UUID   # Required original source server_uuid; also identifies the archive.
-  mode: gtid                       # run: gtid, or file-position for the forward profile. replay: gtid only.
+  mode: gtid                       # run: gtid; file-position only for an 8.4 source. replay: gtid only.
   start:
     executedGTIDs: REPLACE_SNAPSHOT_GTID_SET  # Required FULL source GTID set represented by the snapshot, not just its last GTID. Empty: "".
     # file: binlog.000123           # Example; file and position must be supplied together.

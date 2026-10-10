@@ -17,6 +17,7 @@
   },
   "demo_reports": {
     "mysql84-to-mysql57-myisam": 4,
-    "mysql57-to-mysql84-innodb": 5
+    "mysql57-to-mysql84-innodb": 5,
+    "mysql57-to-mysql57-myisam": 4
   }
 }

@@ -1,4 +1,4 @@
--- Common to both profiles. Run once in a fresh demo.
+-- Common to all profiles. Run once in a fresh demo.
 INSERT INTO reverse_poc.aux VALUES (1,10),(2,20);
 UPDATE reverse_poc.aux SET counter=counter+1 WHERE id=1;
 DELETE FROM reverse_poc.aux WHERE id=2;

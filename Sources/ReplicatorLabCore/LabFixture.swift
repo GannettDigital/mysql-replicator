@@ -18,11 +18,12 @@ final class LabFixture {
     var helper: String { h.project + "-copy" }
     init(root: URL, category: String = "reverse-suite", identifier: String = runID(), image: String = "mysql-replicator-packaging:reverse", profile: LabProfile = .reverse, codeCoverage: Bool = false, variant: LabVariant = .standard) {
         self.profile=profile; self.codeCoverage=codeCoverage; self.variant=variant
-        var nativeCase=NativeCase(); nativeCase.autoPosition=variant.mode == "gtid"; nativeCase.nativeEngine=profile.targetEngine; nativeCase.transaction=profile == .reverse
+        var nativeCase=NativeCase(); nativeCase.autoPosition=variant.mode == "gtid"; nativeCase.nativeEngine=profile.targetEngine; nativeCase.transaction=profile.transactionalTarget
         h=NativeHarness(root:root,config:nativeCase,artifactCategory:category,identifier:identifier)
         self.image=image
-        h.composeOverlays=[root.appendingPathComponent(profile == .reverse ? "docker/reverse/compose.yaml" : "docker/dml/compose.yaml").path]
-        h.composeEnvironment=[profile == .reverse ? "REPLICATOR_REVERSE_EVIDENCE_VOLUME" : "REPLICATOR_DML_EVIDENCE_VOLUME":volume]
+        h.composeOverlays=[root.appendingPathComponent(profile.composeOverlay).path]
+        h.serverVersions=Dictionary(uniqueKeysWithValues:LabProfile.Role.allCases.map { (profile.service($0),$0 == .target ? profile.targetVersion : profile.sourceVersion) })
+        h.composeEnvironment=[profile.evidenceVariable:volume]
     }
     func stage(_ message: String) { FileHandle.standardError.write(Data((profile.rawValue + ": " + message + "\n").utf8)) }
     func docker(_ args: [String], checked: Bool = true) throws -> CommandResult { try runner.run(["docker"]+args,checked:checked) }
@@ -60,25 +61,26 @@ final class LabFixture {
             INSERT INTO reverse_poc.items VALUES ('2026-10-06',1,'seed',1.00,'ready','a',X'00FF');
             """
         for role in LabProfile.Role.allCases {
-            if profile == .forward {
+            if !profile.transactionalTarget {
                 _ = try sql(role,"SET GLOBAL default_storage_engine=\(profile.engine(role)); SET GLOBAL default_tmp_storage_engine=\(profile.engine(role))")
             }
             _ = try sql(role,"SET GLOBAL collation_server=utf8mb4_bin")
             _ = try sql(role,seed.replacingOccurrences(of:"ENGINE=InnoDB",with:"ENGINE="+profile.engine(role)))
         }
-        if profile == .forward { _ = try sql(.source,"SET PERSIST binlog_row_metadata="+variant.metadata) }
+        if profile.hasOptionalMetadata { _ = try sql(.source,"SET PERSIST binlog_row_metadata="+variant.metadata) }
         _ = try sql(.source,"CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE,REPLICATION CLIENT ON *.* TO 'capture_fixture'@'%'")
-        _ = try sql(.target,"CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'" + (profile == .reverse ? "; GRANT SET_ANY_DEFINER ON *.* TO 'apply_fixture'@'%'" : ""))
+        _ = try sql(.target,"CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'" + (profile.targetVersion == .mysql84 ? "; GRANT SET_ANY_DEFINER ON *.* TO 'apply_fixture'@'%'" : ""))
         let baseline = try boundary(), uuid = try sql(.source,"SELECT @@server_uuid")
         // Reset only the disposable reference's locally generated seed GTIDs.
-        if profile == .reverse {
-            _ = try sql(.native,"RESET MASTER; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE MASTER TO MASTER_HOST='target57',MASTER_USER='capture_fixture',MASTER_PASSWORD='fixture-capture-only',MASTER_SSL=1,MASTER_SSL_CA='/evidence/tls/ca.pem',MASTER_SSL_VERIFY_SERVER_CERT=1,MASTER_AUTO_POSITION=1; START SLAVE")
-        } else {
+        let native=profile.nativeVersion
+        let caFile: String
+        if native == .mysql57 { caFile="/evidence/tls/ca.pem" }
+        else {
+            caFile="/tmp/lab-ca.pem"
             let nativeID=try h.compose(["ps","-q","native"]).text
-            _ = try docker(["cp",tls.appendingPathComponent("ca.pem").path,nativeID+":/tmp/lab-ca.pem"])
-            let positioning=variant == .positionMinimal ? "SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(baseline.file)',SOURCE_LOG_POS=\(baseline.position)" : "SOURCE_AUTO_POSITION=1"
-            _ = try sql(.native,"RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_HOST='source',SOURCE_USER='capture_fixture',SOURCE_PASSWORD='fixture-capture-only',SOURCE_SSL=1,SOURCE_SSL_CA='/tmp/lab-ca.pem',SOURCE_SSL_VERIFY_SERVER_CERT=1,\(positioning); START REPLICA")
+            _ = try docker(["cp",tls.appendingPathComponent("ca.pem").path,nativeID+":"+caFile])
         }
+        _ = try sql(.native,native.resetBinlogs+"; SET GLOBAL gtid_purged='\(baseline.gtids)'; "+native.connect(host:profile.service(.source),caFile:caFile,boundary:baseline,autoPosition:variant.mode == "gtid")+"; "+native.startReplica)
         versions["native_version"] = try h.sql("native","SELECT VERSION()")
         bootstrap = baseline.json
         versions["source_version"] = try sql(.source,"SELECT VERSION()")
@@ -97,7 +99,7 @@ final class LabFixture {
     func awaitNative() throws {
         let end = try boundary()
         let waited = try h.sql("native","SELECT WAIT_FOR_EXECUTED_GTID_SET('\(end.gtids)',90)")
-        try h.sql("native",profile == .reverse ? "SHOW SLAVE STATUS\\G" : "SHOW REPLICA STATUS\\G",headers:true).write(to:output.appendingPathComponent("native-status.txt"),atomically:true,encoding:.utf8)
+        try h.sql("native",profile.nativeVersion.replicaStatus+"\\G",headers:true).write(to:output.appendingPathComponent("native-status.txt"),atomically:true,encoding:.utf8)
         try require(waited == "0","native reference failed to catch up; inspect native-status.txt")
     }
 

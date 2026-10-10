@@ -33,7 +33,7 @@ public enum LabBenchmark {
             }
             try require((1...100000).contains(events),"events must be 1...100000")
             try require(["insert","multi-table-transaction"].contains(workload),"unknown backlog workload")
-            try require(workload == "insert" || profile == .reverse,"multi-table transactions are outside the MyISAM apply contract")
+            try require(workload == "insert" || profile.transactionalTarget,"multi-table transactions are outside the MyISAM apply contract")
         }
     }
 
@@ -49,7 +49,7 @@ public enum LabBenchmark {
         var failure: Error?
         do {
             try f.prepare(build:false); try f.recordRuntime()
-            _ = try f.sql(.native,profile == .reverse ? "STOP SLAVE" : "STOP REPLICA")
+            _ = try f.sql(.native,profile.nativeVersion.stopReplica)
             let statements=(0..<events).map { i -> String in
                 let insert="INSERT INTO reverse_poc.aux VALUES(\(1000+i),\(i));"
                 return workload == "insert" ? insert : "START TRANSACTION; "+insert+" UPDATE reverse_poc.items SET amount=\(i).00 WHERE id=1; COMMIT;"
@@ -62,7 +62,7 @@ public enum LabBenchmark {
             try require(try f.sql(.source,"SELECT COUNT(*),SUM(counter) FROM reverse_poc.aux") == "\(events)\t\(Int64(events)*Int64(events-1)/2)","source workload count/sum differs")
             let nativeBefore=try f.counters(profile.service(.native)), targetBefore=try f.counters(profile.service(.target))
             let start=ProcessInfo.processInfo.systemUptime
-            _ = try f.sql(.native,profile == .reverse ? "START SLAVE" : "START REPLICA")
+            _ = try f.sql(.native,profile.nativeVersion.startReplica)
             try f.awaitNative(); let nativeSeconds=ProcessInfo.processInfo.systemUptime-start
             var source=f.config["source"] as! [String:Any]; source["stopAfterTransactions"]=events; f.config["source"]=source
             try f.installConfig()

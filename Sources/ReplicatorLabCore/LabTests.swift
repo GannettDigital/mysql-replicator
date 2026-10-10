@@ -6,7 +6,7 @@ public enum LabTests {
         let suites=options.suite == "all" ? ["correctness","lifecycle","recovery","demo","native"] : [options.suite]
         var rows: [[String:Any]]=[]
         for profile in options.profiles {
-            for suite in suites where !(options.suite == "all" && profile == .forward && suite == "recovery") {
+            for suite in suites where !(options.suite == "all" && !profile.transactionalTarget && suite == "recovery") {
               for variant in options.variants {
                 if suite == "correctness" {
                     rows += try LabScenario.select(tier:options.tier,family:options.family,ids:options.ids).map { item in
@@ -14,7 +14,7 @@ public enum LabTests {
                     }
                 } else if suite == "demo" {
                     rows += try LabDemoQualification.select(family:options.family,ids:options.ids).map { $0.fields(profile) }
-                } else if suite == "recovery" && profile == .forward {
+                } else if suite == "recovery" && !profile.transactionalTarget {
                     var row=LabScenario.correctness.first { $0.id == "myisam-recovery" }!.fields(profile,variant:variant)
                     row["suite"]=suite; rows.append(row)
                 } else if suite == "lifecycle" { rows += LabLifecycle.fields(profile,variant:variant) }
@@ -35,7 +35,7 @@ public enum LabTests {
         var failed=false
         var image: String?
         for profile in options.profiles {
-            for suite in suites where !(options.suite == "all" && profile == .forward && suite == "recovery") {
+            for suite in suites where !(options.suite == "all" && !profile.transactionalTarget && suite == "recovery") {
               for variant in options.variants {
                 let indices=rows.indices.filter { rows[$0]["profile"] as? String == profile.rawValue && rows[$0]["suite"] as? String == suite && (rows[$0]["variant"] as? String ?? "default") == variant.rawValue }
                 guard indices.contains(where:{rows[$0]["status"] as? String == "not_run"}) else { continue }
@@ -54,7 +54,7 @@ public enum LabTests {
                         }
                         if let error { throw error }
                         try require(indices.allSatisfy { ["passed","not_applicable"].contains(rows[$0]["status"] as? String ?? "") },"demo runner omitted selected cases")
-                    } else if suite == "correctness" || suite == "lifecycle" || (suite == "recovery" && profile == .forward) {
+                    } else if suite == "correctness" || suite == "lifecycle" || (suite == "recovery" && !profile.transactionalTarget) {
                         if image == nil { image=try LabBuild.prepare(root:root,build:options.build,coverage:options.coverage); report["image"]=image }
                         let selected=Set(indices.filter { rows[$0]["status"] as? String == "not_run" }.compactMap { rows[$0]["id"] as? String })
                         let reporter: QualificationReporter, output: URL, execute: () throws -> Void
@@ -122,9 +122,9 @@ public enum LabTests {
         switch suite {
         case "native":
             row["intent"]="preserve existing assertions and evidence; includes bootstrap/version-specific experiments"
-            if profile == .reverse { row["status"]="not_applicable"; row["reason"]="Historical 8.4-source qualification; shared applicable workloads run in correctness." }
+            if profile.sourceVersion == .mysql57 { row["status"]="not_applicable"; row["reason"]="Historical 8.4-source qualification; shared applicable workloads run in correctness." }
         case "recovery":
-            row["intent"]=profile == .reverse ? "transaction rollback, inspection and audited retry" : "MyISAM fail-stop and recovery refusal"
+            row["intent"]=profile.transactionalTarget ? "transaction rollback, inspection and audited retry" : "MyISAM fail-stop and recovery refusal"
         default: break
         }
         return row
@@ -132,7 +132,7 @@ public enum LabTests {
     static func runAdapter(root: URL, profile: LabProfile, suite: String, build: Bool, onEvidence: @escaping (URL)->Void) throws {
         switch suite {
         case "recovery":
-            try require(profile == .reverse,"forward recovery must use the shared runner")
+            try require(profile.transactionalTarget,"forward recovery must use the shared runner")
             try ReverseQualification.run(root:root,build:build,events:0,onEvidence:onEvidence)
         case "native": try NativeDDLQualification.run(root:root,onEvidence:onEvidence)
         default: throw LabError("unknown adapter suite")

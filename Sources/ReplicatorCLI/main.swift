@@ -135,7 +135,7 @@ func main() throws {
             struct Config:Decodable { let source:CaptureConfiguration;let profile:ReplicationProfile?;let archive:ArchiveConfiguration }
             let c=try ConfigurationFile.load(Config.self,from:file)
             let password=try PasswordConfiguration.resolve(password:c.source.password,environmentVariable:c.source.passwordEnvironment,endpoint:"source")
-            let contract:SourceContract = c.profile == .mysql57To84InnoDB ? .mysql57 : .mysql84
+            let contract:SourceContract = (c.profile ?? .mysql84To57MyISAM).sourceContract
             data=try encoder.encode(ArchiveFetch.run(source:c.source,password:password,archive:c.archive,contract:contract))
         } else {
             let c=try ConfigurationFile.load(SupportBundleConfiguration.self,from:file)
@@ -151,7 +151,7 @@ func main() throws {
         let reloadIdentity=try ConfigurationFile.reloadIdentity(from:configData)
         let offline=args[0] == "replay"
         struct ArchiveOptions:Decodable { let archive:ArchiveConfiguration }
-        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:config.profile == .mysql57To84InnoDB ? .mysql57 : .mysql84,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty) : nil
+        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:(config.profile ?? .mysql84To57MyISAM).sourceContract,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty) : nil
         let sourcePassword=try offline ? "" : PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
         let targetPassword=try PasswordConfiguration.resolve(password:config.target.password,environmentVariable:config.target.passwordEnvironment,endpoint:"target")
         let cancellation = CaptureCancellation(), drain = CaptureCancellation()

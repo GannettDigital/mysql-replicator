@@ -3,7 +3,7 @@
 # Start: mysql-replicator replay --config replay.yaml --initialize
 # Resume: same command without --initialize. All options: apply.example.yaml.
 version: 2
-profile: mysql84-to-mysql57-myisam # Or mysql57-to-mysql84-innodb.
+profile: mysql84-to-mysql57-myisam # Or mysql57-to-mysql84-innodb / mysql57-to-mysql57-myisam.
 stateDirectory: ./replica-state # Must not exist on initialization.
 
 source:

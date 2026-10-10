@@ -35,7 +35,7 @@ public struct DDLPolicy: Decodable {
         do { try Self.rejectProhibited(query) }
         catch ProhibitedDDL.trigger where triggers == "skip" { }
         if let trigger = try skippedTrigger(query) { return trigger }
-        guard profile == .mysql57To84InnoDB else { return nil }
+        guard profile.sourceContract.requiresHistoricalSchema else { return nil }
         let mode = try query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode
         var parser = try DDLParser(query.sql,database:query.database,sqlMode:mode)
         guard parser.take("DROP"), parser.take("TEMPORARY") else { return nil }

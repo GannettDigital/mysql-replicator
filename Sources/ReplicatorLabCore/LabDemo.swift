@@ -28,17 +28,17 @@ public enum LabDemo {
             try require(args.isEmpty,"legacy-down takes no additional arguments")
             try cleanupLegacy(root:root,profile:profile)
         case "skip":
-            try require(args.count == 1 && profile == .forward,"demo skip requires one GTID and the MyISAM profile")
+            try require(args.count == 1 && !profile.transactionalTarget,"demo skip requires one GTID and the MyISAM profile")
             try session.load(); print(try session.cli(["skip",args[0]]).text)
         case "fail":
-            try require(args.isEmpty && profile == .forward,"demo fail is the MyISAM explicit-engine refusal")
+            try require(args.isEmpty && !profile.transactionalTarget,"demo fail is the MyISAM explicit-engine refusal")
             try session.load(); try session.fail()
         case "compare":
-            try require(args.isEmpty || (profile == .forward && args == ["--expect-blocked"]),"compare accepts --expect-blocked on MyISAM only")
+            try require(args.isEmpty || (!profile.transactionalTarget && args == ["--expect-blocked"]),"compare accepts --expect-blocked on MyISAM only")
             try session.load()
             if args.isEmpty { try session.compare() } else { try session.verifyBlocked() }
         case "inspect","resolve":
-            try require(profile == .reverse,"audited recovery is only implemented for the InnoDB profile")
+            try require(profile.transactionalTarget,"audited recovery is only implemented for the InnoDB profile")
             if action == "inspect" { try require(args.isEmpty,"inspect takes no additional arguments") }
             else { try require(args.count == 5 && ["retry","skip","mark-applied"].contains(args[0]) && args[1] == "--gtids" && args[3] == "--reason","resolve ACTION --gtids SET --reason TEXT") }
             try session.load()
@@ -56,6 +56,7 @@ public enum LabDemo {
     }
     static func cleanupLegacy(root: URL, profile: LabProfile) throws {
         if profile == .forward { try ForwardBenchmarkFixture(root:root,category:"demo").down(); return }
+        try require(profile == .reverse,"this profile has no legacy demo session")
         let session=Session(root:root,profile:profile,category:"reverse-demo")
         let object=try JSONSerialization.jsonObject(with:Data(contentsOf:session.manifestURL)) as? [String:Any]
         guard let identifier=object?["identifier"] as? String, var image=object?["image"] as? String else { throw LabError("invalid legacy session") }
@@ -105,7 +106,7 @@ public enum LabDemo {
             instructions()
         }
         func configureFixture() {
-            if profile == .forward { fixture!.h.composeEnvironment["FIXTURE_DISABLED_ENGINES"]="InnoDB" }
+            if !profile.transactionalTarget { fixture!.h.composeEnvironment["FIXTURE_DISABLED_ENGINES"]="InnoDB" }
         }
         func instructions() {
             let f=fixture!, prefix="swift run replicator-lab demo"
@@ -162,7 +163,7 @@ public enum LabDemo {
                 let json=try state("SELECT json_object('lifecycle',lifecycle,'baselineGTIDSet',baseline_gtids,'appliedFile',applied_file,'appliedPosition',applied_position,'transactionsApplied',transactions_applied,'rowsApplied',rows_applied,'diagnostic',diagnostic) FROM state")
                 saved=try JSONSerialization.jsonObject(with:Data(json.utf8)) as? [String:Any] ?? [:]
             }
-            let native=try f.sql(.native,profile == .reverse ? "SHOW SLAVE STATUS\\G" : "SHOW REPLICA STATUS\\G")
+            let native=try f.sql(.native,profile.nativeVersion.replicaStatus+"\\G")
             try LabTests.printJSON(["profile":profile.rawValue,"topology":profile.topology,"artifacts":f.output.path,"container":try applier.containerState(),"processRunning":running,"lifecycle":running ? "RUNNING" : (saved["lifecycle"] ?? "NOT_STARTED"),"state":saved,"native":native,"progress":try applier.containerState() == "running" ? (try applier.latestProgress() ?? [:]) : [:]])
         }
         func compare() throws {

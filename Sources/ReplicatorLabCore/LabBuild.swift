@@ -63,7 +63,7 @@ struct LabTestOptions {
         try require(["smoke","full"].contains(tier),"tier must be smoke or full")
         try require(tier == "full" || suite == "correctness", "--tier smoke selects shared correctness only; adapter suites retain their full scope")
         try require(["correctness","demo"].contains(suite) || (family == nil && ids.isEmpty),"--case and --family select correctness or demo scenarios")
-        let sharedRecovery=suite == "recovery" && profiles == [.forward]
+        let sharedRecovery=suite == "recovery" && profiles.allSatisfy { !$0.transactionalTarget }
         try require(!coverage || sharedRecovery || ["correctness","lifecycle","demo"].contains(suite),"--coverage collects shared correctness, lifecycle, demo and forward recovery runs")
         try require(variants == [.standard] || sharedRecovery || ["correctness","lifecycle"].contains(suite),"--variant selects shared correctness or lifecycle; adapters retain their own variants")
         if suite == "demo" { _ = try LabDemoQualification.select(family:family,ids:ids) }
