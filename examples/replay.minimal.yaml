@@ -1,0 +1,33 @@
+# Copy to replay.yaml, replace REPLACE_* values, and set REPLICATOR_TARGET_PASSWORD.
+# Target schema/data must already match the FULL source GTID set below.
+# Start: mysql-replicator replay --config replay.yaml --initialize
+# Resume: same command without --initialize. All options: apply.example.yaml.
+version: 2
+profile: mysql84-to-mysql57-myisam # Or mysql57-to-mysql84-innodb.
+stateDirectory: ./replica-state # Must not exist on initialization.
+
+source:
+  version: 2
+  # Required configuration fields; replay never connects to the source.
+  host: unused.invalid
+  port: 3306
+  username: unused
+  serverHostname: unused.invalid
+  serverID: 9100
+  sourceUUID: REPLACE_SOURCE_UUID # Original source that produced the archive.
+  mode: gtid
+  start:
+    executedGTIDs: REPLACE_SNAPSHOT_GTID_SET # Full set at snapshot time; not just its last GTID.
+
+target:
+  host: REPLACE_TARGET_HOST
+  port: 3306
+  username: applier
+  passwordEnvironment: REPLICATOR_TARGET_PASSWORD
+  serverHostname: REPLACE_TARGET_TLS_HOSTNAME
+  # caFile: /path/to/target-ca.pem # Omit only if system trust roots suffice.
+  nativeAutoStartDisabled: true # Disable native replication autostart yourself first.
+
+archive:
+  directory: /REPLACE/binlogs # Immutable fetch archive or directory containing only mysqlbinlog --raw files.
+  # maximumBytes: 68719476736 # Default 64 GiB; increase for larger archives.

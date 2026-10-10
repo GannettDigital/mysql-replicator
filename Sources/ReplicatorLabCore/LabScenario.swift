@@ -12,7 +12,8 @@ struct LabScenario {
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
         if let reason=variant.reason(profile) { return reason }
-        if ["offline-replay","runtime-control"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
+        if ["offline-replay","offline-skip-errors","runtime-control"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
+        if id == "live-skip-errors" && variant == .positionMinimal { return "Skip/resume fixture uses exact GTID stop boundaries; use default or gtid-full variants." }
         if profile == .reverse, let reason=forwardOnlyReason { return reason }
         if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
         if variant == .positionMinimal && id == "ddl-compat-types" { return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full." }
@@ -45,6 +46,8 @@ struct LabScenario {
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",smoke:$0.id == "composite") }
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
         cases.append(.init(test:.init("offline-replay","Fetch, external raw replay, resume, and sensitive support evidence"),family:"offline"))
+        cases.append(.init(test:.init("offline-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"offline",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
+        cases.append(.init(test:.init("live-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"policy",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
         cases.append(.init(test:.init("runtime-control","Exact GTID limits, reload, status, and graceful stop"),family:"offline"))
         cases.append(.init(test:DDLCompatibilityCases.skipTrigger,family:"policy",intent:"skip definitions; apply row effects",smoke:true))
         cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float","json"].map {

@@ -10,9 +10,10 @@ struct DMLExecution {
         let failure: Error?
         var diagnostic: TargetFailureDiagnostic? = nil
         var discardUnwritten = false
+        var skipped: [Int:SkippedApplyError] = [:]
         func record(in state: StateStore) throws {
             do {
-                try state.finishBatch(acknowledgedRows:acknowledged)
+                try state.finishBatch(acknowledgedRows:acknowledged,skipped:skipped)
                 if let diagnostic { try state.recordTargetFailure(diagnostic) }
                 if discardUnwritten { try state.discardUnwrittenPending() }
             }

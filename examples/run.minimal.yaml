@@ -1,0 +1,30 @@
+# Copy to run.yaml, replace REPLACE_* values, and set both password environment variables.
+# Target schema/data must already match the FULL source GTID set below.
+# Start: mysql-replicator run --config run.yaml --initialize
+# Resume: same command without --initialize. All options: apply.example.yaml.
+version: 2
+profile: mysql84-to-mysql57-myisam # Or mysql57-to-mysql84-innodb.
+stateDirectory: ./replica-state # Must not exist on initialization.
+
+source:
+  version: 2
+  host: REPLACE_SOURCE_HOST
+  port: 3306
+  username: capture
+  passwordEnvironment: REPLICATOR_SOURCE_PASSWORD
+  serverHostname: REPLACE_SOURCE_TLS_HOSTNAME
+  # caFile: /path/to/source-ca.pem # Omit only if system trust roots suffice.
+  serverID: 9100 # Unique nonzero replication client ID.
+  sourceUUID: REPLACE_SOURCE_UUID
+  mode: gtid
+  start:
+    executedGTIDs: REPLACE_SNAPSHOT_GTID_SET # Full set at snapshot time; not just its last GTID.
+
+target:
+  host: REPLACE_TARGET_HOST
+  port: 3306
+  username: applier
+  passwordEnvironment: REPLICATOR_TARGET_PASSWORD
+  serverHostname: REPLACE_TARGET_TLS_HOSTNAME
+  # caFile: /path/to/target-ca.pem # Omit only if system trust roots suffice.
+  nativeAutoStartDisabled: true # Disable native replication autostart yourself first.

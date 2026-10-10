@@ -9,8 +9,10 @@ Database cloning, restoration, and upgrades happen outside these commands. Suppl
 the complete source GTID set corresponding to the target's existing data in
 `source.start.executedGTIDs`. Replay does not establish or verify that snapshot.
 
-Use the normal [apply configuration](../examples/apply.example.yaml), selecting
-the appropriate `profile`, and add:
+For replay alone, start with [replay.minimal.yaml](../examples/replay.minimal.yaml).
+For fetch and support bundles too, use the full
+[apply configuration](../examples/apply.example.yaml), selecting the appropriate
+`profile`, and add:
 
 ```yaml
 archive:
@@ -82,6 +84,28 @@ sets with holes, without decoding historical row values against newer schemas.
 SQLite's saved source progress takes precedence on resume. Target-local GTIDs do
 not replace this checkpoint.
 
+Target TCP connections still require TLS. The default
+`target.tlsVerification: verify-identity` verifies the CA chain and requires
+`serverHostname` to match the server certificate. For a target with an
+instance-specific CA but no certificate DNS name (such as some Cloud SQL
+instances), set these fields in your existing `target` section:
+
+```yaml
+target:
+  # Keep host, port, credentials and nativeAutoStartDisabled from your config.
+  tlsVerification: verify-ca
+  caFile: /data/server-ca.pem
+  # serverHostname can be omitted.
+```
+
+`verify-ca` requires an explicit, nonempty `caFile`; it still validates the
+certificate chain and validity period. It skips hostname matching. Trust the
+intended instance's CA: a shared CA alone does not distinguish its instances.
+If supplied, `serverHostname` is used for TLS SNI, not identity matching in this
+mode. This target setting applies to both `run` and `replay`; source TLS settings
+are unchanged. Changing TLS settings requires stopping and restarting the
+applier, rather than `ctl reload`.
+
 The reader validates file ordering, rotation, framing, CRCs, complete transaction
 boundaries, and whether the baseline covers history before the first available
 file. Missing required history, corruption, and a partial last transaction fail.
@@ -89,6 +113,78 @@ The supplied files define the ending boundary; reaching their end does not mean
 the live source is caught up. Keep archive files immutable while replay runs.
 
 ## Stop, resume, and failures
+
+### Continue past selected errors
+
+Both live `run` and offline `replay` stop on errors by default. To continue past
+selected errors on a target you can reconcile, explicitly list supported errors
+in the top-level policy:
+
+```yaml
+skipErrors:
+  codes:
+    - 'ddl.unsupported_alter'
+    - 'mysql.1062'
+  recordSkippedTransactions: false
+```
+
+`codes` defaults to `[]`. Unknown codes and `all` are rejected. A nonempty policy
+works in both `run` and `replay`; changing it requires a stop/edit/restart.
+
+| Code | Eligible failure |
+| --- | --- |
+| `ddl.unsupported_statement` | Statement falls outside the DDL parser's recognized statement forms |
+| `ddl.unsupported_column_type` | DDL column type rejected by the type parser |
+| `ddl.unsupported_alter` | ALTER TABLE operation outside the recognized operations |
+| `ddl.unsupported_collation` | Unavailable DDL encoding/collation at the explicitly classified resolution checks |
+| `dml.multiple_statements` | Multi-statement DML outside the MyISAM profile |
+| `dml.multiple_tables` | Multi-table DML outside the MyISAM profile |
+| `mysql.1062` | Duplicate key in an InnoDB DML transaction, after confirmed rollback |
+
+The DDL/DML compatibility codes are eligible only before target write intents.
+They do not classify every possible parser, schema-discovery, or decoder error.
+Duplicate-key skipping rolls back the **whole source transaction**, including
+earlier successful statements, before continuing with the next GTID. MyISAM SQL
+errors, issued DDL, uncertain COMMIT, failed/unconfirmed rollback, transport
+failures, corrupt binlogs, and unlisted errors still stop replication.
+
+`recordSkippedTransactions` defaults to `true`. It stores one `error_skips` row
+per skipped GTID with positions, structured error information, available source
+SQL and table identities. Those rows follow storage history retention and may
+eventually be pruned; they are not a permanent external audit archive.
+
+Set it to **false** when hundreds of thousands or millions of skips would make
+individual records impractical. The checkpoint still includes skipped GTIDs, and
+`error_skip_counts` retains cumulative counts by code. The applier removes the
+skipped groups' temporary journal rows and updates the latest covering snapshot
+in the same SQLite transaction; it does not retain one snapshot per skip.
+Existing relay, GTID-set, and SQLite storage limits still apply. Previously
+recorded audit rows are not deleted merely by turning this option off.
+
+With auditing disabled, **plan data consistency checks and recovery using evidence
+maintained elsewhere**. Aggregate counts cannot identify which specific GTIDs
+were skipped. Relay files and unresolved crash intents can still contain GTID or
+row evidence, but are not a substitute for a complete skip audit.
+
+Progress/final summaries expose `skippedTransactionsByCode`, including counts
+from earlier invocations. As with filtered groups, `transactionsApplied` counts
+completed source groups including skips; skipped rows do not increase
+`rowsApplied`, and skipped DDL does not increase `ddlApplied`. Coverage advances
+for stop limits and resume, so a completed replay with skips is not a correctness
+claim. Skipped DDL can also cause later dependent failures; inspect the original
+rejection rather than treating every later error as an independent bug.
+
+Inspect the local counts, or detailed records when enabled, with:
+
+```sh
+sqlite3 /path/to/state/state.sqlite 'SELECT code, transactions FROM error_skip_counts;'
+sqlite3 /path/to/state/state.sqlite 'SELECT gtid, source_file, start_position, end_position, diagnostic_json FROM error_skips;'
+```
+
+These tables are created on the first automatic skip. The existing manual
+`skip` and `recovery resolve` commands retain their separate behavior.
+
+### Controlled stop and resume
 
 `--initialize` creates a new state directory for an externally prepared target.
 Omit it to resume cleanly stopped state:

@@ -2,7 +2,6 @@ import Foundation
 import MySQLNIO
 import NIOCore
 import NIOPosix
-import NIOSSL
 import ReplicatorCodec
 
 final class TargetSession {
@@ -20,11 +19,9 @@ final class TargetSession {
         do {
             let c = configuration.target
             try c.validate()
-            var tls = TLSConfiguration.makeClientConfiguration(); tls.certificateVerification = .fullVerification
-            if let ca = c.caFile { tls.trustRoots = .file(ca) }
             let address = try c.unixSocket.map { try SocketAddress(unixDomainSocketPath:$0) }
                 ?? SocketAddress.makeAddressResolvingHost(c.host!,port:c.port!)
-            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.requireTLS ? tls : nil,serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
+            connection = try MySQLConnection.connect(to:address,username:c.username,database:"",password:password,tlsConfiguration:c.tlsConfiguration(),serverHostname:c.serverHostname,requireTLS:c.requireTLS,handshakeTimeout:.seconds(10),on:group.next()).wait()
         } catch {
             try? group.syncShutdownGracefully()
             let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT
@@ -60,9 +57,9 @@ final class TargetSession {
             throw TargetConnectionFailure(description:"target connection interrupted")
         } catch let e as MySQLError {
             switch e {
-            case .duplicateEntry: throw ApplyError("target SQL error 1062 (duplicate key)")
+            case .duplicateEntry: throw ApplyError("target SQL error 1062 (duplicate key)",code:.duplicateKey,mysqlErrorNumber:1062,sqlState:"23000")
             case .invalidSyntax: throw ApplyError("target SQL syntax error")
-            case .server(let packet): throw ApplyError("target SQL error \(packet.errorCode), state \(packet.sqlState ?? "unknown")")
+            case .server(let packet): throw ApplyError("target SQL error \(packet.errorCode), state \(packet.sqlState ?? "unknown")",code:packet.errorCode == 1062 ? .duplicateKey : .targetSQL,mysqlErrorNumber:Int(packet.errorCode.rawValue),sqlState:packet.sqlState)
             default: throw ApplyError("target connection/protocol failure; SQL outcome may be uncertain")
             }
         } catch { throw ApplyError("target transport failure; SQL outcome may be uncertain") }

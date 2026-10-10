@@ -92,6 +92,8 @@ public enum SharedCorrectness {
                     try forwardFailures()
                     try myisamRecovery()
                     try offline()
+                    try skipErrors(offline:true)
+                    try skipErrors(offline:false)
                     try runtimeControl()
                 }
             } catch {
@@ -385,6 +387,19 @@ public enum SharedCorrectness {
                     try wait()
                 }
             }
+        }
+        /// Test-only: negative scenarios deliberately diverge from the native
+        /// oracle. Preserve its failure evidence, then skip that rejected range
+        /// so later scenarios can establish their own equivalent table snapshots.
+        func reseedNativeAfterRejections(_ label: String) throws {
+            try require(f.profile == .forward,"native rejection cleanup requires the forward fixture")
+            try f.h.sql("native","SHOW REPLICA STATUS\\G",headers:true).write(to:f.output.appendingPathComponent(label+"-native-before-reset.txt"),atomically:true,encoding:.utf8)
+            let end=try f.boundary()
+            try writeJSON(end.json,to:f.output.appendingPathComponent(label+"-native-reset-boundary.json"))
+            _ = try f.sql(.native,"STOP REPLICA; RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(end.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(end.file)',SOURCE_LOG_POS=\(end.position); START REPLICA")
+            // The seeded GTID set alone cannot prove that replication resumed.
+            let status=try f.h.status()
+            try require(status["Replica_SQL_Running"] == "Yes" && status["Last_SQL_Errno"] == "0","native reference did not resume after rejected scenarios")
         }
         func resetNativeEngine() throws {
             nativeInnoDB=false

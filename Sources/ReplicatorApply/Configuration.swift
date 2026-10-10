@@ -6,11 +6,17 @@ import ReplicatorCodec
 let maximumCachedTables = 1024
 
 public struct ApplyError: Error, CustomStringConvertible {
-    public let description: String
-    public init(_ message: String) { description = message }
+    public let message: String
+    public let code: ApplyErrorCode?
+    public let mysqlErrorNumber: Int?
+    public let sqlState: String?
+    public var description: String { code.map { "[\($0.rawValue)] \(message)" } ?? message }
+    public init(_ message: String, code: ApplyErrorCode? = nil, mysqlErrorNumber: Int? = nil, sqlState: String? = nil) {
+        self.message=message;self.code=code;self.mysqlErrorNumber=mysqlErrorNumber;self.sqlState=sqlState
+    }
 }
-func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
-    if try !condition() { throw ApplyError(message) }
+func require(_ condition: @autoclosure () throws -> Bool, _ message: String, code: ApplyErrorCode? = nil) throws {
+    if try !condition() { throw ApplyError(message,code:code) }
 }
 func quoted(_ name: String) throws -> String {
     try require(!name.isEmpty && name.utf8.count <= 64 && !name.contains("\0") && name.unicodeScalars.allSatisfy { $0.isASCII }, "invalid SQL identifier")
@@ -146,10 +152,15 @@ extension ApplyTable {
     }
 }
 public struct TargetConfiguration: Decodable {
+    public enum TLSVerification: String, Decodable {
+        case verifyIdentity = "verify-identity"
+        case verifyCA = "verify-ca"
+    }
     public let host: String?
     public let port: Int?
     public let unixSocket: String?
     public let requireTLS: Bool
+    public let tlsVerification: TLSVerification
     public let username: String
     public let passwordEnvironment: String?
     public let password: String?
@@ -159,13 +170,14 @@ public struct TargetConfiguration: Decodable {
     public let explicitTableLocks: Bool
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
+    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,tlsVerification,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
         host=try c.decodeIfPresent(String.self,forKey:.host); port=try c.decodeIfPresent(Int.self,forKey:.port)
         unixSocket=try c.decodeIfPresent(String.self,forKey:.unixSocket)
         requireTLS=try c.decodeIfPresent(Bool.self,forKey:.requireTLS) ?? true
+        tlsVerification=try c.decodeIfPresent(TLSVerification.self,forKey:.tlsVerification) ?? .verifyIdentity
         username=try c.decode(String.self,forKey:.username)
         passwordEnvironment=try c.decodeIfPresent(String.self,forKey:.passwordEnvironment)
         password=try c.decodeIfPresent(String.self,forKey:.password)
@@ -183,8 +195,16 @@ public struct TargetConfiguration: Decodable {
             try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
             try require(requireTLS,"target TCP connections require TLS; only a Unix socket may disable TLS")
         }
-        if requireTLS { try require(!(serverHostname ?? "").isEmpty,"target TLS requires serverHostname") }
-        else { try require(serverHostname == nil && caFile == nil,"remove target TLS settings when requireTLS is false") }
+        if requireTLS {
+            if tlsVerification == .verifyIdentity {
+                try require(!(serverHostname ?? "").isEmpty,"target verify-identity TLS requires serverHostname")
+            } else {
+                try require(!(caFile ?? "").isEmpty,"target verify-ca TLS requires an explicit caFile")
+                try require(serverHostname == nil || !serverHostname!.isEmpty,"omit target serverHostname or provide a nonempty TLS name")
+            }
+        } else {
+            try require(serverHostname == nil && caFile == nil && tlsVerification == .verifyIdentity,"remove target TLS settings when requireTLS is false")
+        }
     }
 }
 public struct ApplyConfiguration: Decodable {
@@ -209,6 +229,8 @@ public struct ApplyConfiguration: Decodable {
     public let targetReconnect: TargetReconnectPolicy?
     var targetReconnectPolicy: TargetReconnectPolicy { targetReconnect ?? .init() }
     public let sourceReconnect: SourceReconnectPolicy?
+    public let skipErrors: SkipErrorPolicy?
+    var skipErrorPolicy: SkipErrorPolicy { skipErrors ?? .init() }
     var reconnectPolicy: SourceReconnectPolicy { sourceReconnect ?? .init() }
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
@@ -231,6 +253,7 @@ public struct ApplyConfiguration: Decodable {
         try batchPolicy.validate()
         try reconnectPolicy.validate()
         try targetReconnectPolicy.validate(endpoint:"target")
+        try skipErrorPolicy.validate()
     }
 }
 
@@ -259,7 +282,8 @@ enum DMLPlan {
             if !event.replicationFiltered { includedEvents += 1 }
         }
         if includedEvents == 0 { return [] }
-        try require(statementEnds >= 1 && (transactional || statementEnds == 1),"only single-statement source groups are supported")
+        try require(statementEnds >= 1,"source group lacks a statement boundary")
+        try require(transactional || statementEnds == 1,"only single-statement source groups are supported",code:.multipleStatements)
         var result: [Mutation] = []
         var firstIdentity: String?
         for event in group.events where event.rowFlags != nil && !event.replicationFiltered {
@@ -267,7 +291,7 @@ enum DMLPlan {
                   let plan = tables[database + "\0" + name] else { throw ApplyError("row event outside configured scope") }
             if !event.rows.isEmpty {
                 let identity = plan.table.identity
-                if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement") }
+                if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement",code:.multipleTables) }
                 else { firstIdentity = identity }
             }
             for (index,row) in event.rows.enumerated() {

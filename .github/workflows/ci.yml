@@ -79,6 +79,7 @@ jobs:
     outputs:
       inputs: ${{ steps.bundle.outputs.inputs }}
       matrix: ${{ steps.bundle.outputs.matrix }}
+      coverage_reports: ${{ steps.bundle.outputs.coverage_reports }}
     steps:
       - uses: actions/checkout@v4
       # Keep toolchain headers and their consuming objects in the SAME archive.
@@ -112,6 +113,7 @@ jobs:
           path: |
             artifacts/ci/lab.tar.gz
             artifacts/ci/lab.sha256
+            artifacts/ci/matrix.json
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
@@ -208,12 +210,13 @@ jobs:
           if-no-files-found: error
 
   integration:
-    name: Integration (${{ matrix.id }})
+    name: Integration / ${{ matrix.profile }} / ${{ matrix.area }} / ${{ matrix.variant }} / ${{ matrix.image }}
     needs: [lab-tools, build-images]
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.lab-tools.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -273,6 +276,7 @@ jobs:
           path: |
             artifacts/lab/
             artifacts/reverse-suite/
+            artifacts/native-ddl-suite/
           if-no-files-found: ignore
 
   packaging-and-smoke:
@@ -307,13 +311,13 @@ jobs:
         env:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           INTEGRATION_RESULT: ${{ needs.packaging-and-smoke.result }}
+          EXPECTED_REPORTS: ${{ needs.lab-tools.outputs.coverage_reports }}
         run: |
-          reports=$(python3 -c 'import json; print(sum(s["reports"] for s in json.load(open("tools/ci_matrix.json"))["include"]))')
           python3 tools/coverage_report.py --ci \
             --downloaded artifacts/coverage/downloaded \
             --unit-result "$UNIT_RESULT" \
             --integration-result "$INTEGRATION_RESULT" \
-            --expected-integration "$reports"
+            --expected-integration "${EXPECTED_REPORTS:-0}"
       - uses: actions/upload-artifact@v4
         with:
           overwrite: true

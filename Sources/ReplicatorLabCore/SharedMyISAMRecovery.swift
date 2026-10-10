@@ -327,6 +327,7 @@ extension SharedCorrectness.Run {
                 report["extended_dml"] = "multirow_insert_delete_and_primary_key_update_passed"
             try SharedWorkflowCases.requirePassed(SharedWorkflowCases.recovery,in:reporter.results)
             try writeJSON(report,to:f.output.appendingPathComponent("myisam-recovery.json"))
+            try reseedNativeAfterRejections("myisam-recovery")
         }
     }
 }

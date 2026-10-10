@@ -1,98 +1,162 @@
-# Copy to apply.yaml and replace REPLACE_* values with your snapshot's settings.
-# Choose passwordEnvironment OR password per connection. Initial data/schema copying is external.
-# Optional settings below show their defaults unless marked otherwise.
+# Shared YAML configuration for run, fetch, replay and support-bundle.
+# Short starting points: run.minimal.yaml and replay.minimal.yaml in this directory.
+# Copy to apply.yaml and replace REPLACE_* values. Initial data/schema copying is external.
+# Commented options are inactive. Defaults are shown unless labeled "example".
+# Relative paths resolve from the process working directory, not this YAML file.
+# Inside Docker, all paths refer to the container filesystem; mount files/directories there.
+# Values are literal: $VARIABLE is not expanded. Use passwordEnvironment for passwords.
 
-version: 2                          # Config format; schema/table allowlists are obsolete.
-profile: mysql84-to-mysql57-myisam   # Default qualified profile; see docs/REVERSE_REPLICATION.md for the experimental reverse profile.
-stateDirectory: ./replica-state      # New with --initialize; reuse after a clean stop.
+version: 2                          # Required config format; do not add tables/schema allowlists.
+# Supported profiles (select for the source binlog version AND target engine/version):
+#   mysql84-to-mysql57-myisam: MySQL 8.4 source -> MySQL 5.7 MyISAM target (default).
+#   mysql57-to-mysql84-innodb: MySQL 5.7 source -> MySQL 8.4 InnoDB target.
+profile: mysql84-to-mysql57-myisam
+stateDirectory: ./replica-state     # Required for run/replay/support-bundle/ctl; new with --initialize.
+                                    # Reuse after a clean stop; saved progress wins over source.start.
 
-# Optional comparison-semantics translation; omitted means strict matching.
-# Enable BEFORE initializing state and use the same mapping for snapshot schemas.
-# utf8mb4 bytes are preserved, but sorting/equality and unique keys can differ.
+# Optional comparison-semantics translation; default is no mappings.
+# Forward profile only. Enable BEFORE initializing state and use the same mapping
+# for snapshot schemas. UTF-8 bytes stay the same; sorting/equality/unique keys may differ.
 # compatibility:
 #   collations:
-#     utf8mb4_0900_ai_ci: utf8mb4_unicode_ci  # Also permits utf8mb4_general_ci or utf8mb4_bin.
+#     utf8mb4_0900_ai_ci: utf8mb4_unicode_ci  # Example; also allows utf8mb4_general_ci or utf8mb4_bin.
 
 source:
-  version: 2
-  host: REPLACE_SOURCE_HOST          # MySQL 8.4 source with ROW/FULL binlogging.
-  port: 3306
-  username: capture                 # Source replication account.
-  passwordEnvironment: REPLICATOR_SOURCE_PASSWORD
-  # password: 'REPLACE_SOURCE_PASSWORD'  # Alternative: remove passwordEnvironment.
-  serverHostname: REPLACE_SOURCE_TLS_HOSTNAME  # Certificate hostname to verify.
-  caFile: /REPLACE/source-ca.pem      # Omit to use default TLS trust roots.
-  serverID: 9100                     # Nonzero client ID, unique in the topology.
-  sourceUUID: REPLACE_SOURCE_UUID    # Expected source server_uuid.
-  mode: gtid                        # gtid or file-position.
-  start:                            # Verified snapshot boundary; resume uses SQLite.
-    executedGTIDs: REPLACE_SNAPSHOT_GTID_SET  # Quote an empty set as "".
-    # file: binlog.000123            # Required together with position for file-position.
-    # position: 4                   # Next event byte offset, at least 4.
-  # nonBlocking: false              # true drains the existing backlog through EOF.
-  # stopAfterTransactions: 10000     # Optional run limit, 1..1000000; omitted = continuous.
-  # stopAfterGTIDs: 'REPLACE_SOURCE_UUID:1-20000' # Inclusive GTID-set limit; first satisfied limit wins.
-  # Both limits may be changed with: mysql-replicator ctl reload --config apply.yaml
-  # idleTimeoutSeconds: 15          # Source read/heartbeat timeout, 1..300 seconds.
-  # maximumEventBytes: 4194304       # 4 MiB per event; range 23 bytes..16 MiB.
-  # downloadCacheBytes: 268435456    # 256 MiB disposable backlog; range 20 MiB..1 GiB.
-  # decoderProfiling: false         # Detailed decoder timings; coarse timings stay on.
+  version: 2                       # Required; legacy source.tables is not accepted by run/replay.
+  # run/fetch connect to this endpoint with verified TLS.
+  # replay never connects: host, port, username and serverHostname must still be
+  # syntactically valid, but dummy values are allowed; omit both password settings.
+  host: REPLACE_SOURCE_HOST
+  port: 3306                       # Required; valid range 1..65535.
+  username: capture                # Example account; source replication/metadata privileges.
+  passwordEnvironment: REPLICATOR_SOURCE_PASSWORD  # Name of an environment variable, not its value.
+  # password: 'REPLACE_SOURCE_PASSWORD'  # Alternative; remove passwordEnvironment. Choose exactly one for run/fetch.
+  serverHostname: REPLACE_SOURCE_TLS_HOSTNAME  # Name verified against the source TLS certificate.
+  caFile: /REPLACE/source-ca.pem    # Optional; omit to use system trust roots. Source has no verify-ca mode.
+  serverID: 9100                   # Example client ID; required nonzero UInt32, unique for live capture.
+  sourceUUID: REPLACE_SOURCE_UUID   # Required original source server_uuid; also identifies the archive.
+  mode: gtid                       # run: gtid, or file-position for the forward profile. replay: gtid only.
+  start:
+    executedGTIDs: REPLACE_SNAPSHOT_GTID_SET  # Required FULL source GTID set represented by the snapshot, not just its last GTID. Empty: "".
+    # file: binlog.000123           # Example; file and position must be supplied together.
+    # position: 4                  # Example next-event byte offset; minimum 4. Required for file-position mode.
+                                    # Both may be omitted in gtid mode. Resume uses the saved SQLite checkpoint.
+  # nonBlocking: false             # Live capture only: true exits at source EOF instead of following new writes.
+  # stopAfterTransactions: 10000    # Example limit, 1..1000000 source groups per invocation (including DDL/filtered groups).
+  # stopAfterGTIDs: 'REPLACE_SOURCE_UUID:1-20000' # Example inclusive GTID-set limit, not a count.
+  # Neither limit is set by default: run follows the source; replay ends at archive EOF.
+  # The first satisfied limit wins. Only these two limits support ctl reload;
+  # other configuration changes require stop/edit/restart, subject to saved-state checks.
+  # idleTimeoutSeconds: 15         # Live source read/heartbeat timeout; 1..300 seconds.
+  # maximumEventBytes: 4194304     # 4 MiB per event; 23 bytes..16 MiB. Also applies to replay.
+  # downloadCacheBytes: 268435456   # Live download backlog; 20 MiB..1 GiB. Unused by replay.
+  # decoderProfiling: false        # Detailed decoder timings; coarse timings stay on.
 
 target:
-  host: REPLACE_TARGET_HOST          # Dedicated MySQL 5.7 MyISAM target.
-  port: 3306
-  username: applier                 # DML/DDL and metadata visibility privileges.
+  host: REPLACE_TARGET_HOST         # Dedicated target matching the selected profile.
+  port: 3306                       # Required with host; valid range 1..65535.
+  username: applier                # Example account; DML/DDL and metadata visibility privileges.
   passwordEnvironment: REPLICATOR_TARGET_PASSWORD
-  # password: 'REPLACE_TARGET_PASSWORD'  # Alternative: remove passwordEnvironment.
+  # password: 'REPLACE_TARGET_PASSWORD'  # Alternative; remove passwordEnvironment. Choose exactly one.
+  # tlsVerification: verify-identity # Default: verify CA chain and serverHostname.
+                                    # verify-ca: require an explicit caFile; skip hostname matching.
+                                    # In verify-ca, omit serverHostname or supply it for TLS SNI only.
   serverHostname: REPLACE_TARGET_TLS_HOSTNAME
-  caFile: /REPLACE/target-ca.pem      # Omit to use default TLS trust roots.
-  nativeAutoStartDisabled: true      # Attests skip-slave-start is configured.
-  explicitTableLocks: false          # Optional client LOCK TABLES; internal locks remain.
-  # unixSocket: /var/run/mysqld/mysqld.sock  # Local alternative; remove host and port.
-  # requireTLS: true                # TCP requires true. Only a socket may use false;
-                                    # then remove serverHostname and caFile.
+  caFile: /REPLACE/target-ca.pem     # Required for verify-ca; otherwise may be omitted for system trust roots.
+                                    # For Cloud SQL per-instance CA, use that instance's downloaded server CA.
+  nativeAutoStartDisabled: true     # Required attestation that native replication will not auto-start.
+                                    # This setting does not disable native replication for you.
+  explicitTableLocks: false         # Optional LOCK TABLES; must stay false for the InnoDB profile.
+  # unixSocket: /var/run/mysqld/mysqld.sock  # Example local alternative; remove both host and port.
+  # requireTLS: true               # TCP requires true. Only a Unix socket may use false;
+                                    # then remove tlsVerification, serverHostname and caFile.
+  # Do not set targetUUID: the applier discovers and records target identity itself.
 
 ddlPolicy:
-  triggers: skip                    # Audit CREATE/DROP, advance, apply source row effects.
-                                    # reject stops instead. Target triggers always reject.
-  events: reject                    # Only supported choice; no scheduled target writes.
-ddlTimeoutSeconds: 300               # 1..86400; timeout can leave an uncertain pending DDL.
+  triggers: skip                   # skip or reject. skip audits CREATE/DROP without issuing them;
+                                    # source trigger row effects still apply. Target triggers always reject.
+  events: reject                   # Only supported value; no scheduled target writes.
+ddlTimeoutSeconds: 300              # Top-level setting; 1..86400 seconds. Timeout can leave uncertain DDL.
 
-# Case-sensitive database.table exclusions: % = any sequence, _ = one character.
-# Use single quotes for patterns containing backslashes, e.g. 'scratch.tmp\_%'.
+# Table exclusions apply to BOTH run and replay. Default [] is an empty YAML list:
+# nothing is excluded. '%' matches any sequence; '_' matches one character.
+# Matches are case-sensitive database.table patterns; source and target must use
+# lower_case_table_names=0 when filters are enabled. Maximum 128 patterns, 512 bytes each.
 replicateWildIgnoreTable: []
+# To add exclusions, REPLACE the line above with ONE of these equivalent YAML lists:
+# replicateWildIgnoreTable:
+#   - 'scratch.%'                   # All tables in database scratch (and database-scoped DDL).
+#   - 'my_database.tmp\_%'          # Literal underscore: tables beginning with tmp_.
+# Or: replicateWildIgnoreTable: ['scratch.%', 'my_database.tmp\_%']
+# Use single quotes to preserve backslashes. Do not define the key twice.
+# Filtered groups still advance GTIDs; existing target rows are not deleted.
+# DDL spanning included and excluded tables blocks for explicit resolution.
+
+# Optional error policy for run and replay; default codes: [] stops on every error.
+# Skip the WHOLE GTID, never just one row. See docs/OFFLINE_REPLAY.md for supported codes.
+# skipErrors:
+#   codes: ['ddl.unsupported_alter', 'mysql.1062'] # Example; 1062 needs confirmed InnoDB rollback.
+#   recordSkippedTransactions: true # Default. false keeps counters/checkpoint but no per-GTID audit.
+# With false, plan data consistency/recovery using evidence maintained elsewhere.
+# MyISAM SQL failures and uncertain writes still block. Changes require restart.
 
 sourceReconnect:
-  enabled: true                     # Resume from the applied source checkpoint.
-  initialDelaySeconds: 1             # First retry delay, 1..300 seconds.
-  maximumDelaySeconds: 30            # Backoff cap: initial delay..300 seconds.
-  maximumAttempts: 0                 # 0 = unlimited; otherwise 1..10000 since progress.
+  enabled: true                    # Live run only; replay always disables source reconnect.
+  initialDelaySeconds: 1            # First retry delay; 1..300 seconds.
+  maximumDelaySeconds: 30           # Backoff cap; initialDelaySeconds..300 seconds.
+  maximumAttempts: 0               # 0 = unlimited; otherwise 1..10000 since applied progress.
 targetReconnect:
-  enabled: true                     # Only safe reconnects; uncertain writes still block.
-  initialDelaySeconds: 1             # First retry delay, 1..300 seconds.
-  maximumDelaySeconds: 30            # Backoff cap: initial delay..300 seconds.
-  maximumAttempts: 0                 # 0 = unlimited; applied progress resets the budget.
+  enabled: true                    # run and replay: safe reconnects only; uncertain writes still block.
+  initialDelaySeconds: 1            # First retry delay; 1..300 seconds.
+  maximumDelaySeconds: 30           # Backoff cap; initialDelaySeconds..300 seconds.
+  maximumAttempts: 0               # 0 = unlimited; otherwise 1..10000; applied progress resets the budget.
 
 storage:
-  maximumSQLiteBytes: 268435456       # 256 MiB including WAL/headroom; range 8 MiB..1 GiB.
-  minimumFreeDiskBytes: 536870912     # 512 MiB reserve; minimum 1 MiB.
-  pruneAtPercent: 80                 # Prune eligible history at 50..90% utilization.
-  historyRetentionSeconds: 86400     # Minimum history age; 1..31536000, includes skip audit.
-  snapshotEveryTransactions: 1000    # Covering GTID snapshot interval, 1..10000 groups.
-  capacityCheckEveryTransactions: 1000  # Inspect every 1..10000 groups, earlier under pressure.
-  capacityCheckIntervalSeconds: 5    # Inspect while active every 1..60 seconds.
+  maximumSQLiteBytes: 268435456      # 256 MiB including WAL/headroom; 8 MiB..1 GiB.
+  minimumFreeDiskBytes: 536870912    # 512 MiB reserve; minimum 1 MiB.
+  pruneAtPercent: 80                # Prune eligible history at 50..90% utilization.
+  historyRetentionSeconds: 86400    # Minimum history age; 1..31536000 seconds, includes skip audit.
+  snapshotEveryTransactions: 1000   # Covering GTID snapshot interval; 1..10000 groups.
+  capacityCheckEveryTransactions: 1000 # Inspect every 1..10000 groups, earlier under pressure.
+  capacityCheckIntervalSeconds: 5   # Inspect while active every 1..60 seconds.
 
-# Batches preserve source order; grouping does not make MyISAM writes atomic.
+# DML batching for run/replay. Preserves source order; MyISAM writes are not atomic.
 batch:
-  maximumInsertRows: 32              # Compatible rows per INSERT statement, 1..128.
-  maximumInsertBytes: 1048576        # 1 MiB; 1 KiB..4 MiB, also capped by max_allowed_packet.
-  overlapPreparation: true           # Prepare next batch while the single executor runs.
-  flushOnTableChange: false          # true ends a batch whenever its table changes.
-  maximumTransactions: 32            # Complete source groups per batch, 1..256.
-  maximumRows: 4096                  # Collection threshold, 1..65536 rows.
-  maximumWireBytes: 8388608          # Collection threshold, 1 KiB..32 MiB; default 8 MiB.
-  maximumDelayMilliseconds: 25       # Flush nonempty batch after 1..1000 ms.
+  maximumInsertRows: 32             # Compatible rows per INSERT; 1..128.
+  maximumInsertBytes: 1048576       # 1 MiB; 1 KiB..4 MiB, also capped by target max_allowed_packet.
+  overlapPreparation: true          # Prepare the next batch while the single executor runs.
+  flushOnTableChange: false         # true ends a batch whenever its table changes.
+  maximumTransactions: 32           # Complete source groups per batch; 1..256.
+  maximumRows: 4096                 # Collection threshold; 1..65536 rows.
+  maximumWireBytes: 8388608         # 8 MiB collection threshold; 1 KiB..32 MiB.
+  maximumDelayMilliseconds: 25      # Flush nonempty batch after 1..1000 ms.
                                     # Oversized groups run alone without being split.
 
-# maximumRelayBytes: 268435456       # Durable relay cap: 1 MiB..1 GiB; default 256 MiB.
-# applierProfiling: false            # Detailed apply timings; coarse timings stay on.
+# maximumRelayBytes: 268435456      # Durable relay cap for run/replay; 1 MiB..1 GiB, default 256 MiB.
+# applierProfiling: false           # Detailed apply timings; coarse timings stay on.
+
+# Needed only for fetch/replay, and optional archive evidence in support-bundle.
+# The archive block is ignored by run; it does not enable automatic archiving.
+# Enable archive and directory, then only the optional fields needed for your command.
+# Do not enable files for fetch. See docs/OFFLINE_REPLAY.md.
+# archive:
+#   directory: ./binlogs           # Required. fetch: must NOT exist; replay: existing immutable raw binlogs.
+#   maximumBytes: 68719476736       # Default 64 GiB total archive limit; minimum 4 bytes. Increase for multi-day archives.
+#   firstFile: binlog.000123        # Example starting filename (whole file, not event position).
+#                                  # fetch default: source.start.file, or oldest available source file.
+#                                  # External replay: optional first file in the selected list; ignored with a manifest.
+#   files:                         # Optional ordered, nonempty list for EXTERNAL replay only; rejected by fetch.
+#     - binlog.000123               # Example names; omit files to read all entries in filename order.
+#     - binlog.000124               # With a fetch manifest, the manifest determines file order instead.
+#   lowerCaseTableNames: 0          # Example declaration of original source setting for EXTERNAL archives.
+#                                  # Required as 0 when replay filters are enabled; omit if not needed.
+#                                  # A fetch manifest supplies this setting itself. This does not change MySQL.
+# Keep non-binlog files out of an external directory unless files lists the inputs explicitly.
+
+# Used only by support-bundle. Stop the writer first; the bundle contains workload data.
+# supportBundle:
+#   output: ./support.tar          # Required new output path, outside stateDirectory; uncompressed tar.
+#   maximumBytes: 2147483648        # Default 2 GiB including tar overhead; minimum 1 MiB.
+#   logs: []                       # Optional existing log files; omitted/[] adds no logs.
+#                                  # Example: logs: ['/var/log/mysql-replicator/applier.ndjson']
+# Credentials are excluded from config evidence; supplied logs are not scrubbed.

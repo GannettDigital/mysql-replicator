@@ -14,24 +14,36 @@ BUNDLE = ROOT / 'artifacts/ci/lab'
 
 
 def matrix():
-    return json.loads((ROOT / 'tools/ci_matrix.json').read_text())
+    return json.loads((BUNDLE / 'matrix.json').read_text())
 
 
 def command(shard):
-    if shard['suite'] == 'recovery':
-        if shard['image'] != 'release' or shard['profile'] != 'mysql57-to-mysql84-innodb':
-            raise ValueError('specialized recovery requires the reverse release profile')
-        return ['reverse-suite', '--skip-build', '--events', '0']
-    args = ['test', '--profile', shard['profile'], '--skip-build']
+    args = ['test', '--profile', shard['profile'], '--suite', shard['suite'], '--skip-build']
     if shard['image'] == 'coverage':
         args += ['--coverage']
-    if shard['suite'] == 'sample':
-        args += ['--case', 'positive', '--case', 'ddl-modify-demo-varchar-120', '--case', 'ddl-index-create']
-    else:
-        args += ['--suite', shard['suite']]
-        if shard['suite'] == 'correctness':
-            args += ['--tier', 'smoke']
+    if shard['suite'] in ('correctness', 'lifecycle'):
+        args += ['--variant', shard['variant']]
+    if shard['suite'] == 'correctness':
+        args += ['--tier', shard['tier']]
+        for case in shard['cases']:
+            args += ['--case', case]
     return args
+
+
+def plan(query):
+    from ci_matrix import generate
+    catalogs = [json.loads(query('test', '--profile', 'all', '--suite', suite,
+                                '--variant', 'all', '--list'))
+                for suite in ('correctness', 'lifecycle')]
+    catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
+    result = generate(catalogs, json.loads((ROOT / 'tools/ci_matrix.json').read_text()))
+    result['inputs'] = query('build-inputs').strip()
+    destination = ROOT / 'artifacts/ci/matrix.json'
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(result, indent=2) + '\n')
+    print(f"CI plan: {len(result['include'])} shards, {result['obligations']} catalog obligations, "
+          f"{result['coverage_reports']} instrumented collections; {destination}")
+    return result
 
 
 def lab(*args):
@@ -52,13 +64,16 @@ def bundle(binary):
         shutil.copy2(path, BUNDLE / 'lib' / path.name)
     digest = lab('build-inputs')
     (BUNDLE / 'inputs.sha256').write_text(digest + '\n')
+    result = plan(lab)
+    (BUNDLE / 'matrix.json').write_text(json.dumps(result) + '\n')
     archive = BUNDLE.parent / 'lab.tar.gz'
     with tarfile.open(archive, 'w:gz') as out:
         out.add(BUNDLE, arcname='lab')
     (archive.parent / 'lab.sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + '  lab.tar.gz\n')
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('inputs=' + digest + '\n')
-        output.write('matrix=' + json.dumps(matrix(), separators=(',', ':')) + '\n')
+        output.write('matrix=' + json.dumps({'include': result['include']}, separators=(',', ':')) + '\n')
+        output.write('coverage_reports=' + str(result['coverage_reports']) + '\n')
 
 
 def runtime_libraries(listing):
@@ -75,10 +90,20 @@ def runtime_libraries(listing):
     return libraries
 
 
-def run_shard(identifier):
-    shard = next(s for s in matrix()['include'] if s['id'] == identifier)
+def validate_bundle():
     if lab('build-inputs') != (BUNDLE / 'inputs.sha256').read_text().strip():
         raise ValueError('lab bundle inputs differ from this checkout')
+
+
+def run_shard(identifier):
+    validate_bundle()
+    manifest = matrix()
+    if manifest['inputs'] != (BUNDLE / 'inputs.sha256').read_text().strip():
+        raise ValueError('matrix inputs differ from this bundle')
+    matches = [s for s in manifest['include'] if s['id'] == identifier]
+    if len(matches) != 1:
+        raise ValueError(f'unknown or ambiguous shard: {identifier}')
+    shard = matches[0]
     if shard['suite'] == 'recovery':
         subprocess.run(['docker', 'tag', 'mysql-replicator-packaging:lab', 'mysql-replicator-packaging:reverse'], check=True)
     if shard['image'] == 'release':
@@ -98,10 +123,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--bundle', type=Path)
-    group.add_argument('--run', choices=[s['id'] for s in matrix()['include']])
+    group.add_argument('--run', help='shard ID from the bundled CI matrix')
+    group.add_argument('--plan', type=Path, help='generate the CI matrix using this local lab binary')
     args = parser.parse_args()
     if args.bundle:
         bundle(args.bundle)
+    elif args.plan:
+        binary = args.plan.resolve()
+        plan(lambda *arguments: subprocess.check_output([str(binary), *arguments], cwd=ROOT, text=True))
     else:
         run_shard(args.run)
 

@@ -78,6 +78,8 @@ specific refusals are not silently reused with different expectations.
 | `dml-refusals` | Forward `matrix-reject-*`: incompatible metadata, generated values and decoder refusals, with target effects and unchanged checkpoint checks |
 | `discovery` | `ddl-index-resume`: saved indexed schema, resumed DML and external index-drift refusal |
 | `offline` | `offline-replay`: finite fetch, external raw files, replay/resume without source credentials, native comparison, and support-bundle extraction |
+| `policy` | `live-skip-errors`: live capture with optional audit, DDL skip, InnoDB rollback/resume, exact GTID stop and MyISAM refusal |
+| `offline` | `offline-skip-errors`: optional per-GTID audit, DDL skip-and-continue, InnoDB duplicate rollback/resume and MyISAM duplicate refusal |
 | `offline` | `runtime-control`: exact GTID stop/resume, live/offline reload, refusal of checkpoint changes, and acknowledged stop while target writes are blocked |
 | `failures` | `forward-failures`: restricted grants, target SQL errors, uncertain DDL, skip refusal, trigger policies and generated-value divergence |
 | `recovery` | `myisam-recovery`: exact values, discovery/cache/explicit locks, partial writes, killed groups and refused replay; GTID variants only |
@@ -245,12 +247,50 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-PR CI runs the same smoke, reconnect and demo cases for both profiles, retains
-specialized forward integration/reverse recovery checks, and merges shared
-applier coverage with unit coverage. `Full Profile Qualification` runs the full
-correctness and reconnect matrix weekly, on release tags, and through manual workflow dispatch.
-It uploads each profile's evidence separately. Current published CI coverage uses
-unit tests and instrumented integration/shared smoke, not the full weekly matrix.
+PR and main CI run the full catalog through one parallel matrix. Correctness and
+source/target reconnect run for both default profiles, plus the forward
+`position-minimal` and `gtid-full` capture variants. Demo, reverse recovery and
+the applicable native-reference DDL suite run in the same workflow. There is no
+separate weekly or release-tag qualification workflow.
+
+The lab catalog generates the matrix; `tools/ci_matrix.json` only assigns
+correctness families to areas and sets chunk sizes. New cases automatically join
+their area, while an unassigned family or suite fails planning. The generated
+`ci-lab` artifact contains `matrix.json`, including all obligations, explicit
+not-applicable entries and exact shard selections. Each applicable obligation
+has one owning shard; prerequisites can also run in dependent shards.
+
+Jobs show profile, area, capture variant and image type. Large DDL, index and
+bootstrap areas are split into case groups, with up to 16 jobs running at once.
+Each job owns a fresh fixture. Ordered scenarios and the forward
+failure → recovery → offline/control sequence stay together. CI builds the lab
+once and each applier image once, then shares checksummed artifacts with the
+whole matrix. Release jobs verify they use the packaged binary.
+
+Generate and inspect the same plan locally:
+
+```sh
+swift build --product replicator-lab
+python3 tools/ci_lab.py --plan .build/debug/replicator-lab
+jq '.include[] | {profile, variant, area, suite, cases}' artifacts/ci/matrix.json
+```
+
+Reproduce a shard with the usual `make lab-test PROFILE=...` command
+and its `ARGS="--suite ... --variant ... --case ..."` selections. Only correctness
+and lifecycle accept `--variant`; omit case selectors for lifecycle, demo and
+specialized adapters, which run their complete suite in CI.
+
+The forward negative suites archive the native reference's error and the source
+boundary before reseeding that disposable reference past rejected transactions.
+Applier failure states remain intact. To check the recovery-to-offline transition locally:
+
+```sh
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--case myisam-recovery --case offline-replay --case runtime-control"
+```
+
+CI uploads each shard's evidence separately. Published code coverage combines
+unit tests with instrumented smoke and demo runs. Full correctness and reconnect
+runs use the release image and do not contribute to line coverage.
 See [coverage reports and publication](../CONTRIBUTING.md#code-coverage) for PR
 comments and downloading the HTML/LCOV reports linked from the README.
 Publishing does not require GitHub Pages.

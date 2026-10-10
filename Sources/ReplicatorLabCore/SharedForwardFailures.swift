@@ -129,7 +129,8 @@ extension SharedCorrectness.Run {
                     _ = try h.sql("native","START REPLICA")
                     _ = try h.sql("source",test.sql+"; INSERT INTO demo.mi VALUES(99,'blocked marker',9,NULL)")
                     let diagnostic=try finish(applying,label,success:false,reason:test.error)
-                    try require((diagnostic["reason"] as? String)?.hasPrefix("target SQL error ")==true,"index failure was not a target SQL error")
+                    let expectedCode=test.error == "1062" ? "mysql.1062" : "target.sql"
+                    try require(diagnostic["code"] as? String == expectedCode,"index failure has unexpected code: \(diagnostic["code"] ?? "missing")")
                     let deadline=Date().addingTimeInterval(20)
                     while try h.status()["Last_SQL_Errno"] != test.error && Date()<deadline {Thread.sleep(forTimeInterval:0.1)}
                     try require(h.status()["Last_SQL_Errno"]==test.error,"native error differs from Swift target")
@@ -256,11 +257,8 @@ extension SharedCorrectness.Run {
                 try reporter.pass("ddl-denied")
 
             _ = try h.sql("target57","GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'")
-            // Only this disposable native reference skips rejected ranges. The
-            // target's blocked states and source events remain archived above.
-            let end=try f.boundary()
-            _ = try h.sql("native","STOP REPLICA; RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(end.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(end.file)',SOURCE_LOG_POS=\(end.position); START REPLICA")
             try SharedWorkflowCases.requirePassed(SharedWorkflowCases.failures,in:reporter.results)
+            try reseedNativeAfterRejections("forward-failures")
         }
     }
 }

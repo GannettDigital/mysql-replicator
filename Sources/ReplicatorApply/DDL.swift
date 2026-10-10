@@ -106,11 +106,11 @@ extension TargetSession {
             // 5.7 cannot set default_collation_for_utf8mb4. Preserve the SQL;
             // refuse a semantic mismatch instead of inserting a COLLATE rewrite.
             let actual=try contract.defaultUTF8MB4Collation(self)
-            try require(rows.first?.column("COLLATION_NAME")?.string==actual,"source default utf8mb4 collation is unsupported by target: default_collation_for_utf8mb4=\(DDLQueryContextDiagnostic.collation(context.defaultUTF8MB4Collation)), target default=\(actual ?? "unavailable"); no collation substitution")
+            try require(rows.first?.column("COLLATION_NAME")?.string==actual,"source default utf8mb4 collation is unsupported by target: default_collation_for_utf8mb4=\(DDLQueryContextDiagnostic.collation(context.defaultUTF8MB4Collation)), target default=\(actual ?? "unavailable"); no collation substitution",code:.unsupportedCollation)
         } else {
             rows=try query("SELECT CHARACTER_SET_NAME,DEFAULT_COLLATE_NAME AS COLLATION_NAME FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME=?",[.init(string:charset!)]).0
         }
-        guard let row=rows.first,let found=row.column("CHARACTER_SET_NAME")?.string,let name=row.column("COLLATION_NAME")?.string else {throw ApplyError("unsupported target charset/collation: characterSet=\(charset ?? "inferred"), collation=\(collation ?? "default"); no substitution")}
+        guard let row=rows.first,let found=row.column("CHARACTER_SET_NAME")?.string,let name=row.column("COLLATION_NAME")?.string else {throw ApplyError("unsupported target charset/collation: characterSet=\(charset ?? "inferred"), collation=\(collation ?? "default"); no substitution",code:.unsupportedCollation)}
         try require(charset==nil || charset==found,"DDL charset/collation mismatch: characterSet=\(charset ?? "inferred"), collation=\(name), collation characterSet=\(found)")
         return DDLEncoding(characterSet:found,collation:name)
     }
@@ -256,7 +256,7 @@ extension TargetSession {
         else if definition.characterSet==nil && definition.collation==nil {
             guard let row=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(config.compatibilityPolicy.targetID(context.serverCollation)))]).0.first,
                   let charset=row.column("CHARACTER_SET_NAME")?.string,let collation=row.column("COLLATION_NAME")?.string else {
-                throw ApplyError("unsupported source server collation: collation_server=\(DDLQueryContextDiagnostic.collation(context.serverCollation)), database=\(definition.name); unavailable on target; no substitution")
+                throw ApplyError("unsupported source server collation: collation_server=\(DDLQueryContextDiagnostic.collation(context.serverCollation)), database=\(definition.name); unavailable on target; no substitution",code:.unsupportedCollation)
             }
             after=DDLEncoding(characterSet:charset,collation:collation);serverCollation=collation
         } else {
