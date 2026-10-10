@@ -3,22 +3,35 @@
 [![CI](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml/badge.svg)](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Replicate MySQL across versions where native replication does not meet your needs.
-`mysql-replicator` reads source binary logs and applies supported INSERT, UPDATE,
-DELETE and DDL changes to a dedicated replica.
+Use `mysql-replicator` to replicate data between MySQL versions when native
+replication does not meet your needs. It reads source binary logs and applies
+supported INSERT, UPDATE, DELETE, and DDL changes to a dedicated replica.
 
-The primary tested profile is
-**MySQL 8.4 InnoDB → MySQL 5.7 MyISAM**, alongside an
-[experimental 5.7 → 8.4 InnoDB profile](docs/REVERSE_REPLICATION.md). Initial
-data copying is external; interrupted or uncertain writes can require DBA intervention.
-See [supported behavior](PLAN/DML_APPLY.md) and [DDL compatibility](PLAN/DDL_COMPATIBILITY.md).
+## Supported profiles
+
+The test suite checks these profiles:
+
+| Configuration profile | Source | Target | Foreign keys |
+| --- | --- | --- | --- |
+| `mysql84-to-mysql57-myisam` | MySQL 8.4 InnoDB | MySQL 5.7 MyISAM | Not supported |
+| [`mysql57-to-mysql84-innodb`](docs/REVERSE_REPLICATION.md) | MySQL 5.7 InnoDB | MySQL 8.4 InnoDB | Supported with [limits](PLAN/MYSQL57_FOREIGN_KEYS.md) |
+| [`mysql57-to-mysql57-myisam`](docs/MYSQL57_MYISAM.md) | MySQL 5.7 InnoDB | MySQL 5.7 MyISAM | Not supported |
+
+Set `profile` in your YAML configuration to select a profile. Other combinations
+are not tested. See [DML support](PLAN/DML_APPLY.md) and
+[DDL support](PLAN/DDL_COMPATIBILITY.md) for the supported operations and limits.
+
+Copy the initial data with an external tool. If a write stops or its result is
+unknown, a database administrator can need to repair the target before replication
+continues.
 
 ## Install and start
 
-Download a standalone archive or Debian `.deb` package from [Releases](https://github.com/GannettDigital/mysql-replicator/releases).
-**Binaries and containers are Linux x86_64 only**;
-other platforms require a source build. No Swift, Rust, Node.js or SQLite runtime
-installation is needed. With `curl`, `jq`, `tar` and coreutils installed:
+Download a binary archive or Debian `.deb` package from [Releases](https://github.com/GannettDigital/mysql-replicator/releases).
+**Binaries and containers support Linux x86_64 only.**
+For other platforms, build from source. You do not need to install Swift, Rust,
+Node.js, or SQLite to use the binary. Install `curl`, `jq`, `tar`, and coreutils.
+Then run:
 
 ```sh
 curl -fLo install.sh https://raw.githubusercontent.com/GannettDigital/mysql-replicator/main/packaging/install.sh
@@ -26,23 +39,25 @@ sh install.sh
 ~/.local/bin/mysql-replicator --version
 ```
 
-Follow the [setup guide](docs/INSTALL.md) to prepare the target, snapshot boundary,
-TLS and credentials in your `apply.yaml`.
+Follow the [setup guide](docs/INSTALL.md) to prepare the target and record the
+source position for the initial data copy. Configure TLS and credentials in
+`apply.yaml`.
 
-Short starting points: [live replication](examples/run.minimal.yaml) or
+Use the short example for [live replication](examples/run.minimal.yaml) or
 [offline replay](examples/replay.minimal.yaml). The [full example](examples/apply.example.yaml)
-documents optional settings. Start live replication with:
+describes the optional settings. To start live replication, run:
 
 ```sh
 ~/.local/bin/mysql-replicator run --config ./apply.yaml --initialize
 ```
 
-The installer selects the newest published release, including betas, verifies its
-archive checksum and preserves configuration and state. Use `--version VERSION`
-to pin a release.
+The installer selects the latest published release, including beta releases.
+It checks the archive checksum and keeps the configuration and state.
+Use `--version VERSION` to select a specific release.
 
-For Debian/Ubuntu, download the chosen release's `.deb` and `SHA256SUMS` into a
-directory containing only that package version, then verify and install:
+For Debian or Ubuntu, download the `.deb` and `SHA256SUMS` files for the selected
+release. Put them in a directory with no other package versions.
+Check the checksum. Then install the package:
 
 ```sh
 sha256sum --ignore-missing --check SHA256SUMS
@@ -51,24 +66,25 @@ sudo apt install ./mysql-replicator_*_amd64.deb
 
 The package installs `mysql-replicator` on `PATH` and includes a systemd service.
 Follow the [Debian installation and service setup guide](docs/INSTALL.md#download-and-verify)
-for configuration, first start and clean resume. The setup guide also covers containers.
+to configure, start, and restart the service. The setup guide also describes containers.
 See [offline replay and support bundles](docs/OFFLINE_REPLAY.md) to test captured
-binlogs against a prepared target and collect troubleshooting evidence.
+binary logs against a prepared target and collect data for troubleshooting.
 
 ## Try the demo
 
-From a source checkout with the [developer prerequisites](CONTRIBUTING.md#prerequisites):
+Get a copy of the source and install the [developer prerequisites](CONTRIBUTING.md#prerequisites).
+Then run:
 
 ```sh
 make lab-demo PROFILE=mysql84-to-mysql57-myisam ACTION=up
 make lab-demo PROFILE=mysql84-to-mysql57-myisam ACTION=start
 ```
 
-Use the [test lab guide](docs/TEST_LAB.md) to issue SQL, compare replicas, or select
-`mysql57-to-mysql84-innodb` or [5.7 → 5.7 MyISAM](docs/MYSQL57_MYISAM.md). Clean up with the same profile and `ACTION=down`.
+Use the [test lab guide](docs/TEST_LAB.md) to run SQL, compare replicas, or select
+another profile. To remove the demo, use the same profile with `ACTION=down`.
 Run shared smoke tests with `make correctness TIER=smoke`.
 The [forward workbook](PLAN/DEMO_WORKBOOK.md) and
-[reverse workbook](PLAN/REVERSE_DEMO_WORKBOOK.md) use the same profile-based commands for detailed experiments.
+[reverse workbook](PLAN/REVERSE_DEMO_WORKBOOK.md) give more examples with the same commands.
 
 [Build, test and contribute](CONTRIBUTING.md) · [Security](SECURITY.md) ·
 [License](LICENSE) · [Third-party notices](NOTICE)

@@ -199,7 +199,6 @@ public struct TargetConfiguration: Decodable {
             try require(path.hasPrefix("/") && !path.utf8.contains(0) && path.utf8.count <= 103,"target unixSocket must be an absolute path of at most 103 UTF-8 bytes without NUL")
         } else {
             try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
-            try require(requireTLS,"target TCP connections require TLS; only a Unix socket may disable TLS")
         }
         if requireTLS {
             if tlsVerification == .verifyIdentity {
@@ -223,6 +222,7 @@ public struct ApplyConfiguration: Decodable {
     public let target: TargetConfiguration
     public let tables: [ApplyTable]?
     public let stateDirectory: String
+    public let supportBundle: SupportBundleConfiguration.Options?
     public let maximumRelayBytes: UInt64?
     public let replicateWildIgnoreTable: [String]?
     public let ddlTimeoutSeconds: Int?
@@ -241,6 +241,7 @@ public struct ApplyConfiguration: Decodable {
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate(offline: Bool = false) throws {
+        try supportBundle?.validate(stateDirectory:stateDirectory)
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
         _ = try source.validate(connection:!offline)
         try target.validate()

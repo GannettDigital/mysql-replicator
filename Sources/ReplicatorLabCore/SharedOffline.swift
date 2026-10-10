@@ -64,7 +64,7 @@ extension SharedCorrectness.Run {
             let raw=try invoke("offline-external","replay",initialize:true)
             try require(raw["appliedGTIDSet"] as? String == end.gtids && raw["transactionsApplied"] as? Int == 5,"external raw checkpoint differs")
             _ = try compare("offline_poc")
-            f.config["supportBundle"]=["output":"/evidence/support.tar","maximumBytes":64*1024*1024]
+            f.config["supportBundle"]=["output":"/evidence/support.tar","maximumBytes":64*1024*1024,"format":"tar","onBlocked":true,"directory":"/evidence/support-bundles"]
             var target=f.config["target"] as! [String:Any];target["password"]="must-not-be-exported";target.removeValue(forKey:"passwordEnvironment");f.config["target"]=target
             let bundle=try invoke("offline-support","support-bundle")
             try require(bundle["containsCustomerData"] as? Bool == true,"support bundle sensitivity label missing")

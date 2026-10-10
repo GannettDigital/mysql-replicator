@@ -1,10 +1,12 @@
-# Experimental 5.7 → 8.4 InnoDB profile
+# MySQL 5.7 → MySQL 8.4 InnoDB profile
 
 For common profile-based test, demo and benchmark commands, see the [test lab](TEST_LAB.md).
 The commands in this document remain available; retained legacy demos are separate sessions.
 
-This is an experimental DML/DDL implementation, not Cloud SQL qualification or a complete
-migration/recovery solution. The default 8.4 → 5.7 MyISAM profile is unchanged.
+This profile supports the DML and DDL operations described below.
+Cloud SQL deployment still requires separate tests. Use external tools to copy the
+initial data. Some failures require manual recovery.
+The default profile remains 8.4 → 5.7 MyISAM.
 The implementation plan is [INNODB_REVERSE_REPLICATION.md](../PLAN/INNODB_REVERSE_REPLICATION.md).
 
 ## Configuration and bootstrap
@@ -18,8 +20,9 @@ profile: mysql57-to-mysql84-innodb
 
 Both servers require GTID mode ON, enforce_gtid_consistency ON, ROW/FULL logging
 and CRC32 checksums. Target binary logging remains enabled with target-local
-GTIDs. The source GTID checkpoint lives exclusively in SQLite. TLS is required
-for TCP connections. Do not configure collation translation or explicit table
+GTIDs. The source GTID checkpoint lives exclusively in SQLite. Connections use
+verified TLS by default. To disable TLS, see [connection settings](INSTALL.md#connection-security).
+Do not configure collation translation or explicit table
 locks for this profile. GTID positioning is required.
 
 Target TLS defaults to `tlsVerification: verify-identity`, requiring a matching

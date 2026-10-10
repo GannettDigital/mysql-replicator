@@ -1,5 +1,12 @@
 # Testing replication by profile
 
+Shared fixtures enable automatic support bundles when the applier enters
+`BLOCKED`. They use `format: directory` so you can read the files without extraction.
+After a test, look in its `support-bundles/` artifact directory. Start with
+`failure.json`, then check `state.sqlite`, `relay.frames`, and `bundle.json`.
+The rejection tests check that the bundle preserves the failure and the blocked
+checkpoint. A test failure outside the applier does not cause a support bundle.
+
 The lab runs shared experiments against a source, an external-applier target,
 and a native reference. A profile identifies the topology and replication
 contract; it does not mean every feature of those MySQL versions is supported.

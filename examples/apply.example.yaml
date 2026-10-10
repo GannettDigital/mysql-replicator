@@ -11,33 +11,35 @@ version: 2                          # Required config format; do not add tables/
 #   mysql84-to-mysql57-myisam: MySQL 8.4 source -> MySQL 5.7 MyISAM target (default).
 #   mysql57-to-mysql84-innodb: MySQL 5.7 source -> MySQL 8.4 InnoDB target.
 #   mysql57-to-mysql57-myisam: MySQL 5.7 source -> MySQL 5.7 MyISAM target.
-profile: mysql84-to-mysql57-myisam
+profile: mysql84-to-mysql57-myisam   # Select a source version and target version/engine from the list above.
 stateDirectory: ./replica-state     # Required for run/replay/support-bundle/ctl; new with --initialize.
                                     # Reuse after a clean stop; saved progress wins over source.start.
 
 # Optional comparison-semantics translation; default is no mappings.
 # Forward profile only. Enable BEFORE initializing state and use the same mapping
 # for snapshot schemas. UTF-8 bytes stay the same; sorting/equality/unique keys may differ.
-# compatibility:
-#   collations:
+# compatibility:                  # Optional rules for differences between source and target.
+#   collations:                    # Map source collation names to supported target names.
 #     utf8mb4_0900_ai_ci: utf8mb4_unicode_ci  # Example; also allows utf8mb4_general_ci or utf8mb4_bin.
 
+# Source connection and binary log settings.
 source:
   version: 2                       # Required; legacy source.tables is not accepted by run/replay.
-  # run/fetch connect to this endpoint with verified TLS.
-  # replay never connects: host, port, username and serverHostname must still be
-  # syntactically valid, but dummy values are allowed; omit both password settings.
-  host: REPLACE_SOURCE_HOST
+  # run/fetch connect to this endpoint. Verified TLS is the default.
+  # replay never connects. Use valid dummy host, port, and username values.
+  # Keep a dummy serverHostname if requireTLS is true. Omit both password settings.
+  host: REPLACE_SOURCE_HOST         # Source TCP address. Use 127.0.0.1 for a local server.
   port: 3306                       # Required; valid range 1..65535.
   username: capture                # Example account; source replication/metadata privileges.
   passwordEnvironment: REPLICATOR_SOURCE_PASSWORD  # Name of an environment variable, not its value.
   # password: 'REPLACE_SOURCE_PASSWORD'  # Alternative; remove passwordEnvironment. Choose exactly one for run/fetch.
+  # requireTLS: true               # false disables TLS. Remove serverHostname and caFile when false.
   serverHostname: REPLACE_SOURCE_TLS_HOSTNAME  # Name verified against the source TLS certificate.
   caFile: /REPLACE/source-ca.pem    # Optional; omit to use system trust roots. Source has no verify-ca mode.
   serverID: 9100                   # Example client ID; required nonzero UInt32, unique for live capture.
   sourceUUID: REPLACE_SOURCE_UUID   # Required original source server_uuid; also identifies the archive.
   mode: gtid                       # run: gtid; file-position only for an 8.4 source. replay: gtid only.
-  start:
+  start:                           # Source position that matches the initial data copy.
     executedGTIDs: REPLACE_SNAPSHOT_GTID_SET  # Required FULL source GTID set represented by the snapshot, not just its last GTID. Empty: "".
     # file: binlog.000123           # Example; file and position must be supplied together.
     # position: 4                  # Example next-event byte offset; minimum 4. Required for file-position mode.
@@ -53,27 +55,31 @@ source:
   # downloadCacheBytes: 268435456   # Live download backlog; 20 MiB..1 GiB. Unused by replay.
   # decoderProfiling: false        # Detailed decoder timings; coarse timings stay on.
 
-target:
+target:                            # Dedicated replica connection and session settings.
   host: REPLACE_TARGET_HOST         # Dedicated target matching the selected profile.
   port: 3306                       # Required with host; valid range 1..65535.
   username: applier                # Example account; DML/DDL and metadata visibility privileges.
-  passwordEnvironment: REPLICATOR_TARGET_PASSWORD
+  passwordEnvironment: REPLICATOR_TARGET_PASSWORD # Name of the environment variable with the target password.
   # password: 'REPLACE_TARGET_PASSWORD'  # Alternative; remove passwordEnvironment. Choose exactly one.
   # tlsVerification: verify-identity # Default: verify CA chain and serverHostname.
                                     # verify-ca: require an explicit caFile; skip hostname matching.
                                     # In verify-ca, omit serverHostname or supply it for TLS SNI only.
-  serverHostname: REPLACE_TARGET_TLS_HOSTNAME
+  serverHostname: REPLACE_TARGET_TLS_HOSTNAME # Name to check against the target TLS certificate.
   caFile: /REPLACE/target-ca.pem     # Required for verify-ca; otherwise may be omitted for system trust roots.
                                     # For Cloud SQL per-instance CA, use that instance's downloaded server CA.
   nativeAutoStartDisabled: true     # Required attestation that native replication will not auto-start.
                                     # This setting does not disable native replication for you.
   explicitTableLocks: false         # Optional LOCK TABLES; must stay false for the InnoDB profile.
   # unixSocket: /var/run/mysqld/mysqld.sock  # Example local alternative; remove both host and port.
-  # requireTLS: true               # TCP requires true. Only a Unix socket may use false;
-                                    # then remove tlsVerification, serverHostname and caFile.
+  # requireTLS: true               # false disables TLS for TCP or a Unix socket.
+                                    # When false, remove tlsVerification, serverHostname and caFile.
   # Do not set targetUUID: the applier discovers and records target identity itself.
 
-ddlPolicy:
+# With requireTLS: false, replication data is not encrypted by the connection.
+# The account and server must permit connections without TLS.
+# Change TLS settings with stop/edit/restart. ctl reload cannot change them.
+
+ddlPolicy:                         # Rules for source DDL that can cause independent target writes.
   triggers: skip                   # skip or reject. skip audits CREATE/DROP without issuing them;
                                     # source trigger row effects still apply. Target triggers always reject.
   events: reject                   # Only supported value; no scheduled target writes.
@@ -83,7 +89,7 @@ ddlTimeoutSeconds: 300              # Top-level setting; 1..86400 seconds. Timeo
 # nothing is excluded. '%' matches any sequence; '_' matches one character.
 # Matches are case-sensitive database.table patterns; source and target must use
 # lower_case_table_names=0 when filters are enabled. Maximum 128 patterns, 512 bytes each.
-replicateWildIgnoreTable: []
+replicateWildIgnoreTable: []        # Exclude tables that match these patterns. Empty means no exclusions.
 # To add exclusions, REPLACE the line above with ONE of these equivalent YAML lists:
 # replicateWildIgnoreTable:
 #   - 'scratch.%'                   # All tables in database scratch (and database-scoped DDL).
@@ -95,24 +101,24 @@ replicateWildIgnoreTable: []
 
 # Optional error policy for run and replay; default codes: [] stops on every error.
 # Skip the WHOLE GTID, never just one row. See docs/OFFLINE_REPLAY.md for supported codes.
-# skipErrors:
+# skipErrors:                      # Optional rules to skip supported failures in run and replay.
 #   codes: ['ddl.unsupported_alter', 'mysql.1062'] # Example; 1062 needs confirmed InnoDB rollback.
 #   recordSkippedTransactions: true # Default. false keeps counters/checkpoint but no per-GTID audit.
 # With false, plan data consistency/recovery using evidence maintained elsewhere.
 # MyISAM SQL failures and uncertain writes still block. Changes require restart.
 
-sourceReconnect:
+sourceReconnect:                   # Retry source connections after supported transport failures.
   enabled: true                    # Live run only; replay always disables source reconnect.
   initialDelaySeconds: 1            # First retry delay; 1..300 seconds.
   maximumDelaySeconds: 30           # Backoff cap; initialDelaySeconds..300 seconds.
   maximumAttempts: 0               # 0 = unlimited; otherwise 1..10000 since applied progress.
-targetReconnect:
+targetReconnect:                   # Retry target connections when it is safe to do so.
   enabled: true                    # run and replay: safe reconnects only; uncertain writes still block.
   initialDelaySeconds: 1            # First retry delay; 1..300 seconds.
   maximumDelaySeconds: 30           # Backoff cap; initialDelaySeconds..300 seconds.
   maximumAttempts: 0               # 0 = unlimited; otherwise 1..10000; applied progress resets the budget.
 
-storage:
+storage:                           # SQLite capacity, history retention, and disk reserve.
   maximumSQLiteBytes: 268435456      # 256 MiB including WAL/headroom; 8 MiB..1 GiB.
   minimumFreeDiskBytes: 536870912    # 512 MiB reserve; minimum 1 MiB.
   pruneAtPercent: 80                # Prune eligible history at 50..90% utilization.
@@ -122,7 +128,7 @@ storage:
   capacityCheckIntervalSeconds: 5   # Inspect while active every 1..60 seconds.
 
 # DML batching for run/replay. Preserves source order; MyISAM writes are not atomic.
-batch:
+batch:                             # Prepare and apply bounded groups of source transactions.
   maximumInsertRows: 32             # Compatible rows per INSERT; 1..128.
   maximumInsertBytes: 1048576       # 1 MiB; 1 KiB..4 MiB, also capped by target max_allowed_packet.
   overlapPreparation: true          # Prepare and journal ahead while the single target worker runs.
@@ -142,7 +148,7 @@ batch:
 # The archive block is ignored by run; it does not enable automatic archiving.
 # Enable archive and directory, then only the optional fields needed for your command.
 # Do not enable files for fetch. See docs/OFFLINE_REPLAY.md.
-# archive:
+# archive:                         # Binary log files for fetch, replay, and support bundles.
 #   directory: ./binlogs           # Required. fetch: must NOT exist; replay: existing immutable raw binlogs.
 #   maximumBytes: 68719476736       # Default 64 GiB total archive limit; minimum 4 bytes. Increase for multi-day archives.
 #   firstFile: binlog.000123        # Example starting filename (whole file, not event position).
@@ -156,10 +162,18 @@ batch:
 #                                  # A fetch manifest supplies this setting itself. This does not change MySQL.
 # Keep non-binlog files out of an external directory unless files lists the inputs explicitly.
 
-# Used only by support-bundle. Stop the writer first; the bundle contains workload data.
-# supportBundle:
-#   output: ./support.tar          # Required new output path, outside stateDirectory; uncompressed tar.
+# Bundles contain workload data. Automatic collection starts after the writer stops.
+# Stop the writer before you use the manual support-bundle command.
+# supportBundle:                   # Manual collection and automatic collection on a BLOCKED error.
+#   onBlocked: false               # true collects one bundle when run/replay enters BLOCKED.
+#   directory: ./support-bundles    # Required when onBlocked is true. Must be outside stateDirectory.
+#                                  # Each error gets a unique name. Old bundles are not removed.
+#   format: tar                    # tar packs the files. directory leaves them unpacked for inspection.
+#   output: ./support.tar          # Required only for manual collection. Use a new path outside stateDirectory.
+#                                  # For format: directory, this is a new directory path.
 #   maximumBytes: 2147483648        # Default 2 GiB including tar overhead; minimum 1 MiB.
+#                                  # This limit applies to each bundle, including directory output.
 #   logs: []                       # Optional existing log files; omitted/[] adds no logs.
 #                                  # Example: logs: ['/var/log/mysql-replicator/applier.ndjson']
 # Credentials are excluded from config evidence; supplied logs are not scrubbed.
+# A bundle failure is reported separately. It does not replace the replication error.

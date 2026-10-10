@@ -24,6 +24,7 @@ target:
   port: 3306
   username: applier
   passwordEnvironment: REPLICATOR_TARGET_PASSWORD
+  # To disable TLS, set requireTLS: false and remove serverHostname and caFile.
   serverHostname: REPLACE_TARGET_TLS_HOSTNAME
   # caFile: /path/to/target-ca.pem # Omit only if system trust roots suffice.
   nativeAutoStartDisabled: true # Disable native replication autostart yourself first.

@@ -83,7 +83,7 @@ with `profile: mysql57-to-mysql57-myisam`. This profile is not in beta.3 binarie
 
 Follow [source/target preconditions and supported behavior](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/PLAN/DML_APPLY.md)
 and the comments in [apply.example.yaml](https://github.com/GannettDigital/mysql-replicator/blob/v0.1.0-beta.3/examples/apply.example.yaml). Configure
-ROW/FULL/CRC32 binlogs, the required GTID settings, account privileges, verified TLS,
+ROW/FULL/CRC32 binlogs, the required GTID settings, account privileges, connection security,
 and disable native replication autostart on the target. No native channel or
 other writer may operate on that target. The program checks these preconditions.
 
@@ -106,6 +106,36 @@ using systemd EnvironmentFile syntax (no `export`). It is not loaded by the CLI.
 Strict collation matching is the default. If opting into translation of
 `utf8mb4_0900_ai_ci`, configure the same mapping for the snapshot and replication
 before initialization. Equality, ordering and unique-key behavior may differ.
+
+## Connection security
+
+Source and target TCP connections use verified TLS by default.
+To connect without TLS, set `requireTLS: false` in the applicable section:
+
+```yaml
+source:
+  # Keep the other source settings.
+  requireTLS: false
+target:
+  # Keep the other target settings.
+  requireTLS: false
+```
+
+Remove `serverHostname` and `caFile` from each section where you disable TLS.
+Also remove `target.tlsVerification` if you disable target TLS.
+You can disable TLS for one connection and keep it for the other.
+The account and server must permit connections without TLS.
+Replication data on these connections is not encrypted.
+
+For a local TCP target, use `host: 127.0.0.1` and its port.
+For a local Unix socket, replace target `host` and `port` with
+`unixSocket: /var/run/mysqld/mysqld.sock`. Set `requireTLS: false` to use the
+socket without TLS. The source uses TCP.
+
+These settings apply to live replication, source archive downloads, and target
+replay connections. Replay never connects to the source.
+Stop and restart the process to change connection settings. `ctl reload` cannot
+change them. A connection that requires TLS cannot fall back to an unencrypted connection.
 
 ## First start and clean resume
 

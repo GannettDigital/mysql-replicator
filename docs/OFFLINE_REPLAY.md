@@ -84,7 +84,7 @@ sets with holes, without decoding historical row values against newer schemas.
 SQLite's saved source progress takes precedence on resume. Target-local GTIDs do
 not replace this checkpoint.
 
-Target TCP connections still require TLS. The default
+Target TCP connections use TLS by default. The default
 `target.tlsVerification: verify-identity` verifies the CA chain and requires
 `serverHostname` to match the server certificate. For a target with an
 instance-specific CA but no certificate DNS name (such as some Cloud SQL
@@ -105,6 +105,12 @@ If supplied, `serverHostname` is used for TLS SNI, not identity matching in this
 mode. This target setting applies to both `run` and `replay`; source TLS settings
 are unchanged. Changing TLS settings requires stopping and restarting the
 applier, rather than `ctl reload`.
+
+To disable target TLS, set `target.requireTLS: false`. Remove `tlsVerification`,
+`serverHostname`, and `caFile` from the target section. This works with TCP and
+Unix sockets. The connection does not encrypt replication data.
+See [connection settings](INSTALL.md#connection-security). Replay does not connect
+to the source, regardless of its TLS settings.
 
 The reader validates file ordering, rotation, framing, CRCs, complete transaction
 boundaries, and whether the baseline covers history before the first available
@@ -281,6 +287,34 @@ Stop the applier before `support-bundle`; collection refuses an active state
 writer. It also works with blocked or abandoned state, and does not perform
 recovery. The output path must be new and outside the state directory.
 
+To collect a bundle when `run` or `replay` enters `BLOCKED`, add:
+
+```yaml
+supportBundle:
+  onBlocked: true
+  directory: ./support-bundles
+  format: tar
+  maximumBytes: 2147483648
+```
+
+Automatic collection is off by default. Collection starts after the run releases
+the writer lock and stops its workers. Each bundle gets a unique name in
+`directory`. Keep this directory outside `stateDirectory`.
+The error report contains the bundle path and any collection error.
+A collection error does not replace the replication error or change the exit code.
+
+Use `format: directory` to keep the files unpacked. The default `tar` format
+creates an uncompressed tar file. Both formats use the same size limit and file
+index. The size limit applies to each bundle. Remove old bundles when you no
+longer need them; automatic collection does not remove them.
+
+Automatic bundles also include `failure.json`. This file contains the original
+error, progress, stage timings, and target failure details when available.
+Clean stops, skipped errors, and safe reconnects do not create a bundle.
+A process crash or `SIGKILL` cannot trigger collection. Use the manual command
+after these failures. A rejected resume that does not enter `BLOCKED` also needs
+manual collection.
+
 The bundle includes a standalone SQLite backup, relay evidence, configuration
 with credential fields excluded, and build/state diagnostics. If `archive` is
 configured, it includes raw binlogs within the byte budget, prioritizing pending
@@ -292,8 +326,8 @@ journal's durable boundary are labeled as an unjournaled tail, not applied work.
 and identifiers. Workload data is deliberately not anonymized. Connection
 password/private-key/secret fields are excluded from configuration evidence;
 referenced environment values and TLS private-key files are not collected.
-Explicitly supplied logs are not scrubbed. The file is created with mode 0600 and
-is never uploaded automatically. SQLite backup includes committed WAL contents;
+Explicitly supplied logs are not scrubbed. Files use mode 0600. Bundle directories
+use mode 0700. Bundles are never uploaded automatically. SQLite backup includes committed WAL contents;
 the original state and relay are not changed or pruned.
 
 Extract with a standard tar reader. A bundle is evidence, not a ready-to-run

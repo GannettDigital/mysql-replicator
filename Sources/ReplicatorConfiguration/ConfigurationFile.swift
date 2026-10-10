@@ -9,7 +9,12 @@ public enum ConfigurationFile {
     /// Preserve operational settings without exporting credential fields. Never
     /// read the referenced environment variables or TLS files for diagnostics.
     public static func diagnosticJSON(from url: URL) throws -> Data {
-        let value=try load(DiagnosticValue.self,from:url)
+        try diagnosticJSON(from:read(from:url))
+    }
+
+    /// Use the same bytes as the running configuration, even if its file changes.
+    public static func diagnosticJSON(from data: Data) throws -> Data {
+        let value=try decode(DiagnosticValue.self,from:data)
         return try JSONSerialization.data(withJSONObject:value.redacted,options:[.prettyPrinted,.sortedKeys,.fragmentsAllowed])
     }
 

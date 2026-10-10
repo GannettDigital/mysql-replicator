@@ -1,7 +1,6 @@
 import Foundation
 import NIOCore
 import NIOPosix
-import NIOSSL
 import MySQLNIO
 import ReplicatorCodec
 
@@ -152,12 +151,9 @@ public enum LiveInspection {
             defer { try? timings.measure("capture.shutdown.event_loop") { try group.syncShutdownGracefully() } }
             let loop = group.next()
             let address = try timings.measure("capture.resolve") { try sourceNetworkOperation { try SocketAddress.makeAddressResolvingHost(config.host, port: config.port) } }
-            var tls = TLSConfiguration.makeClientConfiguration()
-            tls.certificateVerification = .fullVerification
-            if let ca = config.caFile { tls.trustRoots = .file(ca) }
             let connection = try timings.measure("capture.connect") { try sourceNetworkOperation { try MySQLConnection.connect(to: address, username: config.username, database: "",
-                password: password, tlsConfiguration: tls, serverHostname: config.serverHostname,
-                requireTLS: true, handshakeTimeout: .seconds(10), on: loop).wait() } }
+                password: password, tlsConfiguration: config.tlsConfiguration(), serverHostname: config.serverHostname,
+                requireTLS: config.requireTLS, handshakeTimeout: .seconds(10), on: loop).wait() } }
             defer { try? timings.measure("capture.shutdown.connection") { try connection.close().wait() } }
             func query(_ sql: String) throws -> [MySQLRow] {
                 let timeout = loop.scheduleTask(in: .seconds(10)) { _ = connection.close() }
@@ -177,7 +173,8 @@ public enum LiveInspection {
                 guard casing.first?.column("n")?.string == "0" else { throw CaptureError("wildcard filtering requires source lower_case_table_names=0") }
             }
             let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
-            guard !(ssl.first?.column("Value")?.string ?? "").isEmpty else { throw CaptureError("source connection has no TLS cipher") }
+            let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
+            guard encrypted == config.requireTLS else { throw CaptureError("source session TLS differs from configured transport") }
             let set = try GTIDSet(config.start.executedGTIDs)
             let covered = try query("SELECT GTID_SUBSET('\(set.canonical)',@@GLOBAL.gtid_executed) AS covered")
             guard covered.first?.column("covered")?.string == "1" else { throw CaptureError("bootstrap GTID set is not covered by this source") }
