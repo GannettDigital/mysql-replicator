@@ -359,6 +359,27 @@ optional `applier-profile.tsv` / `decoder-profile.tsv`, server durability settin
 and native/target binlog boundaries. `apply.detail.transaction.begin` and
 `apply.detail.transaction.commit` include the SQL round trip; `capture.schema_wait`
 measures time waiting for historical schema interpretation in the apply loop.
+
+The application and benchmark default to eight source transactions per journal
+batch. `batch.maximumPreparedBatches` defaults to two (one executing and one
+prepared); setting it to one retains overlap of row planning but serializes
+durable batch preparation with completion. `batch.overlapPreparation: false`
+also disables coordinator planning overlap at batch handoff and uses one slot.
+For a backlog comparison with the same binary, use `--prepared-batches 1` and
+`--prepared-batches 2`, keeping `--batch-transactions 8` and profiling settings
+unchanged. This controls the durable queue depth, not the number of target
+connections or source transactions committed together.
+
+The final summary's `applyQueue` reports the current target session's queue
+capacity, maximum outstanding batches, executed/unissued batch counts, and
+worker `busySeconds`, `idleSeconds`, and `spanSeconds`. Span covers the first
+batch start through the last completed batch, excluding startup before the first
+batch and shutdown afterward. Idle includes any gap between batches, including
+source starvation and DDL barriers; it is most useful on a DML-only backlog.
+Busy includes target execution and its checks. These are elapsed durations,
+not CPU measurements. While execution is active, busy time includes only
+completed batches and idle time includes gaps preceding batches already started.
+
 The decoder caches those interpretations by database, table and wire column
 metadata. `capture.schema_cache.hit` / `.miss` report reuse; a repeated numeric
 table ID alone is insufficient. DDL, new format contexts and skipped ranges

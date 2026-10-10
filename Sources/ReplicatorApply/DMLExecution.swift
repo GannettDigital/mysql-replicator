@@ -141,30 +141,3 @@ struct DMLExecution {
         }
     }
 }
-
-/// At most one target batch executes while the coordinator collects the next
-/// bounded batch. No StateStore access occurs on this queue. join() is mandatory
-/// before touching the target session, checkpointing or reporting its timings.
-final class DMLExecutor {
-    private let queue = DispatchQueue(label:"mysql-replicator.target")
-    private let done = DispatchGroup()
-    private var outcome: DMLExecution.Outcome?
-    private(set) var active = false
-    var ready: Bool { active && done.wait(timeout:.now()) == .success }
-    func start(_ work: @escaping () -> DMLExecution.Outcome) {
-        precondition(!active)
-        active = true; done.enter()
-        queue.async {
-            self.outcome = work()
-            self.done.leave()
-        }
-    }
-    func join() -> DMLExecution.Outcome? {
-        guard active else { return nil }
-        done.wait()
-        active = false
-        let result = outcome; outcome = nil
-        return result
-    }
-    deinit { done.wait() }
-}

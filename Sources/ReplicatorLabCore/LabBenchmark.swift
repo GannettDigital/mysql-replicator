@@ -7,6 +7,7 @@ public enum LabBenchmark {
         var mode="backlog", workload="insert"
         var build=true, events=1000
         var decoderProfiling=false, applierProfiling=true, batchTransactions=8
+        var preparedBatches=2
         var forwardedArguments: [String]=[]
         init(_ arguments: [String]) throws {
             var args=arguments
@@ -31,6 +32,7 @@ public enum LabBenchmark {
                 if flag == "--events", let n=Int(value) { events=n }
                 else if flag == "--workload" { workload=value }
                 else if flag == "--batch-transactions", let n=Int(value) { batchTransactions=n }
+                else if flag == "--prepared-batches", let n=Int(value) { preparedBatches=n }
                 else if flag == "--decoder-profile" || flag == "--applier-profile" {
                     try require(["on","off"].contains(value),flag+" must be on or off")
                     if flag == "--decoder-profile" { decoderProfiling=value == "on" }
@@ -40,6 +42,7 @@ public enum LabBenchmark {
             }
             try require((1...100000).contains(events),"events must be 1...100000")
             try require((1...256).contains(batchTransactions),"batch-transactions must be 1...256")
+            try require((1...2).contains(preparedBatches),"prepared-batches must be 1 or 2")
             try require(["insert","multi-table-transaction"].contains(workload),"unknown backlog workload")
             try require(workload == "insert" || profile.transactionalTarget,"multi-table transactions are outside the MyISAM apply contract")
         }
@@ -53,7 +56,7 @@ public enum LabBenchmark {
         let image=try LabBuild.prepare(root:root,build:build,coverage:false)
         let f=LabFixture(root:root,category:"lab-benchmark/"+profile.rawValue,image:image,profile:profile)
         var result: [String:Any]=["result":"failed","profile":profile.rawValue,"topology":profile.topology,"mode":mode,"workload":workload,"events":events,
-            "decoder_profiling":options.decoderProfiling,"applier_profiling":options.applierProfiling,"batch_transactions":options.batchTransactions,
+            "decoder_profiling":options.decoderProfiling,"applier_profiling":options.applierProfiling,"batch_transactions":options.batchTransactions,"prepared_batches":options.preparedBatches,
             "timing":"Sequential backlog replay; monotonic host wall time includes startup/control overhead. Different target versions and engines are recorded, not normalized."]
         var failure: Error?
         do {
@@ -79,7 +82,7 @@ public enum LabBenchmark {
             var source=f.config["source"] as! [String:Any]; source["stopAfterTransactions"]=events
             source["decoderProfiling"]=options.decoderProfiling; f.config["source"]=source
             f.config["applierProfiling"]=options.applierProfiling
-            f.config["batch"]=["maximumTransactions":options.batchTransactions]
+            f.config["batch"]=["maximumTransactions":options.batchTransactions,"maximumPreparedBatches":options.preparedBatches]
             try f.installConfig()
             let applyStart=ProcessInfo.processInfo.systemUptime
             let client=try f.startClient("benchmark",arguments:["run","--config","/evidence/apply.yaml","--initialize"])

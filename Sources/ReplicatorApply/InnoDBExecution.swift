@@ -67,7 +67,9 @@ enum InnoDBExecution {
                 let diagnostic = TargetFailureDiagnostic(reason:String(describing:error),statement:failedTrace,
                     rows:diagnosticRows(groups,failedIndex:index,outcome:outcome,skipped:skipped),
                     ddlGTID:nil,ddlSQL:nil,transactionOutcome:outcome)
-                return .init(acknowledged:acknowledged,failure:error,diagnostic:diagnostic,skipped:skipped)
+                return .init(acknowledged:acknowledged,failure:error,diagnostic:diagnostic,
+                             discardUnwritten:error is TargetConnectionFailure && outcome == "notStarted" && failedTrace.phase == .notIssued,
+                             skipped:skipped)
             }
         }
         return .init(acknowledged:acknowledged,failure:nil,skipped:skipped)

@@ -433,3 +433,142 @@ The autocommit checkpoint sets the application and benchmark journal batch
 defaults to eight, as requested. The measured batch-32 run remains an explicit
 experiment. Correctness qualification remains deferred until performance work
 is complete.
+
+## Bounded prepared-batch queue
+
+Autocommit and the default batch size of eight were committed as `a974f0b`.
+The following uncommitted increment implements the prepared-batch proposal above.
+`batch.maximumPreparedBatches` accepts one or two, defaulting to two. The bound
+includes the executing batch and completed batches awaiting coordinator
+acknowledgment. `overlapPreparation: false` uses one slot and waits at each handoff.
+
+`DMLExecutor` owns a serial target queue and ordered completion tickets. The
+coordinator durably syncs/journals each batch before submitting its ticket; it can
+do that while the worker executes the previous batch. The coordinator remains the
+only SQLite writer. It can record earlier completions while the worker executes
+the next durable batch. Target schema validation/locking remains on the target
+worker or behind drained schema barriers, avoiding concurrent session access.
+
+The state store retains the bounded outstanding groups and their batch boundaries.
+Preparation assigns sequences after the outstanding tail and leaves applied
+progress unchanged. Completion updates only the acknowledged head prefix, leaving
+the oldest outstanding GTID active. This uses the existing groups, row intents and
+relay format; pending-state crash recovery remains fail-stop.
+
+A target failure latches the executor stopped before its result is published, so
+later queued tickets do not issue SQL. Coordinator/checkpoint failure cancels and
+joins remaining work; outstanding durable intents are retained even if a target
+write raced the failure. DDL, schema discovery, finite input, drain and reload
+barriers drain all submitted batches. The existing capture limits still bound the
+number/GTID boundary of source groups admitted to the pipeline.
+
+### Measured reverse performance
+
+All three runs used the same release binary, batch size eight, 10,000 single-row
+INSERT transactions, and both detailed profilers disabled. Only queue depth
+changed. Each run passed the benchmark's final row/schema/checkpoint comparison,
+issued 10,026 target SQL requests, and executed all 1,250 journal batches.
+
+| Prepared slots | Native wall seconds | External wall seconds | Target SQL seconds | Worker busy seconds | Worker idle seconds | Worker span seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2, first | 11.917 | 24.623 | 17.551 | 18.712 | 0.039 | 18.751 |
+| 1, comparison | 12.667 | 31.321 | 16.411 | 17.604 | 7.829 | 25.432 |
+| 2, repeat | 28.833 | 30.472 | 23.441 | 24.550 | 0.036 | 24.586 |
+
+Worker idle share fell from about 31% to 0.15–0.21%. The first comparison reduced
+external wall time by about 21%, despite slightly higher target SQL time. Native
+and target SQL times varied substantially on the repeat, so wall throughput is
+not a stable guarantee. Both two-slot runs demonstrate that durable preparation
+no longer leaves material gaps between reverse-profile SQL batches. Worker span
+was within roughly 5–7% of aggregate target SQL time, which also includes setup
+queries outside that span. This is approximate scope comparison, not an exact
+partition of elapsed time.
+
+About 5.9 seconds of each external run were outside the first-to-last target-batch
+window. That includes startup, initial preparation and shutdown/control work; it
+has not been separately attributed. The queue metrics should be used alongside
+full wall time when assessing steady-state replay throughput.
+
+Evidence under `artifacts/lab-benchmark/mysql57-to-mysql84-innodb/`:
+
+- `20261010T055610Z-8f294878-auto-transaction-innodb`: two slots.
+- `20261010T055817Z-f513716d-auto-transaction-innodb`: one slot.
+- `20261010T060044Z-0371ad18-auto-transaction-innodb`: two-slot repeat.
+
+Binary SHA-256:
+`bad6cf7a682cf1acc5ec140316dfb6545b3bd945b2bc7a606225bfe8120b9882`.
+
+### MyISAM profile confirmation (10K)
+
+The same binary, batch size eight and two prepared slots also passed both MyISAM
+backlog benchmarks. Each compared final rows/schema/checkpoints, applied 10,000
+source transactions, executed all 1,250 journal batches, and issued 1,274 target
+SQL requests. MyISAM INSERT groups can be coalesced across source transactions;
+the reverse InnoDB profile retains separate target transactions.
+
+| Profile | Native wall seconds | External wall seconds | Target SQL seconds | Worker busy seconds | Worker idle seconds | Worker span seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| mysql84-to-mysql57-myisam | 7.845 | 16.721 | 2.109 | 2.571 | 8.383 | 10.954 |
+| mysql57-to-mysql57-myisam | 8.014 | 16.648 | 2.082 | 2.547 | 8.339 | 10.886 |
+
+Unlike reverse InnoDB, MyISAM target writes are faster than batch production, so
+these workers still wait for prepared work. The queue does not remove that
+bottleneck. These are profile confirmations, not measured queue speedups: no
+same-binary one-slot MyISAM comparison was run. The forward native reference is
+8.4 MyISAM; the new 5.7-to-5.7 profile uses 5.7 MyISAM for both target and native.
+
+Evidence under `artifacts/lab-benchmark/<profile>/`:
+
+- `20261010T060325Z-6d7c812a-auto-autocommit-myisam`: forward 8.4 source.
+- `20261010T060916Z-a76b7c2a-auto-autocommit-myisam`: 5.7 source.
+
+### Longer backlog confirmation (25K)
+
+At the user's request, repeat all three profiles with 25,000 single-row INSERT
+transactions to reduce the relative contribution of fixed overhead. These runs
+used the same binary and settings as the two-slot 10K runs, sequentially on the
+same host. All passed final row/schema/checkpoint comparisons and executed all
+3,125 journal batches with no unissued batches.
+
+| Profile | Native wall seconds | External wall seconds | External/native | Target SQL seconds | Worker span seconds | Worker idle seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| mysql57-to-mysql84-innodb | 28.798 | 51.171 | 1.78× | 42.240 | 45.362 | 0.089 |
+| mysql57-to-mysql57-myisam | 18.761 | 33.345 | 1.78× | 5.137 | 27.558 | 21.184 |
+| mysql84-to-mysql57-myisam | 18.677 | 42.093 | 2.25× | 7.094 | 36.282 | 27.969 |
+
+Reverse InnoDB issued 25,026 target SQL requests; each MyISAM profile issued
+3,149. InnoDB's worker idle share remained about 0.2%, confirming that batch
+preparation keeps pace with target execution in this workload. Its worker span
+was about 7% above total target SQL time, subject to the timing-scope caveat above.
+
+Time outside the worker window remained approximately 5.8 seconds for each run.
+That is about 11–17% of external wall time at 25K, versus about 24–35% in the
+first two-slot 10K runs. The 5.7-source profiles both measured 1.78× native wall
+time. The forward 8.4-source profile measured 2.25× and retained substantial
+worker idle time. This longer forward run was slower per transaction than its
+10K run; one sample cannot distinguish host variability from scaling effects.
+Do not claim a uniform ratio, a forward speedup, or target-SQL-limited performance
+for MyISAM. Further performance tuning is deferred in favor of correctness work.
+
+Evidence under `artifacts/lab-benchmark/<profile>/`:
+
+- `20261010T061047Z-1e6b02e8-auto-transaction-innodb`: `mysql57-to-mysql84-innodb`.
+- `20261010T061352Z-b0413392-auto-autocommit-myisam`: `mysql57-to-mysql57-myisam`.
+- `20261010T061617Z-4d96a53c-auto-autocommit-myisam`: `mysql84-to-mysql57-myisam`.
+
+`artifacts/prepared-queue-performance-20261009/` collects all eight queue
+comparison/profile runs, runtime provenance, stage timings, benchmark logs, the
+host build log and `comparison.json`. All runs used the binary hash recorded
+above. No runtime code changed between these measurements.
+
+### Deferred correctness qualification
+
+No unit, lifecycle, recovery, or broad correctness suite has been run for this
+increment, per the requested performance-first order. Benchmark success does not
+qualify the failure paths. Before release, update the autocommit unit expectations
+and cover one/two-slot ordering, limits and capacity; partial acknowledgments and
+error skips with a prepared tail; worker failure before the next ticket; SQLite
+failure while another batch executes; generated-column rollback; before-image
+checks; and DDL/reconnect/drain/reload/GTID-stop barriers. Run these against the
+shared profiles, including live and offline replay. Retain the one-slot mode as a
+performance comparison and conservative scheduling option.

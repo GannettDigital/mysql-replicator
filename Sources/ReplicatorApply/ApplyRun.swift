@@ -25,6 +25,7 @@ public struct ApplySummary: Encodable {
     public var stopReason: String? = nil
     public var activeBatchTransactions: Int = 0
     public var skippedTransactionsByCode: [String:Int] = [:]
+    public var applyQueue: ApplyQueueSnapshot? = nil
     // Crash recovery / uncertain target replay remains unsupported.
     public let automaticRecovery = false
 }
@@ -65,6 +66,7 @@ public enum ApplyRun {
         var stopReason: String?
         var finalResult: ApplySummary?
         var activeBatchTransactions=0
+        var executionQueue: DMLExecutor?
         let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
         func finalTimings() -> [String:StageTimings.Sample] {
             let merged = StageTimings()
@@ -77,7 +79,7 @@ public enum ApplyRun {
                 pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
                 sourceReconnectEnabled:archive == nil && configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
                 targetReconnectEnabled:configuration.targetReconnectPolicy.enabled,targetReconnectAttempts:targetRetry.attempts,
-                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions,skippedTransactionsByCode:state.skippedTransactionsByCode)
+                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions,skippedTransactionsByCode:state.skippedTransactionsByCode,applyQueue:executionQueue?.snapshot)
         }
         func report(_ value: ApplySummary) throws {
             control?.publish(value);try emitProgress(value)
@@ -118,31 +120,44 @@ public enum ApplyRun {
             try state.running(); started = true
             targetReason=nil
             try progress()
-            let executor = DMLExecutor()
+            let executor = DMLExecutor(capacity:configuration.batchPolicy.overlapPreparation ? configuration.batchPolicy.maximumPreparedBatches : 1)
+            executionQueue=executor
+            let byteLimit = target.insertByteLimit
             let executionStop = CaptureCancellation(parent:cancellation)
             func checkSourceFailure() throws {
                 try pipeline.queue.checkFailure(allowSourceReconnect:configuration.reconnectPolicy.enabled,allowDrain:true)
             }
             var planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
-            func finishExecution() throws {
+            func finishOneExecution() throws {
                 guard executor.active else { return }
-                let outcome = timings.measure("apply.execution_wait") { executor.join()! }
-                if let diagnostic=outcome.diagnostic { targetFailure=diagnostic }
-                try outcome.record(in:state)
-                activeBatchTransactions=0
-                try progress()
+                do {
+                    guard let outcome = timings.measure("apply.execution_wait",{ executor.join() }) else {
+                        throw ApplyError("prepared batch was not executed after an earlier failure")
+                    }
+                    if let diagnostic=outcome.diagnostic { targetFailure=diagnostic }
+                    try outcome.record(in:state)
+                    activeBatchTransactions -= outcome.acknowledged.count
+                    try progress()
+                } catch {
+                    // A checkpoint failure can race a later, already-durable
+                    // batch. Stop and join it; retain all outstanding intents.
+                    executionStop.cancel(); executor.cancelAndWait()
+                    activeBatchTransactions=0
+                    throw error
+                }
+            }
+            func finishExecution() throws {
+                while executor.active { try finishOneExecution() }
             }
             // Always join before target destruction, diagnostics or a journal
             // error path. Main-thread failures stop further target statements.
-            defer { executionStop.cancel(); _ = executor.join() }
+            defer { executionStop.cancel(); executor.cancelAndWait() }
             let batch = DMLBatch(policy:configuration.batchPolicy,onFlush:{ reason in timings.measure("apply.batch.flush." + reason) {} }) { groups in
-                try finishExecution()
+                while executor.full { try finishOneExecution() }
                 try checkSourceFailure()
-                try target.lock(groups[0].mutations[0].table)
                 try timings.measure("apply.batch.prepare") { try state.beginBatch(groups) }
-                activeBatchTransactions=groups.count
+                activeBatchTransactions += groups.count
                 control?.publish(summary("RUNNING"))
-                let byteLimit = target.insertByteLimit
                 executor.start {
                     targetTimings.measure("apply.batch.execute") {
                         target.execute(groups,cancellation:executionStop,maximumInsertBytes:byteLimit,checkSourceFailure:checkSourceFailure)
@@ -152,7 +167,7 @@ public enum ApplyRun {
             }
             func barrier(_ reason: String = "barrier") throws { try batch.flush(reason:reason); try finishExecution() }
             func maintainExecution() throws {
-                if executor.ready { try finishExecution() }
+                while executor.ready { try finishOneExecution() }
                 if !executor.active { try target.checkConnection(); try target.releaseExpiredLock() }
             }
             func event(_ record: LiveRecord) throws {
