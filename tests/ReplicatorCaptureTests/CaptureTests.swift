@@ -10,8 +10,8 @@ import ReplicatorCodec
 final class CaptureTests: XCTestCase {
     let sid = "8ba09bde-bc41-11f1-8272-ba06e9024a03"
     var root: URL { URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
-    func config(_ mode: String = "file-position", decoderProfiling: Bool? = nil) throws -> CaptureConfiguration {
-        var object: [String: Any] = ["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"TEST_PASSWORD",
+    func config(_ mode: String = "file-position", decoderProfiling: Bool? = nil, version: Int = 1) throws -> CaptureConfiguration {
+        var object: [String: Any] = ["version":version,"host":"source","port":3306,"username":"capture","passwordEnvironment":"TEST_PASSWORD",
             "serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":mode,
             "start":["file":"binlog.000003","position":1589,"executedGTIDs":sid + ":1-10"],
             "tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]]

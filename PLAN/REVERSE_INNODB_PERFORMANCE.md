@@ -1,0 +1,332 @@
+# Reverse InnoDB performance investigation
+
+Date: 2026-10-09 (local); evidence directory timestamps use UTC, 2026-10-10.
+
+## Method
+
+Replay 10,000 source transactions from a fixed backlog, first through native
+replication, then through mysql-replicator. Compare final rows and schemas against
+the source and check the final source GTID checkpoint. The default workload is one
+single-row INSERT per transaction into `reverse_poc.aux`.
+
+- Source: MySQL 5.7.42, InnoDB.
+- Native reference: MySQL 5.7.42, InnoDB, one SQL applier thread.
+- External target: MySQL 8.4.8, InnoDB, one client connection for writes.
+- Release Linux x86_64 binaries and containers on Docker Desktop / Apple Silicon.
+- TCP with TLS; all three servers have `sync_binlog=1` and
+  `innodb_flush_log_at_trx_commit=1`.
+- Native `log_slave_updates=ON`; our target also has binary logging enabled and
+  the applier requires `sql_log_bin=1`.
+- SQLite and relay durability settings are unchanged. Journal batches default to
+  eight transactions in this harness (the application default is 32).
+
+This measures the supported topologies, including the difference between MySQL
+versions. It is not an isolated comparison of two appliers on identical servers.
+Startup and Docker control overhead are included. Runs are sequential, with no
+other lab fixtures active; unrelated existing Docker containers were left alone.
+These local measurements do not establish Cloud SQL throughput or network latency.
+
+## Native commits and binary logging
+
+Native replication does commit transactions and write a replica binlog. It avoids
+the external client's SQL protocol requests, not the storage engine's commit work.
+
+The local upstream checkouts are MySQL 5.7.44 and 8.4.8 (the 5.7 runtime fixture is
+5.7.42). In `sql/log_event.cc`, the row applier calls `ha_write_row()`;
+`Xid_log_event::do_commit()` calls `trans_commit()` and finishes GTID accounting.
+In 5.7 `sql/handler.cc`, `handler::ha_write_row()` calls the engine's `write_row()`
+and then `binlog_log_row()`. `MYSQL_BIN_LOG::prepare()` in `sql/binlog.cc` explicitly
+uses `log_slave_updates` for the replica thread. The binlog coordinator has flush,
+sync and commit stages; its group-commit machinery does not remove transaction
+boundaries.
+
+References: [5.7 log_event.cc](https://github.com/mysql/mysql-server/blob/mysql-5.7.44/sql/log_event.cc),
+[5.7 handler.cc](https://github.com/mysql/mysql-server/blob/mysql-5.7.44/sql/handler.cc),
+[5.7 binlog.cc](https://github.com/mysql/mysql-server/blob/mysql-5.7.44/sql/binlog.cc),
+[8.4 log_event.cc](https://github.com/mysql/mysql-server/blob/mysql-8.4.8/sql/log_event.cc),
+[replica update logging](https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-options-binary-log.html).
+
+Our InnoDB path currently sends `START TRANSACTION`, each row statement, and
+`COMMIT` for every source transaction. Source GTIDs live in SQLite; these writes
+generate target-local GTIDs. Native replication retains the source GTIDs.
+
+## Instrumentation
+
+The backlog harness now accepts `--decoder-profile on|off`,
+`--applier-profile on|off`, and `--batch-transactions 1..256`. Historical defaults
+are retained: decoder off, applier on, batch limit eight. Example:
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --decoder-profile on"
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--skip-build --events 10000 --decoder-profile off --applier-profile off"
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--skip-build --events 10000 --decoder-profile off --applier-profile off --batch-transactions 32"
+```
+
+`apply.detail.transaction.prepare`, `.begin`, `.commit`, and `.rollback` separate
+the InnoDB transaction operations. Use their inclusive `seconds` to see SQL wait
+time: the nested SQL timer accounts for most of it. `capture.schema_wait` measures
+the decoder's wait for the consumer to supply historical column interpretation.
+
+The harness exports `stage-timings.json`, optional applier/decoder TSV reports,
+native/target binlog boundaries, server settings, and counter deltas before row
+verification. The original baseline counter window included final verification;
+small differences in status/Questions totals across that boundary are not workload
+changes. Global handler counters include internal server work, not just our table.
+
+All timings are elapsed time, not CPU time. Workers overlap. Inclusive parent and
+child timings must not be added together. Schema-wait time can include downstream
+execution and journal backpressure; it is not a prediction of cache savings.
+
+## Results
+
+The original release-image baseline passed with 12.671 s native and 41.806 s
+external apply (3.30x elapsed time). Both recorded 10,000 commits. Our path made
+20,000 text SQL calls and 10,026 prepared executions including setup/schema work.
+Only 23 target statements were prepared. Repeated SQL preparation or schema
+discovery is not evident in this workload.
+
+Original evidence: `artifacts/lab-benchmark/mysql57-to-mysql84-innodb/20261010T043040Z-7834efd3-auto-transaction-innodb/`.
+
+The detailed run passed in 48.182 s external / 12.686 s native. Its transaction
+counters and binlog boundaries independently confirm 10,000 target transactions
+on both paths. The native binlog grew by 2,570,000 bytes and retained the source
+GTID SID; the 8.4 target binlog grew by 3,010,000 bytes with its own SID. The binary
+log byte difference includes different server versions and row-metadata settings;
+it does not demonstrate disproportionate binlog I/O time.
+
+| Detailed-run stage | Calls | Inclusive elapsed seconds |
+| --- | ---: | ---: |
+| Target batch execution | 1,251 | 32.193 |
+| COMMIT, including response wait | 10,000 | 19.887 |
+| Row application | 10,000 | 7.275 |
+| START TRANSACTION, including response wait | 10,000 | 4.035 |
+| Per-transaction preparation | 10,000 | 0.303 |
+| Capture waiting for schema interpretation | 10,000 | 26.695 |
+| Decoder, including probes | 90,002 | 11.302 |
+| SQLite journal preparation | 1,251 | 4.336 |
+| SQLite journal completion | 1,251 | 4.461 |
+| Target schema verification | 1 | 0.046 |
+| Progress output | 1,252 | 0.849 |
+
+The rows overlap and must not be summed. Commit time is about 62% of target
+execution time, but it includes protocol, scheduling and server time; it is not a
+measurement of fsync alone. The original `capture.process` self time concealed
+schema waits. Adding a separate timer shows that most of the apparent capture
+cost is waiting, not decoding CPU.
+
+Every included 5.7 TABLE_MAP requests historical interpretation from the consumer,
+even for an unchanged table. The consumer already caches discovered schema and
+SQL plans, so these requests do not each issue schema SQL. They still require a
+cross-thread handoff and can wait behind relay writes, journal work, or the join
+of a previous target batch. Cache savings cannot be equated to the full 26.695 s.
+
+The stream decodes 50,001 ordinary events plus 40,001 format/probe calls. For every
+TABLE_MAP it constructs a probe decoder, decodes the format twice, probes identity
+and probes metadata, before the main decode. Detailed decoder measurements put
+Swift control conversion at 3.181 s self time, Rust decoding at 2.716 s inclusive,
+and SHA-256 computation at 0.183 s. Hash computation is not a leading target.
+
+Detailed evidence: `artifacts/lab-benchmark/mysql57-to-mysql84-innodb/20261010T043637Z-7ec04829-auto-transaction-innodb/`.
+
+### Profiling-off and batch-size checks
+
+Four further runs used the same instrumented release binary with both detailed
+profilers disabled. The batch limits followed an 8, 32, 32, 8 order. Coarse timers,
+including schema-wait accounting, stayed enabled.
+
+| Batch limit | Native seconds | External seconds | External/native | Actual batches | SQLite commits | Target SQL seconds |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 12.988 | 38.032 | 2.93x | 1,251 | 2,532 | 22.488 |
+| 32 | 12.840 | 42.365 | 3.30x | 521 | 1,072 | 28.640 |
+| 32 | 12.407 | 34.824 | 2.81x | 494 | 1,018 | 22.253 |
+| 8 | 12.749 | 38.235 | 3.00x | 1,250 | 2,530 | 22.575 |
+
+Batch eight reproduced the roughly 3x gap. Batch 32 reduced journal operations,
+but its end-to-end results varied by 7.5 seconds; the target SQL time varied by
+6.4 seconds. Both batch-32 runs flushed every batch on age, averaging only 19–20
+transactions per batch. Do not infer a reliable overall speedup or regression
+from these two samples. The lower journal cost is measured, but it is not the
+main explanation for the gap, and this experiment does not justify a default
+change. Detailed profiling also affected the observed timings; use the runs
+without detailed profiling for throughput comparisons, not the 48.182 s profile.
+
+All six 10K runs passed exact row/schema comparison, checkpoint verification,
+and clean shutdown. Each recorded 10,000 commits on both native and target.
+All five runs with the new instrumentation showed 10,000 schema waits and
+10,000 additional GTIDs in each replica's own binlog boundary. All 372 Swift
+unit tests passed after the instrumentation and harness changes.
+
+Remaining evidence directories under
+`artifacts/lab-benchmark/mysql57-to-mysql84-innodb/`:
+
+- `20261010T043918Z-6eea6445-auto-transaction-innodb`: batch 8, profiling off.
+- `20261010T044106Z-5c48042f-auto-transaction-innodb`: batch 32, profiling off.
+- `20261010T044348Z-c26aead6-auto-transaction-innodb`: batch 32 repeat.
+- `20261010T044533Z-795e54d9-auto-transaction-innodb`: batch 8 repeat.
+
+`artifacts/reverse-performance-20261009/comparison.json` collects the six results
+and the shared instrumented binary hash. That directory also retains the unit
+test log. Generated artifacts remain local and are not committed.
+
+## Proposed order after the baseline
+
+1. Cache repeated historical TABLE_MAP interpretations on the decode side, and
+   avoid reconstructing/probing an unchanged map. Invalidate at DDL and reconnect/
+   resume boundaries; validate wire shape rather than trusting reused numeric
+   table IDs. Preserve the ordered consumer lookup on misses. Qualify ALTER,
+   RENAME, DROP/recreate, rotation, filtered tables, and offline replay. This is
+   the clearest unnecessary coordination found so far, not a promised speedup.
+2. Reduce target transaction-control round trips while preserving each source
+   transaction. Investigate a narrowly eligible single-statement autocommit path
+   or session transaction mode. Generated-column checks, before-image reads,
+   DDL barriers, skips and lost-commit responses need explicit semantics and fault
+   tests. The 4.035 s BEGIN time is an observed cost; eliminating a separate COMMIT
+   request would not eliminate the server's durable commit work.
+3. Recheck journal batching after reducing schema handoffs. The current batch-32
+   measurements are inconclusive for end-to-end throughput. The 25 ms age limit
+   flushes before the count limit; changing the count is not equivalent to
+   merging target transactions.
+4. If target commits still dominate, first measure server-side commit waits to
+   separate MySQL/redo/binlog work from client protocol and scheduling costs. Then
+   consider dependency-aware parallel apply as a separate design. Multiple
+   concurrent commits may share flush work, but source
+   transaction boundaries, dependencies, error handling and a contiguous durable
+   checkpoint still matter. Table hashing alone cannot safely schedule the
+   supported multi-table transactions.
+
+The initial profiling increment adds measurement only. It does not change apply semantics, relax
+durability, disable target binlogging, merge transactions, or add apply workers.
+
+## Parallel InnoDB apply and comparable decoding
+
+Parallel apply is feasible for independent transactions. A conservative first
+scheduler can serialize transactions that touch any common table while allowing
+disjoint table sets to execute concurrently. A transaction touching tables A and B
+must reserve both and execute atomically on one connection; hashing only its first
+table is insufficient. DDL and schema changes need a drain barrier. Each worker
+needs its own connection, prepared statements and timing collector, with schema
+cache invalidation coordinated across workers. The coordinator should remain the
+single SQLite writer and own the target writer lease.
+
+Current completion logic accepts an acknowledged prefix of one pending batch.
+Parallel workers require durable accounting for completed transactions after a
+gap, a checkpoint that never advances past that gap, and fail-stop diagnostics for
+all in-flight transactions. Out-of-order commit visibility is a separate semantic
+choice. Waiting for each earlier COMMIT acknowledgment preserves order but keeps
+that commit bottleneck serial; potential group-commit benefits require overlapping
+server commits and cannot be promised by adding worker threads alone. Native 5.7
+also implements dependency-aware parallel scheduling: its
+`sql/rpl_mts_submode.cc` logical-clock scheduler uses the GTID event's
+`last_committed` and `sequence_number` values.
+
+The current INSERT benchmark writes only one table, so table-based partitioning
+would still use one worker. The current `multi-table-transaction` workload is also
+deliberately dependent: every transaction updates `items.id=1`. To evaluate
+parallelism, first add an independent multi-table workload, retain these dependent
+controls, and compare one/two/four workers with full row/checkpoint verification.
+Keep the native reference's worker count explicit (currently one).
+
+Raw decoding cost should be broadly comparable for an equivalent row workload,
+but 5.7 and 8.4 source binlogs are not byte-identical simply because both use GTIDs.
+The 8.4 profile carries FULL optional table metadata. The 5.7 profile lacks that
+information and resolves historical column interpretation through the consumer.
+In this experiment, actual unprofiled `capture.decode` is around 7–8 seconds;
+the additional 10,000 schema handoffs and their waits are a pipeline dependency,
+not inherently slower GTID or row decoding. A comparison with forward decoding
+needs the same workload, release build, profiling settings and timing scope.
+
+## Historical schema cache
+
+The implementation caches historical column interpretations inside each stream
+processor. Keys use database/table identity, with an exact comparison of decoded
+wire columns before reuse. Table IDs, event offsets and event checksums are not
+schema keys; each new event still gets its own schema binding and checksum checks.
+The consumer continues validating each TABLE_MAP against its historical schema.
+
+All non-transaction-control query events clear the cache before publication, so a
+subsequent miss waits behind the DDL in the ordered consumer queue. New format
+contexts, heartbeat gaps and skipped archive groups clear it too. Reconnect and
+resume create a new processor. The cache holds at most 1,024 table entries and
+evicts entries by clearing on capacity; eviction only repeats the ordered lookup.
+
+This implements the interpretation-cache portion of the first recommendation.
+It leaves the existing table-map probe decodes in place. It changes no SQL,
+transaction, journal, error-skip or durability policy.
+
+The detailed 10K run passed with **one schema lookup and 9,999 cache hits**, versus
+10,000 lookups before. Schema-wait time fell from 26.695 s to 0.136 s. Decoder work
+still made 90,002 calls (10.166 s inclusive). End-to-end time was 37.985 s external
+versus 13.323 s native, compared with the earlier detailed 48.182/12.686 s run.
+Target SQL time also fell from 29.908 to 21.946 s, so this single comparison must
+not attribute the entire wall-time reduction to caching. Producer enqueue time
+rose to 19.171 s: a faster producer now waits at the bounded queue rather than
+requesting schema at every map. Moving that wait is not itself a speedup.
+
+Detailed cache evidence:
+`artifacts/lab-benchmark/mysql57-to-mysql84-innodb/20261010T045407Z-0b0e57d9-auto-transaction-innodb/`.
+
+Two subsequent runs used the same cache binary with both detailed profilers off,
+batch limit eight, and no concurrent lab suites:
+
+| Run | Native seconds | External seconds | External/native | Target SQL seconds | Decoder seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Before cache, first | 12.988 | 38.032 | 2.93x | 22.488 | 7.728 |
+| Before cache, repeat | 12.749 | 38.235 | 3.00x | 22.575 | 7.849 |
+| Cache, first | 12.192 | 37.502 | 3.08x | 22.006 | 6.922 |
+| Cache, repeat | 11.842 | 36.336 | 3.07x | 21.068 | 6.912 |
+
+All final rows, schema, source checkpoints and 10,000 commits on each target were
+verified. Each cache run performed one lookup and 9,999 hits. Raw wall time fell
+slightly, but native also ran faster: these samples do not establish a significant
+throughput improvement. The stable benefit is eliminating repeated coordination;
+the roughly 3x native gap remains. Target execution and transaction-control calls
+are the next performance targets. Additional probe-decode optimization remains
+possible, but this change does not remove those decodes.
+
+Profiling-off cache evidence under the same benchmark directory:
+
+- `20261010T045634Z-9e6ef7f8-auto-transaction-innodb`.
+- `20261010T045820Z-3188a893-auto-transaction-innodb`.
+
+### Why 30,026 SQL calls remain
+
+`InnoDBExecution.run` unconditionally starts and commits each source group. In
+this single-row INSERT workload that is 10,000 START TRANSACTION requests, 10,000
+INSERT executions and 10,000 COMMIT requests, plus 26 setup/schema requests.
+Native row replication writes through internal storage-engine APIs and commits
+the transaction; it does not send this client SQL sequence.
+
+A source group that can be applied by exactly one target statement can use
+autocommit, reducing this workload to roughly 10,026 requests while retaining
+10,000 durable commits. Eligibility must be based on the actual target plan, not
+whether source SQL used explicit BEGIN: a large source INSERT can be split into
+multiple target statements. Multi-statement plans and post-write validation that
+requires rollback retain explicit transactions. Lost autocommit responses must
+be treated as uncertain commits, and known statement failures need appropriate
+rollback/skip classification. This is the next proposed execution change; it is
+not part of the schema-cache implementation.
+
+### Cache validation
+
+All 377 Swift unit tests passed, including five new cache tests for changing table
+IDs, wire metadata changes, DDL, rotation, reconnect through a fresh processor,
+excluded ranges, filtering and checksum validation. Periphery's strict scan found
+no unused code.
+
+The selected reverse correctness run passed all seven scenarios: database charset
+defaults, database/table defaults, ordered DDL, wildcard exclusions and resume,
+included-statement rejection, and offline replay. The ordered DDL scenario also
+exercises changes that reuse a table name, including drop/recreate and conditional
+CREATE. Evidence: `artifacts/lab/20261010T050037Z-af987ff3/result.json`.
+
+Shared correctness smoke tests passed all 27 scenarios (nine each for
+8.4 → 5.7 MyISAM, 5.7 → 8.4 InnoDB, and 5.7 → 5.7 MyISAM).
+Evidence: `artifacts/lab/20261010T050039Z-2f9487f2/result.json`.
+
+All 11 reverse lifecycle scenarios passed, including source disconnect/rotation/
+restart, target reconnect, draining and resume, lost-write uncertainty, and
+incompatible-setting rejection. Evidence:
+`artifacts/lab/20261010T051639Z-b87fae7e/result.json`.
+
+Local comparison data and validation logs are collected under
+`artifacts/schema-cache-20261009/`.

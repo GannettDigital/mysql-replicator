@@ -262,7 +262,7 @@ public enum ApplyRun {
                     let resolver: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])? = legacyMetadata ? { event,_ in
                         let request = ApplySchemaRequest(event)
                         try send(.schema(request))
-                        return try request.wait(cancellation:stop)
+                        return try producerTimings.measure("capture.schema_wait") { try request.wait(cancellation:stop) }
                     } : nil
                     if let archive {
                         try archive.run(configuration:capture,cancellation:stop,

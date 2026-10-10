@@ -138,7 +138,7 @@ final class LabFixture {
         for role in LabProfile.Role.allCases {
             let id=try h.compose(["ps","-q",profile.service(role)]).text
             let image=try docker(["inspect",id,"--format","{{.Image}}"] ).text
-            let settings=try sql(role,"SHOW VARIABLES WHERE Variable_name IN ('gtid_mode','enforce_gtid_consistency','binlog_format','binlog_row_image','binlog_row_metadata','default_storage_engine','sql_mode','character_set_server','collation_server')")
+            let settings=try sql(role,"SHOW VARIABLES WHERE Variable_name IN ('gtid_mode','enforce_gtid_consistency','binlog_format','binlog_row_image','binlog_row_metadata','default_storage_engine','sql_mode','character_set_server','collation_server','sync_binlog','innodb_flush_log_at_trx_commit','log_slave_updates','log_replica_updates','slave_parallel_workers','replica_parallel_workers')")
             let version=try sql(role,"SELECT VERSION()")
             try require(version.hasPrefix(profile.version(role)+"."),"unexpected server version for "+role.rawValue+": "+version)
             if role == .source {

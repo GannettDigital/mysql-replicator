@@ -6,6 +6,7 @@ public enum LabBenchmark {
         let profile: LabProfile
         var mode="backlog", workload="insert"
         var build=true, events=1000
+        var decoderProfiling=false, applierProfiling=true, batchTransactions=8
         var forwardedArguments: [String]=[]
         init(_ arguments: [String]) throws {
             var args=arguments
@@ -29,9 +30,16 @@ public enum LabBenchmark {
                 let value=args.removeFirst()
                 if flag == "--events", let n=Int(value) { events=n }
                 else if flag == "--workload" { workload=value }
+                else if flag == "--batch-transactions", let n=Int(value) { batchTransactions=n }
+                else if flag == "--decoder-profile" || flag == "--applier-profile" {
+                    try require(["on","off"].contains(value),flag+" must be on or off")
+                    if flag == "--decoder-profile" { decoderProfiling=value == "on" }
+                    else { applierProfiling=value == "on" }
+                }
                 else { throw LabError("unknown benchmark option: "+flag) }
             }
             try require((1...100000).contains(events),"events must be 1...100000")
+            try require((1...256).contains(batchTransactions),"batch-transactions must be 1...256")
             try require(["insert","multi-table-transaction"].contains(workload),"unknown backlog workload")
             try require(workload == "insert" || profile.transactionalTarget,"multi-table transactions are outside the MyISAM apply contract")
         }
@@ -45,6 +53,7 @@ public enum LabBenchmark {
         let image=try LabBuild.prepare(root:root,build:build,coverage:false)
         let f=LabFixture(root:root,category:"lab-benchmark/"+profile.rawValue,image:image,profile:profile)
         var result: [String:Any]=["result":"failed","profile":profile.rawValue,"topology":profile.topology,"mode":mode,"workload":workload,"events":events,
+            "decoder_profiling":options.decoderProfiling,"applier_profiling":options.applierProfiling,"batch_transactions":options.batchTransactions,
             "timing":"Sequential backlog replay; monotonic host wall time includes startup/control overhead. Different target versions and engines are recorded, not normalized."]
         var failure: Error?
         do {
@@ -61,10 +70,16 @@ public enum LabBenchmark {
             let end=try f.boundary()
             try require(try f.sql(.source,"SELECT COUNT(*),SUM(counter) FROM reverse_poc.aux") == "\(events)\t\(Int64(events)*Int64(events-1)/2)","source workload count/sum differs")
             let nativeBefore=try f.counters(profile.service(.native)), targetBefore=try f.counters(profile.service(.target))
+            let nativeStart=try f.boundary(.native), targetStart=try f.boundary(.target)
             let start=ProcessInfo.processInfo.systemUptime
             _ = try f.sql(.native,profile.nativeVersion.startReplica)
             try f.awaitNative(); let nativeSeconds=ProcessInfo.processInfo.systemUptime-start
-            var source=f.config["source"] as! [String:Any]; source["stopAfterTransactions"]=events; f.config["source"]=source
+            let nativeAfter=try f.counters(profile.service(.native))
+            let nativeEnd=try f.boundary(.native)
+            var source=f.config["source"] as! [String:Any]; source["stopAfterTransactions"]=events
+            source["decoderProfiling"]=options.decoderProfiling; f.config["source"]=source
+            f.config["applierProfiling"]=options.applierProfiling
+            f.config["batch"]=["maximumTransactions":options.batchTransactions]
             try f.installConfig()
             let applyStart=ProcessInfo.processInfo.systemUptime
             let client=try f.startClient("benchmark",arguments:["run","--config","/evidence/apply.yaml","--initialize"])
@@ -72,6 +87,8 @@ public enum LabBenchmark {
             let seconds=ProcessInfo.processInfo.systemUptime-applyStart, logs=try f.docker(["logs",client])
             try (logs.stdout+logs.stderr).write(to:f.output.appendingPathComponent("applier.ndjson"))
             try require(exit == "0","benchmark applier failed; inspect applier.ndjson")
+            let targetAfter=try f.counters(profile.service(.target))
+            let targetEnd=try f.boundary(.target)
             guard let last=logs.stderr.split(separator:10).last,
                   let summary=try JSONSerialization.jsonObject(with:Data(last)) as? [String:Any],
                   let gtids=summary["appliedGTIDSet"] as? String else { throw LabError("missing final benchmark summary") }
@@ -79,12 +96,24 @@ public enum LabBenchmark {
             try require(try f.sql(.source,"SELECT GTID_SUBSET('\(end.gtids)','\(gtids)')") == "1","benchmark checkpoint does not cover source")
             try f.compare()
             var deltas: [String:[String:Int64]]=[:]
-            for (role,before) in [(LabProfile.Role.native,nativeBefore),(.target,targetBefore)] {
-                deltas[role.rawValue]=try f.counters(profile.service(role)).reduce(into:[:]) { $0[$1.key]=$1.value-(before[$1.key] ?? 0) }
+            for (role,before,after) in [(LabProfile.Role.native,nativeBefore,nativeAfter),(.target,targetBefore,targetAfter)] {
+                deltas[role.rawValue]=after.reduce(into:[:]) { $0[$1.key]=$1.value-(before[$1.key] ?? 0) }
             }
+            result["counter_scope"]="Before native replay/applier startup to completion, before row verification; includes control and status queries."
+            result["binlog_boundaries"]=["native":["start":nativeStart.json,"end":nativeEnd.json],"target":["start":targetStart.json,"end":targetEnd.json]]
             result["native_seconds"]=nativeSeconds; result["applier_seconds"]=seconds
             result["native_transactions_per_second"]=Double(events)/nativeSeconds; result["applier_transactions_per_second"]=Double(events)/seconds
             result["counter_deltas"]=deltas; result["summary"]=summary; result["source_end"]=end.json
+            guard let timings=summary["stageTimings"] as? [String:Any] else { throw LabError("missing benchmark stage timings") }
+            result["stage_timing_scope"]="Worker-local elapsed time including startup/stop. seconds is inclusive; selfSeconds excludes nested timers on that worker. Workers overlap; totals are not wall time or CPU time."
+            try writeJSON(timings,to:f.output.appendingPathComponent("stage-timings.json"))
+            if options.decoderProfiling {
+                try require(timings["decode.call.event"] != nil,"missing decoder profile")
+                try PerformanceBenchmark.decoderProfile(timings).write(to:f.output.appendingPathComponent("decoder-profile.tsv"),atomically:true,encoding:.utf8)
+            }
+            if options.applierProfiling {
+                try PerformanceBenchmark.applierProfile(timings).write(to:f.output.appendingPathComponent("applier-profile.tsv"),atomically:true,encoding:.utf8)
+            }
             _ = try f.docker(["cp",f.helper+":/evidence/state",f.output.path])
             result["result"]="passed"
         } catch { failure=error; result["error"]=String(describing:error) }

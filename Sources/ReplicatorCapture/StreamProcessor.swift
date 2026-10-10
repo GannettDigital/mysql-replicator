@@ -37,6 +37,13 @@ final class StreamProcessor {
     var receivedBytes: UInt64 = 0
     var firstGroup = true
     private var finished = false
+    // Worker-local interpretations of historical maps, never current source
+    // information_schema. Numeric table IDs and event headers are not schema.
+    private struct ResolvedSchema {
+        let wire: [WireColumn]
+        let columns: [ColumnInterpretation]
+    }
+    private var resolvedSchemas: [String:ResolvedSchema] = [:]
     let resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?
     let emitEvent: (LiveRecord) throws -> Void
     let emitTransaction: (CompleteTransaction) throws -> Void
@@ -130,6 +137,7 @@ final class StreamProcessor {
         }
         if type == 15 {
             guard let start = announced else { throw CaptureError("format event without rotation announcement") }
+            resolvedSchemas.removeAll(keepingCapacity:true)
             let fresh = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024, timings:config.decoderProfiling == true ? timings : nil)
             let event = try measureDecode("decode.call.format") { try fresh.decode(frame, at: 4, includeRaw: includeRaw) }
             let fullFile = start.position == 4
@@ -154,6 +162,7 @@ final class StreamProcessor {
                 try check(config.mode == "gtid" && !excluded.isEmpty && observed.position > current.position,
                           "unexpected heartbeat position gap")
                 try assembler.advanceExcludedRange(to: observed)
+                resolvedSchemas.removeAll(keepingCapacity:true)
                 cursor = observed
             }
             heartbeatCount += 1
@@ -182,7 +191,7 @@ final class StreamProcessor {
             identity = try measureDecode("decode.call.probe_metadata") { try probe.decode(frame, at: UInt64(format!.count)+4) }
             let columns: [ColumnInterpretation]
             if config.version == 2 {
-                if let resolveSchema { columns = try resolveSchema(identity.atSourcePosition(offset),current) }
+                if let resolveSchema { columns = try historicalColumns(identity.atSourcePosition(offset),at:current,resolve:resolveSchema) }
                 else {
                     guard let wire = identity.wireColumns else {throw CaptureError("missing wire schema")}
                     columns = try wire.map { c in
@@ -199,9 +208,13 @@ final class StreamProcessor {
         }
         let event = try measureDecode("decode.call.event") { try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset) }
         if case .query(let query) = event.control {
-            try check(allowDDL || [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql),
+            let transactionControl = [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql)
+            try check(allowDDL || transactionControl,
                       "live schema window stops at DDL or non-control SQL")
             try check(assembler.pendingTransactionStart != nil, "query without GTID on GTID-ON source")
+            // Clear before publishing DDL. The next cache miss is queued after
+            // that DDL and waits for the consumer's updated historical schema.
+            if !transactionControl { resolvedSchemas.removeAll(keepingCapacity:true) }
         }
         if case .gtid(let gtid) = event.control {
             try check(!completeGTIDs.contains(sid: gtid.sid, sequence: gtid.sequence), "source returned an excluded or duplicate GTID")
@@ -228,6 +241,27 @@ final class StreamProcessor {
             return try body()
         }
     }
+    private func historicalColumns(_ event: DecodedEvent, at position: BinlogCoordinate,
+                                   resolve: (DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation]) throws -> [ColumnInterpretation] {
+        guard let database=event.database,let table=event.table,let wire=event.wireColumns else {
+            throw CaptureError("missing historical table-map metadata")
+        }
+        let key=database+"\0"+table
+        if let cached=resolvedSchemas[key],cached.wire == wire {
+            timings.measure("capture.schema_cache.hit") {}
+            return cached.columns
+        }
+        resolvedSchemas.removeValue(forKey:key)
+        return try timings.measure("capture.schema_cache.miss") {
+            let columns=try resolve(event,position)
+            try check(columns.count == wire.count,"historical schema column count differs from table map")
+            // Bound retention in long-lived streams with many transient tables.
+            // Eviction only repeats the ordered lookup; it never changes schema.
+            if resolvedSchemas.count >= 1024 { resolvedSchemas.removeAll(keepingCapacity:true) }
+            resolvedSchemas[key]=ResolvedSchema(wire:wire,columns:columns)
+            return columns
+        }
+    }
     func finish() throws {
         try check(announced == nil && assembler != nil, "dump ended before format context")
         try assembler!.finish()
@@ -238,6 +272,7 @@ final class StreamProcessor {
     func skipArchivedGroup(to boundary: BinlogCoordinate) throws {
         guard let assembler, let cursor, cursor.file == boundary.file else { throw CaptureError("archive exclusion without format context") }
         try assembler.advanceExcludedRange(to:boundary)
+        resolvedSchemas.removeAll(keepingCapacity:true)
         self.cursor=boundary
     }
 }

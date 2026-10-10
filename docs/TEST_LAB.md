@@ -344,6 +344,32 @@ rows/checkpoints, and record wall time, target counters and stage timings. Start
 and polling overhead are included. `--workload multi-table-transaction` is an
 explicit InnoDB-only experiment, never silently substituted for `insert`.
 
+Backlog profiling controls keep the historical defaults: `--applier-profile on`,
+`--decoder-profile off`, and `--batch-transactions 8`. For a detailed 10K run:
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --decoder-profile on"
+```
+
+Repeat with `--skip-build --applier-profile off --decoder-profile off` to measure
+without detailed profiling. `--batch-transactions 32` changes the SQLite journal
+batch limit; InnoDB still commits each source transaction separately. The 25 ms
+batch age limit can produce smaller batches. Results include `stage-timings.json`,
+optional `applier-profile.tsv` / `decoder-profile.tsv`, server durability settings,
+and native/target binlog boundaries. `apply.detail.transaction.begin` and
+`apply.detail.transaction.commit` include the SQL round trip; `capture.schema_wait`
+measures time waiting for historical schema interpretation in the apply loop.
+The decoder caches those interpretations by database, table and wire column
+metadata. `capture.schema_cache.hit` / `.miss` report reuse; a repeated numeric
+table ID alone is insufficient. DDL, new format contexts and skipped ranges
+invalidate the cache; reconnect creates a new cache. Retention is bounded to
+1,024 table entries, with eviction causing a fresh ordered lookup. Checksums,
+table-map decoding and consumer-side schema validation still run for each map.
+Timers from different workers overlap. Inclusive and self times are elapsed time,
+not CPU time, and must not be summed as end-to-end duration.
+See the [reverse InnoDB investigation](../PLAN/REVERSE_INNODB_PERFORMANCE.md)
+for the 10K measurements, native binlog behavior, and proposed optimization order.
+
 The historical forward sysbench streaming and blackhole capture experiments are
 available with `--mode streaming` and `--mode capture`, respectively. These are
 separate measurements and are currently unavailable for the 5.7-source profiles.
