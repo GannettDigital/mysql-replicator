@@ -169,9 +169,24 @@ func main() throws {
         }
         defer { signals.forEach { $0.cancel() } }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
+        do {
         let summary = try ApplyRun.run(configuration:config,sourcePassword:sourcePassword,targetPassword:targetPassword,initialize:args.count == 4,cancellation:cancellation,drain:drain,archive:archive,control:control,
             emitProgress: { try FileHandle.standardOutput.write(contentsOf:encoder.encode($0) + Data([10])) })
         try FileHandle.standardError.write(contentsOf:encoder.encode(summary) + Data([10]))
+        } catch var failure as ApplyRunError {
+            if config.supportBundle?.onBlocked == true, failure.progress.lifecycle == "BLOCKED" {
+                // ApplyRun has released the state writer before collection.
+                // Config parsing already succeeded; use its original bytes.
+                do {
+                    let request=try ConfigurationFile.decode(SupportBundleConfiguration.self,from:configData)
+                    failure.supportBundle=SupportBundle.onBlocked(failure,configuration:request,
+                        redactedConfiguration:try ConfigurationFile.diagnosticJSON(from:configData),version:ReleaseVersion.current)
+                } catch {
+                    failure.supportBundle = .init(status:"failed",bundle:nil,reason:String(describing:error))
+                }
+            }
+            throw failure
+        }
         return
     }
     guard args.removeFirst() == "inspect", !args.isEmpty else { throw DecoderError(code: 1, offset: 0, reason: "unsupported command; use --help") }
@@ -258,6 +273,9 @@ catch {
         let progress = (try? JSONEncoder().encode(failure.progress)).flatMap { try? JSONSerialization.jsonObject(with:$0) }
         diagnostic = ["error":"apply_failed","reason":failure.reason,"progress":progress ?? NSNull()]
         if let code=failure.code { diagnostic["code"]=code.rawValue }
+        if let bundle=failure.supportBundle,let bytes=try? JSONEncoder().encode(bundle) {
+            diagnostic["supportBundle"]=try? JSONSerialization.jsonObject(with:bytes)
+        }
     } else if let failure = error as? ApplyError {
         diagnostic = ["error":"apply_failed","reason":failure.description]
         if let code=failure.code { diagnostic["code"]=code.rawValue }

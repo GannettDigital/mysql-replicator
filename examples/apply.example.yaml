@@ -162,10 +162,18 @@ batch:                             # Prepare and apply bounded groups of source 
 #                                  # A fetch manifest supplies this setting itself. This does not change MySQL.
 # Keep non-binlog files out of an external directory unless files lists the inputs explicitly.
 
-# Used only by support-bundle. Stop the writer first; the bundle contains workload data.
-# supportBundle:                   # Options for the support-bundle command.
-#   output: ./support.tar          # Required new output path, outside stateDirectory; uncompressed tar.
+# Bundles contain workload data. Automatic collection starts after the writer stops.
+# Stop the writer before you use the manual support-bundle command.
+# supportBundle:                   # Manual collection and automatic collection on a BLOCKED error.
+#   onBlocked: false               # true collects one bundle when run/replay enters BLOCKED.
+#   directory: ./support-bundles    # Required when onBlocked is true. Must be outside stateDirectory.
+#                                  # Each error gets a unique name. Old bundles are not removed.
+#   format: tar                    # tar packs the files. directory leaves them unpacked for inspection.
+#   output: ./support.tar          # Required only for manual collection. Use a new path outside stateDirectory.
+#                                  # For format: directory, this is a new directory path.
 #   maximumBytes: 2147483648        # Default 2 GiB including tar overhead; minimum 1 MiB.
+#                                  # This limit applies to each bundle, including directory output.
 #   logs: []                       # Optional existing log files; omitted/[] adds no logs.
 #                                  # Example: logs: ['/var/log/mysql-replicator/applier.ndjson']
 # Credentials are excluded from config evidence; supplied logs are not scrubbed.
+# A bundle failure is reported separately. It does not replace the replication error.

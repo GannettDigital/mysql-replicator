@@ -52,6 +52,20 @@ extension SharedCorrectness.Run {
                 _ = try f.docker(["cp",f.helper+":/evidence/"+label,f.output.path])
                 let evidence=try f.runner.run(["sqlite3",f.output.appendingPathComponent(label+"/state.sqlite").path,"SELECT lifecycle,transactions_applied,active_gtid,diagnostic FROM state"]).text
                 try require(evidence.hasPrefix("BLOCKED|0|"),"missing durable rejection evidence")
+                guard let automatic=diagnostic["supportBundle"] as? [String:Any],automatic["status"] as? String == "collected",
+                      let bundle=automatic["bundle"] as? [String:Any],let path=bundle["output"] as? String else {
+                    throw LabError("missing automatic support bundle: \(diagnostic)")
+                }
+                let bundleOutput=f.output.appendingPathComponent("support-bundles/"+URL(fileURLWithPath:path).lastPathComponent)
+                _ = try f.docker(["cp",f.helper+":"+path,bundleOutput.path])
+                let failureData=try Data(contentsOf:bundleOutput.appendingPathComponent("failure.json"))
+                let savedFailure=try JSONSerialization.jsonObject(with:failureData) as? [String:Any]
+                try require(savedFailure?["reason"] as? String == diagnostic["reason"] as? String,"support bundle lost the original failure")
+                let bundleState=try f.runner.run(["sqlite3",bundleOutput.appendingPathComponent("state.sqlite").path,"SELECT lifecycle,transactions_applied,active_gtid,diagnostic FROM state"]).text
+                try require(bundleState == evidence,"support bundle checkpoint differs from blocked state")
+                for name in ["configuration.json","bundle.json","diagnostics.json","relay.frames"] {
+                    try require(FileManager.default.fileExists(atPath:bundleOutput.appendingPathComponent(name).path),"missing support evidence: "+name)
+                }
                 try writeJSON(["source_before":before.json,"diagnostic":diagnostic,"durable_state":evidence],to:f.output.appendingPathComponent(label+".json"))
             }
         }

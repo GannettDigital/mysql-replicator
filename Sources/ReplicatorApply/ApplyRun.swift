@@ -33,6 +33,7 @@ public struct ApplyRunError: Error, CustomStringConvertible {
     public let reason: String
     public let progress: ApplySummary
     public var code: ApplyErrorCode? = nil
+    public var supportBundle: SupportBundle.AutomaticResult? = nil
     public var description: String { reason }
 }
 public enum ApplyRun {

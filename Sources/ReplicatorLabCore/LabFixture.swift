@@ -46,6 +46,9 @@ final class LabFixture {
         _ = try docker(["volume","create",volume])
         _ = try docker(["create","--name",helper,"--platform","linux/amd64","--mount","type=volume,src=\(volume),dst=/evidence","--entrypoint","/bin/true",image])
         _ = try docker(["cp",tls.path,helper+":/evidence/tls"])
+        let bundles=output.appendingPathComponent("support-bundles")
+        try FileManager.default.createDirectory(at:bundles,withIntermediateDirectories:true)
+        _ = try docker(["cp",bundles.path,helper+":/evidence/support-bundles"])
 
         stage("starting source, native reference and target: " + profile.rawValue)
         _ = try h.compose(["up","-d","--build","--wait","--wait-timeout","300","target57","source","native"],timeout:360,onOutput:{ FileHandle.standardError.write($0) })
@@ -88,7 +91,8 @@ final class LabFixture {
         config = ["applierProfiling":true,"version":2,"profile":profile.rawValue,"stateDirectory":"/evidence/state",
             "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","serverID":9101,"sourceUUID":uuid,"mode":variant.mode,"start":variant.start(baseline),"stopAfterTransactions":2],
             "target":["host":profile.service(.target),"port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":profile.service(.target),"caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
-            "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024]]
+            "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024],
+            "supportBundle":["onBlocked":true,"directory":"/evidence/support-bundles","format":"directory","maximumBytes":64*1024*1024]]
     }
     func sql(_ role: LabProfile.Role, _ statement: String, preserveWhitespace: Bool = false) throws -> String {
         try h.sql(profile.service(role),statement,preserveWhitespace:preserveWhitespace)
@@ -181,8 +185,14 @@ final class LabFixture {
         for client in clients {
             if try docker(["inspect",client],checked:false).status == 0 { _ = try docker(["rm","-f",client]) }
         }
+        var bundleFailure: Error?
+        if !config.isEmpty, try docker(["inspect",helper],checked:false).status == 0 {
+            do { _ = try docker(["cp",helper+":/evidence/support-bundles/.",output.appendingPathComponent("support-bundles").path]) }
+            catch { bundleFailure=error }
+        }
         _ = try h.compose(["down","-v","--remove-orphans"])
         if try docker(["inspect",helper],checked:false).status == 0 { _ = try docker(["rm","-f",helper]) }
         if try docker(["volume","inspect",volume],checked:false).status == 0 { _ = try docker(["volume","rm",volume]) }
+        if let bundleFailure { throw bundleFailure }
     }
 }

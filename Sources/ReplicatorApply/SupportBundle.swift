@@ -11,9 +11,20 @@ import Darwin
 
 public struct SupportBundleConfiguration: Decodable {
     public struct Options: Decodable {
-        public let output: String
+        public enum Format: String, Decodable { case tar, directory }
+        public var output: String?
+        public let onBlocked: Bool?
+        public let directory: String?
+        public let format: Format?
         public let maximumBytes: UInt64?
         public let logs: [String]?
+        func validate(stateDirectory: String) throws {
+            try require((maximumBytes ?? 2*1024*1024*1024) >= 1024*1024,"support bundle maximumBytes must be at least 1 MiB")
+            if onBlocked == true {
+                try require(!(directory ?? "").isEmpty,"supportBundle.onBlocked requires directory")
+                try SupportBundle.requireOutsideState(URL(fileURLWithPath:directory!), state:URL(fileURLWithPath:stateDirectory))
+            }
+        }
     }
     public let stateDirectory: String
     public let supportBundle: Options
@@ -27,19 +38,57 @@ public enum SupportBundle {
         public let files: Int
         public let omitted: [String]
     }
+    public struct AutomaticResult: Encodable {
+        public let status: String
+        public let bundle: Summary?
+        public let reason: String?
+        public init(status:String,bundle:Summary?,reason:String?) {
+            self.status=status;self.bundle=bundle;self.reason=reason
+        }
+    }
     private struct Entry: Encodable {
         let name: String
         let bytes: UInt64
         let sha256: String
     }
-    public static func run(configuration c:SupportBundleConfiguration,redactedConfiguration:Data,version:String) throws -> Summary {
+    static func requireOutsideState(_ output: URL, state: URL) throws {
+        let path=output.standardizedFileURL.resolvingSymlinksInPath().path
+        let root=state.standardizedFileURL.resolvingSymlinksInPath().path
+        try require(path != root && !path.hasPrefix(root+"/"),"support bundle output must be outside the state directory")
+    }
+
+    /// Call only after ApplyRun has unwound and released its writer and workers.
+    /// Collection failures are diagnostic; they must not replace the apply error.
+    public static func onBlocked(_ failure: ApplyRunError, configuration c: SupportBundleConfiguration,
+                                 redactedConfiguration: Data, version: String) -> AutomaticResult? {
+        guard failure.progress.lifecycle == "BLOCKED", c.supportBundle.onBlocked == true else { return nil }
+        do {
+            try c.supportBundle.validate(stateDirectory:c.stateDirectory)
+            let directory=URL(fileURLWithPath:c.supportBundle.directory!).standardizedFileURL
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+            let stamp=ISO8601DateFormatter().string(from:Date()).replacingOccurrences(of:":",with:"")
+            let suffix=c.supportBundle.format == .directory ? "" : ".tar"
+            var options=c.supportBundle
+            options.output=directory.appendingPathComponent("blocked-"+stamp+"-"+UUID().uuidString+suffix).path
+            struct Failure: Encodable { let error = "apply_failed"; let reason:String; let code:ApplyErrorCode?; let progress:ApplySummary }
+            let diagnostic=try JSONEncoder().encode(Failure(reason:failure.reason,code:failure.code,progress:failure.progress))
+            let request=SupportBundleConfiguration(stateDirectory:c.stateDirectory,supportBundle:options,archive:c.archive)
+            let bundle=try run(configuration:request,redactedConfiguration:redactedConfiguration,version:version,failureDiagnostic:diagnostic)
+            return AutomaticResult(status:"collected",bundle:bundle,reason:nil)
+        } catch { return AutomaticResult(status:"failed",bundle:nil,reason:String(describing:error)) }
+    }
+
+    public static func run(configuration c:SupportBundleConfiguration,redactedConfiguration:Data,version:String,
+                           failureDiagnostic:Data? = nil) throws -> Summary {
         let fm=FileManager.default, state=URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
-        let output=URL(fileURLWithPath:c.supportBundle.output).standardizedFileURL
+        try c.supportBundle.validate(stateDirectory:c.stateDirectory)
+        guard let destination=c.supportBundle.output,!destination.isEmpty else { throw ApplyError("support bundle requires output") }
+        let output=URL(fileURLWithPath:destination).standardizedFileURL
         let limit=c.supportBundle.maximumBytes ?? 2*1024*1024*1024
-        try require(!c.stateDirectory.isEmpty && !c.supportBundle.output.isEmpty, "support bundle requires stateDirectory and output")
+        try require(!c.stateDirectory.isEmpty, "support bundle requires stateDirectory")
         try require(limit >= 1024*1024,"support bundle maximumBytes must be at least 1 MiB")
         try require(!fm.fileExists(atPath:output.path),"support bundle output already exists")
-        try require(!output.path.hasPrefix(state.path+"/"),"support bundle output must be outside the state directory")
+        try requireOutsideState(output,state:state)
         let fd=open(state.appendingPathComponent("writer.lock").path,O_RDONLY|O_NOFOLLOW)
         try require(fd >= 0,"existing state writer lock is required")
         let lock=FileHandle(fileDescriptor:fd,closeOnDealloc:true);defer { try? lock.close() }
@@ -69,6 +118,7 @@ public enum SupportBundle {
         sqlite3_close(copy);copy=nil
         let q=try statements.query("SELECT lifecycle,durable_relay_length,applied_file,active_gtid FROM state WHERE id=1")
         try require(q.count == 1,"missing support state row")
+        if failureDiagnostic != nil { try require(q[0][0] == "BLOCKED","automatic bundle requires durable BLOCKED state") }
         let durable=UInt64(q[0][1] ?? "")
         let configFile=working.appendingPathComponent("configuration.json")
         try redactedConfiguration.write(to:configFile,options:.withoutOverwriting)
@@ -96,6 +146,12 @@ public enum SupportBundle {
         try include(snapshot,as:"state.sqlite",required:true)
         try include(configFile,as:"configuration.json",required:true)
         try include(info,as:"diagnostics.json",required:true)
+        if let failureDiagnostic {
+            let failure=working.appendingPathComponent("failure.json")
+            try failureDiagnostic.write(to:failure,options:.withoutOverwriting)
+            try fm.setAttributes([.posixPermissions:0o600],ofItemAtPath:failure.path)
+            try include(failure,as:"failure.json",required:true)
+        }
         let relay=state.appendingPathComponent("relay.frames")
         if let bytes=try? ArchiveIO.regularFile(relay),let durable,bytes > durable {
             omitted.append("relay.frames includes unjournaled tail at byte \(durable); tail is evidence, not committed progress")
@@ -127,11 +183,38 @@ public enum SupportBundle {
         let indexSize=try ArchiveIO.regularFile(index)
         try require(indexSize+1024 <= limit-total,"support bundle index exceeds size limit")
         paths.append(("bundle.json",index))
-        let tar=working.appendingPathComponent("bundle.tar")
-        try writeTar(paths,to:tar)
-        try require(ArchiveIO.regularFile(tar) <= limit,"support bundle exceeds size limit")
-        try fm.moveItem(at:tar,to:output)
+        if c.supportBundle.format == .directory {
+            let contents=working.appendingPathComponent("contents")
+            try fm.createDirectory(at:contents,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+            for (name,path) in paths {
+                let copy=contents.appendingPathComponent(name)
+                try fm.createDirectory(at:copy.deletingLastPathComponent(),withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+                try copyFile(path,to:copy)
+            }
+            try fm.moveItem(at:contents,to:output)
+        } else {
+            let tar=working.appendingPathComponent("bundle.tar")
+            try writeTar(paths,to:tar)
+            try require(ArchiveIO.regularFile(tar) <= limit,"support bundle exceeds size limit")
+            try fm.moveItem(at:tar,to:output)
+        }
         return Summary(output:output.path,files:paths.count,omitted:omitted)
+    }
+
+    /// Copy bytes rather than link to mutable state or caller-supplied logs.
+    private static func copyFile(_ source:URL,to destination:URL) throws {
+        let size=try ArchiveIO.regularFile(source)
+        guard FileManager.default.createFile(atPath:destination.path,contents:nil,attributes:[.posixPermissions:0o600]) else { throw ApplyError("cannot create support file") }
+        let input=try FileHandle(forReadingFrom:source),out=try FileHandle(forWritingTo:destination)
+        defer { try? input.close();try? out.close() }
+        var remaining=size
+        while remaining > 0 {
+            let data=try input.read(upToCount:Int(min(remaining,1024*1024))) ?? Data()
+            try require(!data.isEmpty,"support input truncated during collection")
+            try out.write(contentsOf:data);remaining -= UInt64(data.count)
+        }
+        try require((try input.read(upToCount:1) ?? Data()).isEmpty,"support input grew during collection")
+        try out.synchronize()
     }
     /// Portable uncompressed ustar avoids requiring a shell, tar or gzip in the
     /// statically linked runtime image. Files are streamed, never loaded whole.

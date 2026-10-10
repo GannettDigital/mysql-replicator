@@ -13,7 +13,8 @@ extension ConfigurationFileTests {
             "compatibility": CompatibilityPolicy(), "ddlPolicy": DDLPolicy(),
             "storage": StoragePolicy(), "batch": BatchPolicy(),
             "sourceReconnect": SourceReconnectPolicy(), "targetReconnect": TargetReconnectPolicy(),
-            "skipErrors": SkipErrorPolicy()
+            "skipErrors": SkipErrorPolicy(),
+            "supportBundle": try ConfigurationFile.decode(SupportBundleConfiguration.Options.self,from:Data("format: tar".utf8))
         ]
         var expected = Set<String>()
         func inspect(_ value: Any, path: String = "") {
@@ -25,7 +26,7 @@ extension ConfigurationFileTests {
                     // Unknown optional section types must get a specimen above.
                     // This prevents a newly added section from hiding its fields.
                     let type = String(describing: mirror.subjectType)
-                    let scalarTypes = ["String", "Bool", "Int", "Int64", "UInt32", "UInt64", "ReplicationProfile"]
+                    let scalarTypes = ["String", "Bool", "Int", "Int64", "UInt32", "UInt64", "ReplicationProfile", "Format"]
                     XCTAssertTrue(scalarTypes.contains { type == "Optional<\($0)>" } || type.hasPrefix("Optional<Array<"),
                                   "Add a specimen for optional section \(path): \(type)")
                     return
