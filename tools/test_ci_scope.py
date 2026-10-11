@@ -21,6 +21,18 @@ class ScopeTests(unittest.TestCase):
         for action in ('labeled', 'unlabeled'):
             self.assertIsNone(select('pull_request', self.pr(action, ['ci-full'], 'documentation')))
 
+    def test_expanded_label_implies_full_and_survives_full_label_removal(self):
+        for action in ('opened', 'synchronize', 'reopened', 'labeled'):
+            self.assertEqual(select('pull_request', self.pr(action, ['ci-expanded-coverage'], 'ci-expanded-coverage')),
+                             dict(scope='full', expanded=True))
+        self.assertEqual(select('pull_request', self.pr('unlabeled', ['ci-expanded-coverage'], 'ci-full')),
+                         dict(scope='full', expanded=True))
+        self.assertEqual(select('pull_request', self.pr('unlabeled', ['ci-full'], 'ci-expanded-coverage')),
+                         dict(scope='full', expanded=False))
+        self.assertEqual(select('pull_request', self.pr('unlabeled', [], 'ci-expanded-coverage')),
+                         dict(scope='pr-smoke', expanded=False))
+        self.assertIsNone(select('pull_request', self.pr('labeled', ['ci-expanded-coverage'], 'documentation')))
+
     def test_main_and_default_manual_runs_are_full(self):
         self.assertEqual(select('push', {'ref': 'refs/heads/main'}), dict(scope='full', expanded=False))
         self.assertEqual(select('workflow_dispatch', {}), dict(scope='full', expanded=False))

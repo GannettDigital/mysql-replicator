@@ -7,6 +7,7 @@ Do not add a separate release test runner.
 | --- | --- | --- | --- |
 | Ordinary PR | Open, push or reopen | Unit tests, Periphery and two parallel engine smoke suites | No |
 | Final PR in a release stack | Add `ci-full`; later pushes keep this scope | Full catalog, packages, coverage and Periphery | Candidate evidence |
+| Test-suite investigation | Add `ci-expanded-coverage` | Full suite plus instrumented correctness and reconnect copies | Candidate evidence from release-binary checks |
 | Main | Push after merge | Same full suite | Required for the release |
 | Manual investigation | Dispatch with `suite=full` | Same full suite; expanded coverage is optional | Candidate evidence |
 | Draft release | Push the release tag after main passes | Verify and copy the tested packages | Verify main evidence; no rebuild |
@@ -48,8 +49,9 @@ gh pr edit <top-pr-number> --add-label ci-full
 ```
 
 Use a maintainer account. Adding the label starts full CI. Each later push to that
-PR starts full CI again. Remove the label to restore smoke checks. Other label
-changes do not start test jobs or cancel the active test run.
+PR starts full CI again. Remove both CI labels to restore smoke checks. Changes to `ci-full` or
+`ci-expanded-coverage` start CI. Other label changes do not start test jobs or
+cancel the active test run.
 If a new PR becomes the top of the stack, put the label on that PR. Labels do not
 move between PRs automatically.
 
@@ -63,6 +65,25 @@ It does not certify a future merge into main. If a lower stack layer changes,
 update the top branch and run full CI again. A result for an old commit is stale.
 After merge, wait for full CI on the exact final main commit. Do not substitute
 candidate evidence because the source trees appear equivalent.
+
+## Measure the full suite on a PR
+
+Create the diagnostic label once, then add it to the top PR:
+
+```sh
+gh label create ci-expanded-coverage --color 1d76db --description 'Measure full-suite Swift coverage; retain release checks'
+gh pr edit <top-pr-number> --add-label ci-full --add-label ci-expanded-coverage
+```
+
+The expanded label implies the full suite, even without `ci-full`. It adds
+instrumented copies of shared correctness and lifecycle jobs. It keeps all
+release-binary jobs. Coverage builds are not release artifacts. Remove only
+`ci-expanded-coverage` to return to normal full CI while `ci-full` remains.
+
+Read the scope counts in the coverage summary. Use the measurement artifact's
+`test-value.md`, `test-value.csv` and `test-value.json` to compare cost and added
+line coverage by profile, variant and area. These files include declared case
+intent for an assertion review. See [measurement scope](CI_MEASUREMENTS.md).
 
 ## Run the full suite manually
 

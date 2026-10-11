@@ -12,9 +12,11 @@ import re
 import subprocess
 import zipfile
 
+from coverage_scope import description
+
 MARKER = "<!-- mysql-replicator-swift-coverage -->"
-SCOPES = {"runtime": "Runtime: unit + integration smoke", "runtime-unit": "Runtime: unit only",
-          "runtime-integration": "Runtime: integration smoke only", "harness": "Harness: unit only"}
+SCOPES = {"runtime": "Runtime: unit + measured integration", "runtime-unit": "Runtime: unit only",
+          "runtime-integration": "Runtime: measured integration only", "harness": "Harness: unit only"}
 
 
 def api(path, method="GET", body=None, binary=False):
@@ -55,6 +57,15 @@ def validate(metrics):
             raise ValueError("invalid coverage counts")
         if metrics["complete"] and count["total"] == 0:
             raise ValueError("complete report has missing coverage")
+    for key, allowed in [('ci_suite', ('full', 'pr-smoke')), ('coverage_mode', ('selected', 'expanded'))]:
+        if key in metrics and metrics[key] not in allowed:
+            raise ValueError('invalid coverage scope')
+    for key in ('integration_jobs', 'instrumented_jobs', 'integration_reports', 'expected_integration_reports'):
+        if key in metrics and (type(metrics[key]) is not int or not 0 <= metrics[key] <= 10000):
+            raise ValueError('invalid instrumentation count')
+    if 'integration_jobs' in metrics:
+        if 'instrumented_jobs' not in metrics or metrics['instrumented_jobs'] > metrics['integration_jobs']:
+            raise ValueError('invalid instrumented job count')
     return metrics
 
 
@@ -95,8 +106,8 @@ def comment(metrics, run, repo, baseline=None):
     if metrics is None:
         lines += ["Coverage report unavailable for this run."]
     else:
-        lines += ["Complete selected CI suites." if metrics["complete"] else "**PARTIAL — selected coverage suites did not all complete.**",
-                  "", "| Scope | Covered / mapped lines | Coverage | Change vs base |", "|---|---:|---:|---:|"]
+        lines += ["Complete selected coverage collections." if metrics["complete"] else "**PARTIAL — selected coverage suites did not all complete.**",
+                  "", description(metrics), "", "| Scope | Covered / mapped lines | Coverage | Change vs base |", "|---|---:|---:|---:|"]
         compare = comparable(metrics, baseline)
         for name, label in SCOPES.items():
             count = metrics["scopes"][name]
@@ -111,8 +122,8 @@ def comment(metrics, run, repo, baseline=None):
         if not compare:
             lines += ["", "Base comparison unavailable: requires complete reports for the exact base commit and identical test/reporting inputs."]
         lines += ["", f'Tested commit: `{metrics["commit"]}`.']
-    lines += ["", "First-party Swift only; Rust and dependencies excluded. Integration measures selected smoke/demo runs. "
-              "Full correctness/reconnect tests use the release image in the same CI workflow; this is not MySQL catalog coverage. Harness uses unit tests only.", "",
+    lines += ["", "First-party Swift only; Rust and dependencies excluded. Only instrumented jobs contribute to this percentage. "
+              "This is not MySQL catalog coverage. Harness uses unit tests only.", "",
               f'[CI run and downloadable HTML/LCOV reports (`combined-swift-coverage`)]({run_url})']
     return "\n".join(lines)
 

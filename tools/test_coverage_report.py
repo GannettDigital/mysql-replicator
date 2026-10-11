@@ -65,6 +65,22 @@ class ScopedCoverageTests(unittest.TestCase):
         self.assertNotEqual(full['policy'], smoke['policy'])
         self.assertEqual(smoke['ci_suite'], 'pr-smoke')
 
+    def test_matrix_identifies_instrumentation_and_separates_expanded_baseline(self):
+        unit = self.report('unit', {self.runtime: {'1': 1}, self.harness: {'1': 1}})
+        integration = self.report('integration', {self.runtime: {'2': 1}})
+        matrix = dict(scope='full', coverage_mode='selected', include=[dict(reports=0), dict(reports=1)])
+        selected = write_reports(self.root, self.output, [unit, integration], 'success', 'success', 1, matrix=matrix)
+        self.assertEqual((selected['integration_jobs'], selected['instrumented_jobs']), (2, 1))
+        self.assertIn('smoke suites, demos and sample only', (self.output / 'summary.md').read_text())
+        expanded = write_reports(self.root, self.output, [unit, integration], 'success', 'success', 1,
+                                 matrix=dict(matrix, coverage_mode='expanded'))
+        self.assertNotEqual(selected['policy'], expanded['policy'])
+        self.assertIn('instrumented correctness and reconnect', (self.output / 'summary.md').read_text())
+        with self.assertRaisesRegex(ValueError, 'differs from CI matrix'):
+            write_reports(self.root, self.output, [unit, integration], 'success', 'success', 2, matrix=matrix)
+        partial = write_reports(self.root, self.output, [unit], 'success', 'success', matrix=matrix)
+        self.assertFalse(partial['complete'])
+
     def test_missing_failed_and_unverified_suites_are_partial(self):
         unit = self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}})
         integration = self.report("integration", {self.runtime: {"2": 1}})

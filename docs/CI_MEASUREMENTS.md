@@ -41,8 +41,16 @@ Keep the run ID, attempt and commit with downloaded evidence. Do not mix attempt
 
 Start expanded coverage manually on the release candidate branch or tag.
 The `ci-full` label runs the full PR suite without expanded instrumentation.
-The `ci-expanded-coverage` label has no effect. After the workflow is available
-on main, use:
+Add `ci-expanded-coverage` to a PR to collect expanded coverage. This label also
+selects the full suite. Each later push keeps this selection. Remove the expanded
+label to return to normal full CI if `ci-full` remains, or smoke CI if it does not.
+Both label changes start a new CI run. Unrelated labels do not start or cancel CI.
+
+```sh
+gh pr edit <top-pr-number> --add-label ci-full --add-label ci-expanded-coverage
+```
+
+After the workflow is available on main, a manual run can use:
 
 ```sh
 gh workflow run ci.yml --ref <branch-or-tag> -f suite=full -f expanded_coverage=true
@@ -53,12 +61,47 @@ of shared correctness and lifecycle shards for every applicable variant.
 Ordinary PR CI has two smoke shards and two integration coverage collections.
 The current full plan has 120 shards and 227 expanded shards. Both full plans own
 718 catalog obligations. There are 23 full-plan coverage collections and 130
-expanded collections. The generated matrix is the authority if the catalog grows.
+expanded collections. Normal full CI instruments 9 of 120 jobs. Expanded CI
+instruments 116 of 227 jobs. The other 111 jobs check the release binary.
+The generated matrix is the authority if the catalog grows.
 
 Native-reference and specialized recovery adapters do not export line coverage.
 Their existing tests remain required. Demo collections remain instrumented.
 This experiment is more expensive than normal CI. It is evidence for later
 selection changes. It is separate from the PR smoke selection.
+
+## Read coverage scope and test value
+
+The coverage summary states the test scope and instrumentation mode. It shows
+planned integration jobs, jobs that collect coverage, and collected versus
+expected fixture reports. A fixture report is not a job or an assertion.
+A complete selected report does not mean that all release tests were instrumented.
+The PR comment uses the same scope fields. Its publisher runs trusted code from
+main. New comment wording takes effect after that publisher change reaches main;
+PR job summaries and artifacts use the code in the tested PR immediately.
+
+The measurement artifact also contains `test-value.md`, `test-value.csv` and
+`test-value.json`. These files group numbered chunks by profile, capture variant,
+suite and area. Each row shows:
+
+- Release and coverage shard minutes, plus jobs measured and total jobs.
+- Passed catalog keys and declared case intent in the JSON.
+- Covered lines and lines added beyond the two PR smoke jobs from the same run.
+- Lines added beyond that smoke baseline plus the unit report from the same run.
+- Lines exclusive to this area among measured integration areas.
+
+An unmeasured area has no line counts. It is not assigned zero coverage. Missing
+smoke or unit data makes the corresponding baseline unavailable. Partial rows
+can miss results. Source hashes must match before unit and integration line maps
+can be compared. Line gains are not additive. Catalog keys can occur in several
+rows, so their sum is not catalog coverage.
+
+Review assertions, profile behavior and failure checks before removing a case.
+Equal line coverage does not prove equal test value. Native-reference and
+specialized recovery adapters remain required without line maps. Rust code is
+not measured. SIGKILL can prevent the process from saving coverage counters.
+Use expanded coverage for a test-suite investigation. Keep normal full CI as the
+release default. Coverage binaries are diagnostic builds, not release packages.
 
 ## Cold and warm build comparison
 

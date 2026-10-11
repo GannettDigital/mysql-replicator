@@ -13,6 +13,7 @@ import time
 from code_coverage import load_reports
 from coverage_report import downloaded_inputs
 from ci_matrix import key
+from coverage_scope import description, plan_scope
 
 
 def write(path, value):
@@ -151,6 +152,7 @@ def summarize(manifest, records, jobs=None):
         provenance={k: records[0].get(k) for k in ('commit', 'run_id', 'attempt')} if records else {},
         missing_shards=missing, failed_shards=failed, missing_coverage=missing_coverage,
         profiles=profiles, jobs=timings, failed_jobs=job_failures,
+        instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings),
         shards=[dict(planned[k], seconds=r['seconds'], status=r['status'],
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
@@ -160,6 +162,8 @@ def summarize(manifest, records, jobs=None):
 def markdown(report):
     lines = ['# CI measurement', '', 'Complete' if report['complete'] else 'PARTIAL: inspect missing or failed records.', '',
         'Scope: ' + report['scope'] + '. Catalog totals cover only this selection.', '',
+        description(report['instrumentation']), '',
+        'See test-value.md, test-value.csv and test-value.json for costs, marginal line coverage and case intent by area.', '',
         '| Profile | Catalog passed / expected | Runtime lines hit / mapped | Unique lines | Shard minutes: release / coverage |',
         '|---|---:|---:|---:|---:|']
     for name, p in report['profiles'].items():
@@ -185,12 +189,19 @@ def main():
     parser.add_argument('--matrix', type=Path, required=True)
     parser.add_argument('--records', type=Path, required=True)
     parser.add_argument('--jobs', type=Path)
+    parser.add_argument('--unit-coverage', type=Path)
     parser.add_argument('--output', type=Path, default=Path('artifacts/ci/report'))
     args = parser.parse_args()
     records = [json.loads(p.read_text()) for p in sorted(args.records.rglob('*.json'))]
-    report = summarize(json.loads(args.matrix.read_text()), records,
+    manifest = json.loads(args.matrix.read_text())
+    report = summarize(manifest, records,
                        json.loads(args.jobs.read_text()) if args.jobs else None)
     write(args.output / 'report.json', report)
+    from ci_test_value import analyze, write as write_value
+    unit = load_reports(Path(__file__).resolve().parents[1], [args.unit_coverage])[0] if args.unit_coverage else None
+    if unit is not None and unit['inputs'] != ['unit']:
+        raise ValueError('unit baseline must contain only unit coverage')
+    write_value(args.output, analyze(manifest, records, unit))
     text = markdown(report)
     (args.output / 'summary.md').write_text(text)
     if os.environ.get('GITHUB_STEP_SUMMARY'):

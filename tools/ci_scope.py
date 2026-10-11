@@ -5,15 +5,18 @@ import os
 from pathlib import Path
 
 FULL_LABEL = 'ci-full'
+EXPANDED_LABEL = 'ci-expanded-coverage'
+CI_LABELS = {FULL_LABEL, EXPANDED_LABEL}
 
 
 def select(event_name, event):
     if event_name == 'pull_request':
-        # Ignore unrelated label edits. A removed ci-full label restores smoke.
-        if event.get('action') in ('labeled', 'unlabeled') and event.get('label', {}).get('name') != FULL_LABEL:
+        # Ignore unrelated label edits. Expanded coverage implies the full suite.
+        if event.get('action') in ('labeled', 'unlabeled') and event.get('label', {}).get('name') not in CI_LABELS:
             return None
         labels = {label['name'] for label in event['pull_request'].get('labels', [])}
-        return {'scope': 'full' if FULL_LABEL in labels else 'pr-smoke', 'expanded': False}
+        return {'scope': 'full' if labels & CI_LABELS else 'pr-smoke',
+                'expanded': EXPANDED_LABEL in labels}
     if event_name == 'push':
         if event['ref'] != 'refs/heads/main':
             raise ValueError('automatic full CI requires main')

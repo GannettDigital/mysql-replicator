@@ -25,13 +25,13 @@ permissions:
 
 concurrency:
   # Unrelated labels must not cancel a running test suite.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci-full' && github.run_id || 'tests' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !contains(fromJSON('["ci-full","ci-expanded-coverage"]'), github.event.label.name) && github.run_id || 'tests' }}
   cancel-in-progress: true
 
 jobs:
   select-suite:
     name: Select test scope
-    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci-full'
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || contains(fromJSON('["ci-full","ci-expanded-coverage"]'), github.event.label.name)
     runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
@@ -391,6 +391,10 @@ jobs:
         with:
           pattern: coverage-*
           path: artifacts/coverage/downloaded
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-lab
+          path: artifacts/ci
       - name: Combine line coverage
         env:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
@@ -398,7 +402,7 @@ jobs:
           EXPECTED_REPORTS: ${{ needs.lab-tools.outputs.coverage_reports }}
           CI_SUITE: ${{ needs.lab-tools.outputs.scope }}
         run: |
-          python3 tools/coverage_report.py --ci \
+          python3 tools/coverage_report.py --ci --matrix artifacts/ci/matrix.json \
             --downloaded artifacts/coverage/downloaded \
             --unit-result "$UNIT_RESULT" \
             --integration-result "$INTEGRATION_RESULT" \
@@ -473,8 +477,12 @@ jobs:
           path: artifacts/ci
       - uses: actions/download-artifact@v4
         with:
-          pattern: ci-measurement-*
+          pattern: ci-measurement-*-*
           path: artifacts/ci/downloaded-measurements
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: artifacts/ci/unit
       - name: Read job and step times for this attempt
         env:
           GH_TOKEN: ${{ github.token }}
@@ -483,7 +491,8 @@ jobs:
       - name: Report timing, catalog results and profile line coverage
         run: |
           python3 tools/ci_measurements.py --matrix artifacts/ci/matrix.json \
-            --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json
+            --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json \
+            --unit-coverage artifacts/ci/unit/coverage.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
