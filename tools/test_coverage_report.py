@@ -58,6 +58,13 @@ class ScopedCoverageTests(unittest.TestCase):
         self.assertEqual(metrics["scopes"]["runtime"], {"covered": 1, "total": 1})
         self.assertEqual((metrics["commit"], metrics["run_id"]), ("a" * 40, "123"))
 
+    def test_smoke_coverage_cannot_compare_against_full_main_baseline(self):
+        unit = self.report('unit', {self.runtime: {'1': 1}, self.harness: {'1': 1}})
+        full = write_reports(self.root, self.output, [unit], metadata=dict(ci_suite='full'))
+        smoke = write_reports(self.root, self.output, [unit], metadata=dict(ci_suite='pr-smoke'))
+        self.assertNotEqual(full['policy'], smoke['policy'])
+        self.assertEqual(smoke['ci_suite'], 'pr-smoke')
+
     def test_missing_failed_and_unverified_suites_are_partial(self):
         unit = self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}})
         integration = self.report("integration", {self.runtime: {"2": 1}})

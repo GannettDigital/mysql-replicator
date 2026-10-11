@@ -30,14 +30,25 @@ def command(shard):
     return args
 
 
-def plan(query):
-    from ci_matrix import generate
+def select_plan(query):
+    from ci_matrix import SMOKE_PROFILES, generate, generate_smoke
+    scope = os.environ.get('CI_SUITE', 'full')
+    if scope == 'pr-smoke':
+        return generate_smoke([json.loads(query('test', '--profile', profile, '--suite', 'correctness',
+                                               '--variant', 'default', '--tier', 'smoke', '--list'))
+                               for profile in SMOKE_PROFILES])
+    if scope != 'full':
+        raise ValueError(f'unknown CI_SUITE: {scope}')
     catalogs = [json.loads(query('test', '--profile', 'all', '--suite', suite,
                                 '--variant', 'all', '--list'))
                 for suite in ('correctness', 'lifecycle')]
     catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
-    result = generate(catalogs, json.loads((ROOT / 'tools/ci_matrix.json').read_text()),
-                      expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true')
+    return generate(catalogs, json.loads((ROOT / 'tools/ci_matrix.json').read_text()),
+                    expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true')
+
+
+def plan(query):
+    result = select_plan(query)
     result['inputs'] = query('build-inputs').strip()
     destination = ROOT / 'artifacts/ci/matrix.json'
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +86,8 @@ def bundle(binary):
         output.write('inputs=' + digest + '\n')
         output.write('matrix=' + json.dumps({'include': result['include']}, separators=(',', ':')) + '\n')
         output.write('coverage_reports=' + str(result['coverage_reports']) + '\n')
+        output.write('images=' + json.dumps(result['images']) + '\n')
+        output.write('scope=' + result['scope'] + '\n')
 
 
 def runtime_libraries(listing):

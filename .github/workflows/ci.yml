@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
     # Stacked feature PRs target the preceding beta branch.
     branches: [main, "beta/**"]
 
@@ -88,6 +88,8 @@ jobs:
       inputs: ${{ steps.bundle.outputs.inputs }}
       matrix: ${{ steps.bundle.outputs.matrix }}
       coverage_reports: ${{ steps.bundle.outputs.coverage_reports }}
+      images: ${{ steps.bundle.outputs.images }}
+      scope: ${{ steps.bundle.outputs.scope }}
     steps:
       - uses: actions/checkout@v4
       # Keep toolchain headers and their consuming objects in the SAME archive.
@@ -110,7 +112,8 @@ jobs:
       - name: Build and bundle lab with its runtime libraries
         id: bundle
         env:
-          CI_EXPANDED_COVERAGE: ${{ inputs.expanded_coverage || contains(github.event.pull_request.labels.*.name, 'ci-expanded-coverage') }}
+          CI_SUITE: ${{ github.event_name == 'pull_request' && 'pr-smoke' || 'full' }}
+          CI_EXPANDED_COVERAGE: ${{ inputs.expanded_coverage == true }}
         run: |
           python3 tools/swift_cache.py restore --scratch-path .build/ci-lab
           swift build --scratch-path .build/ci-lab --product replicator-lab --force-resolved-versions
@@ -135,7 +138,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [release, coverage]
+        image: ${{ fromJSON(needs.lab-tools.outputs.images) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -297,7 +300,7 @@ jobs:
           if-no-files-found: ignore
 
   packaging-and-smoke:
-    # Preserve the required check name while the underlying work is sharded.
+    # Preserve the required check name. PRs require smoke; main also packages.
     name: Debian Packaging & Integration Smoke
     needs: [lab-tools, build-images, integration]
     if: always()
@@ -329,6 +332,7 @@ jobs:
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           INTEGRATION_RESULT: ${{ needs.packaging-and-smoke.result }}
           EXPECTED_REPORTS: ${{ needs.lab-tools.outputs.coverage_reports }}
+          CI_SUITE: ${{ needs.lab-tools.outputs.scope }}
         run: |
           python3 tools/coverage_report.py --ci \
             --downloaded artifacts/coverage/downloaded \

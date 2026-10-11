@@ -136,8 +136,12 @@ record these in `code-coverage/profile-status.json`. Missing profiles after a
 normal exit fail collection. Do not interpret absent crash coverage as an
 unexercised path. Failed suites retain the evidence available before cleanup.
 
-CI combines one unit report and twelve integration collections: the sample,
-two profile smoke runs, and nine demo sessions (four forward, five reverse).
+PR CI combines one unit report and two integration smoke collections:
+`mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
+Unit tests, Periphery and the build for the smoke suites start independently.
+The two smoke suites run in parallel after their shared build finishes.
+Main and manual CI retain the full four-profile matrix and package checks.
+Their coverage also includes the other profile smoke suites, sample and demos.
 Downloaded report discovery excludes demo `evidence-*` snapshots, which copy
 existing measurements. Duplicate inputs in original collections still fail;
 missing collections or failed suites produce a partial report.
@@ -145,14 +149,15 @@ missing collections or failed suites produce a partial report.
 CI uploads raw unit/integration collections, integration evidence, and the four
 scoped reports in `combined-swift-coverage`. It also writes a job summary and a
 small `coverage-summary` artifact. Complete CI coverage requires the unit job
-and packaging/integration gate to succeed, with all twelve selected instrumented
+and packaging/integration gate to succeed, with all planned instrumented
 fixture reports. Each coverage shard also checks its own expected report count.
 The full correctness and reconnect matrix runs against the release image and
-does not contribute to this percentage. These checks run on every PR and main
-push; there is no separate release qualification workflow.
+does not contribute to this percentage. These full checks run on main pushes
+and manual runs. There is no separate release qualification workflow.
 
 CI builds the lab executable once, bundles its Linux runtime libraries, and
-builds the release and instrumented images in parallel. It generates the test
+builds only the instrumented image for PRs. Full CI builds the release and
+instrumented images in parallel. It generates the test
 matrix from the lab catalog, grouping correctness families by area and splitting
 larger areas into case chunks. Jobs name the profile, area, variant and image;
 up to 16 run concurrently with `--skip-build`. Dependent operations within a
@@ -164,14 +169,16 @@ plan is retained in the `ci-lab` artifact. See [the test lab](docs/TEST_LAB.md)
 for local plan inspection and reproduction.
 
 The existing **Debian Packaging & Integration Smoke** check keeps its historical
-name for branch protection, but now requires every build and full-suite shard
-to pass, including native-reference DDL, recovery and demos.
+name for branch protection. It requires all planned builds and integration shards
+to pass. PRs do not build packages. Full CI also checks packages, native-reference
+DDL, recovery and demos. A successful PR smoke run is not release certification.
 
 Test jobs verify archive checksums and the lab source/fixture fingerprint, and
 release shards check that their applier matches the release archive binary.
 The instrumented image retains its matching LLVM exporter. Artifacts are scoped
 to the workflow run; individual shard evidence has a distinct artifact name.
 The release workflow still promotes the exact packages from successful main CI.
+The release certification model will be reviewed after the build-cache work.
 
 SwiftPM/Cargo build caches are separated by OS, architecture, toolchain, build
 variant, runner image and dependency locks. Host jobs restore the installed
@@ -218,7 +225,8 @@ SWIFT_CACHE_INTEGRATION=1 python3 -m unittest discover -s tools -p 'test_swift_c
 Compare both cold and warm Actions runs after changing CI. Record build, image
 transfer and shard times separately: splitting jobs adds image downloads, and
 organization runner queues can dominate a large PR stack. The initial targets
-are 10–15 minutes warm and 20–30 minutes cold, subject to measurement on Actions.
+are five minutes for PR feedback and twenty minutes for full main checks.
+These are targets. The current build and image transfer times still need work.
 
 A separate `Coverage PR Comment` workflow updates one comment per PR, including
 fork PRs. It runs trusted default-branch code and reads only bounded JSON metadata
@@ -228,6 +236,8 @@ Old-head runs and older reruns cannot replace a newer comment. Base deltas requi
 a successful CI push run for the exact tested base commit and identical test,
 harness, toolchain configuration and reporting inputs. Missing or expired baseline
 artifacts produce an unavailable comparison, not a zero baseline.
+PR smoke and full main reports have different selection policies. Their coverage
+percentages cannot produce a valid base delta. Both retain their absolute counts.
 
 Coverage publication uses GitHub Actions summaries, downloadable artifacts and
 PR comments. It does not require GitHub Pages or an external hosting service.

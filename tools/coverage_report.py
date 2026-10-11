@@ -48,7 +48,7 @@ def badge(count, complete):
             f'<text x="80" y="14">{label}</text><text x="192" y="14">{value}</text></g></svg>\n')
 
 
-def policy_hash(root):
+def policy_hash(root, selection='full'):
     # Baseline deltas require identical test/toolchain/reporting inputs. Runtime
     # changes are intentionally excluded; tests and their selection are not.
     paths = [root / ".github/workflows/ci.yml", root / "Package.swift", root / "Package.resolved"]
@@ -56,6 +56,8 @@ def policy_hash(root):
         paths.extend(p for p in (root / directory).rglob("*")
                      if p.is_file() and "__pycache__" not in p.parts)
     digest = hashlib.sha256()
+    # A PR smoke report cannot use full main coverage as a comparable baseline.
+    digest.update(selection.encode() + b'\0')
     for path in sorted(set(paths)):
         if path.exists():
             digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
@@ -90,7 +92,8 @@ def write_reports(root, output, inputs, unit_result="unknown", integration_resul
         "runtime-integration": [select(r, False) for r in integration],
         "harness": [select(r, True) for r in unit],
     }
-    metrics = {**(metadata or {}), "version": 1, "complete": complete, "policy": policy_hash(root),
+    selection = (metadata or {}).get('ci_suite', 'full')
+    metrics = {**(metadata or {}), "version": 1, "complete": complete, "policy": policy_hash(root, selection),
                "unit_result": unit_result, "integration_result": integration_result,
                "integration_reports": len(integration), "scopes": {}}
     output.mkdir(parents=True, exist_ok=True)
@@ -109,7 +112,9 @@ def write_reports(root, output, inputs, unit_result="unknown", integration_resul
     note = ("First-party Swift line coverage only; excludes Rust and dependencies. "
             "Harness coverage uses unit tests only. Runtime combined coverage is a union, not a sum. "
             "Each view uses its own mapped executable lines; unmapped code is not measured. "
-            "Integration line coverage measures the instrumented collections selected by the CI plan (smoke/demo by default; expanded runs also measure shared correctness/lifecycle). Full correctness/reconnect tests run against the release image in the same CI workflow; this percentage does not measure MySQL catalog coverage.")
+            "PR integration coverage measures two smoke suites. Main and manual runs also collect sample/demo coverage. "
+            "Expanded manual runs add instrumented correctness/lifecycle suites. Full release-image checks run on main and manual runs. "
+            "This percentage does not measure MySQL catalog coverage.")
     provenance = "\n".join(f'{key}: {metrics[key]}' for key in ["commit", "run_id", "run_attempt"] if metrics.get(key))
     summary = (f'{status}\n\n| Scope | Covered / mapped lines | Coverage |\n|---|---:|---:|\n'
                + '\n'.join(rows) + '\n\n' + note + '\n\n' + provenance + '\n')
@@ -142,7 +147,7 @@ def main():
         pr = event.get("pull_request", {})
         metadata = dict(commit=os.environ["GITHUB_SHA"], head_sha=pr.get("head", {}).get("sha", os.environ["GITHUB_SHA"]),
                         base_sha=pr.get("base", {}).get("sha"), run_id=os.environ["GITHUB_RUN_ID"],
-                        run_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
+                        run_attempt=os.environ["GITHUB_RUN_ATTEMPT"], ci_suite=os.environ.get('CI_SUITE', 'full'))
     write_reports(args.root.resolve(), args.output, inputs, args.unit_result,
                   args.integration_result, args.expected_integration, metadata)
     if args.ci:

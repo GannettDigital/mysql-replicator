@@ -1,10 +1,29 @@
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import ci_lab
 
 
 class CIShardsTests(unittest.TestCase):
+    def test_pr_plan_queries_actual_smoke_catalogs_even_with_expanded_requested(self):
+        from ci_matrix import SMOKE_PROFILES
+        catalogs = [dict(scenarios=[dict(id='new-smoke', profile=p, suite='correctness',
+                                       variant='default', status='not_run')]) for p in SMOKE_PROFILES]
+        query = Mock(side_effect=[json.dumps(c) for c in catalogs])
+        with patch.dict(ci_lab.os.environ, CI_SUITE='pr-smoke', CI_EXPANDED_COVERAGE='true'):
+            result = ci_lab.select_plan(query)
+        self.assertEqual(result['obligations'], 2)
+        for call, profile in zip(query.call_args_list, SMOKE_PROFILES):
+            self.assertEqual(call.args, ('test', '--profile', profile, '--suite', 'correctness',
+                                        '--variant', 'default', '--tier', 'smoke', '--list'))
+
+    def test_unknown_selection_fails_before_catalog_queries(self):
+        query = Mock()
+        with patch.dict(ci_lab.os.environ, CI_SUITE='typo'), self.assertRaisesRegex(ValueError, 'CI_SUITE'):
+            ci_lab.select_plan(query)
+        query.assert_not_called()
+
     def test_bundle_keeps_swift_runtime_but_uses_workers_system_loader_and_libc(self):
         listing = '''libswiftCore.so => /opt/swift/usr/lib/swift/linux/libswiftCore.so (0x1)
 libFoundation.so => /opt/swift/usr/lib/swift/linux/libFoundation.so (0x2)

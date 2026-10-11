@@ -264,13 +264,21 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-PR and main CI run the full catalog through one parallel matrix. Correctness and
+PR CI runs unit tests, Periphery and two correctness smoke suites. The smoke
+profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
+Both use the default variant and run in parallel after one shared image build.
+Unit tests and Periphery do not wait for this build. Coverage and timing reports
+remain enabled. PRs do not build release packages or run the full catalog.
+
+Main and manual CI retain the full catalog. Correctness and
 source/target reconnect run for all default profiles, plus the forward
 `position-minimal` and `gtid-full` capture variants. Demo, reverse recovery and
 the applicable native-reference DDL suite run in the same workflow. There is no
 separate weekly or release-tag qualification workflow.
 
-The lab catalog generates the matrix; `tools/ci_matrix.json` only assigns
+The lab catalog generates both matrices. PR planning queries the actual smoke
+selection, including prerequisites. New smoke cases enter the PR matrix without
+a second case list. `tools/ci_matrix.json` assigns full CI
 correctness families to areas and sets chunk sizes. New cases automatically join
 their area, while an unassigned family or suite fails planning. The generated
 `ci-lab` artifact contains `matrix.json`, including all obligations, explicit
@@ -288,9 +296,13 @@ Generate and inspect the same plan locally:
 
 ```sh
 swift build --product replicator-lab
-python3 tools/ci_lab.py --plan .build/debug/replicator-lab
+CI_SUITE=pr-smoke python3 tools/ci_lab.py --plan .build/debug/replicator-lab
 jq '.include[] | {profile, variant, area, suite, cases}' artifacts/ci/matrix.json
 ```
+
+Use `CI_SUITE=full` for the main plan. It is also the local default.
+The manifest and timing report identify the scope. A complete smoke report means
+that all selected smoke obligations passed. It does not certify all profiles.
 
 Reproduce a shard with the usual `make lab-test PROFILE=...` command
 and its `ARGS="--suite ... --variant ... --case ..."` selections. Only correctness
@@ -306,7 +318,8 @@ make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--case myisam-recovery 
 ```
 
 CI uploads each shard's evidence separately. Published code coverage combines
-unit tests with instrumented smoke and demo runs. Full correctness and reconnect
+unit tests with instrumented smoke runs. Full CI adds sample and demo coverage.
+Full correctness and reconnect
 runs use the release image and do not contribute to line coverage.
 See [coverage reports and publication](../CONTRIBUTING.md#code-coverage) for PR
 comments and downloading the HTML/LCOV reports linked from the README.
@@ -489,7 +502,7 @@ Compose overlay. `LabMySQLVersion` supplies server administration SQL; engine
 capabilities select rollback, failure and recovery expectations. Add the profile
 to these registries, then run the existing catalog. Do not copy a suite.
 
-The CI matrix is generated from this catalog. New profiles automatically receive
+The full CI matrix is generated from this catalog. New profiles automatically receive
 applicable correctness, lifecycle and demo jobs; update `tools/ci_matrix.json` for
 the expected demo coverage report count. Keep version-specific exclusions explicit.
 The 5.7 MyISAM profile reuses MyISAM recovery and the GTID demo resume workflow.
@@ -503,5 +516,6 @@ See [5.7 MyISAM setup](MYSQL57_MYISAM.md) for deployment boundaries.
 
 See [CI measurements](CI_MEASUREMENTS.md) for case and shard timing, profile
 catalog results, expanded line coverage, and isolated cold/warm build comparisons.
-The same catalog drives normal and expanded CI. Release-binary checks remain in
-both plans. These measurements do not change the supported profiles or assertions.
+The same catalog drives PR smoke, full and expanded CI. Full and expanded plans
+retain release-binary checks. These measurements do not change the supported
+profiles or assertions.

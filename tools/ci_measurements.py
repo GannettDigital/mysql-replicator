@@ -118,9 +118,10 @@ def summarize(manifest, records, jobs=None):
                 continue
             record = by_id[identifier]
             wall[shard['image']] += record['seconds']
-            # Instrumented correctness runs supplement release assertions. Only
-            # the demo's primary obligations are owned by a coverage job.
-            if record['status'] == 'passed' and (shard['image'] == 'release' or shard['suite'] == 'demo'):
+            # PR smoke owns its selected obligations. In the full plan, coverage
+            # supplements release assertions (except for instrumented demos).
+            owns = shard.get('owns_obligations', shard['image'] == 'release' or shard['suite'] == 'demo')
+            if record['status'] == 'passed' and owns:
                 observed.update(key(r) for r in record['scenarios'] if r['status'] == 'passed')
             for row in record['scenarios']:
                 if 'seconds' in row:
@@ -146,7 +147,7 @@ def summarize(manifest, records, jobs=None):
     timings = job_timings(jobs) if jobs else []
     job_failures = [j['name'] for j in timings if j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')]
     complete = not (missing or failed or missing_coverage or job_failures) and all(not p['catalog_missing'] for p in profiles.values())
-    return dict(version=1, complete=complete, coverage_mode=manifest.get('coverage_mode', 'selected'),
+    return dict(version=1, complete=complete, scope=manifest.get('scope', 'full'), coverage_mode=manifest.get('coverage_mode', 'selected'),
         provenance={k: records[0].get(k) for k in ('commit', 'run_id', 'attempt')} if records else {},
         missing_shards=missing, failed_shards=failed, missing_coverage=missing_coverage,
         profiles=profiles, jobs=timings, failed_jobs=job_failures,
@@ -158,6 +159,7 @@ def summarize(manifest, records, jobs=None):
 
 def markdown(report):
     lines = ['# CI measurement', '', 'Complete' if report['complete'] else 'PARTIAL: inspect missing or failed records.', '',
+        'Scope: ' + report['scope'] + '. Catalog totals cover only this selection.', '',
         '| Profile | Catalog passed / expected | Runtime lines hit / mapped | Unique lines | Shard minutes: release / coverage |',
         '|---|---:|---:|---:|---:|']
     for name, p in report['profiles'].items():
@@ -167,7 +169,7 @@ def markdown(report):
         'Line coverage measures first-party Swift runtime code. It excludes Rust and lab code. '
         'Unique lines are relative to the other measured profiles. They do not prove that a test is redundant. '
         'Coverage is attributed to a shard, not an individual case. SIGKILL cannot flush LLVM counters. '
-        'Native and specialized recovery adapters have no instrumented collection; their catalog results remain required.', '',
+        'Full CI also requires native and specialized recovery adapters, which have no instrumented collection.', '',
         'Shard time includes tool validation and the lab run. Case time includes its assertions and waits. '
         'Nested case times overlap. The remainder can include fixture setup, cleanup and coverage export. '
         'Use job and step times in report.json to identify build, download and setup costs.', '',

@@ -1,6 +1,40 @@
 """Plan CI from the lab's complete catalog; policy controls grouping, not inventory."""
 from collections import Counter, defaultdict
 
+SMOKE_PROFILES = ('mysql84-to-mysql57-myisam', 'mysql57-to-mysql84-innodb')
+
+
+def generate_smoke(catalogs):
+    """Use the lab's smoke selection, including its prerequisite closure."""
+    inventory, shards = [], []
+    for profile in SMOKE_PROFILES:
+        rows = [dict(r, variant=r.get('variant', 'default'))
+                for catalog in catalogs for r in catalog['scenarios'] if r['profile'] == profile]
+        if not rows or len({key(r) for r in rows}) != len(rows):
+            raise ValueError(f'empty or duplicate smoke catalog: {profile}')
+        if any(r['suite'] != 'correctness' or r['variant'] != 'default' or
+               r['status'] not in ('not_run', 'not_applicable') for r in rows):
+            raise ValueError(f'invalid smoke catalog: {profile}')
+        applicable = {r['id']: r for r in rows if r['status'] == 'not_run'}
+        if not applicable:
+            raise ValueError(f'no applicable smoke cases: {profile}')
+
+        def check_dependencies(identifier, visiting=()):
+            if identifier in visiting or identifier not in applicable:
+                raise ValueError(f'missing or cyclic smoke dependency: {identifier}')
+            for dependency in applicable[identifier].get('dependencies', []):
+                check_dependencies(dependency, visiting + (identifier,))
+
+        for identifier in applicable:
+            check_dependencies(identifier)
+        inventory.extend(rows)
+        shards.append(dict(id=f'coverage-{profile}-default-smoke', profile=profile,
+                           variant='default', suite='correctness', area='smoke', image='coverage',
+                           reports=1, tier='smoke', cases=list(applicable), owns_obligations=True))
+    return dict(scope='pr-smoke', images=['coverage'], coverage_mode='selected', include=shards,
+                coverage_reports=len(shards), obligations=sum(len(s['cases']) for s in shards),
+                inventory=inventory)
+
 
 def key(row):
     return (row['profile'], row.get('variant', 'default'), row['suite'], row['id'])
@@ -110,5 +144,5 @@ def generate(catalogs, policy, expanded_coverage=False):
         raise ValueError('duplicate shard identifiers')
     if len(shards) > 256:
         raise ValueError('CI matrix exceeds GitHub limit of 256 jobs')
-    return dict(coverage_mode='expanded' if expanded_coverage else 'selected', include=shards, coverage_reports=sum(s['reports'] for s in shards),
+    return dict(scope='full', images=['release', 'coverage'], coverage_mode='expanded' if expanded_coverage else 'selected', include=shards, coverage_reports=sum(s['reports'] for s in shards),
                 obligations=len(applicable), inventory=list(inventory.values()))

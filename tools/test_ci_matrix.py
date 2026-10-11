@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from ci_matrix import generate, key
+from ci_matrix import SMOKE_PROFILES, generate, generate_smoke, key
 
 
 def row(identifier, family='database', suite='correctness', profile='forward',
@@ -110,6 +110,34 @@ class MatrixTests(unittest.TestCase):
         self.rows += [row('create', variant=f'variant-{i}') for i in range(260)]
         with self.assertRaisesRegex(ValueError, '256 jobs'):
             self.generate()
+
+    def test_smoke_owns_only_two_default_profile_selections(self):
+        rows = [row('create', profile=p) for p in SMOKE_PROFILES]
+        rows += [row('new-smoke', profile=p) for p in SMOKE_PROFILES]
+        rows[2]['dependencies'] = ['create']
+        rows.append(dict(row('unavailable', profile=SMOKE_PROFILES[0]), status='not_applicable'))
+        result = generate_smoke([dict(scenarios=rows)])
+        self.assertEqual(result['scope'], 'pr-smoke')
+        self.assertEqual(result['images'], ['coverage'])
+        self.assertEqual(result['obligations'], 4)
+        self.assertEqual({key(r) for r in result['inventory']}, {key(r) for r in rows})
+        self.assertEqual(result['coverage_reports'], 2)
+        self.assertEqual(len(result['include']), 2)
+        for shard in result['include']:
+            self.assertTrue(shard['owns_obligations'])
+            self.assertEqual(shard['cases'], ['create', 'new-smoke'])
+            self.assertEqual((shard['suite'], shard['tier'], shard['variant']), ('correctness', 'smoke', 'default'))
+
+    def test_smoke_rejects_missing_profiles_variants_duplicates_and_dependencies(self):
+        rows = [row('create', profile=p) for p in SMOKE_PROFILES]
+        invalid = [rows[:1], rows + rows[:1],
+                   [dict(rows[0], variant='position-minimal'), rows[1]],
+                   [dict(rows[0], dependencies=['missing']), rows[1]],
+                   [dict(rows[0], dependencies=['create']), rows[1]],
+                   [dict(rows[0], status='not_applicable'), rows[1]]]
+        for selected in invalid:
+            with self.subTest(rows=selected), self.assertRaises(ValueError):
+                generate_smoke([dict(scenarios=selected)])
 
 
 if __name__ == '__main__':

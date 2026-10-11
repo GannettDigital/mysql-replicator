@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from ci_cache_study import comparison
-from ci_measurements import job_timings, line_sets, record_shard, summarize
+from ci_measurements import job_timings, line_sets, markdown, record_shard, summarize
 
 
 class MeasurementsTests(unittest.TestCase):
@@ -35,6 +35,19 @@ class MeasurementsTests(unittest.TestCase):
         manifest['include'].append(other)
         with self.assertRaisesRegex(ValueError, 'mixed commits'):
             summarize(manifest, [dict(record, commit='a'), dict(record, id='other', commit='b')])
+
+    def test_smoke_coverage_owns_selected_catalog_but_still_requires_cases_and_collection(self):
+        manifest, record = self.fixture()
+        manifest['scope'] = 'pr-smoke'
+        manifest['include'][0].update(image='coverage', reports=1, owns_obligations=True)
+        record['coverage'] = dict(collections=1, sources_digest='a', mapped=[], hit=[])
+        report = summarize(manifest, [record])
+        self.assertTrue(report['complete'])
+        self.assertIn('Scope: pr-smoke', markdown(report))
+        self.assertFalse(summarize(manifest, [dict(record, scenarios=[])])['complete'])
+        without_coverage = dict(record)
+        del without_coverage['coverage']
+        self.assertFalse(summarize(manifest, [without_coverage])['complete'])
 
     def test_lines_are_unioned_and_harness_is_excluded(self):
         mapped, hit = line_sets([dict(files={'Sources/App/A.swift': {'1': 2, '2': 0},

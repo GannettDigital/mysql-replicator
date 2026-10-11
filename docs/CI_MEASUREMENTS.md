@@ -1,7 +1,8 @@
 # CI timing and coverage measurements
 
 Use the beta.4 release stack to collect a baseline for all four profiles.
-Do not remove tests based on this first report. Keep the current merge checks.
+PR checks use unit tests, Periphery and two parallel smoke suites. Main retains
+the full catalog while build caching and the release certification model are reviewed.
 The targets for later work are five minutes for PR feedback and twenty minutes
 for the complete merge checks. This change does not claim those times.
 
@@ -17,7 +18,8 @@ Normal integration evidence can still contain sensitive data.
 The report separates these measurements:
 
 - Catalog coverage: passed obligations divided by applicable obligations for
-  each profile. This is coverage of our catalog, not all MySQL features.
+  each selected profile and scope. PR scope is `pr-smoke`; main and manual scope
+  is `full`. This is coverage of our selected catalog, not all MySQL features.
 - Code coverage: the union of mapped Swift runtime lines reached by instrumented
   runs. It excludes Rust, dependencies and the lab. The existing combined Swift
   report also includes unit coverage.
@@ -36,11 +38,9 @@ Keep the run ID, attempt and commit with downloaded evidence. Do not mix attempt
 
 ## Expanded coverage for the release candidate
 
-Add the `ci-expanded-coverage` label to the final release PR. Create this label
-if it does not exist. The label event starts CI. Later commits retain this mode.
-Only label the final PR; lower layers keep the normal matrix.
-
-After the workflow is available on main, it can also be started manually:
+Start expanded coverage manually on the release candidate branch or tag.
+PR runs always keep the smoke selection. The `ci-expanded-coverage` label no
+longer expands PR checks. After the workflow is available on main, use:
 
 ```sh
 gh workflow run ci.yml --ref <branch-or-tag> -f expanded_coverage=true
@@ -48,14 +48,15 @@ gh workflow run ci.yml --ref <branch-or-tag> -f expanded_coverage=true
 
 Expanded mode retains every release-binary shard. It adds instrumented copies
 of shared correctness and lifecycle shards for every applicable variant.
-The current plan has 120 normal shards and 227 expanded shards. Both plans own
-718 catalog obligations. There are 23 normal coverage collections and 130
+PR CI has two smoke shards and two integration coverage collections.
+The current full plan has 120 shards and 227 expanded shards. Both full plans own
+718 catalog obligations. There are 23 full-plan coverage collections and 130
 expanded collections. The generated matrix is the authority if the catalog grows.
 
 Native-reference and specialized recovery adapters do not export line coverage.
 Their existing tests remain required. Demo collections remain instrumented.
 This experiment is more expensive than normal CI. It is evidence for later
-selection changes, not a new fast PR suite.
+selection changes. It is separate from the PR smoke selection.
 
 ## Cold and warm build comparison
 
