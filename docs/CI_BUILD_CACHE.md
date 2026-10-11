@@ -9,7 +9,8 @@ its build layers contain source files and compiler output.
 
 The release and coverage Dockerfiles have separate dependency stages. Each stage
 uses pinned Swift and Rust base images. Release builds also use the pinned musl
-SDK. These inputs remain in the same layer chain as their compiled output.
+SDK. SQLite, Rust dependencies and Swift dependencies have separate stages.
+Probe and application source changes do not invalidate these stages.
 
 `tools/build_dependencies.py` reads the root package manifest. It creates empty
 source placeholders and builds `MySQLNIO`, `Crypto` and `Yams` with the final
@@ -28,12 +29,67 @@ separate Actions caches.
 | Dependency lock, manifest or vendor source | Rebuild the dependency layer |
 | Toolchain or SDK | Rebuild its dependent layers |
 | Release installer or example config | Reuse compiled application output; rebuild package checks |
+| Probe or fixture source | Reuse native and Swift dependency layers; rebuild affected consumers |
+| Packaging Makefile or license collection | Reuse compiler output; rebuild package or evidence steps |
 | Report or workflow only | Reuse matching build layers |
 
 The application build can still recompile its own Swift and Rust code. This
 design does not promise incremental reuse of application objects across edits.
 `tools/swift_cache.py` restores unchanged file timestamps when layer transport
 loses precision. Changed file contents remain invalidated.
+
+## Static release components
+
+The static build has three independent dependency paths:
+
+- `sqlite` compiles the pinned SQLite archive with the musl sysroot.
+- `rust-dependencies` builds both locked crate dependency graphs. Temporary crate
+  sources select the dependencies. The helper removes those sources and cleans
+  only the temporary crate outputs. Real codec and probe sources compile later.
+- `dependencies` compiles the root Swift dependency graph once. The application
+  and probe inherit the same objects, toolchain, paths and compiler flags.
+
+The probe is an optional root-package product. `REPLICATOR_PACKAGING=1` enables
+it only in the static builder. Normal unit tests and Periphery do not include it.
+The probe uses the production vendored MySQLNIO and the root Swift lockfile.
+It still exercises SQLite, MySQL/TLS, Rust decoding and zstd through real calls.
+Its Rust ABI remains separate from the production codec ABI.
+
+`packaging/static.mk` defines native compiler settings. `native.mk` builds native
+components. `compile.mk` links Swift executables. `evidence.mk` records ELF checks,
+hashes, toolchains and notices. `packaging/Makefile` packages the existing output.
+An edit to package recipes no longer invalidates compilation.
+
+The real Rust crate cannot reuse a temporary placeholder archive. The helper
+uses package-scoped `cargo clean` before it removes placeholder sources. This
+also handles a later Docker COPY whose source timestamps predate the stub build.
+Dependency objects remain available. Swift recipes remove only the executable
+before linking, because SwiftPM does not track external Rust archive changes.
+
+The layer layout changes once for this update. Its first build can be cold.
+Subsequent builds can reuse the new layers through the same GHCR cache policy.
+
+### Local reuse checks
+
+The 2026-10-11 check used an isolated build context on Docker Desktop. Each edit
+changed a source comment or package recipe comment. Each run exported and checked
+the release packages. These times include package work and local export.
+
+| Input change | Compiler work | Local elapsed time |
+| --- | --- | ---: |
+| None, after the initial build | All compiler layers cached | 1.1 s |
+| Swift application source | Swift executables; dependency layers cached | 99.5 s |
+| Rust codec source | Codec crate; Rust and Swift dependency layers cached | 56.2 s |
+| Packaging Makefile | No compilation; package steps rerun | 54.0 s |
+
+The first static build and the Ubuntu 16.04 runtime probe passed. The probe checked
+MySQL/TLS, decoding and SQLite crash recovery. The Rust cache test also used real
+source with an old timestamp. It proved that the dependency stub cannot replace
+the real crate and that dependency objects remain reusable.
+
+These are local layer checks. They do not measure GHCR transfer or GitHub runner
+performance. Registry reuse must be measured again after these layers are built
+on GitHub.
 
 ## Cache access and image transfer
 

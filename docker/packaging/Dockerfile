@@ -11,35 +11,58 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 RUN curl -fsSL https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip -o /tmp/sqlite.zip \
     && echo '1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d  /tmp/sqlite.zip' | sha256sum -c - \
     && unzip -q /tmp/sqlite.zip -d /opt && mv /opt/sqlite-amalgamation-3530400 /opt/sqlite && rm /tmp/sqlite.zip
-FROM toolchain AS probe
+# Stable native components do not depend on probes, app sources or packaging.
+FROM toolchain AS native-inputs
 WORKDIR /workspace
-COPY packaging/Probe/Package.swift packaging/Probe/Package.resolved packaging/Probe/
-RUN swift package --package-path packaging/Probe resolve --force-resolved-versions
-COPY packaging/rust packaging/rust
+COPY packaging/static.mk packaging/native.mk packaging/
+FROM native-inputs AS sqlite
+RUN make -f packaging/native.mk sqlite
+FROM native-inputs AS rust-dependencies
+COPY rust/Cargo.toml rust/Cargo.lock rust/
+COPY packaging/rust/Cargo.toml packaging/rust/Cargo.lock packaging/rust/
+COPY packaging/build_rust_dependencies.py packaging/
+RUN make -f packaging/native.mk rust-dependencies
+FROM rust-dependencies AS codec-rust
+COPY rust/src rust/src
+RUN make -f packaging/native.mk codec-rust
+FROM rust-dependencies AS probe-rust
+COPY packaging/rust/src packaging/rust/src
 COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog tests/ReplicatorLabTests/Fixtures/source-positive.binlog
-COPY packaging/Probe/Sources packaging/Probe/Sources
-COPY packaging/Makefile packaging/
-COPY tools/swift_cache.py tools/
-RUN make -f packaging/Makefile probe
+RUN make -f packaging/native.mk probe-rust
 
-FROM probe AS dependencies
-# The probe fixture is copied separately into the runtime below.
-RUN rm -rf tests
+# One Swift dependency graph and one set of compiled objects for both products.
+FROM toolchain AS dependencies
+WORKDIR /workspace
+ENV REPLICATOR_PACKAGING=1 REPLICATOR_CODEC_LIBRARY_PATH=/workspace/packaging/rust/target/x86_64-unknown-linux-musl/release
 COPY Package.swift Package.resolved ./
 COPY Vendor Vendor
-COPY tools/build_dependencies.py tools/
+COPY tools/build_dependencies.py tools/swift_cache.py tools/
 RUN python3 tools/build_dependencies.py --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
-
-# Application edits do not invalidate the independent ABI/dependency probe.
-FROM dependencies AS build
+FROM dependencies AS swift-inputs
+COPY Sources Sources
 COPY tests tests
-COPY packaging/collect_notices.py packaging/
+COPY packaging/Probe/Sources packaging/Probe/Sources
+COPY packaging/static.mk packaging/compile.mk packaging/native.mk packaging/
+COPY --from=sqlite /out/native /out/native
+FROM swift-inputs AS application
+COPY --from=codec-rust /workspace/packaging/rust/target/x86_64-unknown-linux-musl/release/libreplicator_codec.a /workspace/packaging/rust/target/x86_64-unknown-linux-musl/release/libreplicator_codec.a
+RUN make -f packaging/compile.mk build
+FROM swift-inputs AS probe
+COPY --from=probe-rust /workspace/packaging/rust/target/x86_64-unknown-linux-musl/release/libpackaging_rust.a /workspace/packaging/rust/target/x86_64-unknown-linux-musl/release/libpackaging_rust.a
+RUN make -f packaging/compile.mk probe
+
+# Package metadata and license collection do not invalidate compiler output.
+FROM application AS build
+COPY --from=probe /out/packaging-probe /out/packaging-probe
+COPY --from=codec-rust /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=codec-rust /usr/local/cargo/git /usr/local/cargo/git
+COPY rust rust
+COPY packaging/rust/Cargo.lock packaging/rust/Cargo.lock
+COPY packaging/collect_notices.py packaging/evidence.mk packaging/
 COPY packaging/licenses packaging/licenses
 COPY tools/release_version.py tools/
 COPY VERSION ./
-COPY Sources Sources
-COPY rust rust
-RUN make -f packaging/Makefile build
+RUN python3 tools/release_version.py && mkdir -p /out/evidence && make -f packaging/evidence.mk evidence
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS runtime
 COPY LICENSE NOTICE /usr/share/doc/mysql-replicator/
 COPY --from=build /out/packaging-probe /usr/local/bin/packaging-probe
@@ -51,7 +74,7 @@ ENTRYPOINT ["/usr/local/bin/packaging-probe"]
 
 # The production runtime remains unchanged; demo tools use the same pinned SQLite.
 FROM build AS demo-tools
-RUN make -f packaging/Makefile demo-tools
+RUN make -f packaging/native.mk demo-tools
 FROM runtime AS demo
 COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 
@@ -59,6 +82,7 @@ COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 # Packaging-only edits must not invalidate the compiler layer. Dependency
 # notices are collected above while Swift/Cargo build directories are available.
 FROM build AS deb
+COPY packaging/Makefile packaging/
 ARG VERSION
 COPY LICENSE NOTICE ./
 COPY packaging/debian packaging/debian

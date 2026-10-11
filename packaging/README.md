@@ -33,13 +33,14 @@ Prerequisites: Docker with Linux/amd64 execution support, host SwiftPM, OpenSSL 
 
 ## Persistent build caches
 
-Docker BuildKit cache mounts retain the production `.build`, the probe's `.build`,
-Cargo registry/git downloads and the musl Cargo target directory across image
-rebuilds. Swift dependency compilation survives source `COPY` changes. Compiler
-caches are locked during a build so concurrent harness builds cannot modify them
-at once. These caches live in the Docker builder's managed storage, not in the
-host macOS `.build`; no host-path setup is needed. Pruning Docker build caches
-makes the next build cold again.
+Docker BuildKit stores compiled dependencies in ordinary image layers. CI exports
+all intermediate layers to GHCR. SQLite, Rust dependencies and Swift dependencies
+have separate stages. Application and probe builds share the Swift dependency
+objects. Package recipes and license collection run after compilation.
+
+These layers belong to the Docker builder. They do not use the host macOS
+`.build` directory. A cache miss causes a cold build. See
+[CI build caching](../docs/CI_BUILD_CACHE.md) for the stage layout and registry refs.
 
 The Make build removes each Swift executable after building its Rust archive.
 That forces a relink while preserving dependency
@@ -57,7 +58,10 @@ The runtime image is digest-pinned Ubuntu 16.04.7 with glibc 2.23. No newer glib
 Two executables are produced:
 
 - `mysql-replicator`: the current production executable, now including the bounded offline decoder and JSON inspector.
-- `packaging-probe`: a separate Swift package exercising MySQLNIO 1.9.1, NIO 2.90.0, NIOSSL 2.37.0, pinned SQLite 3.53.4, the selected Rust mysql_common revision and zstd 0.13.3 / native zstd 1.5.7. It calls these libraries, preventing a successful link caused by dead-stripping all unused dependency code.
+- `packaging-probe`: an optional product of the root Swift package. It uses the same vendored
+  MySQLNIO, NIO 2.90.0 and NIOSSL 2.37.0 as the application. It also exercises
+  pinned SQLite 3.53.4, the selected Rust mysql_common revision and zstd 0.13.3 /
+  native zstd 1.5.7. It calls these libraries, preventing a successful link caused by dead-stripping all unused dependency code.
 
 Both Swift and Rust dependency resolutions are committed. The packaging Rust crate uses the production codec revision/features without upstream's test-only MySQL C++ dependencies. Its self-test accepts only its compiled-in synthetic fixture and returns event/row counts. This probe is not the production decoder ABI or its error/ownership qualification.
 
