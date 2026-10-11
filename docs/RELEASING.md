@@ -9,8 +9,8 @@ Only Linux x86_64 binaries and Linux/amd64 containers are distributed.
 
 This stack starts at upstream `main` commit `5d877f0`. It includes the 13 local
 feature commits, CI measurement tools, and release preparation. Each PR targets
-the preceding branch. The release PR is last. Existing feature commits remain
-unchanged.
+the preceding branch. CI improvements follow the release preparation PR. Existing feature commits
+remain unchanged.
 
 | Order | Branch | Scope |
 | --- | --- | --- |
@@ -21,6 +21,9 @@ unchanged.
 | 5 | `beta/4/05-mysql57-innodb` | MySQL 5.7 InnoDB to MySQL 5.7 InnoDB profile |
 | 6 | `beta/4/06-ci-measurements` | Timing, profile coverage and isolated cold/warm build comparisons |
 | 7 | `beta/4/07-release` | Version 0.1.0-beta.4, release notes and installation guide |
+| 8 | `beta/4/08-pr-smoke` | Parallel PR smoke checks and Periphery |
+| 9 | `beta/4/09-ghcr-layers` | GHCR dependency layers and smaller coverage runtime |
+| 10 | `beta/4/10-release-testing` | Full tests on the top PR and release evidence |
 
 The first PR targets `main`. The local `artifacts/release-stack-beta4/` directory
 contains the exact SHA manifest, PR descriptions, validation notes and helpers:
@@ -31,7 +34,7 @@ bash artifacts/release-stack-beta4/open-prs.sh
 ```
 
 The maintainer runs these commands. The push helper checks the recorded upstream
-and local branch tips, then pushes the seven branches atomically without force.
+and local branch tips, then pushes the recorded branches atomically without force.
 It never pushes `main` or tags. The PR helper checks the remote tips, creates or
 reuses draft PRs, and registers their ordered numbers using the
 [native GitHub stack API](https://docs.github.com/en/rest/pulls/stacks#create-a-pull-request-stack).
@@ -50,19 +53,22 @@ not replace checks on intermediate branches.
 ## Measure the release candidate
 
 Use the final PR for the [CI measurement study](CI_MEASUREMENTS.md).
-Collect the expanded four-profile report and at least two valid cold/warm pairs.
+For the beta.4 measurement study, collect the expanded four-profile report and
+at least two valid cold/warm pairs. These are research results, not release gates.
 Keep the normal release-binary checks. Do not infer test redundancy from line
 coverage alone. Record run links with the stack's validation notes.
 These measurements guide later CI work. They do not add another release build.
 
 ## Qualify the release
 
-1. Require green CI on the final **main commit**, including unit/catalog checks,
+1. Add `ci-full` to the final PR in the stack. Require its full checks to pass
+   before merge. See [release testing](RELEASE_TESTING.md) for the trigger and evidence.
+   Then require green CI on the final **main commit**, including unit/catalog checks,
    installer/package tests, production-image checks, full correctness and
    source/target reconnect for all four profiles and applicable capture variants,
    offline replay/control, native-reference DDL, recovery, demos, coverage and
-   Periphery. The same suite gates PRs and main; no additional qualification
-   workflow is needed before tagging. CI packages the static binary once and
+   Periphery. Ordinary PRs use smoke checks. The labeled final PR and main use the same
+   full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
    checks integration uses those same bytes.
 2. Review `docs/releases/0.1.0-beta.4.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.
@@ -91,9 +97,11 @@ Assets in `artifacts/release/` include:
   image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.4`.
 - `install.sh`, `apply.example.yaml`, `run.minimal.yaml`, `replay.minimal.yaml`,
   `LICENSE`, `NOTICE`, build evidence and
-  `SHA256SUMS`, covering the downloadable artifacts.
+  `SHA256SUMS`, covering the build artifacts.
+- `release-test-evidence.json`: added by CI after the full suite passes. It records
+  the test run and a digest of the build checksum manifest.
 
-After merging the **release PR** and obtaining green main CI, create an annotated
+After merging the **complete stack** and obtaining green main CI, create an annotated
 tag on that exact commit (not on the pre-merge local branch):
 
 ```sh
@@ -103,12 +111,14 @@ git push origin v0.1.0-beta.4
 
 The maintainer pushes the tag when ready. `release.yml` requires main ancestry,
 matching `VERSION`, and a successful main push CI run for that SHA. It downloads
-that run's tested artifacts, verifies checksums and creates a **draft prerelease**.
+that run's tested artifacts and `release-test-evidence`. It verifies the commit,
+run attempt, full test scope, version and package checksums. It then creates a
+**draft prerelease** with the evidence file.
 It does not push an image or start another test suite at this point. If CI was
 still running, rerun the release workflow on the tag when it finishes. Existing
 drafts are not overwritten.
-If CI artifacts have expired, regenerate CI evidence for that exact commit; never
-substitute an untested local rebuild. Leave the release unpublished until ready.
+If CI artifacts have expired, rerun all jobs of the original main push CI run for
+that exact commit. Do not substitute a manual smoke run or a local rebuild. Leave the release unpublished until ready.
 
 ## Publish binaries and the image
 

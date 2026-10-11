@@ -264,19 +264,21 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-PR CI runs unit tests, Periphery and two correctness smoke suites. The smoke
+Ordinary PR CI runs unit tests, Periphery and two correctness smoke suites. The smoke
 profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Both use the default variant and run in parallel after one shared image build.
 Unit tests and Periphery do not wait for this build. Coverage and timing reports
-remain enabled. PRs do not build release packages or run the full catalog.
+remain enabled. Ordinary PRs do not build release packages or run the full catalog.
 
-Main and manual CI retain the full catalog. Correctness and
+Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
+See [release testing](RELEASE_TESTING.md) for the stack workflow and evidence.
+Correctness and
 source/target reconnect run for all default profiles, plus the forward
 `position-minimal` and `gtid-full` capture variants. Demo, reverse recovery and
 the applicable native-reference DDL suite run in the same workflow. There is no
 separate weekly or release-tag qualification workflow.
 
-The lab catalog generates both matrices. PR planning queries the actual smoke
+The lab catalog generates both matrices. Smoke planning queries the actual smoke
 selection, including prerequisites. New smoke cases enter the PR matrix without
 a second case list. `tools/ci_matrix.json` assigns full CI
 correctness families to areas and sets chunk sizes. New cases automatically join

@@ -2,7 +2,8 @@
 
 Use the beta.4 release stack to collect a baseline for all four profiles.
 PR checks use unit tests, Periphery and two parallel smoke suites. Main retains
-the full catalog while build caching and the release certification model are reviewed.
+the full catalog. Add `ci-full` to the top release PR to run that catalog before
+merge. See [release testing](RELEASE_TESTING.md) for the evidence and release gate.
 The targets for later work are five minutes for PR feedback and twenty minutes
 for the complete merge checks. This change does not claim those times.
 
@@ -18,8 +19,8 @@ Normal integration evidence can still contain sensitive data.
 The report separates these measurements:
 
 - Catalog coverage: passed obligations divided by applicable obligations for
-  each selected profile and scope. PR scope is `pr-smoke`; main and manual scope
-  is `full`. This is coverage of our selected catalog, not all MySQL features.
+  each selected profile and scope. Ordinary PR scope is `pr-smoke`. PRs with
+  `ci-full` and main use `full`. Manual runs default to `full`. This is coverage of our selected catalog, not all MySQL features.
 - Code coverage: the union of mapped Swift runtime lines reached by instrumented
   runs. It excludes Rust, dependencies and the lab. The existing combined Swift
   report also includes unit coverage.
@@ -39,16 +40,17 @@ Keep the run ID, attempt and commit with downloaded evidence. Do not mix attempt
 ## Expanded coverage for the release candidate
 
 Start expanded coverage manually on the release candidate branch or tag.
-PR runs always keep the smoke selection. The `ci-expanded-coverage` label no
-longer expands PR checks. After the workflow is available on main, use:
+The `ci-full` label runs the full PR suite without expanded instrumentation.
+The `ci-expanded-coverage` label has no effect. After the workflow is available
+on main, use:
 
 ```sh
-gh workflow run ci.yml --ref <branch-or-tag> -f expanded_coverage=true
+gh workflow run ci.yml --ref <branch-or-tag> -f suite=full -f expanded_coverage=true
 ```
 
 Expanded mode retains every release-binary shard. It adds instrumented copies
 of shared correctness and lifecycle shards for every applicable variant.
-PR CI has two smoke shards and two integration coverage collections.
+Ordinary PR CI has two smoke shards and two integration coverage collections.
 The current full plan has 120 shards and 227 expanded shards. Both full plans own
 718 catalog obligations. There are 23 full-plan coverage collections and 130
 expanded collections. The generated matrix is the authority if the catalog grows.
@@ -97,4 +99,5 @@ queue time. GitHub step times have second-level precision.
 
 Keep the existing release process. These measurements do not replace its required
 main CI run. The release workflow must publish the exact packages from that run.
-No additional correctness gate or release rebuild is added here.
+The full-suite evidence file binds the report to the tested package checksums.
+No release rebuild is added.

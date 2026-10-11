@@ -136,11 +136,12 @@ record these in `code-coverage/profile-status.json`. Missing profiles after a
 normal exit fail collection. Do not interpret absent crash coverage as an
 unexercised path. Failed suites retain the evidence available before cleanup.
 
-PR CI combines one unit report and two integration smoke collections:
+Ordinary PR CI combines one unit report and two integration smoke collections:
 `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Unit tests, Periphery and the build for the smoke suites start independently.
 The two smoke suites run in parallel after their shared build finishes.
-Main and manual CI retain the full four-profile matrix and package checks.
+Main, PRs with `ci-full`, and default manual runs use the full four-profile
+matrix and package checks. See [release testing](docs/RELEASE_TESTING.md).
 Their coverage also includes the other profile smoke suites, sample and demos.
 Downloaded report discovery excludes demo `evidence-*` snapshots, which copy
 existing measurements. Duplicate inputs in original collections still fail;
@@ -153,10 +154,11 @@ and packaging/integration gate to succeed, with all planned instrumented
 fixture reports. Each coverage shard also checks its own expected report count.
 The full correctness and reconnect matrix runs against the release image and
 does not contribute to this percentage. These full checks run on main pushes
-and manual runs. There is no separate release qualification workflow.
+and PRs with `ci-full`, plus full manual runs. There is no separate release
+qualification workflow.
 
 CI builds the lab executable once, bundles its Linux runtime libraries, and
-builds only the instrumented image for PRs. Full CI builds the release and
+builds only the instrumented image for ordinary PRs. Full CI builds the release and
 instrumented images in parallel. It generates the test
 matrix from the lab catalog, grouping correctness families by area and splitting
 larger areas into case chunks. Jobs name the profile, area, variant and image;
@@ -170,7 +172,7 @@ for local plan inspection and reproduction.
 
 The existing **Debian Packaging & Integration Smoke** check keeps its historical
 name for branch protection. It requires all planned builds and integration shards
-to pass. PRs do not build packages. Full CI also checks packages, native-reference
+to pass. Ordinary PRs do not build packages. Full CI also checks packages, native-reference
 DDL, recovery and demos. A successful PR smoke run is not release certification.
 
 Test jobs verify image digests or archive checksums and the lab source/fixture fingerprint, and
@@ -178,7 +180,8 @@ release shards check that their applier matches the release archive binary.
 The instrumented image retains its matching LLVM exporter. Artifacts are scoped
 to the workflow run; individual shard evidence has a distinct artifact name.
 The release workflow still promotes the exact packages from successful main CI.
-The release certification model will be reviewed after the build-cache work.
+Full CI records release evidence with the commit, run attempt, profile results
+and package checksum digest. Draft creation checks this evidence before promotion.
 
 SwiftPM/Cargo build caches are separated by OS, architecture, toolchain, build
 variant, runner image and dependency locks. Host jobs restore the installed
