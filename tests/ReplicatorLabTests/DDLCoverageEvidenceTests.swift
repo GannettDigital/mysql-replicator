@@ -3,6 +3,22 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class DDLCoverageEvidenceTests: XCTestCase {
+    func testBuildToolChangesInvalidateImageInputs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for directory in ["Sources", "rust", "Vendor", "packaging", "docker", "tests", "tools"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(directory), withIntermediateDirectories: true)
+        }
+        for file in ["Package.swift", "Package.resolved", "compose.yaml", "Makefile", ".dockerignore",
+                     "tools/build_dependencies.py", "tools/coverage_runtime.py", "tools/swift_cache.py",
+                     "tools/code_coverage.py", "tools/release_version.py"] {
+            try Data("original".utf8).write(to: root.appendingPathComponent(file))
+        }
+        let before = try LabBuild.inputDigest(root: root)
+        try Data("changed".utf8).write(to: root.appendingPathComponent("tools/coverage_runtime.py"))
+        XCTAssertNotEqual(try LabBuild.inputDigest(root: root), before)
+    }
+
     private var inventory: DDLCoverage.Inventory {
         get throws {
             try DDLCoverage.load(directory: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("DDLCoverage"))

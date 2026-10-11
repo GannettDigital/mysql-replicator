@@ -26,10 +26,12 @@ def comparison(records):
             for field in ('commit', 'run_id', 'attempt', 'runner_image'):
                 if not cold.get(field) or cold[field] != warm.get(field):
                     errors.append('different or missing ' + field)
+            if cold.get('backend', 'mounts') != warm.get('backend', 'mounts'):
+                errors.append('different cache backends')
             if cold['cache_hit']:
-                errors.append('cold compiler cache was not empty')
+                errors.append('cold cache was not empty')
             if not warm['cache_hit']:
-                errors.append('warm compiler cache was not restored')
+                errors.append('warm cache was not available')
             if any(r['status'] != 'success' or r['seconds'] is None for r in (cold, warm)):
                 errors.append('build failed or did not start')
         rows.append(dict(image=image, valid=not errors, errors=errors,
@@ -48,6 +50,7 @@ def main():
     if args.action == 'record':
         value = dict(version=1, **provenance(), image=os.environ['BUILD_IMAGE'],
                      phase=os.environ['BUILD_PHASE'], cache_hit=os.environ.get('CACHE_HIT') == 'true',
+                     backend=os.environ.get('CACHE_BACKEND', 'mounts'),
                      seconds=time.time() - float(os.environ['BUILD_STARTED']) if os.environ.get('BUILD_STARTED') else None,
                      status=os.environ['BUILD_STATUS'])
         write(args.output / (value['image'] + '-' + value['phase'] + '.json'), value)
@@ -65,10 +68,11 @@ def main():
         lines.append(f"| {row['image']} | {row['cold_seconds']} | {row['warm_seconds']} | {row['valid']} |")
         if row['errors']:
             lines.append('\n' + row['image'] + ': ' + '; '.join(row['errors']) + '\n')
-    lines += ['', 'Each pair uses the same commit on fresh runners. Compiler mounts and Docker layers use an isolated cache namespace. '
-              'Cold disables build-layer reuse. Warm imports that experiment\'s caches. '
+    lines += ['', 'Each pair uses the same commit on fresh runners. Caches use an isolated namespace. '
+              'Cold disables build-layer reuse. Warm imports that experiment\'s cache. '
+              'For registry layers, cache_hit confirms that the cache manifest exists. Inspect the build log for actual cached steps. '
               'The build timer includes layer import/export and package or image output. '
-              'Job and step times include compiler-cache restore/save. '
+              'Job and step times include registry login and manifest lookup. '
               'This measures exact-revision reuse, not incremental compilation after a source edit. '
               'It does not measure unit-test or lab-tool builds. Repeat pairs to estimate variation. '
               'These artifacts do not qualify or publish a release.']

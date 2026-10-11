@@ -133,6 +133,10 @@ jobs:
 
   build-images:
     name: Build ${{ matrix.image }} once
+    permissions:
+      contents: read
+      packages: write
+      actions: read
     needs: lab-tools
     runs-on: ubuntu-24.04
     strategy:
@@ -142,19 +146,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      # Restore/save mount contents as well as Docker layers. A gha layer cache
-      # alone does not persist SwiftPM/Cargo RUN --mount=type=cache directories.
-      # Post steps run in reverse order: extract mounts before saving this cache.
-      - uses: actions/cache@v4
+      - name: Select registry caches and runtime reference
+        id: registry
+        env:
+          BUILD_IMAGE: ${{ matrix.image }}
+        run: python3 tools/ci_registry.py plan --image "$BUILD_IMAGE"
+      - name: Log in to GHCR
+        if: steps.registry.outputs.publish == 'true'
+        uses: docker/login-action@v3
         with:
-          path: .ci-cache
-          key: docker-${{ matrix.image }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'packaging/Probe/Package.resolved', '**/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            docker-${{ matrix.image }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v1-${{ hashFiles('Package.resolved', 'packaging/Probe/Package.resolved', '**/Cargo.lock') }}-
-      - uses: reproducible-containers/buildkit-cache-dance@e475a9cbcb5052f85fd3830f1266fa0c91ef8595
-        with:
-          dockerfile: ${{ matrix.image == 'release' && 'docker/packaging/Dockerfile' || 'docker/coverage/Dockerfile' }}
-          cache-dir: .ci-cache
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and verify Linux packages
         if: matrix.image == 'release'
         uses: docker/build-push-action@v6
@@ -164,9 +167,10 @@ jobs:
           target: release-export
           platforms: linux/amd64
           outputs: type=local,dest=artifacts/release
-          cache-from: type=gha,scope=release
-          cache-to: type=gha,scope=release,mode=max
+          cache-from: ${{ steps.registry.outputs.cache_from }}
+          cache-to: ${{ steps.registry.outputs.cache_to }}
       - name: Export the tested release runtime
+        id: release-runtime
         if: matrix.image == 'release'
         uses: docker/build-push-action@v6
         with:
@@ -174,30 +178,50 @@ jobs:
           file: docker/packaging/Dockerfile
           target: runtime
           platforms: linux/amd64
-          tags: mysql-replicator-packaging:lab
-          labels: org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
+          tags: ${{ steps.registry.outputs.publish == 'true' && steps.registry.outputs.runtime || 'mysql-replicator-packaging:lab' }}
+          push: ${{ steps.registry.outputs.publish == 'true' }}
+          labels: |
+            org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
+            org.opencontainers.image.source=${{ steps.registry.outputs.source }}
           load: true
           # A cached package export need not populate the builder's intermediate
           # layers. This separate target must import the external cache too.
-          cache-from: type=gha,scope=release
+          cache-from: ${{ steps.registry.outputs.cache_from }}
+      - name: Tag loaded release image for local checks
+        if: matrix.image == 'release' && steps.registry.outputs.publish == 'true'
+        env:
+          IMAGE_REFERENCE: ${{ steps.registry.outputs.runtime }}
+        run: docker tag "$IMAGE_REFERENCE" mysql-replicator-packaging:lab
       - name: Verify production image and identical integration binary
         if: matrix.image == 'release'
         run: |
           make release-image
           python3 tools/verify_release_binary.py
       - name: Build instrumented runtime and matching LLVM exporter
+        id: coverage-runtime
         if: matrix.image == 'coverage'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/coverage/Dockerfile
           platforms: linux/amd64
-          tags: mysql-replicator:coverage
-          labels: org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
-          load: true
-          cache-from: type=gha,scope=coverage
-          cache-to: type=gha,scope=coverage,mode=max
-      - name: Save image for test jobs
+          tags: ${{ steps.registry.outputs.publish == 'true' && steps.registry.outputs.runtime || 'mysql-replicator:coverage' }}
+          push: ${{ steps.registry.outputs.publish == 'true' }}
+          labels: |
+            org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
+            org.opencontainers.image.source=${{ steps.registry.outputs.source }}
+          load: ${{ steps.registry.outputs.publish != 'true' }}
+          cache-from: ${{ steps.registry.outputs.cache_from }}
+          cache-to: ${{ steps.registry.outputs.cache_to }}
+      - name: Record immutable runtime image
+        if: steps.registry.outputs.publish == 'true'
+        env:
+          BUILD_IMAGE: ${{ matrix.image }}
+          IMAGE_REFERENCE: ${{ steps.registry.outputs.runtime }}
+          IMAGE_DIGEST: ${{ steps.coverage-runtime.outputs.digest || steps.release-runtime.outputs.digest }}
+        run: python3 tools/ci_registry.py record --image "$BUILD_IMAGE"
+      - name: Save image for test jobs without registry write access
+        if: steps.registry.outputs.publish != 'true'
         env:
           IMAGE: ${{ matrix.image == 'release' && 'mysql-replicator-packaging:lab' || 'mysql-replicator:coverage' }}
         run: |
@@ -224,6 +248,10 @@ jobs:
 
   integration:
     name: Integration / ${{ matrix.profile }} / ${{ matrix.area }} / ${{ matrix.variant }} / ${{ matrix.image }}
+    permissions:
+      contents: read
+      packages: read
+      actions: read
     needs: [lab-tools, build-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -246,14 +274,23 @@ jobs:
         with:
           name: linux-release-packages
           path: artifacts/release
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify and load prebuilt tools
+        env:
+          BUILD_IMAGE: ${{ matrix.image }}
         run: |
-          cd artifacts/ci
-          sha256sum --check lab.sha256
-          tar -xzf lab.tar.gz
-          cd image
-          sha256sum --check SHA256SUMS
-          docker load --input image.tar.gz
+          (cd artifacts/ci && sha256sum --check lab.sha256 && tar -xzf lab.tar.gz)
+          if [ -f artifacts/ci/image/image.json ]; then
+            python3 tools/ci_registry.py load --image "$BUILD_IMAGE"
+          else
+            (cd artifacts/ci/image && sha256sum --check SHA256SUMS && docker load --input image.tar.gz)
+          fi
       - name: Install integration test tools
         run: |
           sudo apt-get update

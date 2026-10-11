@@ -69,15 +69,18 @@ gh workflow run ci-cache-study.yml --ref <branch-or-tag>
 
 The study builds release packages and the coverage image. It uses fresh runners
 for the cold and warm phases. Both phases use the same commit and build commands.
-Each run attempt has isolated Docker-layer and compiler-cache keys. It does not
-clear or overwrite normal CI caches. Cold disables layer reuse. Warm imports
-that experiment's layers and compiler caches.
+Each run attempt has an isolated GHCR layer-cache reference. Compiler output
+is stored in those layers. The study does not clear or overwrite normal CI
+caches. Cold disables layer reuse. Warm imports that experiment's layers.
+The study requires registry write access and does not run on fork PRs.
 
 Download `ci-cache-comparison`. The comparison is invalid if a build fails, the
-warm compiler cache is missing, the cold compiler cache was already present,
+warm registry cache is missing, the cold run imported a cache,
 or the commit or runner image differs. Read the build logs for Docker layer hits
-and Swift timestamp restoration. Job times include compiler-cache transfer and
-post steps. The build timer includes layer cache transfer and output export.
+and Swift timestamp restoration. `cache_hit` means that the warm registry
+manifest was available. It does not prove that a build step used cached output.
+Job times include registry login and manifest lookup. The build timer includes
+layer cache transfer and output export. See [CI build caching](CI_BUILD_CACHE.md).
 
 This is an exact-revision reuse test. It does not measure incremental compilation
 after an edit, or unit-test and lab-tool build caches. Repeat complete pairs to

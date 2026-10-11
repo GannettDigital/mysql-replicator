@@ -14,26 +14,32 @@ RUN curl -fsSL https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip -o /t
 FROM toolchain AS probe
 WORKDIR /workspace
 COPY packaging/Probe/Package.swift packaging/Probe/Package.resolved packaging/Probe/
-RUN --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked swift package --package-path packaging/Probe resolve --force-resolved-versions
+RUN swift package --package-path packaging/Probe resolve --force-resolved-versions
 COPY packaging/rust packaging/rust
 COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog tests/ReplicatorLabTests/Fixtures/source-positive.binlog
 COPY packaging/Probe/Sources packaging/Probe/Sources
 COPY packaging/Makefile packaging/
 COPY tools/swift_cache.py tools/
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target,sharing=locked --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked make -f packaging/Makefile probe
+RUN make -f packaging/Makefile probe
+
+FROM probe AS dependencies
+# The probe fixture is copied separately into the runtime below.
+RUN rm -rf tests
+COPY Package.swift Package.resolved ./
+COPY Vendor Vendor
+COPY tools/build_dependencies.py tools/
+RUN python3 tools/build_dependencies.py --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
 
 # Application edits do not invalidate the independent ABI/dependency probe.
-FROM probe AS build
+FROM dependencies AS build
 COPY tests tests
 COPY packaging/collect_notices.py packaging/
 COPY packaging/licenses packaging/licenses
 COPY tools/release_version.py tools/
 COPY VERSION ./
-COPY Vendor Vendor
-COPY Package.swift Package.resolved ./
 COPY Sources Sources
 COPY rust rust
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/workspace/packaging/rust/target,sharing=locked --mount=type=cache,target=/workspace/packaging/Probe/.build,sharing=locked --mount=type=cache,target=/workspace/.build,sharing=locked make -f packaging/Makefile build
+RUN make -f packaging/Makefile build
 FROM --platform=linux/amd64 ubuntu:16.04@sha256:1f1a2d56de1d604801a9671f301190704c25d604a416f59e03c04f5c6ffee0d6 AS runtime
 COPY LICENSE NOTICE /usr/share/doc/mysql-replicator/
 COPY --from=build /out/packaging-probe /usr/local/bin/packaging-probe
@@ -51,7 +57,7 @@ COPY --from=demo-tools /out/sqlite3 /usr/local/bin/sqlite3
 
 # Build and verify Debian package (.deb)
 # Packaging-only edits must not invalidate the compiler layer. Dependency
-# notices are collected above while Swift/Cargo cache mounts are available.
+# notices are collected above while Swift/Cargo build directories are available.
 FROM build AS deb
 ARG VERSION
 COPY LICENSE NOTICE ./

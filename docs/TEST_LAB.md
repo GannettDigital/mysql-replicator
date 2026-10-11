@@ -289,8 +289,9 @@ Jobs show profile, area, capture variant and image type. Large DDL, index and
 bootstrap areas are split into case groups, with up to 16 jobs running at once.
 Each job owns a fresh fixture. Ordered scenarios and the forward
 failure → recovery → offline/control sequence stay together. CI builds the lab
-once and each applier image once, then shares checksummed artifacts with the
-whole matrix. Release jobs verify they use the packaged binary.
+once and each applier image once. Test jobs pull images from GHCR by digest;
+fork PRs use checksummed image archives. Release jobs verify they use the
+packaged binary. See [CI build caching](CI_BUILD_CACHE.md).
 
 Generate and inspect the same plan locally:
 

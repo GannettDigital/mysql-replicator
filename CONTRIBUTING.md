@@ -173,7 +173,7 @@ name for branch protection. It requires all planned builds and integration shard
 to pass. PRs do not build packages. Full CI also checks packages, native-reference
 DDL, recovery and demos. A successful PR smoke run is not release certification.
 
-Test jobs verify archive checksums and the lab source/fixture fingerprint, and
+Test jobs verify image digests or archive checksums and the lab source/fixture fingerprint, and
 release shards check that their applier matches the release archive binary.
 The instrumented image retains its matching LLVM exporter. Artifacts are scoped
 to the workflow run; individual shard evidence has a distinct artifact name.
@@ -191,16 +191,20 @@ pair; a separately shared toolchain cache could race during initial population.
 The v2 host cache keys require one fresh build before warm reuse can be measured.
 These archives are larger, so compare transfer time as well as compilation time.
 
-Docker builds persist both layer caches and cache mount contents; caching
-layers alone does not preserve compiler intermediates.
+Docker builds store compiler output in ordinary dependency layers. They export
+these layers to GHCR with `mode=max`. Application sources enter a later layer.
+Test jobs pull the runtime image by digest. Fork PRs retain archive transfer.
+See [CI build caching](docs/CI_BUILD_CACHE.md) for access, layer boundaries,
+branch isolation and measurement instructions.
 Both the package export and the separate runtime-image export explicitly import
 the release layer cache; a hit on the first target does not warm every
 intermediate step needed by the second target.
 Unit coverage clears old counters and forces relinking after Rust builds.
 Periphery uses the current incremental build's index store, rather than cleaning
 and recompiling it. The packaging probe has an independent Docker stage so
-application-only edits leave it cached. Main CI populates shared caches; PR
-merge-ref caches are normally reusable only by that PR. Cold builds remain valid.
+application-only edits leave it cached. Main CI populates shared caches.
+GHCR branch caches can be read by later PRs in the stack. Host Actions caches
+still follow GitHub's branch access rules. Cold builds remain valid.
 
 `tools/swift_cache.py` saves nanosecond timestamps beside each Swift build cache.
 The release build applies it separately to the applier and `packaging/Probe`,
