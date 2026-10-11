@@ -130,10 +130,8 @@ in cache post steps. The two smoke jobs took about six minutes each, including
 image transfer. Periphery took 7m55s. These times are a baseline, not a prediction
 for GHCR. Host cache reuse also needs measurement.
 
-Use [the cold/warm study](CI_MEASUREMENTS.md#cold-and-warm-build-comparison).
-It stores layers under an isolated run-and-attempt reference. The warm run uses
-a fresh worker and imports only that reference. Check the Docker log for cached
-dependency steps. A registry manifest that exists does not prove compiler reuse.
+Use the normal CI build job times and Docker logs to assess cache reuse.
+Check the log for cached dependency steps. A registry manifest that exists does not prove compiler reuse.
 
 Also test a source edit after the first run. The dependency stage must remain
 cached and the application stage must rebuild. Record build time, registry

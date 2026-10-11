@@ -96,9 +96,9 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full
 For code coverage research, add `-f expanded_coverage=true`. This retains all
 release-binary assertions and adds instrumented correctness and lifecycle runs.
 The current expanded plan has 227 shards and 130 integration collections. It
-covers the same 718 obligations. Expanded coverage and cold/warm cache studies
-are measurements, not extra release gates. Use the full plan without expanded
-coverage for routine release checks.
+covers the same 718 obligations. Expanded coverage measures test-suite behavior.
+It is not an extra release gate. Use the full plan without expanded coverage for
+routine release checks.
 
 Use `-f suite=pr-smoke` for a manual smoke check. Expanded coverage requires
 `suite=full`. A manual run does not replace the required main push run.
@@ -144,8 +144,8 @@ as the existing `release: published` action.
 The new PR can import GHCR layers from its base PR. Compare the same image's build
 steps and transfer times with that base run. A new release image can still need a
 cold build if the base ran smoke only. A full suite has more jobs than smoke;
-total workflow time is not a cache comparison. Use the isolated
-[cold/warm study](CI_MEASUREMENTS.md#cold-and-warm-build-comparison) for that test.
+total workflow time is not a cache comparison. Use the normal CI build job
+times and Docker logs to assess cache reuse.
 
 GitHub references:
 

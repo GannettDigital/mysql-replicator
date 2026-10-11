@@ -518,7 +518,7 @@ See [5.7 MyISAM setup](MYSQL57_MYISAM.md) for deployment boundaries.
 ## CI cost and coverage reports
 
 See [CI measurements](CI_MEASUREMENTS.md) for case and shard timing, profile
-catalog results, expanded line coverage, and isolated cold/warm build comparisons.
+catalog results, expanded line coverage, and test-area cost comparisons.
 The same catalog drives PR smoke, full and expanded CI. Full and expanded plans
 retain release-binary checks. These measurements do not change the supported
 profiles or assertions.

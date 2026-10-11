@@ -54,19 +54,6 @@ def receipt(repository, image, reference, digest, commit):
     return dict(image=image, reference=namespace(repository) + '@' + digest, commit=commit)
 
 
-def study_plan(env, image, phase):
-    run, attempt = env['GITHUB_RUN_ID'], env['GITHUB_RUN_ATTEMPT']
-    if not run.isdigit() or not attempt.isdigit():
-        raise ValueError('invalid run identity')
-    ref = f'{namespace(env["GITHUB_REPOSITORY"])}:study-v2-{run}-{attempt}-{image}'
-    available = False
-    if phase == 'warm':
-        available = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', ref],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    return dict(cache_from='type=registry,ref=' + ref if phase == 'warm' else '',
-                cache_to='type=registry,ref=' + ref + ',mode=max', cache_hit=str(available).lower())
-
-
 def load_receipt(value, repository, image, commit):
     if value['image'] != image or value['commit'] != commit:
         raise ValueError('image receipt does not match this job')
@@ -80,16 +67,12 @@ def load_receipt(value, repository, image, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['plan', 'record', 'load', 'study'])
+    parser.add_argument('action', choices=['plan', 'record', 'load'])
     parser.add_argument('--image', choices=TAGS, required=True)
-    parser.add_argument('--phase', choices=['cold', 'warm'])
     args = parser.parse_args()
     env = os.environ
-    if args.action in ('plan', 'study'):
-        if args.action == 'study' and not args.phase:
-            parser.error('study requires --phase')
-        value = (study_plan(env, args.image, args.phase) if args.action == 'study' else
-                 plan(env, json.loads(Path(env['GITHUB_EVENT_PATH']).read_text()), args.image))
+    if args.action == 'plan':
+        value = plan(env, json.loads(Path(env['GITHUB_EVENT_PATH']).read_text()), args.image)
         with open(env['GITHUB_OUTPUT'], 'a') as output:
             for key, text in value.items():
                 output.write(f'{key}<<REGISTRY_OUTPUT\n{text}\nREGISTRY_OUTPUT\n')

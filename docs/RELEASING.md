@@ -19,7 +19,7 @@ remain unchanged.
 | 3 | `beta/4/03-innodb-foreign-keys` | InnoDB foreign keys, validation and recovery evidence |
 | 4 | `beta/4/04-connections-support` | Profile documentation, plaintext connections and automatic support bundles |
 | 5 | `beta/4/05-mysql57-innodb` | MySQL 5.7 InnoDB to MySQL 5.7 InnoDB profile |
-| 6 | `beta/4/06-ci-measurements` | Timing, profile coverage and isolated cold/warm build comparisons |
+| 6 | `beta/4/06-ci-measurements` | Timing and profile coverage measurements |
 | 7 | `beta/4/07-release` | Version 0.1.0-beta.4, release notes and installation guide |
 | 8 | `beta/4/08-pr-smoke` | Parallel PR smoke checks and Periphery |
 | 9 | `beta/4/09-ghcr-layers` | GHCR dependency layers and smaller coverage runtime |
@@ -53,8 +53,8 @@ not replace checks on intermediate branches.
 ## Measure the release candidate
 
 Use the final PR for the [CI measurement study](CI_MEASUREMENTS.md).
-For the beta.4 measurement study, collect the expanded four-profile report and
-at least two valid cold/warm pairs. These are research results, not release gates.
+For the beta.4 measurement study, collect the expanded four-profile report.
+These are research results, not release gates.
 Keep the normal release-binary checks. Do not infer test redundancy from line
 coverage alone. Record run links with the stack's validation notes.
 These measurements guide later CI work. They do not add another release build.

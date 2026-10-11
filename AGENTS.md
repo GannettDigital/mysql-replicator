@@ -37,5 +37,5 @@ Read `ci-measurement-report/summary.md` and `report.json` before inspecting full
 CI logs. These files identify missing shards and slow jobs. Use the failed case's
 support bundle to debug replication errors. Do not repeatedly poll full logs.
 Use [docs/CI_MEASUREMENTS.md](docs/CI_MEASUREMENTS.md) for measurement scope and
-cold/warm comparison rules. Do not remove a test because its line coverage overlaps
+test-area comparison rules. Do not remove a test because its line coverage overlaps
 another test. Check its profile, catalog obligations and assertions first.

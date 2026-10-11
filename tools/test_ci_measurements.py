@@ -1,10 +1,8 @@
-import copy
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
-from ci_cache_study import comparison
 from ci_measurements import job_timings, line_sets, markdown, record_shard, summarize
 
 
@@ -79,16 +77,6 @@ class MeasurementsTests(unittest.TestCase):
         self.assertEqual(jobs[0]['seconds'], 60)
         self.assertIsNone(jobs[1]['seconds'])
 
-    def test_cache_comparison_requires_identical_environment_and_observed_restore(self):
-        records = [dict(image=image, phase=phase, commit='a', run_id='1', attempt='1', runner_image='v1',
-                        status='success', seconds=10, cache_hit=phase == 'warm')
-                   for image in ['release', 'coverage'] for phase in ['cold', 'warm']]
-        self.assertTrue(comparison(records)['valid'])
-        for field, value in [('commit', 'b'), ('runner_image', 'v2'), ('cache_hit', False), ('status', 'failure')]:
-            changed = copy.deepcopy(records)
-            changed[1][field] = value
-            self.assertFalse(comparison(changed)['valid'], field)
-        self.assertFalse(comparison(records[:2])['valid'])
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from build_dependencies import placeholders
-from ci_registry import cache_ref, load_receipt, namespace, plan, receipt, study_plan
+from ci_registry import cache_ref, load_receipt, namespace, plan, receipt
 from code_coverage import llvm_tool
 
 
@@ -47,21 +47,6 @@ class RegistryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load_receipt(altered, 'Owner/Project', 'coverage', 'commit')
             run.assert_not_called()
-
-    def test_study_cache_is_isolated_and_missing_manifest_does_not_claim_hit(self):
-        with patch('ci_registry.subprocess.run') as run:
-            cold = study_plan(self.env, 'coverage', 'cold')
-            run.assert_not_called()
-            self.assertEqual(cold['cache_from'], '')
-            self.assertEqual(cold['cache_hit'], 'false')
-            run.return_value.returncode = 1
-            warm = study_plan(self.env, 'coverage', 'warm')
-            self.assertEqual(warm['cache_to'], cold['cache_to'])
-            self.assertEqual(warm['cache_hit'], 'false')
-            run.return_value.returncode = 0
-            self.assertEqual(study_plan(self.env, 'coverage', 'warm')['cache_hit'], 'true')
-            retry = study_plan(dict(self.env, GITHUB_RUN_ATTEMPT='2'), 'coverage', 'cold')
-            self.assertNotEqual(cold['cache_to'], retry['cache_to'])
 
     def test_dependency_placeholders_never_replace_real_sources(self):
         with tempfile.TemporaryDirectory() as folder:
