@@ -111,7 +111,7 @@ class ScopedCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source mismatch"):
             write_reports(self.root, self.output, [unit])
 
-    def test_downloaded_collections_exclude_demo_snapshots_but_reject_duplicate_originals(self):
+    def test_downloaded_collections_exclude_lifecycle_and_demo_snapshots_but_reject_duplicate_originals(self):
         downloaded = self.root / "downloaded"
         unit = downloaded / "coverage-unit/coverage.json"
         unit.parent.mkdir(parents=True)
@@ -123,8 +123,8 @@ class ScopedCoverageTests(unittest.TestCase):
             original.parent.mkdir(parents=True)
             original.write_bytes(self.report(f"apply-{i}", {self.runtime: {"2": 1}}).read_bytes())
             originals.append(original)
-            if i >= 3:  # Nine demo sessions also retain an evidence snapshot.
-                snapshot = fixture / "evidence-saved/code-coverage/combined/coverage.json"
+            for evidence in ("evidence", "evidence-saved"):
+                snapshot = fixture / evidence / "code-coverage/combined/coverage.json"
                 snapshot.parent.mkdir(parents=True)
                 snapshot.write_bytes(original.read_bytes())
         with self.assertRaisesRegex(ValueError, "duplicate coverage inputs"):

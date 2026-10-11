@@ -66,11 +66,12 @@ def policy_hash(root, selection='full', coverage_mode='unknown'):
 
 
 def downloaded_inputs(directory):
-    # Demo teardown copies /evidence, including coverage, into evidence-RUN_ID.
-    # Those snapshots are troubleshooting copies, not new measurements. Keep
+    # Lifecycle teardown copies /evidence into evidence/; demos use evidence-RUN_ID.
+    # Both include coverage snapshots, not new measurements. Keep
     # the originals; load_reports still rejects overlapping original inputs.
     return sorted(path for path in directory.rglob("coverage.json")
-                  if not any(part.startswith("evidence-") for part in path.relative_to(directory).parts[:-1]))
+                  if not any(part == "evidence" or part.startswith("evidence-")
+                             for part in path.relative_to(directory).parts[:-1]))
 
 
 def write_reports(root, output, inputs, unit_result="unknown", integration_result="unknown",
