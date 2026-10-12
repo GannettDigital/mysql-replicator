@@ -25,7 +25,10 @@ def cache_ref(repository, image, branch):
 def plan(env, event, image):
     repository = env['GITHUB_REPOSITORY']
     pr = event.get('pull_request')
-    publish = not pr or pr['head']['repo']['full_name'] == repository
+    # GitHub can omit the source repository after a fork is deleted.
+    # An unknown source must use the same restricted path as an external fork.
+    source_repo = (pr['head'].get('repo') or {}) if pr else {}
+    publish = not pr or source_repo.get('full_name') == repository
     branch = pr['head']['ref'] if pr else env['GITHUB_REF_NAME']
     base = pr['base']['ref'] if pr else 'main'
     own = cache_ref(repository, image, branch)
