@@ -3,16 +3,32 @@
 @@ -13,0 +14,2 @@
 +        requireTLS: Bool = false,
 +        handshakeTimeout: TimeAmount? = nil,
-@@ -17,0 +20 @@
+@@ -16,0 +19 @@
++        let done = eventLoop.makePromise(of: Void.self)
+@@ -17,0 +21 @@
 +            .connectTimeout(.seconds(10))
-@@ -24,0 +28,4 @@
+@@ -22 +26,3 @@
+-        return bootstrap.connect(to: socketAddress).flatMap { channel in
++        // Install the protocol handlers before connect. A server can send its
++        // greeting before a callback on the connect future is registered.
++        bootstrap.channelInitializer { channel in
+@@ -24 +29,0 @@
+-            let done = channel.eventLoop.makePromise(of: Void.self)
+@@ -38,0 +44 @@
++                        requireTLS: requireTLS,
+@@ -51,0 +58,11 @@
++            return channel.eventLoop.makeSucceededFuture(())
++        }
++
++        return bootstrap.connect(to: socketAddress).flatMapError { error in
++            done.fail(error)
++            return eventLoop.makeFailedFuture(error)
++        }.flatMap { channel in
 +            if let handshakeTimeout {
 +                let timeout = channel.eventLoop.scheduleTask(in: handshakeTimeout) { done.fail(MySQLError.closed) }
 +                done.futureResult.whenComplete { _ in timeout.cancel() }
 +            }
-@@ -38,0 +46 @@
-+                        requireTLS: requireTLS,
-@@ -55,0 +64,2 @@
+@@ -55,0 +73,2 @@
 +    let preparedStatements = MySQLPreparedStatementCache()
 +
 --- a/Sources/MySQLNIO/MySQLConnectionHandler.swift
