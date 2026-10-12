@@ -77,11 +77,17 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full -f expanded_coverage=
 Expanded mode retains every release-binary shard. It adds instrumented copies
 of shared correctness and lifecycle shards for every applicable variant.
 Ordinary PR CI has two smoke shards and two integration coverage collections.
-The current full plan has 120 shards and 227 expanded shards. Both full plans own
-718 catalog obligations. There are 23 full-plan coverage collections and 130
-expanded collections. Normal full CI instruments 9 of 120 jobs. Expanded CI
-instruments 116 of 227 jobs. The other 111 jobs check the release binary.
+The current full plan has 108 shards and 203 expanded shards. Both full plans own
+718 catalog obligations. There are 23 full-plan coverage collections and 118
+expanded collections. Normal full CI instruments 9 of 108 jobs. Expanded CI
+instruments 104 of 203 jobs. The other 99 jobs check the release binary.
 The generated matrix is the authority if the catalog grows.
+
+DDL and bootstrap now use two groups per profile and variant. The group
+boundaries use the [PR #41 timings](../PLAN/PR41_TEST_SUITE_RESULTS.md).
+This removes repeated fixture setup without removing cases. Expect fewer
+coverage collections because fewer fixtures run. Check line sets and catalog
+results separately; the collection count is not a coverage percentage.
 
 Native-reference and specialized recovery adapters do not export line coverage.
 Their existing tests remain required. Demo collections remain instrumented.

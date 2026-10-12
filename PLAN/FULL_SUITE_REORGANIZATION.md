@@ -297,3 +297,26 @@ This saves five client launches for each metadata batch. It does not reduce
 the six metadata queries or remove comparison steps. The local runs establish
 behavior on both server versions. They are not a controlled CI timing comparison.
 Compare the next full CI run with PR #40 before claiming an elapsed-time saving.
+
+## Second follow-up: balanced groups
+
+The [PR #41 result review](PR41_TEST_SUITE_RESULTS.md) records the measured gain
+from grouped metadata reads. The next change uses explicit case boundaries to
+reduce repeated fixture setup. It keeps all cases and assertions.
+
+| Area | Boundary after case | Cases in each group | Predicted shard seconds |
+|---|---|---|---|
+| DDL | `ddl-compat-generated` | 5 + 5; 4 + 5 for `position-minimal` | 136–185 |
+| Bootstrap | `bootstrap-matrix-upsert` | 8 + 10 | 232–258 |
+
+The estimates use PR #41 coverage case times and median residual shard time.
+They exclude additional CI job overhead. The next CI run must validate them.
+The same boundaries apply to release and coverage jobs. Stable boundaries make
+the selection reviewable and preserve catalog order. They do not require a
+downloaded timing artifact during planning.
+
+Normal full CI changes from 120 to 108 jobs. Expanded CI changes from 227 to
+203 jobs. It collects 118 coverage reports instead of 130 because 12 instrumented
+fixtures no longer need separate setup. All 718 catalog obligations remain.
+Sample, smoke, index, lifecycle, demo, native, and recovery selections stay the
+same. PR test selection remains a later task.

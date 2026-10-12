@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from ci_matrix import SMOKE_PROFILES, generate, generate_smoke, key
+from ci_matrix import SMOKE_PROFILES, case_groups, generate, generate_smoke, key
 
 
 def row(identifier, family='database', suite='correctness', profile='forward',
@@ -58,6 +58,35 @@ class MatrixTests(unittest.TestCase):
         result = self.generate()
         self.assertTrue(any('new-case' in s['cases'] for s in result['include']))
         self.assertTrue(any(s['variant'] == 'new-variant' for s in result['include']))
+
+    def test_reviewed_boundaries_preserve_order_and_include_new_cases(self):
+        area = dict(name='ddl', split_after=['b', 'd'])
+        self.assertEqual(case_groups(['a', 'b', 'c', 'd', 'e'], area),
+                         [['a', 'b'], ['c', 'd'], ['e']])
+        self.assertEqual(case_groups(['a', 'new', 'b', 'c', 'd', 'e', 'later'], area),
+                         [['a', 'new', 'b'], ['c', 'd'], ['e', 'later']])
+
+    def test_invalid_boundaries_fail_before_planning_jobs(self):
+        for anchors in [[], 'b', ['missing'], [None], ['b', 'b'], ['c', 'b'], ['d']]:
+            with self.subTest(anchors=anchors), self.assertRaisesRegex(ValueError, 'split_after'):
+                case_groups(['a', 'b', 'c', 'd'], dict(name='ddl', split_after=anchors))
+        with self.assertRaisesRegex(ValueError, 'cannot use size'):
+            case_groups(['a', 'b'], dict(name='ddl', split_after=['a'], size=1))
+
+    def test_reviewed_boundary_keeps_dependency_closure_and_coverage_copies(self):
+        # Each profile/variant needs both sides of its declared boundary.
+        rows = [row('create'), row('alter'), dict(row('drop'), dependencies=['create'])]
+        policy = copy.deepcopy(self.policy)
+        policy['areas'][0].pop('size')
+        policy['areas'][0]['split_after'] = ['alter']
+        result = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
+        for image in ['release', 'coverage']:
+            groups = [s for s in result['include'] if s['image'] == image and s['area'].startswith('database-')]
+            self.assertEqual([s['cases'] for s in groups], [['create', 'alter'], ['create', 'drop']])
+        self.assertEqual(result['obligations'], 3)
+        self.assertEqual(result['inventory'], rows)
+        with self.assertRaisesRegex(ValueError, 'not applicable'):
+            generate([dict(scenarios=[rows[0], rows[2]])], policy)
 
     def test_unknown_family_or_suite_fails_instead_of_omitting_coverage(self):
         for extra, reason in [(row('new', family='new-family'), 'unassigned correctness families'),

@@ -281,11 +281,22 @@ separate weekly or release-tag qualification workflow.
 The lab catalog generates both matrices. Smoke planning queries the actual smoke
 selection, including prerequisites. New smoke cases enter the PR matrix without
 a second case list. `tools/ci_matrix.json` assigns full CI
-correctness families to areas and sets chunk sizes. New cases automatically join
+correctness families to areas and sets group sizes or explicit case boundaries.
+New cases automatically join
 their area, while an unassigned family or suite fails planning. The generated
 `ci-lab` artifact contains `matrix.json`, including all obligations, explicit
 not-applicable entries and exact shard selections. Each applicable obligation
 has one owning shard; prerequisites can also run in dependent shards.
+
+For groups balanced by measured time, `split_after` lists the final case in each
+group except the last. DDL splits after `ddl-compat-generated`. Bootstrap splits
+after `bootstrap-matrix-upsert`. Each area has two groups per profile and variant.
+These boundaries come from the [PR #41 review](../PLAN/PR41_TEST_SUITE_RESULTS.md).
+The planner preserves catalog order and adds prerequisites to each group.
+Missing, repeated, or reversed boundaries fail planning. A boundary cannot
+select the last applicable case, because that would leave an empty final group.
+Do not combine `split_after` with `size`. Keep `size` for groups with fixed counts.
+Review the timing report after adding cases; boundaries do not enforce a time limit.
 
 Jobs show profile, area, capture variant and image type. Large DDL, index and
 bootstrap areas are split into case groups, with up to 16 jobs running at once.

@@ -1,11 +1,11 @@
 {
   "areas": [
     {"name": "database", "families": ["database"]},
-    {"name": "ddl", "families": ["ddl"], "size": 4},
+    {"name": "ddl", "families": ["ddl"], "split_after": ["ddl-compat-generated"]},
     {"name": "dml", "families": ["dml"]},
     {"name": "foreign-keys", "families": ["foreign-keys"]},
     {"name": "indexes", "families": ["indexes"], "size": 6},
-    {"name": "bootstrap", "families": ["bootstrap"], "size": 6},
+    {"name": "bootstrap", "families": ["bootstrap"], "split_after": ["bootstrap-matrix-upsert"]},
     {"name": "refusals", "families": ["policy", "rejections", "dml-refusals"]},
     {"name": "ordered-ddl", "families": ["ordered"]},
     {"name": "collation", "families": ["collation"]},

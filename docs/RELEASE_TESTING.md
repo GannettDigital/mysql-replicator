@@ -25,7 +25,7 @@ Current catalog counts are:
 An obligation is a case for one profile, suite and capture variant. These counts
 measure our catalog. They do not measure all MySQL features.
 
-Full CI has 120 shards, 718 obligations and 23 integration coverage collections.
+Full CI has 108 shards, 718 obligations and 23 integration coverage collections.
 It includes database creation, DDL, DML, indexes, bootstrap, foreign keys where
 supported, refusals, ordered DDL, collation, filtering and discovery. It also
 includes failure/recovery/offline/control sequences, reconnect, native-reference
@@ -95,7 +95,7 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full
 
 For code coverage research, add `-f expanded_coverage=true`. This retains all
 release-binary assertions and adds instrumented correctness and lifecycle runs.
-The current expanded plan has 227 shards and 130 integration collections. It
+The current expanded plan has 203 shards and 118 integration collections. It
 covers the same 718 obligations. Expanded coverage measures test-suite behavior.
 It is not an extra release gate. Use the full plan without expanded coverage for
 routine release checks.

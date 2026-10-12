@@ -40,6 +40,24 @@ def key(row):
     return (row['profile'], row.get('variant', 'default'), row['suite'], row['id'])
 
 
+def case_groups(members, area):
+    """Keep catalog order. Use reviewed time-based boundaries or fixed sizes."""
+    if 'split_after' in area:
+        anchors = area['split_after']
+        if 'size' in area or not isinstance(anchors, list) or not anchors:
+            raise ValueError('split_after requires a nonempty list and cannot use size')
+        if any(not isinstance(anchor, str) or anchor not in members for anchor in anchors):
+            raise ValueError(f"split_after case is not applicable in area {area['name']}")
+        ends = [members.index(anchor) + 1 for anchor in anchors]
+        if ends != sorted(set(ends)) or ends[-1] == len(members):
+            raise ValueError('split_after boundaries must be ordered, unique, and leave a final group')
+        return [members[start:end] for start, end in zip([0] + ends, ends + [len(members)])]
+    size = area.get('size', len(members))
+    if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+        raise ValueError('area size must be a positive integer')
+    return [members[offset:offset + size] for offset in range(0, len(members), size)]
+
+
 def generate(catalogs, policy, expanded_coverage=False):
     inventory = {}
     for catalog in catalogs:
@@ -94,16 +112,13 @@ def generate(catalogs, policy, expanded_coverage=False):
                 members = [r['id'] for r in rows if r['family'] in area['families']]
                 if not members:
                     continue
-                size = area.get('size', len(members))
-                if size < 1:
-                    raise ValueError('area size must be positive')
-                for offset in range(0, len(members), size):
-                    roots = members[offset:offset + size]
+                chunks = case_groups(members, area)
+                for index, roots in enumerate(chunks, 1):
                     selected = closure(roots)
                     # Dependencies may be repeated, but each primary obligation
                     # must have exactly one owning shard.
                     cases = [r['id'] for r in rows if r['id'] in selected]
-                    name = area['name'] + (f'-{offset // size + 1}' if len(members) > size else '')
+                    name = area['name'] + (f'-{index}' if len(chunks) > 1 else '')
                     add(profile, variant, suite, name, cases, count=False)
                     owners.update((profile, variant, suite, case) for case in roots)
         elif suite in ('lifecycle', 'recovery', 'native', 'demo'):
