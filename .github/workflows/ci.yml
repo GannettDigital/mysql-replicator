@@ -249,6 +249,16 @@ jobs:
           docker save "$IMAGE" | gzip -1 > artifacts/ci/image/image.tar.gz
           cd artifacts/ci/image
           sha256sum image.tar.gz > SHA256SUMS
+      - name: Record the build identity for reused test results
+        env:
+          BUILD_IMAGE: ${{ matrix.image }}
+        run: python3 tools/ci_reruns.py identity --image "$BUILD_IMAGE" --output artifacts/ci/image/build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: ci-build-${{ matrix.image }}
+          path: artifacts/ci/image/build.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           overwrite: true
@@ -340,6 +350,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
+          overwrite: true
           name: ci-measurement-${{ matrix.id }}
           path: artifacts/ci/measurements/*.json
           if-no-files-found: error
@@ -483,19 +494,24 @@ jobs:
         with:
           name: coverage-unit
           path: artifacts/ci/unit
-      - name: Read job and step times for this attempt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-build-*
+          path: artifacts/ci/builds
+      - name: Read job history with retries
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > artifacts/ci/jobs.json
+          python3 tools/ci_reruns.py jobs --output artifacts/ci/jobs.json
       - name: Report timing, catalog results and profile line coverage
         run: |
           python3 tools/ci_measurements.py --matrix artifacts/ci/matrix.json \
-            --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json \
+            --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json --builds artifacts/ci/builds \
             --unit-coverage artifacts/ci/unit/coverage.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
+          overwrite: true
           name: ci-measurement-report
           path: artifacts/ci/report/
           if-no-files-found: error

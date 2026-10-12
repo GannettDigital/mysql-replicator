@@ -112,7 +112,7 @@ def validate_bundle():
 
 def run_shard(identifier):
     from ci_measurements import record_shard
-    with record_shard(ROOT, identifier):
+    with record_shard(ROOT, identifier, build_inputs=os.environ.get('GITHUB_ACTIONS') == 'true'):
         _run_shard(identifier)
 
 

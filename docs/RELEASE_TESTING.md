@@ -112,7 +112,8 @@ failed case's support bundle before a rerun. See [test lab](TEST_LAB.md).
 A complete full run produces the `release-test-evidence` artifact. Its
 `release-test-evidence.json` file records:
 
-- Repository, tested commit, run ID, attempt and run link.
+- Repository, tested commit, run ID, evidence attempt and run link.
+- Report attempt, each shard execution attempt, and the identities of the tested builds.
 - Event, ref, release version and full test scope.
 - Passed catalog totals and coverage collections for each profile.
 - Results for unit tests, builds/integration, coverage, Periphery and measurements.
@@ -122,11 +123,21 @@ This file links evidence to packages. It is not a cryptographic signature.
 The release workflow checks the successful main CI run through the GitHub API.
 It then checks the evidence identity, full scope, package manifest digest and
 package checksums. It adds the evidence file to the draft release downloads.
-Missing evidence, another run attempt or different packages stop draft creation.
+The evidence must belong to the latest successful CI attempt. Missing evidence,
+a different commit or run, or different packages stop draft creation.
 
-Use **Re-run all jobs** to replace incomplete evidence. Do not combine artifacts
-from different attempts. If release artifacts expire, rerun all jobs of the
-original main push run for the tagged commit. Do not use a local rebuild.
+Use **Re-run failed jobs** for a test or reporting failure. Successful results
+from earlier attempts of that run can be reused only when the test matrix and
+build identities still match. CI checks the latest job result and preserves the
+original execution attempt of each shard. The release record uses format version
+2 and binds the package checksum manifest to the build used by the test shards.
+If only the evidence job is retried, it can reuse an earlier complete report
+from the same run and commit.
+
+Use **Re-run all jobs** if the tested build changed or artifacts expired. Results
+created before build identity recording was added cannot be reused by the new
+reporter. A code change starts a new run. Do not copy results from the old run
+or substitute a local rebuild.
 
 ## Why this model
 
