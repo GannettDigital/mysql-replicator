@@ -16,19 +16,17 @@ public final class MySQLConnection: MySQLDatabase, Sendable {
         logger: Logger = .init(label: "codes.vapor.mysql"),
         on eventLoop: any EventLoop
     ) -> EventLoopFuture<MySQLConnection> {
+        let done = eventLoop.makePromise(of: Void.self)
         let bootstrap = ClientBootstrap(group: eventLoop)
             .connectTimeout(.seconds(10))
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
         
         logger.debug("Opening new connection to \(socketAddress)")
         
-        return bootstrap.connect(to: socketAddress).flatMap { channel in
+        // Install the protocol handlers before connect. A server can send its
+        // greeting before a callback on the connect future is registered.
+        bootstrap.channelInitializer { channel in
             let sequence = MySQLPacketSequence()
-            let done = channel.eventLoop.makePromise(of: Void.self)
-            if let handshakeTimeout {
-                let timeout = channel.eventLoop.scheduleTask(in: handshakeTimeout) { done.fail(MySQLError.closed) }
-                done.futureResult.whenComplete { _ in timeout.cancel() }
-            }
             done.futureResult.whenFailure { _ in
                 channel.close(mode: .all, promise: nil)
             }
@@ -57,6 +55,17 @@ public final class MySQLConnection: MySQLDatabase, Sendable {
                 return channel.eventLoop.makeFailedFuture(error)
             }
 
+            return channel.eventLoop.makeSucceededFuture(())
+        }
+
+        return bootstrap.connect(to: socketAddress).flatMapError { error in
+            done.fail(error)
+            return eventLoop.makeFailedFuture(error)
+        }.flatMap { channel in
+            if let handshakeTimeout {
+                let timeout = channel.eventLoop.scheduleTask(in: handshakeTimeout) { done.fail(MySQLError.closed) }
+                done.futureResult.whenComplete { _ in timeout.cancel() }
+            }
             return done.futureResult.map { MySQLConnection(channel: channel, logger: logger) }
         }
     }
