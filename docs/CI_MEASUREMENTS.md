@@ -1,5 +1,23 @@
 # CI timing and coverage measurements
 
+The [PR #40 review](../PLAN/FULL_SUITE_REORGANIZATION.md) records the first full
+coverage comparison. Review assertions before removing tests with overlapping
+lines. Select PR cases after the full suite has been organized and measured.
+
+Shared correctness fixtures also write `sql-client.json`. It records client
+calls, failed calls, elapsed client seconds, batch calls, and queries in batches.
+CI copies these values into each shard's `sql_client` field in `report.json`.
+The summary separates release and coverage images. Counts include fixture
+setup, waits, and assertions through `NativeHarness.sql`. They do not count
+every SQL statement or direct client calls outside that helper. Client time
+includes process startup and MySQL execution. It is not applier SQL time.
+Missing measurements are not zero.
+
+Metadata queries share a client call at each existing comparison boundary.
+Row comparisons and independent binlog checks retain their existing boundaries.
+Batch framing preserves empty results and exact whitespace. A missing or
+unexpected frame fails the comparison.
+
 Use the beta.4 release stack to collect a baseline for all four profiles.
 PR checks use unit tests, Periphery and two parallel smoke suites. Main retains
 the full catalog. Add `ci-full` to the top release PR to run that catalog before

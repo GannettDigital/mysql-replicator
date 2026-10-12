@@ -3,11 +3,48 @@
 [![CI](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml/badge.svg)](https://github.com/GannettDigital/mysql-replicator/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Use `mysql-replicator` to replicate data between MySQL versions when native
-replication does not meet your needs. It reads source binary logs and applies
-supported INSERT, UPDATE, DELETE, and DDL changes to a dedicated replica.
+`mysql-replicator` replicates changes between MySQL instances, including version
+combinations that native MySQL replication does not support. For example, it can
+keep a MySQL 5.7 MyISAM replica in sync with a MySQL 8.4 InnoDB source.
 
-## Supported profiles
+This tool is for DBAs, data engineers, and platform engineers who operate MySQL
+replicas. It reads source binlogs, decodes row events outside MySQL, and applies
+row changes and supported DDL through a target SQL connection.
+
+## Use cases
+
+- **Keep legacy replicas:** upgrade a primary to 8.4 while a system still needs
+  a 5.7 replica.
+- **Replicate across an upgrade gap:** copy changes from 5.7 directly to an 8.4
+  target. The initial data copy and server upgrades remain external tasks.
+- **Test an upgrade:** restore a snapshot to a newer server, then replay binlogs
+  from the application workload. Stop at a selected GTID boundary. Configure
+  supported error skips to continue and find more incompatibilities.
+
+Replay tests the recorded row changes and DDL. It does not replay SELECT queries
+or recover the original application statements from row events. Error skips
+apply to defined error classes, not every failure. Skipped changes can affect
+later results; the DBA must assess the resulting differences.
+
+## Why this can work
+
+Many row changes from MySQL 8.4 use types and operations that MySQL 5.7 supports.
+An external decoder can turn those events into SQL that 5.7 accepts. The target
+does not need to decode the source binlog itself.
+
+Native replication includes its decoder and event handlers in the MySQL server.
+An older server can read some newer binlog events, but new event formats, SQL
+features, and changed behavior can prevent replication. MySQL does not support
+replication from a newer source to an older replica. See the
+[MySQL compatibility rules](https://dev.mysql.com/doc/refman/8.4/en/replication-compatibility.html).
+
+External decoding does not remove differences in SQL or data semantics. For
+example, MySQL 5.7 has no `utf8mb4_0900_ai_ci` collation. Use compatible schemas
+or enable an explicit [collation mapping](PLAN/DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
+A mapping can change comparisons, sort order, and unique-key behavior. It is not
+a general conversion for all MySQL 8.4 features.
+
+## Tested profiles
 
 The test suite checks these profiles:
 
@@ -25,6 +62,94 @@ are not tested. See [DML support](PLAN/DML_APPLY.md) and
 Copy the initial data with an external tool. If a write stops or its result is
 unknown, a database administrator can need to repair the target before replication
 continues.
+
+## Deployment and other tools
+
+`mysql-replicator` runs as a daemon or service. The Linux release is a standalone
+binary with no language runtime, database client, or separate SQLite installation.
+It connects directly to MySQL. It does not require Kafka, Pub/Sub, or a separate
+state database server.
+
+| Tool | Main workflow |
+| --- | --- |
+| [Google Cloud DMS](https://docs.cloud.google.com/database-migration/docs/mysql/migration-types) | Managed migration: initial dump/load, followed by continuous replication and promotion of the destination |
+| [Debezium](https://debezium.io/documentation/reference/stable/connectors/mysql.html) and [Maxwell](https://maxwells-daemon.io/producers/) | CDC: decode database changes and publish events to downstream systems, often through a durable broker such as Kafka or Pub/Sub |
+| `mysql-replicator` | Apply MySQL changes directly to MySQL, or replay an archive against a prepared target with operator controls |
+
+The source binlog is the change history. Unapplied changes can be downloaded
+again while the source retains them. Keep enough binlog retention for the
+expected outage and replication lag, or keep an external archive.
+
+Local durable storage holds the applied position, schema records, work in
+progress, bounded relay data, and retained recovery evidence. This keeps the
+deployment small without a separate event broker. Storage use still depends
+on configured limits, history, and optional archives or support bundles.
+
+Put `stateDirectory` on a durable POSIX filesystem with working locks, atomic
+renames, and `fsync`. Use a local filesystem on persistent block storage, mounted
+by one applier instance. SQLite uses [WAL mode](https://www.sqlite.org/wal.html).
+Do not use an object-storage FUSE mount for active state. For example,
+[Cloud Storage FUSE](https://docs.cloud.google.com/storage/docs/cloud-storage-fuse/overview#limitations)
+is not POSIX compliant and does not support file locking.
+
+## Operations
+
+- **Live replication:** start from a GTID set or binlog file position. Stop cleanly
+  and resume from the saved checkpoint.
+- **Offline replay:** fetch binlogs or use a directory of raw files from
+  `mysqlbinlog`. Replay does not connect to the source. Stop after a transaction
+  count or when the applied GTID set contains `source.stopAfterGTIDs`.
+- **Process control:** use `ctl status`, `ctl stop`, and `ctl reload`. Reload
+  supports selected runtime limits; it does not replace the saved checkpoint.
+- **Disconnects and restarts:** reconnect to the source or target when the saved
+  state permits continuation. An uncertain target write blocks replication for
+  DBA review.
+- **Selection and error handling:** exclude tables with wildcard rules. Skip
+  selected supported errors in live or replay mode, with optional skip records.
+  The DBA remains responsible for data consistency after a skip.
+- **Statistics and recovery evidence:** collect progress counters and stage
+  timings. Local SQLite state and relay files record checkpoints and pending
+  work. Create support bundles manually or when replication enters `BLOCKED`.
+
+See the [configuration reference](examples/apply.example.yaml),
+[replay and control guide](docs/OFFLINE_REPLAY.md), and
+[filter rules](PLAN/WILDCARD_FILTERS.md). State records help a DBA investigate
+failures. They do not guarantee automatic recovery after an uncertain write.
+
+## What the tests check
+
+The shared suite uses a source, an applier target, and a native MySQL replica.
+The native replica uses the source version. The suite compares exact row values,
+schema metadata, checkpoints, and failure outcomes. Selected workflows also
+compare normalized binlog operations with independent `mysqlbinlog` output.
+
+| Area | Tested cases |
+| --- | --- |
+| Row changes | INSERT, UPDATE, DELETE, multiple rows, primary-key changes, upsert, REPLACE, IGNORE, INSERT SELECT, joined updates/deletes, and LOAD DATA as row events |
+| Data types | Signed/unsigned integers, DECIMAL, date/time types, CHAR/VARCHAR, binary strings, TEXT/BLOB families, ENUM, SET, and NULL values |
+| Keys and transactions | Composite primary keys, secondary and unique indexes; InnoDB multi-statement transactions and foreign keys within the profile limits |
+| DDL | Database create/alter/drop; table create/alter/drop, LIKE, rename, truncate, column and index changes, defaults, generated columns, partitions, views, and stored routines within the supported grammar |
+| Operations | Capture positions, saved-state resume, source/target restarts, filters, selected error skips, offline replay, and support bundles |
+
+This is a test summary, not a claim of complete MySQL compatibility. MyISAM
+profiles accept one row statement against one included table per source group.
+Schemas need supported primary keys. FLOAT/DOUBLE, BIT, JSON, and spatial columns
+are outside the current type contract. Other untested behavior is not necessarily
+unsupported. Check the [test inventory](docs/TEST_LAB.md),
+[DML limits](PLAN/DML_APPLY.md), and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
+
+## Development and validation
+
+This project uses **AI-assisted development with human review and direction**.
+AI agents write much of the code. A human directs the work, reviews decisions,
+and evaluates test evidence.
+
+The end-to-end suite checks actual MySQL servers against native replication.
+Unit tests, error-path tests, and demo workflows provide additional evidence.
+Coverage reports show which code ran. Catalog reports show which scenarios
+passed. These checks provide evidence for the tested behavior; code generation
+alone does not establish correctness. See the [test lab](docs/TEST_LAB.md) and
+[release test process](docs/RELEASE_TESTING.md).
 
 ## Install and start
 

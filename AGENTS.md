@@ -1,7 +1,10 @@
-# Documentation
+# Communication and documentation
 
-Use ASD-STE100 Simplified Technical English when you write or change documentation.
-This rule applies to README files, guides, plans, configuration comments, and release notes.
+Use ASD-STE100 Simplified Technical English for all project communication.
+Apply this rule in this session and in future sessions for this project.
+It includes replies, progress reports, PR descriptions, and documentation.
+Documentation includes README files, guides, plans, configuration comments, and release notes.
+Write for data engineers, DBAs, and platform engineers who know MySQL replication.
 
 - Use short sentences. Give each sentence one main subject.
 - Use active voice and direct instructions.
