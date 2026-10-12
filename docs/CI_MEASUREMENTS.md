@@ -19,7 +19,7 @@ Batch framing preserves empty results and exact whitespace. A missing or
 unexpected frame fails the comparison.
 
 Use the beta.4 release stack to collect a baseline for all four profiles.
-PR checks use unit tests, Periphery and two parallel smoke suites. Main retains
+PR checks use unit tests, Periphery and two parallel [explicit test selections](PR_TEST_SELECTION.md). Main retains
 the full catalog. Add `ci-full` to the top release PR to run that catalog before
 merge. See [release testing](RELEASE_TESTING.md) for the evidence and release gate.
 The targets for later work are five minutes for PR feedback and twenty minutes
@@ -77,6 +77,10 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full -f expanded_coverage=
 Expanded mode retains every release-binary shard. It adds instrumented copies
 of shared correctness and lifecycle shards for every applicable variant.
 Ordinary PR CI has two smoke shards and two integration coverage collections.
+Each shard now selects 11 named cases from the full catalog. The two cross-version
+full-CI coverage supplements use the same cases. The `ddl-dml-policy-replay` job
+area and step summary identify the selection. Its artifact IDs retain the
+`-smoke` suffix so the same-run coverage baseline remains identifiable.
 The current full plan has 108 shards and 203 expanded shards. Both full plans own
 718 catalog obligations. There are 23 full-plan coverage collections and 118
 expanded collections. Normal full CI instruments 9 of 108 jobs. Expanded CI

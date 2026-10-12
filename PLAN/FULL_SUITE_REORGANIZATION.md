@@ -320,3 +320,22 @@ Normal full CI changes from 120 to 108 jobs. Expanded CI changes from 227 to
 fixtures no longer need separate setup. All 718 catalog obligations remain.
 Sample, smoke, index, lifecycle, demo, native, and recovery selections stay the
 same. PR test selection remains a later task.
+
+## Balanced-group results and remaining long jobs
+
+The [PR #42 review](PR42_TEST_SUITE_RESULTS.md) records the measured result.
+All 718 obligations passed. The global integration and combined line sets did
+not change. Release DDL and bootstrap used fewer shard minutes.
+
+The review also checks the remaining failure/recovery, demo, and native jobs.
+It recommends separate jobs for existing demo sessions, followed by a split
+between complete forward failures and recovery/offline workflows. These changes
+trade some runner overhead for shorter jobs. Native DDL needs engine-policy
+timing before further grouping. Keep the assertions and defer PR case selection
+until the next full coverage comparison.
+
+The subsequent decision defers these changes as
+[possible future work](CI_FUTURE_OPTIMIZATIONS.md). Normal full CI omits the 95
+extra coverage jobs used in the analysis runs. Measure that mode before further
+optimization. [PR checks now use explicit cases](../docs/PR_TEST_SELECTION.md),
+with the full catalog and release-binary checks retained.

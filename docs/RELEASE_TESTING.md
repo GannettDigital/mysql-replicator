@@ -5,7 +5,7 @@ Do not add a separate release test runner.
 
 | Use | Trigger | Scope | Release evidence |
 | --- | --- | --- | --- |
-| Ordinary PR | Open, push or reopen | Unit tests, Periphery and two parallel engine smoke suites | No |
+| Ordinary PR | Open, push or reopen | Unit tests, Periphery and two parallel [explicit engine selections](PR_TEST_SELECTION.md) | No |
 | Final PR in a release stack | Add `ci-full`; later pushes keep this scope | Full catalog, packages, coverage and Periphery | Candidate evidence |
 | Test-suite investigation | Add `ci-expanded-coverage` | Full suite plus instrumented correctness and reconnect copies | Candidate evidence from release-binary checks |
 | Main | Push after merge | Same full suite | Required for the release |

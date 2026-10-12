@@ -1,4 +1,20 @@
 {
+  "pr_smoke": {
+    "area": "ddl-dml-policy-replay",
+    "cases": [
+      "database-explicit",
+      "ddl-compat-types",
+      "ddl-compat-database",
+      "matrix-composite",
+      "ddl-index-create",
+      "ddl-compat-skip-trigger",
+      "reject-json",
+      "wild-ignore",
+      "positive",
+      "offline-replay",
+      "live-skip-errors"
+    ]
+  },
   "areas": [
     {"name": "database", "families": ["database"]},
     {"name": "ddl", "families": ["ddl"], "split_after": ["ddl-compat-generated"]},

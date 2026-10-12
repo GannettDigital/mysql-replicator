@@ -145,17 +145,43 @@ class MatrixTests(unittest.TestCase):
         rows += [row('new-smoke', profile=p) for p in SMOKE_PROFILES]
         rows[2]['dependencies'] = ['create']
         rows.append(dict(row('unavailable', profile=SMOKE_PROFILES[0]), status='not_applicable'))
-        result = generate_smoke([dict(scenarios=rows)])
+        rows += [row('full-only', profile=p) for p in SMOKE_PROFILES]
+        selection = dict(area='ddl-dml-policy-replay', cases=['new-smoke', 'create'])
+        result = generate_smoke([dict(scenarios=rows)], selection)
         self.assertEqual(result['scope'], 'pr-smoke')
         self.assertEqual(result['images'], ['coverage'])
         self.assertEqual(result['obligations'], 4)
-        self.assertEqual({key(r) for r in result['inventory']}, {key(r) for r in rows})
+        self.assertEqual({key(r) for r in result['inventory']}, {key(r) for r in rows[:4]})
         self.assertEqual(result['coverage_reports'], 2)
         self.assertEqual(len(result['include']), 2)
         for shard in result['include']:
             self.assertTrue(shard['owns_obligations'])
             self.assertEqual(shard['cases'], ['create', 'new-smoke'])
-            self.assertEqual((shard['suite'], shard['tier'], shard['variant']), ('correctness', 'smoke', 'default'))
+            self.assertEqual((shard['suite'], shard['tier'], shard['variant']), ('correctness', 'full', 'default'))
+            self.assertEqual(shard['area'], selection['area'])
+
+    def test_pr_selection_expands_dependencies_and_is_reused_in_full_ci(self):
+        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'alter', 'full-only']]
+        for r in rows:
+            if r['id'] == 'alter':
+                r['dependencies'] = ['create']
+        policy = dict(areas=[dict(name='database', families=['database'])],
+                      sample=dict(profile=SMOKE_PROFILES[0], cases=['create']), demo_reports={},
+                      pr_smoke=dict(area='ddl-dml-policy-replay', cases=['alter']))
+        pr = generate_smoke([dict(scenarios=rows)], policy['pr_smoke'])
+        full = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
+        self.assertEqual(pr['obligations'], 4)
+        self.assertEqual(full['obligations'], 6)
+        for shard in pr['include']:
+            self.assertEqual(shard['cases'], ['create', 'alter'])
+            supplement = next(s for s in full['include'] if s['id'] == shard['id'])
+            self.assertEqual(supplement, dict(shard, owns_obligations=False))
+
+    def test_pr_selection_rejects_empty_duplicate_and_unknown_cases(self):
+        rows = [row('create', profile=p) for p in SMOKE_PROFILES]
+        for cases in ([], ['create', 'create'], ['typo'], 'create', [None]):
+            with self.subTest(cases=cases), self.assertRaises(ValueError):
+                generate_smoke([dict(scenarios=rows)], dict(area='selected', cases=cases))
 
     def test_smoke_rejects_missing_profiles_variants_duplicates_and_dependencies(self):
         rows = [row('create', profile=p) for p in SMOKE_PROFILES]
@@ -166,7 +192,7 @@ class MatrixTests(unittest.TestCase):
                    [dict(rows[0], status='not_applicable'), rows[1]]]
         for selected in invalid:
             with self.subTest(rows=selected), self.assertRaises(ValueError):
-                generate_smoke([dict(scenarios=selected)])
+                generate_smoke([dict(scenarios=selected)], dict(area='selected', cases=['create']))
 
 
 if __name__ == '__main__':

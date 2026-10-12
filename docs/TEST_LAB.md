@@ -264,11 +264,14 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-Ordinary PR CI runs unit tests, Periphery and two correctness smoke suites. The smoke
+Ordinary PR CI runs unit tests, Periphery and two explicit correctness selections. The
 profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Both use the default variant and run in parallel after one shared image build.
 Unit tests and Periphery do not wait for this build. Coverage and timing reports
 remain enabled. Ordinary PRs do not build release packages or run the full catalog.
+Each integration job runs 11 named cases in the `ddl-dml-policy-replay` area.
+See [PR test selection](PR_TEST_SELECTION.md) for case IDs, assertions, timing
+estimates, limits, and commands to reproduce the selection.
 
 Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
 See [release testing](RELEASE_TESTING.md) for the stack workflow and evidence.
@@ -278,9 +281,12 @@ source/target reconnect run for all default profiles, plus the forward
 the applicable native-reference DDL suite run in the same workflow. There is no
 separate weekly or release-tag qualification workflow.
 
-The lab catalog generates both matrices. Smoke planning queries the actual smoke
-selection, including prerequisites. New smoke cases enter the PR matrix without
-a second case list. `tools/ci_matrix.json` assigns full CI
+The lab catalog generates both matrices. PR planning resolves the explicit
+`pr_smoke` case IDs in `tools/ci_matrix.json` against the full catalog and adds
+prerequisites. New full-suite cases do not enter PR checks until selected.
+Full CI uses the same selection for its two cross-version coverage supplements.
+Local `--tier smoke` keeps its existing convenience selection.
+`tools/ci_matrix.json` also assigns full CI
 correctness families to areas and sets group sizes or explicit case boundaries.
 New cases automatically join
 their area, while an unassigned family or suite fails planning. The generated

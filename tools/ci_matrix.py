@@ -4,8 +4,15 @@ from collections import Counter, defaultdict
 SMOKE_PROFILES = ('mysql84-to-mysql57-myisam', 'mysql57-to-mysql84-innodb')
 
 
-def generate_smoke(catalogs):
-    """Use the lab's smoke selection, including its prerequisite closure."""
+def generate_smoke(catalogs, selection):
+    """Resolve the explicit PR selection against the full lab catalog."""
+    requested = selection['cases']
+    if not isinstance(requested, list) or not requested or any(not isinstance(c, str) for c in requested):
+        raise ValueError('PR cases must be a nonempty list of case IDs')
+    if len(set(requested)) != len(requested):
+        raise ValueError('duplicate PR case IDs')
+    if not isinstance(selection.get('area'), str) or not selection['area'].strip():
+        raise ValueError('PR selection requires a descriptive area')
     inventory, shards = [], []
     for profile in SMOKE_PROFILES:
         rows = [dict(r, variant=r.get('variant', 'default'))
@@ -16,21 +23,24 @@ def generate_smoke(catalogs):
                r['status'] not in ('not_run', 'not_applicable') for r in rows):
             raise ValueError(f'invalid smoke catalog: {profile}')
         applicable = {r['id']: r for r in rows if r['status'] == 'not_run'}
-        if not applicable:
-            raise ValueError(f'no applicable smoke cases: {profile}')
+        if not set(requested) <= set(applicable):
+            raise ValueError(f'missing or inapplicable PR cases: {profile}: {sorted(set(requested) - set(applicable))}')
 
+        selected = set()
         def check_dependencies(identifier, visiting=()):
             if identifier in visiting or identifier not in applicable:
                 raise ValueError(f'missing or cyclic smoke dependency: {identifier}')
             for dependency in applicable[identifier].get('dependencies', []):
                 check_dependencies(dependency, visiting + (identifier,))
+            selected.add(identifier)
 
-        for identifier in applicable:
+        for identifier in requested:
             check_dependencies(identifier)
-        inventory.extend(rows)
+        inventory.extend(r for r in rows if r['id'] in selected)
         shards.append(dict(id=f'coverage-{profile}-default-smoke', profile=profile,
-                           variant='default', suite='correctness', area='smoke', image='coverage',
-                           reports=1, tier='smoke', cases=list(applicable), owns_obligations=True))
+                           variant='default', suite='correctness', area=selection['area'], image='coverage',
+                           reports=1, tier='full', cases=[r['id'] for r in rows if r['id'] in selected],
+                           requested_cases=requested, owns_obligations=True))
     return dict(scope='pr-smoke', images=['coverage'], coverage_mode='selected', include=shards,
                 coverage_reports=len(shards), obligations=sum(len(s['cases']) for s in shards),
                 inventory=inventory)
@@ -133,9 +143,16 @@ def generate(catalogs, policy, expanded_coverage=False):
 
     # Instrumentation supplements full release-binary assertions. Keep collection
     # boundaries stable so coverage aggregation can detect missing fixture reports.
+    pr_shards = {}
+    if 'pr_smoke' in policy:
+        catalog = [r for r in inventory.values() if r['suite'] == 'correctness' and r['variant'] == 'default']
+        pr_shards = {s['profile']: s for s in generate_smoke([dict(scenarios=catalog)], policy['pr_smoke'])['include']}
     for profile, variant, suite in sorted(groups):
         if suite == 'correctness' and variant == 'default':
-            add(profile, variant, suite, 'smoke', [], image='coverage', reports=1, tier='smoke', count=False)
+            if profile in pr_shards:
+                shards.append(dict(pr_shards[profile], owns_obligations=False))
+            else:
+                add(profile, variant, suite, 'smoke', [], image='coverage', reports=1, tier='smoke', count=False)
     sample = policy['sample']
     for identifier in sample['cases']:
         if (sample['profile'], 'default', 'correctness', identifier) not in applicable:
