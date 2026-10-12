@@ -11,9 +11,9 @@ def build(manifest, target, target_dir):
     if sources.exists():
         raise ValueError('dependency build requires absent crate sources: ' + str(sources))
     sources.mkdir()
-    (sources / 'lib.rs').write_text('// Dependency-layer placeholder. Never shipped.\n')
-    common = ['--manifest-path', str(manifest), '--target', target, '--target-dir', str(target_dir)]
     try:
+        (sources / 'lib.rs').write_text('// Dependency-layer placeholder. Never shipped.\n')
+        common = ['--manifest-path', str(manifest), '--target', target, '--target-dir', str(target_dir)]
         metadata = subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1',
                                            '--manifest-path', str(manifest)], text=True)
         import json
