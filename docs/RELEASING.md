@@ -24,6 +24,15 @@ remain unchanged.
 | 8 | `beta/4/08-pr-smoke` | Parallel PR smoke checks and Periphery |
 | 9 | `beta/4/09-ghcr-layers` | GHCR dependency layers and smaller coverage runtime |
 | 10 | `beta/4/10-release-testing` | Full tests on the top PR and release evidence |
+| 11 | `beta/4/11-static-build-reuse` | Reuse static build components |
+| 12 | `beta/4/12-coverage-value` | Expanded coverage and suite value reports |
+| 13 | `beta/4/13-test-suite-cost` | Shared suite groups and native binlog checks |
+| 14 | `beta/4/14-balanced-shards` | Balance full-suite shards by measured time |
+| 15 | `beta/4/15-pr-test-selection` | Explicit PR test selection, README and release controls |
+
+The complete [GitHub stack #35](https://github.com/GannettDigital/mysql-replicator/pull/35)
+contains PRs #28–#34 and #36–#43. PR #43 is the final candidate.
+The [release plan](releases/0.1.0-beta.4.plan.json) lists every required PR.
 
 The first PR targets `main`. The local `artifacts/release-stack-beta4/` directory
 contains the exact SHA manifest, PR descriptions, validation notes and helpers:
@@ -101,15 +110,41 @@ Assets in `artifacts/release/` include:
 - `release-test-evidence.json`: added by CI after the full suite passes. It records
   the test run and a digest of the build checksum manifest.
 
-After merging the **complete stack** and obtaining green main CI, create an annotated
-tag on that exact commit (not on the pre-merge local branch):
+After merging the **complete stack**, update your checkout to upstream `main`.
+Keep the checkout clean. Install Python 3, Git, and `gh`. Use `gh auth login`
+with a maintainer account that can read CI artifacts, push tags, and publish
+releases. Use the same Git credentials for the HTTPS repository URL.
+
+First, run the release check:
 
 ```sh
-git tag -a v0.1.0-beta.4 <TESTED_MAIN_COMMIT> -m 'Fourth beta'
-git push origin v0.1.0-beta.4
+python3 tools/release_cut.py check
 ```
 
-The maintainer pushes the tag when ready. `release.yml` requires main ancestry,
+The script reads `VERSION` and the matching `docs/releases/VERSION.plan.json`.
+It checks that every listed PR is merged and that HEAD is the current upstream
+main commit. It requires successful main push CI on that exact commit. It downloads
+the tested packages to a temporary directory, verifies full-suite evidence and
+all asset checksums, then removes the temporary files. Allow space for the binary
+archive, Debian package, and saved container image. The check does not change
+Git refs or GitHub releases. It stops if the release tag already exists.
+
+When the check passes and you are ready to create the draft, run:
+
+```sh
+python3 tools/release_cut.py tag
+```
+
+This command repeats the checks, creates an annotated tag, and pushes **only that
+tag** to the repository in the release plan. It does not merge PRs or push branches.
+If the push fails, the local tag remains. Inspect it before retrying the push;
+the script does not delete or move tags. Do not run this command to repair an
+existing draft. Inspect the release workflow instead.
+
+For later releases, add a matching plan with the repository and required PR numbers.
+The existing workflow and script accept prerelease versions only.
+
+The maintainer runs the tag command when ready. `release.yml` requires main ancestry,
 matching `VERSION`, and a successful main push CI run for that SHA. It downloads
 that run's tested artifacts and `release-test-evidence`. It verifies the commit,
 run attempt, full test scope, version and package checksums. It then creates a
@@ -122,10 +157,18 @@ that exact commit. Do not substitute a manual smoke run or a local rebuild. Leav
 
 ## Publish binaries and the image
 
-Review the draft notes and downloaded asset checksums. Publish the draft as a
-prerelease with a maintainer account (the UI or `gh release edit --draft=false`),
-without marking it latest stable. Maintainer publication triggers the
-`release: published` job. A publication performed with a workflow's `GITHUB_TOKEN`
+Wait for the **Prepare beta release** workflow to create the draft. Review its
+notes and assets. From a clean checkout of the tagged commit, publish it with:
+
+```sh
+python3 tools/release_cut.py publish
+```
+
+This command checks the annotated remote tag, merged PRs, main ancestry, successful
+CI, and the draft's evidence and asset checksums. It publishes the draft as a
+prerelease without marking it latest stable. It stops if the release is already
+public or if the evidence belongs to another CI attempt. Use a maintainer account.
+Maintainer publication triggers the `release: published` job. A publication performed with a workflow's `GITHUB_TOKEN`
 may not trigger another workflow, so do not replace this step with an automatic
 publish using that token.
 
