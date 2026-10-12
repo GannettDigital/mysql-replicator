@@ -34,6 +34,17 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(value['publish'], 'false')
         self.assertTrue(value['cache_to'].startswith('type=gha,'))
 
+    def test_missing_source_repository_never_enables_registry_writes(self):
+        for source in (None, {}):
+            with self.subTest(source=source):
+                fork = copy.deepcopy(self.pr)
+                fork['pull_request']['head']['repo'] = source
+                value = plan(self.env, fork, 'coverage')
+                self.assertEqual(value['publish'], 'false')
+                self.assertEqual(value['cache_to'], 'type=gha,scope=layers-v2-coverage,mode=max')
+                self.assertNotIn(cache_ref('Owner/Project', 'coverage', 'beta/4/09'), value['cache_from'])
+                self.assertIn(cache_ref('Owner/Project', 'coverage', 'beta/4/08'), value['cache_from'])
+
     def test_receipt_loads_by_digest_and_rejects_other_repository_commit_or_image(self):
         digest = 'sha256:' + 'a' * 64
         value = receipt('Owner/Project', 'coverage', 'ghcr.io/owner/project-ci:run-123-1-coverage', digest, 'commit')
