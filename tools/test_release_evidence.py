@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import unittest
 
 from release_evidence import REQUIRED_JOBS, create, verify
@@ -15,6 +16,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
                                                      catalog_missing=[], coverage_collections=2)})
         self.jobs = {name: {'result': 'success'} for name in REQUIRED_JOBS}
         self.checksums = b'checksums from the package build\n'
+        self.report['builds'] = {'release': dict(image='release', commit='a' * 40, run_id='123', attempt='1',
+            package_checksums_sha256=hashlib.sha256(self.checksums).hexdigest())}
+        self.report['shard_attempts'] = {'one': '1', 'two': '2'}
 
     def create(self):
         return create(self.report, self.jobs, self.checksums, self.env, '0.1.0-beta.4')
@@ -29,13 +33,30 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
     def test_partial_smoke_and_wrong_attempt_reports_cannot_certify(self):
         for changes in ({'complete': False}, {'scope': 'pr-smoke'}, {'profiles': {}},
-                        {'provenance': dict(commit='a' * 40, run_id='123', attempt='1')}):
+                        {'provenance': dict(commit='a' * 40, run_id='123', attempt='3')}):
             with self.subTest(changes=changes):
                 report = dict(self.report, **changes)
                 with self.assertRaises(ValueError):
                     create(report, self.jobs, self.checksums, self.env, 'v')
         self.report['profiles']['profile']['catalog_passed'] = 9
         with self.assertRaises(ValueError):
+            self.create()
+
+    def test_evidence_only_retry_can_reuse_earlier_valid_report(self):
+        self.report['provenance']['attempt'] = '1'
+        self.report['shard_attempts'] = {'one': '1'}
+        evidence = self.create()
+        self.assertEqual(evidence['provenance']['attempt'], '2')
+        self.assertEqual(evidence['report_attempt'], '1')
+        self.verify(evidence)
+
+    def test_rebuilt_packages_and_foreign_build_identity_are_rejected(self):
+        self.report['builds']['release']['package_checksums_sha256'] = 'other'
+        with self.assertRaisesRegex(ValueError, 'packages differ'):
+            self.create()
+        self.report['builds']['release']['package_checksums_sha256'] = hashlib.sha256(self.checksums).hexdigest()
+        self.report['builds']['release']['run_id'] = 'other'
+        with self.assertRaisesRegex(ValueError, 'build belongs'):
             self.create()
 
     def test_every_required_job_must_succeed(self):
@@ -72,7 +93,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 self.verify(evidence)
 
     def test_invalid_receipts_cannot_promote(self):
-        for field, value in [('format_version', 2), ('scope', 'pr-smoke'), ('jobs', {}), ('profiles', {})]:
+        for field, value in [('format_version', 1), ('scope', 'pr-smoke'), ('jobs', {}), ('profiles', {})]:
             evidence = dict(self.create(), **{field: value})
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.verify(evidence)

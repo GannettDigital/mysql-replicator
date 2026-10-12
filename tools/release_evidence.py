@@ -14,17 +14,34 @@ def require(condition, reason):
         raise ValueError(reason)
 
 
+def validate_builds(builds, shard_attempts, provenance):
+    require('release' in builds and bool(shard_attempts), 'missing tested build or shard attempts')
+    for image, build in builds.items():
+        require(build['image'] == image and all(build[k] == provenance[k] for k in ('commit', 'run_id'))
+                and 1 <= int(build['attempt']) <= int(provenance['attempt']), 'build belongs to another run or attempt')
+    require(all(1 <= int(a) <= int(provenance['attempt']) for a in shard_attempts.values()),
+            'invalid shard attempt')
+
+
 def create(report, jobs, checksums, env, version):
     require(set(jobs) == REQUIRED_JOBS and all(j['result'] == 'success' for j in jobs.values()),
             'all full-suite jobs must succeed')
     require(report['complete'] is True and report['scope'] == 'full', 'complete full-suite report required')
     provenance = {k: env[v] for k, v in [('commit', 'GITHUB_SHA'), ('run_id', 'GITHUB_RUN_ID'),
                                        ('attempt', 'GITHUB_RUN_ATTEMPT')]}
-    require(report['provenance'] == provenance, 'report belongs to another commit or run attempt')
+    origin = report['provenance']
+    require(all(origin[k] == provenance[k] for k in ('commit', 'run_id')) and
+            1 <= int(origin['attempt']) <= int(provenance['attempt']),
+            'report belongs to another commit or run attempt')
+    builds = report['builds']
+    require(builds['release']['package_checksums_sha256'] == hashlib.sha256(checksums).hexdigest(),
+            'release packages differ from tested packages')
+    validate_builds(builds, report['shard_attempts'], origin)
     require(report['profiles'] and all(p['catalog_expected'] > 0 and
             p['catalog_expected'] == p['catalog_passed'] and not p['catalog_missing']
             for p in report['profiles'].values()), 'profile catalog is incomplete')
-    return dict(format_version=1, version=version, scope='full', provenance=provenance,
+    return dict(format_version=2, report_attempt=origin['attempt'], builds=builds,
+                shard_attempts=report['shard_attempts'], version=version, scope='full', provenance=provenance,
                 repository=env['GITHUB_REPOSITORY'], event=env['GITHUB_EVENT_NAME'], ref=env['GITHUB_REF'],
                 run_url=f"https://github.com/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}/attempts/{env['GITHUB_RUN_ATTEMPT']}",
                 package_checksums_sha256=hashlib.sha256(checksums).hexdigest(),
@@ -35,7 +52,7 @@ def create(report, jobs, checksums, env, version):
 
 
 def verify(evidence, checksums, env, version):
-    require(evidence['format_version'] == 1 and evidence['scope'] == 'full', 'full release evidence required')
+    require(evidence['format_version'] == 2 and evidence['scope'] == 'full', 'full release evidence required')
     require(evidence['version'] == version, 'release version differs from tested version')
     require(evidence['repository'] == env['GITHUB_REPOSITORY'], 'release evidence is from another repository')
     require(evidence['event'] == 'push' and evidence['ref'] == 'refs/heads/main', 'release needs main push evidence')
@@ -45,6 +62,10 @@ def verify(evidence, checksums, env, version):
             'release evidence has missing or failed jobs')
     require(evidence['profiles'] and all(p['catalog_expected'] > 0 and p['catalog_expected'] == p['catalog_passed']
             for p in evidence['profiles'].values()), 'release evidence has incomplete profiles')
+    require(1 <= int(evidence['report_attempt']) <= int(expected['attempt']), 'invalid report attempt')
+    validate_builds(evidence['builds'], evidence['shard_attempts'], dict(expected, attempt=evidence['report_attempt']))
+    require(evidence['builds']['release']['package_checksums_sha256'] == hashlib.sha256(checksums).hexdigest(),
+            'release packages differ from tested packages')
     require(evidence['package_checksums_sha256'] == hashlib.sha256(checksums).hexdigest(),
             'release packages differ from tested packages')
 
