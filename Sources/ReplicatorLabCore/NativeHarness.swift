@@ -34,6 +34,16 @@ public final class NativeHarness {
     var serverVersions: [String:LabMySQLVersion] = ["source":.mysql84,"native":.mysql84,"target57":.mysql57]
     var composeOverlays: [String] = []
     var composeEnvironment: [String: String] = [:]
+    private var sqlCalls = 0
+    private var sqlFailures = 0
+    private var sqlSeconds = 0.0
+    private var sqlBatchCalls = 0
+    private var sqlBatchQueries = 0
+
+    var sqlClientMeasurements: [String: Any] {
+        ["calls": sqlCalls, "failures": sqlFailures, "seconds": sqlSeconds,
+         "batch_calls": sqlBatchCalls, "batch_queries": sqlBatchQueries]
+    }
 
     public init(root: URL, config: NativeCase, artifactCategory: String = "native-suite", identifier: String = runID()) {
         self.root = root; self.runner = ProcessRunner(root: root); self.config = config
@@ -54,15 +64,35 @@ public final class NativeHarness {
                        timeout: timeout, checked: checked, onOutput: onOutput)
     }
     func sql(_ service: String, _ statement: String, headers: Bool = false, preserveWhitespace: Bool = false) throws -> String {
-        let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
-        let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
-                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
-                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+        let result = try sqlCommand(service, statement, headers: headers)
         if preserveWhitespace {
             let output=String(decoding:result.stdout,as:UTF8.self)
             return output.hasSuffix("\n") ? String(output.dropLast()) : output
         }
         return result.text
+    }
+    func sqlBatch(_ service: String, _ queries: [LabSQLBatch.Query]) throws -> [String: String] {
+        guard !queries.isEmpty else { return [:] }
+        let batch = LabSQLBatch(queries: queries)
+        sqlBatchCalls += 1
+        sqlBatchQueries += queries.count
+        let result = try sqlCommand(service, batch.statement, headers: false)
+        return try batch.decode(String(decoding: result.stdout, as: UTF8.self))
+    }
+    private func sqlCommand(_ service: String, _ statement: String, headers: Bool) throws -> CommandResult {
+        let started = ProcessInfo.processInfo.systemUptime
+        sqlCalls += 1
+        var succeeded = false
+        defer {
+            sqlSeconds += ProcessInfo.processInfo.systemUptime - started
+            if !succeeded { sqlFailures += 1 }
+        }
+        let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
+        let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
+                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
+                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+        succeeded = true
+        return result
     }
     func boundary(_ service: String, statusCommand: String? = nil) throws -> Boundary {
         let fields = try sql(service, statusCommand ?? serverVersions[service]!.binlogStatus).components(separatedBy: "\t")

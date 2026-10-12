@@ -77,6 +77,25 @@ class MeasurementsTests(unittest.TestCase):
         self.assertEqual(jobs[0]['seconds'], 60)
         self.assertIsNone(jobs[1]['seconds'])
 
+    def test_sql_client_metrics_ignore_old_runs_and_copied_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            metrics = dict(calls=10, failures=1, seconds=2.5, batch_calls=2, batch_queries=12)
+            old = root / 'artifacts/lab/old/sql-client.json'
+            old.parent.mkdir(parents=True)
+            old.write_text(json.dumps(metrics))
+            with record_shard(root, 'sql'):
+                for suffix in ('fixture', 'fixture/evidence/copy'):
+                    path = root / 'artifacts/lab/new' / suffix / 'sql-client.json'
+                    path.parent.mkdir(parents=True)
+                    path.write_text(json.dumps(metrics))
+            record = json.loads((root / 'artifacts/ci/measurements/sql.json').read_text())
+            self.assertEqual(record['sql_client'], metrics)
+            manifest, base = self.fixture()
+            report = summarize(manifest, [dict(base, sql_client=metrics)])
+            self.assertEqual(report['shards'][0]['sql_client'], metrics)
+            self.assertIn('| release | 1 | 10 | 1 | 2 | 12 | 2.5 |', markdown(report))
+
 
 
 if __name__ == '__main__':

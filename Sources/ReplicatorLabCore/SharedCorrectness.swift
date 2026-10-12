@@ -124,6 +124,8 @@ public enum SharedCorrectness {
             report["cleanup"]=cleanupErrors.isEmpty ? "passed" : cleanupErrors.joined(separator:"; ")
             if !cleanupErrors.isEmpty { report["result"]="failed"; if failure == nil { failure=LabError(cleanupErrors.joined(separator:"; ")) } }
             report["cases"]=reporter.results
+            report["sql_client"]=f.h.sqlClientMeasurements
+            try writeJSON(f.h.sqlClientMeasurements,to:f.output.appendingPathComponent("sql-client.json"))
             try writeJSON(report,to:f.output.appendingPathComponent("result.json"))
             if let runtime=catalogRuntime, let profile=f.variant.catalogProfile {
                 try SharedCatalogSupport.export(root:f.h.root,output:f.output,profile:profile,inputs:catalogInputs,contracts:catalogContracts,runtime:runtime,results:reporter.results,result:report)
@@ -180,9 +182,14 @@ public enum SharedCorrectness {
                 func sql(_ statement: String, preserveWhitespace: Bool = false) throws -> String {
                     try f.sql(role,"SET NAMES utf8mb4; "+statement,preserveWhitespace:preserveWhitespace)
                 }
-                var snapshot: [String:String]=[:]
-                snapshot["database"]=try sql("SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'")
-                snapshot["tables"]=try sql("SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME")
+                var snapshot = try f.h.sqlBatch(f.profile.service(role), [
+                    .init(name: "database", sql: "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"),
+                    .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME"),
+                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
+                    .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
+                    .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX"),
+                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
+                ])
                 let actualTables=snapshot["tables"]!
                 rawTables[service]=actualTables
                 try actualTables.write(to:f.output.appendingPathComponent("tables-"+service+".tsv"),atomically:true,encoding:.utf8)
@@ -196,11 +203,9 @@ public enum SharedCorrectness {
                     }
                     return fields.joined(separator:"\t")
                 }.joined(separator:"\n")
-                let columns=try sql("SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION",preserveWhitespace:true)
+                let columns = snapshot["columns"]!
                 snapshot["columns"]=try ReverseSchemaComparison.columns(columns,mysql84:f.profile.version(role) == "8.4")
-                snapshot["foreignKeys"]=try sql("SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION")
-                snapshot["indexes"]=try sql("SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX")
-                snapshot["partitions"]=try ReverseSchemaComparison.partitions(sql("SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION",preserveWhitespace:true))
+                snapshot["partitions"]=try ReverseSchemaComparison.partitions(snapshot["partitions"]!)
                 let tables=snapshot["tables"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }.filter { $0.count >= 2 && $0[1] == "BASE TABLE" }.map { $0[0] }
                 let columnRows=columns.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 let indexRows=snapshot["indexes"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }

@@ -44,6 +44,7 @@ def record_shard(root, identifier):
     directory = root / 'artifacts/lab'
     before = set(directory.glob('*/result.json'))
     previous_coverage = set(downloaded_inputs(directory))
+    previous_sql = set(directory.rglob('sql-client.json'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
     try:
         yield
@@ -56,6 +57,13 @@ def record_shard(root, identifier):
                 record['scenarios'].extend({k: row[k] for k in
                     ('profile', 'variant', 'suite', 'id', 'family', 'status', 'seconds') if k in row}
                     for row in report.get('scenarios', []))
+            # Each correctness fixture writes one file outside copied evidence.
+            sql_paths = sorted(p for p in set(directory.rglob('sql-client.json')) - previous_sql
+                               if 'evidence' not in p.relative_to(directory).parts)
+            if sql_paths:
+                values = [json.loads(p.read_text()) for p in sql_paths]
+                record['sql_client'] = {k: sum(v[k] for v in values) for k in
+                                        ('calls', 'failures', 'seconds', 'batch_calls', 'batch_queries')}
             paths = [p for p in set(downloaded_inputs(directory)) - previous_coverage
                      if p.parent.name == 'combined']
             if paths:
@@ -155,6 +163,7 @@ def summarize(manifest, records, jobs=None):
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings),
         shards=[dict(planned[k], seconds=r['seconds'], status=r['status'],
+                     sql_client=r.get('sql_client'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
                      mapped_lines=len(r.get('coverage', {}).get('mapped', []))) for k, r in sorted(by_id.items())])
 
@@ -181,6 +190,22 @@ def markdown(report):
     for job in sorted(report['jobs'], key=lambda j: j['seconds'] or 0, reverse=True)[:12]:
         if job['seconds'] is not None:
             lines.append(f"| {job['name']} | {job['seconds']/60:.1f} | {job['conclusion']} |")
+    sql = defaultdict(list)
+    for shard in report['shards']:
+        if shard.get('sql_client') is not None:
+            sql[shard['image']].append(shard['sql_client'])
+    if sql:
+        lines += ['', '## SQL client cost', '',
+                  'These measurements cover the shared correctness fixtures that export sql-client.json. '
+                  'Calls include setup, waits, and assertions through NativeHarness.sql. '
+                  'Seconds include client startup and query execution. They are not target apply time. '
+                  'Missing measurements are not zero. Per-shard values are in report.json.', '',
+                  '| Image | Measured shards | Client calls | Failed calls | Batch calls | Queries in batches | Client seconds |',
+                  '|---|---:|---:|---:|---:|---:|---:|']
+        for image, values in sorted(sql.items()):
+            totals = {k: sum(v[k] for v in values) for k in values[0]}
+            lines.append(f"| {image} | {len(values)} | {totals['calls']} | {totals['failures']} | "
+                         f"{totals['batch_calls']} | {totals['batch_queries']} | {totals['seconds']:.1f} |")
     return '\n'.join(lines) + '\n'
 
 
