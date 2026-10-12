@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 import unittest
 from unittest.mock import Mock, patch
 
@@ -60,7 +61,7 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
              patch.object(ci_lab, 'matrix', return_value={'include': [dict(id='sample')]}), \
              patch.object(ci_lab.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'inputs differ'):
-                ci_lab.run_shard('sample')
+                ci_lab._run_shard('sample')
             run.assert_not_called()
 
     def test_wrong_matrix_fails_before_any_docker_or_suite_commands(self):
@@ -69,8 +70,18 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
              patch.object(ci_lab, 'matrix', return_value={'inputs': 'old'}), \
              patch.object(ci_lab.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'matrix inputs differ'):
-                ci_lab.run_shard('sample')
+                ci_lab._run_shard('sample')
             run.assert_not_called()
+
+    def test_shard_wrapper_records_build_inputs_only_in_actions(self):
+        for actions, expected in [('true', True), ('false', False), ('', False)]:
+            with self.subTest(actions=actions), \
+                 patch.dict(ci_lab.os.environ, GITHUB_ACTIONS=actions), \
+                 patch('ci_measurements.record_shard', return_value=nullcontext()) as record, \
+                 patch.object(ci_lab, '_run_shard') as run:
+                ci_lab.run_shard('sample')
+                record.assert_called_once_with(ci_lab.ROOT, 'sample', build_inputs=expected)
+                run.assert_called_once_with('sample')
 
 
 if __name__ == '__main__':
