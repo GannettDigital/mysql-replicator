@@ -14,6 +14,7 @@ from code_coverage import load_reports
 from coverage_report import downloaded_inputs
 from ci_matrix import key
 from coverage_scope import description, plan_scope
+from ci_reruns import digest, validate_results
 
 
 def write(path, value):
@@ -39,7 +40,7 @@ def line_sets(reports):
 
 
 @contextmanager
-def record_shard(root, identifier):
+def record_shard(root, identifier, build_inputs=False):
     started = time.monotonic()
     directory = root / 'artifacts/lab'
     before = set(directory.glob('*/result.json'))
@@ -47,6 +48,9 @@ def record_shard(root, identifier):
     previous_sql = set(directory.rglob('sql-client.json'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
     try:
+        if build_inputs:
+            record['build'] = json.loads((root / 'artifacts/ci/image/build.json').read_text())
+            record['matrix_sha256'] = digest(root / 'artifacts/ci/matrix.json')
         yield
         record['status'] = 'passed'
     finally:
@@ -86,11 +90,12 @@ def seconds(start, end):
 
 
 def job_timings(pages):
-    # --paginate --slurp returns pages. Keep run attempts separate at the API URL.
+    # The history reader retains the execution attempt of reused jobs.
     jobs = [job for page in pages for job in page['jobs']]
     result = []
     for job in jobs:
         result.append(dict(name=job['name'], conclusion=job.get('conclusion'),
+            execution_attempt=job.get('execution_attempt'),
             seconds=seconds(job.get('started_at'), job.get('completed_at')),
             started_at=job.get('started_at'), completed_at=job.get('completed_at'),
             steps=[dict(name=s['name'], conclusion=s.get('conclusion'),
@@ -99,7 +104,7 @@ def job_timings(pages):
     return result
 
 
-def summarize(manifest, records, jobs=None):
+def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_digest=None):
     planned = {s['id']: s for s in manifest['include']}
     by_id = {}
     for record in records:
@@ -108,8 +113,11 @@ def summarize(manifest, records, jobs=None):
             raise ValueError('duplicate or unknown shard: ' + identifier)
         by_id[identifier] = record
     origins = {(r.get('commit'), r.get('run_id'), r.get('attempt')) for r in records}
-    if len(origins) > 1:
-        raise ValueError('mixed commits or run attempts')
+    stale = []
+    if context is not None:
+        stale = validate_results(manifest, records, jobs, context, builds, matrix_digest)
+    elif len(origins) > 1:
+        raise ValueError('mixed commits or run attempts; CI job and build evidence is required to reuse results')
     digests = {r['coverage']['sources_digest'] for r in records if r.get('coverage')}
     if len(digests) > 1:
         raise ValueError('mixed coverage source mappings')
@@ -154,15 +162,21 @@ def summarize(manifest, records, jobs=None):
     missing_coverage = sorted(k for k, s in planned.items() if s['reports'] and
         by_id.get(k, {}).get('coverage', {}).get('collections', 0) != s['reports'])
     timings = job_timings(jobs) if jobs else []
-    job_failures = [j['name'] for j in timings if j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')]
-    complete = not (missing or failed or missing_coverage or job_failures) and all(not p['catalog_missing'] for p in profiles.values())
+    # This report cannot require its own success or that of its downstream
+    # evidence job. A retry can still expose their previous failed executions.
+    reporting_jobs = {'Timing & Profile Coverage Report', 'Full Suite / Release Evidence'}
+    job_failures = [j['name'] for j in timings if j['name'] not in reporting_jobs and
+                    j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')]
+    complete = not (missing or failed or missing_coverage or job_failures or stale) and all(not p['catalog_missing'] for p in profiles.values())
     return dict(version=1, complete=complete, scope=manifest.get('scope', 'full'), coverage_mode=manifest.get('coverage_mode', 'selected'),
-        provenance={k: records[0].get(k) for k in ('commit', 'run_id', 'attempt')} if records else {},
+        provenance=context if context is not None else ({k: records[0].get(k) for k in ('commit', 'run_id', 'attempt')} if records else {}),
+        builds=builds, stale_shards=stale,
+        shard_attempts={r['id']: r.get('attempt') for r in records},
         missing_shards=missing, failed_shards=failed, missing_coverage=missing_coverage,
         profiles=profiles, jobs=timings, failed_jobs=job_failures,
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings),
-        shards=[dict(planned[k], seconds=r['seconds'], status=r['status'],
+        shards=[dict(planned[k], seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
                      sql_client=r.get('sql_client'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
                      mapped_lines=len(r.get('coverage', {}).get('mapped', []))) for k, r in sorted(by_id.items())])
@@ -206,6 +220,13 @@ def markdown(report):
             totals = {k: sum(v[k] for v in values) for k in values[0]}
             lines.append(f"| {image} | {len(values)} | {totals['calls']} | {totals['failures']} | "
                          f"{totals['batch_calls']} | {totals['batch_queries']} | {totals['seconds']:.1f} |")
+    if report.get('shard_attempts'):
+        counts = Counter(report['shard_attempts'].values())
+        lines += ['', 'Shard execution attempts: ' + ', '.join(f'{k}: {v} shards' for k, v in sorted(counts.items(), key=lambda item: str(item[0]))) + '.',
+                  'Times describe the latest execution of each job. They do not include failed executions replaced by retries.']
+    if report.get('stale_shards'):
+        lines += ['', 'Stale results: rerun these shards against the current build and matrix:']
+        lines += ['- ' + shard for shard in report['stale_shards']]
     return '\n'.join(lines) + '\n'
 
 
@@ -215,18 +236,31 @@ def main():
     parser.add_argument('--records', type=Path, required=True)
     parser.add_argument('--jobs', type=Path)
     parser.add_argument('--unit-coverage', type=Path)
+    parser.add_argument('--builds', type=Path)
     parser.add_argument('--output', type=Path, default=Path('artifacts/ci/report'))
     args = parser.parse_args()
     records = [json.loads(p.read_text()) for p in sorted(args.records.rglob('*.json'))]
     manifest = json.loads(args.matrix.read_text())
+    context = None
+    builds = None
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        if not args.builds or not args.jobs:
+            parser.error('CI reporting requires --builds and --jobs')
+        context = {k: os.environ[v] for k, v in [('commit', 'GITHUB_SHA'), ('run_id', 'GITHUB_RUN_ID'), ('attempt', 'GITHUB_RUN_ATTEMPT')]}
+        builds = {image: json.loads((args.builds / ('ci-build-' + image) / 'build.json').read_text())
+                  for image in {s['image'] for s in manifest['include']}}
     report = summarize(manifest, records,
-                       json.loads(args.jobs.read_text()) if args.jobs else None)
+                       json.loads(args.jobs.read_text()) if args.jobs else None,
+                       context, builds, digest(args.matrix))
     write(args.output / 'report.json', report)
     from ci_test_value import analyze, write as write_value
     unit = load_reports(Path(__file__).resolve().parents[1], [args.unit_coverage])[0] if args.unit_coverage else None
     if unit is not None and unit['inputs'] != ['unit']:
         raise ValueError('unit baseline must contain only unit coverage')
-    write_value(args.output, analyze(manifest, records, unit))
+    value = analyze(manifest, records, unit)
+    value['provenance'] = report['provenance']
+    value['shard_attempts'] = report['shard_attempts']
+    write_value(args.output, value)
     text = markdown(report)
     (args.output / 'summary.md').write_text(text)
     if os.environ.get('GITHUB_STEP_SUMMARY'):
