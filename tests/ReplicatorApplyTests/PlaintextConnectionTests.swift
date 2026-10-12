@@ -7,6 +7,25 @@ import MySQLNIO
 @testable import ReplicatorCapture
 
 final class PlaintextConnectionTests: XCTestCase {
+    func testImmediateServerGreetingOnSeparateEventLoop() throws {
+        let serverGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let clientGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try? clientGroup.syncShutdownGracefully(); try? serverGroup.syncShutdownGracefully() }
+        let disconnected = expectation(description: "all clients disconnected")
+        disconnected.expectedFulfillmentCount = 200
+        let server = try ServerBootstrap(group: serverGroup).childChannelInitializer { channel in
+            channel.pipeline.addHandler(PlaintextHandshake(advertisesTLS: false, disconnected: disconnected))
+        }.bind(host: "127.0.0.1", port: 0).wait()
+        defer { try? server.close().wait() }
+        for _ in 0..<200 {
+            let connection = try MySQLConnection.connect(to: server.localAddress!, username: "test",
+                database: "", password: "test", tlsConfiguration: nil,
+                handshakeTimeout: .seconds(1), on: clientGroup.next()).wait()
+            try connection.close().wait()
+        }
+        wait(for: [disconnected], timeout: 2)
+    }
+
     func testSourceAndTargetConnectAndDisconnectWithoutTLS() throws {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { try? group.syncShutdownGracefully() }

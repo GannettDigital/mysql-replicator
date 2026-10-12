@@ -36,7 +36,7 @@
     {
       "path": "Sources/MySQLNIO/MySQLConnection.swift",
       "upstream_sha256": "9944323e20f68634d166669eaf4ca5ba38af5edc4aa5540a8ef55a1e57c9579a",
-      "vendored_sha256": "65fffd7268153b4c79e248c32b7cdcddb6cd2e136ae4c4eb9ecf4358a973614c"
+      "vendored_sha256": "34f0af6294876c1e337edac872e9711e67f5eace260a4ea3c942e43772cf99d6"
     },
     {
       "path": "Sources/MySQLNIO/MySQLConnectionHandler.swift",
