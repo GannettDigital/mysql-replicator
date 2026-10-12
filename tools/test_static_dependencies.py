@@ -24,6 +24,16 @@ class RustDependencyTests(unittest.TestCase):
                 deps.build(root / 'Cargo.toml', 'target', root / 'target')
             self.assertEqual(source.read_text(), 'real code')
 
+    def test_placeholder_write_failure_removes_created_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(Path, 'write_text', side_effect=PermissionError('write denied')), \
+                    patch.object(deps.subprocess, 'check_output') as metadata:
+                with self.assertRaisesRegex(PermissionError, 'write denied'):
+                    deps.build(root / 'Cargo.toml', 'target', root / 'target')
+                metadata.assert_not_called()
+            self.assertFalse((root / 'src').exists())
+
     def test_failure_removes_placeholder_sources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
