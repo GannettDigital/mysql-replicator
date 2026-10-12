@@ -183,7 +183,11 @@ final class LabFixture {
     func cleanup() throws {
         // Retained demo applier has a stable name; suite clients are tracked.
         for client in clients {
-            if try docker(["inspect",client],checked:false).status == 0 { _ = try docker(["rm","-f",client]) }
+            if try docker(["inspect",client],checked:false).status == 0 {
+                let logs = try docker(["logs",client],checked:false)
+                try (logs.stdout+logs.stderr).write(to:output.appendingPathComponent(client+".log"))
+                _ = try docker(["rm","-f",client])
+            }
         }
         var bundleFailure: Error?
         if !config.isEmpty, try docker(["inspect",helper],checked:false).status == 0 {
