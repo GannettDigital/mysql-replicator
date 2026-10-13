@@ -54,6 +54,42 @@ class RetryTests(unittest.TestCase):
             with self.subTest(page=page), patch('ci_reruns.api_pages', return_value=[page]), self.assertRaises(ValueError):
                 job_history('owner/repo', '9', '1')
 
+    def test_queued_matrix_copy_does_not_hide_the_execution_or_change_its_attempt(self):
+        for conclusion in ('success', 'failure'):
+            actual = dict(id=2, name='shard', run_id=9, run_attempt=2, head_sha='a',
+                          created_at='created', started_at='new', completed_at='done',
+                          status='completed', conclusion=conclusion, steps=[dict(name='test')],
+                          runner_id=10, runner_name='runner')
+            queued = dict(actual, id=3, status='queued', conclusion=None, started_at='created',
+                          completed_at=None, steps=[], runner_id=None, runner_name=None)
+            old = dict(actual, id=1, run_attempt=1, started_at='old', completed_at='old-done')
+            for pair in ([actual, queued], [queued, actual]):
+                pages = [[dict(total_count=1, jobs=[old])],
+                         [dict(total_count=2, jobs=pair)],
+                         [dict(total_count=1, jobs=[dict(actual, id=4, run_attempt=3)])]]
+                with self.subTest(conclusion=conclusion, first=pair[0]['id']), \
+                        patch('ci_reruns.api_pages', side_effect=pages):
+                    jobs = job_history('owner/repo', '9', '3')[0]['jobs']
+                self.assertEqual(len(jobs), 1)
+                self.assertEqual(jobs[0]['execution_attempt'], '2')
+                self.assertEqual(jobs[0]['conclusion'], conclusion)
+
+    def test_conflicting_duplicates_and_assigned_queued_jobs_fail(self):
+        actual = dict(id=1, name='shard', run_id=9, run_attempt=1, head_sha='a',
+                      created_at='created', started_at='start', completed_at='end',
+                      status='completed', conclusion='success', steps=[dict(name='test')],
+                      runner_id=10, runner_name='runner')
+        queued = dict(actual, id=2, status='queued', conclusion=None, completed_at=None,
+                      steps=[], runner_id=None, runner_name=None)
+        for change in (dict(status='in_progress'), dict(runner_id=20), dict(runner_name='assigned'),
+                       dict(steps=[dict(name='test')]), dict(conclusion='failure'),
+                       dict(completed_at='end'), dict(head_sha='b'), dict(run_attempt=2),
+                       dict(created_at='other'), dict(actual, id=2, conclusion='failure')):
+            pages = [dict(total_count=2, jobs=[actual, dict(queued, **change)])]
+            with self.subTest(change=change), patch('ci_reruns.api_pages', return_value=pages), \
+                    self.assertRaisesRegex(ValueError, 'Conflicting duplicate'):
+                job_history('owner/repo', '9', '1')
+
 
 class ResultReuseTests(unittest.TestCase):
     def setUp(self):
