@@ -104,7 +104,7 @@ def job_timings(pages):
     return result
 
 
-def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_digest=None):
+def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_digest=None, dependencies=None):
     planned = {s['id']: s for s in manifest['include']}
     by_id = {}
     for record in records:
@@ -115,7 +115,7 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
     origins = {(r.get('commit'), r.get('run_id'), r.get('attempt')) for r in records}
     stale = []
     if context is not None:
-        stale = validate_results(manifest, records, jobs, context, builds, matrix_digest)
+        stale = validate_results(manifest, records, context, builds, matrix_digest, dependencies)
     elif len(origins) > 1:
         raise ValueError('mixed commits or run attempts; CI job and build evidence is required to reuse results')
     digests = {r['coverage']['sources_digest'] for r in records if r.get('coverage')}
@@ -165,17 +165,21 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
     # This report cannot require its own success or that of its downstream
     # evidence job. A retry can still expose their previous failed executions.
     reporting_jobs = {'Timing & Profile Coverage Report', 'Full Suite / Release Evidence'}
-    job_failures = [j['name'] for j in timings if j['name'] not in reporting_jobs and
-                    j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')]
+    job_failures = ([name for name, job in dependencies.items() if job.get('result') != 'success']
+                    if dependencies is not None else
+                    [j['name'] for j in timings if j['name'] not in reporting_jobs and
+                     j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')])
     complete = not (missing or failed or missing_coverage or job_failures or stale) and all(not p['catalog_missing'] for p in profiles.values())
     return dict(version=1, complete=complete, scope=manifest.get('scope', 'full'), coverage_mode=manifest.get('coverage_mode', 'selected'),
         provenance=context if context is not None else ({k: records[0].get(k) for k in ('commit', 'run_id', 'attempt')} if records else {}),
         builds=builds, stale_shards=stale,
+        dependency_results={name: job.get('result') for name, job in dependencies.items()} if dependencies is not None else None,
+        job_timing_status='available' if jobs else 'unavailable',
         shard_attempts={r['id']: r.get('attempt') for r in records},
         missing_shards=missing, failed_shards=failed, missing_coverage=missing_coverage,
         profiles=profiles, jobs=timings, failed_jobs=job_failures,
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
-        completed_job_seconds=sum(j['seconds'] or 0 for j in timings),
+        completed_job_seconds=sum(j['seconds'] or 0 for j in timings) if jobs else None,
         shards=[dict(planned[k], seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
                      sql_client=r.get('sql_client'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
@@ -192,15 +196,19 @@ def markdown(report):
     for name, p in report['profiles'].items():
         duration = p['shard_seconds']
         lines.append(f"| {name} | {p['catalog_passed']} / {p['catalog_expected']} | {p['covered_lines']} / {p['mapped_lines']} | {p['unique_covered_lines']} | {duration.get('release', 0)/60:.1f} / {duration.get('coverage', 0)/60:.1f} |")
-    lines += ['', f"Completed jobs: {report['completed_job_seconds']/60:.1f} runner-minutes.", '', 'Coverage mode: ' + report['coverage_mode'] + '.', '',
+    timing = (f"Completed jobs: {report['completed_job_seconds']/60:.1f} runner-minutes."
+              if report['completed_job_seconds'] is not None else
+              'GitHub job and step timing unavailable. Test results, shard times and coverage are retained.')
+    lines += ['', timing, '', 'Coverage mode: ' + report['coverage_mode'] + '.', '',
         'Line coverage measures first-party Swift runtime code. It excludes Rust and lab code. '
         'Unique lines are relative to the other measured profiles. They do not prove that a test is redundant. '
         'Coverage is attributed to a shard, not an individual case. SIGKILL cannot flush LLVM counters. '
         'Full CI also requires native and specialized recovery adapters, which have no instrumented collection.', '',
         'Shard time includes tool validation and the lab run. Case time includes its assertions and waits. '
         'Nested case times overlap. The remainder can include fixture setup, cleanup and coverage export. '
-        'Use job and step times in report.json to identify build, download and setup costs.', '',
-        '| Slowest job | Minutes | Result |', '|---|---:|---|']
+        'When available, use job and step times in report.json to identify build, download and setup costs.']
+    if report['jobs']:
+        lines += ['', '| Slowest job | Minutes | Result |', '|---|---:|---|']
     for job in sorted(report['jobs'], key=lambda j: j['seconds'] or 0, reverse=True)[:12]:
         if job['seconds'] is not None:
             lines.append(f"| {job['name']} | {job['seconds']/60:.1f} | {job['conclusion']} |")
@@ -235,6 +243,8 @@ def main():
     parser.add_argument('--matrix', type=Path, required=True)
     parser.add_argument('--records', type=Path, required=True)
     parser.add_argument('--jobs', type=Path)
+    parser.add_argument('--optional-job-timings', action='store_true',
+                        help='Allow missing GitHub timing data; required workflow results still apply')
     parser.add_argument('--unit-coverage', type=Path)
     parser.add_argument('--builds', type=Path)
     parser.add_argument('--output', type=Path, default=Path('artifacts/ci/report'))
@@ -243,15 +253,25 @@ def main():
     manifest = json.loads(args.matrix.read_text())
     context = None
     builds = None
+    dependencies = None
     if os.environ.get('GITHUB_ACTIONS') == 'true':
-        if not args.builds or not args.jobs:
-            parser.error('CI reporting requires --builds and --jobs')
+        if not args.builds or not os.environ.get('CI_JOB_RESULTS'):
+            parser.error('CI reporting requires --builds and CI_JOB_RESULTS')
+        dependencies = json.loads(os.environ['CI_JOB_RESULTS'])
         context = {k: os.environ[v] for k, v in [('commit', 'GITHUB_SHA'), ('run_id', 'GITHUB_RUN_ID'), ('attempt', 'GITHUB_RUN_ATTEMPT')]}
         builds = {image: json.loads((args.builds / ('ci-build-' + image) / 'build.json').read_text())
                   for image in {s['image'] for s in manifest['include']}}
-    report = summarize(manifest, records,
-                       json.loads(args.jobs.read_text()) if args.jobs else None,
-                       context, builds, digest(args.matrix))
+    jobs = None
+    try:
+        if args.jobs:
+            jobs = json.loads(args.jobs.read_text())
+            job_timings(jobs)  # Validate optional timing input before using it.
+    except (OSError, ValueError, TypeError, KeyError):
+        if not args.optional_job_timings:
+            raise
+        print('GitHub job timing unavailable; validating saved test artifacts and required jobs.')
+        jobs = None
+    report = summarize(manifest, records, jobs, context, builds, digest(args.matrix), dependencies)
     write(args.output / 'report.json', report)
     from ci_test_value import analyze, write as write_value
     unit = load_reports(Path(__file__).resolve().parents[1], [args.unit_coverage])[0] if args.unit_coverage else None

@@ -128,11 +128,17 @@ a different commit or run, or different packages stop draft creation.
 
 Use **Re-run failed jobs** for a test or reporting failure. Successful results
 from earlier attempts of that run can be reused only when the test matrix and
-build identities still match. CI checks the latest job result and preserves the
-original execution attempt of each shard. The release record uses format version
+build identities still match. CI requires successful workflow dependencies and
+checks the saved artifacts. Each successful test job must replace its artifact;
+a failed rerun or upload prevents release approval. CI preserves the original
+execution attempt of each shard. The release record uses format version
 2 and binds the package checksum manifest to the build used by the test shards.
 If only the evidence job is retried, it can reuse an earlier complete report
 from the same run and commit.
+
+GitHub job and step timing is optional. If the history API fails, the report marks
+timing as unavailable. Test results, expected coverage collections, and package
+identity remain required. No bypass label is needed for a job-history outage.
 
 Use **Re-run all jobs** if the tested build changed or artifacts expired. Results
 created before build identity recording was added cannot be reused by the new

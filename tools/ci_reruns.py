@@ -77,7 +77,7 @@ def job_history(repository, run_id, attempt):
     executions = {}
     latest = []
     for number in range(1, int(attempt) + 1):
-        pages = api_pages(f'repos/{repository}/actions/runs/{run_id}/attempts/{number}/jobs?per_page=100')
+        pages = api_pages(f'repos/{repository}/actions/runs/{run_id}/attempts/{number}/jobs?per_page=30')
         jobs = [job for page in pages for job in page['jobs']]
         if not pages or len(jobs) != pages[0]['total_count']:
             raise ValueError('Incomplete GitHub job listing')
@@ -106,17 +106,25 @@ def build_identity(root, image, env):
     return result
 
 
-def validate_results(manifest, records, pages, context, builds, matrix_digest):
-    jobs = {job['name']: job for page in pages for job in page['jobs']}
+REQUIRED_DEPENDENCIES = {'lab-tools', 'unit-tests', 'packaging-and-smoke', 'combined-coverage', 'periphery'}
+
+
+def validate_results(manifest, records, context, builds, matrix_digest, dependencies):
+    # These are workflow `needs` results, not REST job-history responses.
+    # Every successful build/shard must overwrite its named artifact. A failed
+    # rerun (including an upload failure) fails the required aggregate job, so
+    # it cannot certify an older artifact that remains in this workflow run.
+    if dependencies is None or set(dependencies) != REQUIRED_DEPENDENCIES:
+        raise ValueError('missing or unexpected required workflow dependencies')
     shards = {s['id']: s for s in manifest['include']}
     stale = []
     for image in {s['image'] for s in shards.values()}:
         build = builds[image]
-        job = jobs.get(f'Build {image} once', {})
+        attempt = str(build.get('attempt', ''))
         if (build['commit'] != context['commit'] or build['run_id'] != context['run_id']
-                or build['image'] != image or not 1 <= int(build['attempt']) <= int(context['attempt'])
-                or build['attempt'] != job.get('execution_attempt') or job.get('conclusion') != 'success'):
-            raise ValueError('Build identity differs from the latest successful job: ' + image)
+                or build['image'] != image or not build.get('runtime') or not attempt.isdigit()
+                or not 1 <= int(attempt) <= int(context['attempt'])):
+            raise ValueError('Build identity differs from this workflow run: ' + image)
     for record in records:
         if record.get('commit') != context['commit'] or record.get('run_id') != context['run_id']:
             raise ValueError('mixed commits or workflow runs')
@@ -124,10 +132,8 @@ def validate_results(manifest, records, pages, context, builds, matrix_digest):
         if not attempt.isdigit() or not 1 <= int(attempt) <= int(context['attempt']):
             raise ValueError('invalid or future shard attempt')
         shard = shards[record['id']]
-        name = f"Integration / {shard['profile']} / {shard['area']} / {shard['variant']} / {shard['image']}"
-        job = jobs.get(name, {})
-        if (job.get('conclusion') != 'success' or job.get('execution_attempt') != attempt
-                or record.get('build') != builds[shard['image']]
+        if (record.get('build') != builds[shard['image']]
+                or int(attempt) < int(builds[shard['image']]['attempt'])
                 or record.get('matrix_sha256') != matrix_digest):
             stale.append(record['id'])
     return stale

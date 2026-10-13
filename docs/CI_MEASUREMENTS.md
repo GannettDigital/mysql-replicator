@@ -55,16 +55,25 @@ Missing shards, failed runs or missing expected coverage collections make the
 report partial and fail its job. Missing catalog results are listed explicitly.
 Keep the run ID, execution attempt, and commit with downloaded evidence.
 A failed-job rerun can reuse successful shards from earlier attempts of the same
-run. CI checks each result against GitHub's job history, the current test matrix,
-and the build identity. A result from another run or commit is rejected. A new
-build requires fresh results for the affected shards. The report lists stale
-shards and the execution attempt for each result.
+run. CI requires successful workflow dependencies, including the aggregate check
+of all builds and integration jobs. Each successful build and test job must
+replace its named artifact. An upload failure fails that job. Thus, a failed
+rerun cannot use an old successful artifact to pass the release check.
+
+The report checks each saved result against the current test matrix and build
+identity. A result from another run or commit is rejected. A new build requires
+fresh results for the affected shards. The report lists stale shards and the
+execution attempt for each result. Test results, catalog checks, expected coverage
+collections, and package checksums remain required.
 
 GitHub copies successful jobs into later attempts with new job IDs. The report
 uses execution timestamps from the attempt history to find when each job ran.
 Times describe the latest execution of each job; they exclude failed executions
-replaced by retries. Temporary API failures have bounded retries. Shard and
-report uploads replace their earlier artifacts.
+replaced by retries. These API measurements are optional. Requests use smaller
+pages and bounded retries. The timing step has a three-minute limit. If it fails,
+the report marks job and step timing as unavailable, not zero. Shard times and
+case times remain in the saved test artifacts. An API outage does not bypass a
+required test check. Shard and report uploads replace their earlier artifacts.
 
 ## Expanded coverage for the release candidate
 
