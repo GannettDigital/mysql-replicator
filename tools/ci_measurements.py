@@ -114,7 +114,9 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
         by_id[identifier] = record
     origins = {(r.get('commit'), r.get('run_id'), r.get('attempt')) for r in records}
     stale = []
+    missing_builds = []
     if context is not None:
+        missing_builds = sorted({s['image'] for s in planned.values()} - set(builds))
         stale = validate_results(manifest, records, context, builds, matrix_digest, dependencies)
     elif len(origins) > 1:
         raise ValueError('mixed commits or run attempts; CI job and build evidence is required to reuse results')
@@ -169,10 +171,10 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
                     if dependencies is not None else
                     [j['name'] for j in timings if j['name'] not in reporting_jobs and
                      j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')])
-    complete = not (missing or failed or missing_coverage or job_failures or stale) and all(not p['catalog_missing'] for p in profiles.values())
+    complete = not (missing or failed or missing_coverage or job_failures or stale or missing_builds) and all(not p['catalog_missing'] for p in profiles.values())
     return dict(version=1, complete=complete, scope=manifest.get('scope', 'full'), coverage_mode=manifest.get('coverage_mode', 'selected'),
         provenance=context if context is not None else ({k: records[0].get(k) for k in ('commit', 'run_id', 'attempt')} if records else {}),
-        builds=builds, stale_shards=stale,
+        builds=builds, missing_builds=missing_builds, stale_shards=stale,
         dependency_results={name: job.get('result') for name, job in dependencies.items()} if dependencies is not None else None,
         job_timing_status='available' if jobs else 'unavailable',
         shard_attempts={r['id']: r.get('attempt') for r in records},
@@ -235,6 +237,11 @@ def markdown(report):
     if report.get('stale_shards'):
         lines += ['', 'Stale results: rerun these shards against the current build and matrix:']
         lines += ['- ' + shard for shard in report['stale_shards']]
+    for field, label in [('missing_builds', 'Missing build records'), ('failed_jobs', 'Failed required jobs'),
+                         ('missing_shards', 'Missing shards'), ('failed_shards', 'Failed shards'),
+                         ('missing_coverage', 'Missing coverage')]:
+        if report.get(field):
+            lines += ['', label + ':', ''] + ['- ' + value for value in report[field]]
     return '\n'.join(lines) + '\n'
 
 
@@ -259,8 +266,11 @@ def main():
             parser.error('CI reporting requires --builds and CI_JOB_RESULTS')
         dependencies = json.loads(os.environ['CI_JOB_RESULTS'])
         context = {k: os.environ[v] for k, v in [('commit', 'GITHUB_SHA'), ('run_id', 'GITHUB_RUN_ID'), ('attempt', 'GITHUB_RUN_ATTEMPT')]}
-        builds = {image: json.loads((args.builds / ('ci-build-' + image) / 'build.json').read_text())
-                  for image in {s['image'] for s in manifest['include']}}
+        builds = {}
+        for image in {s['image'] for s in manifest['include']}:
+            path = args.builds / ('ci-build-' + image) / 'build.json'
+            if path.is_file():
+                builds[image] = json.loads(path.read_text())
     jobs = None
     try:
         if args.jobs:
