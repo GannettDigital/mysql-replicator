@@ -155,6 +155,11 @@ release default. Coverage binaries are diagnostic builds, not release packages.
 
 ## Review the evidence
 
+If a build fails before it saves `build.json`, the measurement report lists the
+missing build record and test shards. The report remains partial, and the job
+fails after it saves the report. Results without a matching build record cannot
+qualify a release. Check `summary.md` and `report.json` for these failures.
+
 Collect one complete expanded report on the release candidate. Compare
 runner-minutes as well as elapsed time. Check build time, cache transfer, image download/load, fixture time and the longest
 shards. Do not treat the delay before a dependent job starts as proven runner
