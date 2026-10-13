@@ -18,6 +18,20 @@ extension ResumeTests {
                                payload:data,expected:[.float64(key),.float32(value)])
         }
     }
+    func testJSONSurvivesRelayInspectionAndRestart() throws {
+        // JSON UINT64 maximum, not representable through a Double conversion.
+        let document=Data([10])+Data(repeating:255,count:8)
+        let payload=Data([1,0,0,0,9,0,0,0])+document
+        try scalarRecovery(types:["int","json"],codes:[3,245],metadata:[4],payload:payload,
+            expected:[.signed(1),.json(try JSONDocument(text:"18446744073709551615"))])
+    }
+    func testTypedJSONSurvivesRelayInspectionAndRestart() throws {
+        let document=Data([15,246,5,5,2,0x80,123,45])
+        let payload=Data([1,0,0,0,8,0,0,0])+document
+        let expected=try JSONDocument(source:Data(#"{"text":"null","typed":[{"path":"$","type":246,"value":"123.45","rawHex":"0502807b2d","precision":5,"scale":2}]}"#.utf8))
+        try scalarRecovery(types:["int","json"],codes:[3,245],metadata:[4],payload:payload,
+            expected:[.signed(1),.json(expected)])
+    }
     private func scalarRecovery(types:[String],codes:[UInt8],metadata:[UInt8],payload:Data,expected:[DecodedValue]) throws {
 
         let path=try directory(), configuration=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue)

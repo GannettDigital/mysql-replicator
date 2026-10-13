@@ -30,7 +30,7 @@ final class DDLCompatibilityTests: XCTestCase {
         XCTAssertEqual(table.columns[13].defaultValue,"hello")
         XCTAssertEqual(table.secondaryIndexes.map(\.name),["by_amount","lookup"])
         for column in table.columns { XCTAssertNoThrow(try DMLColumnType(column.type)) }
-        for sql in ["CREATE TABLE t(id INT PRIMARY KEY,x JSON)","CREATE TABLE t(id INT PRIMARY KEY,x TEXT DEFAULT 'x')","CREATE TABLE t(id INT PRIMARY KEY,x INT DEFAULT (2+3))"] { XCTAssertThrowsError(try parse(sql)) }
+        for sql in ["CREATE TABLE t(id INT PRIMARY KEY,x JSON DEFAULT 'null')","CREATE TABLE t(id INT PRIMARY KEY,x TEXT DEFAULT 'x')","CREATE TABLE t(id INT PRIMARY KEY,x INT DEFAULT (2+3))"] { XCTAssertThrowsError(try parse(sql)) }
     }
     func testCompoundAlterRetainsOperationOrderAndColumnAttributes() throws {
         guard case .alter(_,let actions) = try parse("ALTER TABLE t CHANGE COLUMN old newer DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER id, ADD COLUMN d DATE DEFAULT '2026-01-01', ALTER COLUMN v SET DEFAULT 'text', DROP INDEX old_index, ADD INDEX next_index(newer), ALGORITHM=COPY, LOCK=EXCLUSIVE") else { return XCTFail("not ALTER") }

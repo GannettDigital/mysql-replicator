@@ -73,6 +73,14 @@ cases for all four profiles. The fixed-scale refusal cases are now
 `reject-float-fixed-scale` and `matrix-reject-float-fixed-scale`. These cases await
 integration qualification. See the [floating-point increment](../PLAN/FLOATING_POINT_SUPPORT.md).
 
+`matrix-json` and `bootstrap-matrix-json` check ordinary JSON values.
+`matrix-typedjson` and `bootstrap-matrix-typedjson` check DECIMAL, temporal and
+binary JSON types. All four profiles select these cases. `matrix-jsonpartial`
+and `bootstrap-matrix-jsonpartial` check partial updates on an 8.4 source.
+They inspect mysqlbinlog output to confirm that the source emitted a change
+record. These new cases have not run. The old `matrix-reject-json-opaque` case
+is removed. See [JSON paths and remaining limits](../PLAN/JSON_SUPPORT.md).
+
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
 after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.

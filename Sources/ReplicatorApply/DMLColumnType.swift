@@ -40,7 +40,7 @@ struct DMLColumnType {
         case "bit": try require(arguments.isEmpty || (arguments.count == 1 && (1...64).contains(arguments[0])),"invalid BIT width")
         case "char","binary": try require(arguments.count == 1 && (0...255).contains(arguments[0]),"unsupported fixed column width")
         case "varchar","varbinary": try require(arguments.count == 1 && (1...16383).contains(arguments[0]),"unsupported declared column type")
-        case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year":
+        case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year","json":
             try require(arguments.isEmpty,"unsupported column type arguments")
         case "decimal": try require(arguments.count == 2 && (1...65).contains(arguments[0]) && (0...min(30,arguments[0])).contains(arguments[1]),"unsupported DECIMAL precision/scale")
         case "time","datetime","timestamp": try require(arguments.isEmpty || (arguments.count == 1 && (0...6).contains(arguments[0])),"unsupported temporal precision")
@@ -74,6 +74,7 @@ struct DMLColumnType {
         throw ApplyError("unterminated ENUM/SET definition")
     }
     var interpretation: ColumnInterpretation {
+        if base == "json" { return .json }
         if let width=floatingWidth { return width == 32 ? .float32 : .float64 }
         if isChoice || bitWidth != nil { return .unsigned }
         if integerBits != nil { return unsigned ? .unsigned : .signed }
@@ -101,6 +102,7 @@ struct DMLColumnType {
             return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && matchingInterpretation
         }
         switch base {
+        case "json": return code == 245 && matchingInterpretation && meta == [4]
         case "float","double":
             return code == (base == "float" ? 4 : 5) && matchingInterpretation && meta == [UInt8(floatingWidth!/8)] && (wire.isUnsigned == unsigned || (legacyMetadata && wire.isUnsigned == nil))
         case "bit": return code == 16 && wire.interpretation == .unsigned && meta == [UInt8(bitWidth! % 8),UInt8(bitWidth! / 8)]
@@ -130,6 +132,7 @@ struct DMLColumnType {
             return
         }
         switch (interpretation,value) {
+        case (.json,.json): break
         case (.signed,.signed(let n)):
             let bits=integerBits!
             if bits < 64 { let half=Int64(1) << (bits-1); try require((-half..<half).contains(n),"signed value out of range") }

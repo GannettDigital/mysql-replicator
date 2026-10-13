@@ -168,9 +168,11 @@ SQL parameters, target reads, and recovery. The [floating-point increment](FLOAT
 has unit tests; integration qualification is pending. Fixed-scale FLOAT/DOUBLE
 forms, NaN, and infinity remain unsupported.
 
-This is not complete 5.7 support: JSON,
-spatial types and multi-statement transactions
-remain outside this increment. The source DDL grammar now accepts these DML types,
+The [JSON increment](JSON_SUPPORT.md) adds full documents, typed values and
+partial updates. Unit tests pass. Database qualification and some legacy opaque
+SQL constructors remain pending. Typed JSON can require `CREATE TEMPORARY TABLES`
+permission on the target. Spatial types remain unsupported. MyISAM profiles
+still exclude multi-statement source transactions. The source DDL grammar now accepts these DML types,
 including ENUM/SET, together with bounded defaults and schema operations described
 in [DDL compatibility](DDL_COMPATIBILITY.md).
 

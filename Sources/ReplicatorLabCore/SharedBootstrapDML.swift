@@ -42,7 +42,7 @@ extension SharedCorrectness.Run {
     }
 
     func bootstrapDML() throws {
-        let chosen=DMLCompatibilityCases.cases.filter { selects("bootstrap-matrix-"+$0.id) }
+        let chosen=DMLCompatibilityCases.cases.filter { selects("bootstrap-matrix-"+$0.id) && ($0.source84OnlyReason == nil || f.profile.sourceVersion == .mysql84) }
         guard !chosen.isEmpty else { return }
         try resetNativeEngine(); try f.awaitNative()
         let isolated=LabIsolatedApply(f)
@@ -66,6 +66,7 @@ extension SharedCorrectness.Run {
                         let sql=phase.sql.replacingOccurrences(of:"/replicator-dml.tsv",with:"/replicator-bootstrap-dml.tsv")
                         _ = try f.sql(.source,session+"USE poc; "+sql)
                         let end=try f.boundary()
+                        if phase.expectsJSONDiff { try verifyJSONDiff(before,label:label) }
                         let delta=try f.sql(.source,"SELECT GTID_SUBTRACT('\(end.gtids)','\(before.gtids)')")
                         let count=try DMLCompatibilityCases.transactionCount(delta)
                         if count>0 {
@@ -87,5 +88,18 @@ extension SharedCorrectness.Run {
             }
         }
         if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
+    }
+}
+
+
+extension SharedCorrectness.Run {
+    /// Prove that this fixture emitted a diff, not only a complete JSON after image.
+    func verifyJSONDiff(_ before:Boundary,label:String) throws {
+        let end=try f.boundary()
+        try require(before.file == end.file,"JSON diff fixture rotated within one phase")
+        let output=try f.h.compose(["exec","-T",f.profile.service(.source),"mysqlbinlog","--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(before.position)","--stop-position=\(end.position)","/var/lib/mysql/"+before.file]).stdout
+        try output.write(to:f.output.appendingPathComponent(label+"-source-diff.txt"))
+        let text=String(decoding:output,as:UTF8.self)
+        try require(["JSON_REPLACE(","JSON_INSERT(","JSON_REMOVE("].contains(where:text.contains),"source did not emit a partial JSON change")
     }
 }

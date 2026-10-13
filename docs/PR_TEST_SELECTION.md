@@ -101,7 +101,7 @@ the release packages.
 | DML | `matrix-composite` | Apply changes with a composite primary key. |
 | Index | `ddl-index-create` | Create an index and verify schema history, following DML, and binlog operations. |
 | Trigger policy | `ddl-compat-skip-trigger` | Skip trigger definitions and apply their source row effects once. |
-| Refusal | `reject-json` | Reject unsupported JSON DDL before target SQL. |
+| Refusal | `reject-geometry` | Reject unsupported spatial DDL before target SQL. |
 | Filters | `wild-ignore` | Exclude selected tables and apply included changes. |
 | Basic apply | `positive` | Check DML, exact counters, completed intents, target identity, and independent binlog operations. |
 | Offline | `offline-replay` | Fetch and replay archives, resume without source credentials, and inspect support-bundle contents. |

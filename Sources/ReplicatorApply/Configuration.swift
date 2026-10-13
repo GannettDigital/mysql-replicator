@@ -47,6 +47,7 @@ public struct ApplyColumn: Codable, Equatable {
         } else {
             try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
         }
+        if parsed.base == "json" { try require(defaultValue == nil,"JSON non-NULL defaults are unsupported") }
         if extra == "auto_increment" { try require(parsed.integerBits != nil && !nullable,"invalid auto-increment column") }
         if parsed.isText {
             try require(characterSet == nil || characterSet == "utf8mb4", "unsupported discovered character set; no charset conversion is performed")
@@ -111,6 +112,7 @@ public struct ApplyTable: Codable, Equatable {
             try require(key.name.uppercased() != "PRIMARY" && key.type == "BTREE" && (1...16).contains(key.parts.count),"unsupported secondary index")
             for part in key.parts {
                 guard let column=columns.first(where:{$0.name == part.column}) else { throw ApplyError("index column is absent") }
+                try require(column.type != "json","direct JSON indexes are unsupported")
                 try require(part.direction == "A","unsupported descending index")
                 if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
             }
@@ -120,7 +122,7 @@ public struct ApplyTable: Codable, Equatable {
         for name in primaryKeyColumns {
             guard let key = columns.first(where:{$0.name == name}) else { throw ApplyError("missing primary key column") }
             let type = try DMLColumnType(key.type)
-            try require(!key.nullable && !key.isGenerated && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob"),"primary key requires full nonnullable supported base scalar columns")
+            try require(!key.nullable && !key.isGenerated && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob") && type.base != "json","primary key requires full nonnullable supported base scalar columns")
         }
     }
 }

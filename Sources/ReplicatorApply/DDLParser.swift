@@ -351,6 +351,7 @@ struct DDLParser {
 
 func normalizedDefault(_ value: String?,type: DMLColumnType) throws -> String? {
     guard var value else { return nil }
+    if type.base == "json" { throw ApplyError("JSON non-NULL defaults are unsupported") }
     if type.floatingWidth != nil { return try FloatingPointSQL.defaultValue(value,type:type) }
     if type.bitWidth != nil {
         let number: UInt64?

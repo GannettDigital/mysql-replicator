@@ -328,12 +328,16 @@ public enum SharedCorrectness {
         func dml() throws {
             try resetNativeEngine()
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"poc")
-            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) {
+            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) && (test.source84OnlyReason == nil || f.profile.sourceVersion == .mysql84) {
                 try reporter.run(QualificationCase("matrix-"+test.id,"Shared DML matrix: "+test.id)) {
                     if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
                     try step("CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",database:"poc")
                     if !test.setup.isEmpty { try step(test.setup,database:"poc") }
-                    for phase in test.phases { try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")]) }
+                    for (ordinal,phase) in test.phases.enumerated() {
+                        let before=phase.expectsJSONDiff ? try f.boundary() : nil
+                        try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")])
+                        if let before { try verifyJSONDiff(before,label:"matrix-"+test.id+"-\(ordinal+1)") }
+                    }
                 }
             }
         }

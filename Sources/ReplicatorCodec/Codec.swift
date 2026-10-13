@@ -17,8 +17,8 @@ public struct DecoderError: Error, CustomStringConvertible {
     }
 }
 public enum ColumnInterpretation: String, Codable {
-    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64
-    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7; case .float32: return 8; case .float64: return 9 } }
+    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64, json
+    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7; case .float32: return 8; case .float64: return 9; case .json: return 10 } }
 }
 public struct TableSchema: Codable {
     public let offset: UInt64
@@ -51,8 +51,8 @@ public struct SchemaHistory: Codable {
 }
 
 public enum DecodedValue: Equatable, Encodable {
-    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data), decimal(String), temporal(String), float32(UInt32), float64(UInt64)
-    private enum Keys: String, CodingKey { case kind, value, ieeeBits }
+    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data), decimal(String), temporal(String), float32(UInt32), float64(UInt64), json(JSONDocument)
+    private enum Keys: String, CodingKey { case kind, value, ieeeBits, typedValues }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: Keys.self)
         switch self {
@@ -71,6 +71,9 @@ public enum DecodedValue: Equatable, Encodable {
             try container.encode("float64",forKey:.kind)
             try container.encode(String(Double(bitPattern:bits)),forKey:.value)
             try container.encode(String(format:"%016llx",bits),forKey:.ieeeBits)
+        case .json(let value):
+            try container.encode("json",forKey:.kind); try container.encode(value.text,forKey:.value)
+            if !value.typedValues.isEmpty { try container.encode(value.typedValues,forKey:.typedValues) }
         case .binary(let value): try container.encode("binary", forKey: .kind); try container.encode(value.base64EncodedString(), forKey: .value)
         }
     }
@@ -138,11 +141,13 @@ public final class BinlogDecoder {
     private var context: OpaquePointer?
     private var failed = false
     private var cachedSID: (bytes: Data, text: String)?
+    private let maximumEventBytes: Int
     private let timings: StageTimings?
     /// When supplied, the collector and this decoder's lifetime belong to one worker.
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
+        self.maximumEventBytes=Int(maximumEventBytes)
         self.timings = timings
-        guard Codec.abiVersion == 7, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 9, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -231,7 +236,7 @@ public final class BinlogDecoder {
                     throw DecoderError(code: 7, offset: offset, eventType: type, reason: "schema history fingerprint or table identity differs")
                 }
             }
-            func image(_ row: UInt32, _ side: UInt32) throws -> [DecodedValue] {
+            func image(_ row: UInt32, _ side: UInt32, before: [DecodedValue]? = nil) throws -> [DecodedValue] {
                 try (0..<info.column_count).map { column in
                     var value = rc_value()
                     guard rc_result_value(result, row, side, column, &value) == 0 else { throw DecoderError(code: 8, offset: offset, reason: "invalid result index") }
@@ -247,6 +252,10 @@ public final class BinlogDecoder {
                     case 6: return .decimal(String(decoding:bytes(value.bytes),as:UTF8.self))
                     case 8: return .float32(UInt32(value.unsigned_value))
                     case 9: return .float64(value.unsigned_value)
+                    case 10: return .json(try JSONDocument(source:bytes(value.bytes)))
+                    case 11:
+                        guard side == 1,let before,case .json(let original)=before[Int(column)] else { throw DecoderError(code:7,offset:offset,reason:"partial JSON requires a complete JSON before image") }
+                        return .json(try original.applying(delta:bytes(value.bytes),maximumBytes:maximumEventBytes*3))
                     case 7: return .temporal(String(decoding:bytes(value.bytes),as:UTF8.self))
                     default: throw DecoderError(code: 8, offset: offset, reason: "unknown ABI value kind")
                     }
@@ -255,7 +264,8 @@ public final class BinlogDecoder {
             let insert = [23, 30].contains(info.event_type), delete = [25, 32].contains(info.event_type)
             let rows = try profile("decode.swift.rows") {
                 try (0..<info.row_count).map { row in
-                    DecodedRow(operation: insert ? "insert" : delete ? "delete" : "update", before: insert ? nil : try image(row, 0), after: delete ? nil : try image(row, 1))
+                    let before=insert ? nil : try image(row,0)
+                    return DecodedRow(operation:insert ? "insert" : delete ? "delete" : "update",before:before,after:delete ? nil : try image(row,1,before:before))
                 }
             }
             let detail = bytes(info.detail)
@@ -292,7 +302,7 @@ public final class BinlogDecoder {
             }
             let rawBase64 = profile("decode.swift.raw_base64") { includeRaw ? bytes(info.raw).base64EncodedString() : nil }
             var decoded = profile("decode.swift.event_build") { DecodedEvent(offset: String(offset), eventSize: info.event_size, control: control,
-                rowFlags: [23,24,25,30,31,32].contains(info.event_type) ? info.payload_flags : nil, eventType: info.event_type, eventName: String(decoding: bytes(info.name), as: UTF8.self), timestamp: info.timestamp, serverID: info.server_id, nextPosition: info.next_position, flags: info.flags, sha256: digest,
+                rowFlags: [23,24,25,30,31,32,39].contains(info.event_type) ? info.payload_flags : nil, eventType: info.event_type, eventName: String(decoding: bytes(info.name), as: UTF8.self), timestamp: info.timestamp, serverID: info.server_id, nextPosition: info.next_position, flags: info.flags, sha256: digest,
                 tableID: info.column_count == 0 ? nil : String(info.table_id), database: database, table: table,
                 number: [4,16,33].contains(info.event_type) ? String(info.number) : nil,
                 detailBase64: detail.isEmpty ? nil : detail.base64EncodedString(), detailText: [2,4,15].contains(info.event_type) ? String(data: detail, encoding: .utf8) : nil,
@@ -303,7 +313,7 @@ public final class BinlogDecoder {
                     try (0..<info.column_count).map { index in
                         var c = rc_column()
                         guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
-                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal,8:.float32,9:.float64][c.kind]
+                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal,8:.float32,9:.float64,10:.json][c.kind]
                         let packedLabels = bytes(c.labels)
                         var labels: [Data] = [], labelOffset = 0
                         while labelOffset < packedLabels.count {
@@ -319,7 +329,13 @@ public final class BinlogDecoder {
                 }
             }
             return decoded
-        } catch { failed = true; throw error }
+        } catch {
+            failed = true
+            if let error=error as? DecoderError, error.offset == 0 {
+                throw DecoderError(code:error.code,offset:offset,eventType:type,reason:error.reason)
+            }
+            throw error
+        }
     }
 }
 
@@ -341,6 +357,7 @@ public extension DecodedEvent {
                     cost += 64
                     switch value {
                     case .text(let s), .decimal(let s), .temporal(let s): cost += s.utf8.count
+                    case .json(let d): cost += d.retainedByteCost
                     case .binary(let d): cost += d.count
                     default: break
                     }

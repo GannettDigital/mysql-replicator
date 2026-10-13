@@ -234,3 +234,21 @@ final class LabProfileTests: XCTestCase {
     }
 
 }
+
+extension LabProfileTests {
+    func testJSONCasesShareProfilesAndGateOnlyPartialEvents() throws {
+        for prefix in ["matrix-","bootstrap-matrix-"] {
+            for profile in LabProfile.allCases {
+                for name in ["json","typedjson"] {
+                    let test=try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix+name })
+                    XCTAssertNil(test.reason(profile))
+                }
+                let partial=try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix+"jsonpartial" })
+                XCTAssertEqual(partial.reason(profile) == nil,profile.sourceVersion == .mysql84)
+            }
+        }
+        XCTAssertFalse(DMLCompatibilityCases.rejections.contains { $0.id == "json-opaque" })
+        let partial=try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "jsonpartial" })
+        XCTAssertEqual(partial.phases.filter(\.expectsJSONDiff).count,2)
+    }
+}

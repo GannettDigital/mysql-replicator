@@ -3,7 +3,7 @@ import Foundation
 /// Original fixtures, informed by both pinned MySQL trees. Each phase is checked
 /// against source/native/target data before the next phase can overwrite evidence.
 enum DMLCompatibilityCases {
-    struct Phase { let sql: String; let check: String }
+    struct Phase { let sql: String; let check: String; var expectsJSONDiff = false }
     struct Case {
         let id: String
         let definition: String
@@ -11,8 +11,24 @@ enum DMLCompatibilityCases {
         var setup: String = ""
         var orderBy: String = "id"
         var rowMetadata: String? = nil
+        var source84OnlyReason: String? = nil
     }
     static let cases: [Case] = [
+        Case(id:"json",definition:"id INT PRIMARY KEY,doc JSON",phases:[
+            .init(sql:"INSERT INTO poc.matrix_json VALUES (1,JSON_OBJECT('n',CAST('18446744073709551615' AS UNSIGNED),'a',JSON_ARRAY(1,true,NULL))),(2,'null'),(3,NULL),(4,JSON_QUOTE(CONVERT(0xF09F988065CC81 USING utf8mb4))),(5,'1.0'),(6,JSON_OBJECT())",check:"SELECT COUNT(*)=6 AND SUM(doc IS NULL)=1 AND SUM(JSON_TYPE(doc)='NULL')=1 AND SUM(JSON_TYPE(doc)='DOUBLE')=1 FROM poc.matrix_json"),
+            .init(sql:"UPDATE poc.matrix_json SET id=11,doc=JSON_SET(doc,'$.n',CAST('-9223372036854775808' AS SIGNED),'$.s',JSON_ARRAY('x','y')) WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_json WHERE id=11 AND JSON_UNQUOTE(JSON_EXTRACT(doc,'$.n'))='-9223372036854775808' AND JSON_LENGTH(JSON_EXTRACT(doc,'$.s'))=2"),
+            .init(sql:"ALTER TABLE poc.matrix_json ADD extra JSON; UPDATE poc.matrix_json SET doc=JSON_ARRAY(9007199254740993,1.25e0),extra='true' WHERE id=5",check:"SELECT COUNT(*)=1 FROM poc.matrix_json WHERE id=5 AND JSON_UNQUOTE(JSON_EXTRACT(doc,'$[0]'))='9007199254740993' AND JSON_TYPE(JSON_EXTRACT(doc,'$[1]'))='DOUBLE' AND JSON_TYPE(extra)='BOOLEAN'"),
+            .init(sql:"DELETE FROM poc.matrix_json WHERE id IN (2,4,5,6,11)",check:"SELECT COUNT(*)=1 FROM poc.matrix_json WHERE id=3 AND doc IS NULL")]),
+        Case(id:"typedjson",definition:"id INT PRIMARY KEY,doc JSON,ts TIMESTAMP(6) NULL,b TINYBLOB,c BLOB,d MEDIUMBLOB,e LONGBLOB,f VARBINARY(4),g BINARY(4),bits BIT(9)",phases:[
+            .init(sql:"INSERT INTO poc.matrix_typedjson VALUES(1,NULL,'2024-02-29 12:34:56.123456',0x00FF,0x0027,0xFF00,0x0102,0x00FF,0x00FF,511),(2,NULL,'2024-02-29 12:34:56.123456',0x00FF,0x0027,0xFF00,0x0102,0x00FF,0x00FF,511)",check:"SELECT COUNT(*)=2 AND SUM(doc IS NULL)=2 FROM poc.matrix_typedjson"),
+            .init(sql:"UPDATE poc.matrix_typedjson SET doc=JSON_OBJECT('decimal',CAST('-12345678901234567890123456789012345.123456789012345678901234567890' AS DECIMAL(65,30)),'date',CAST('2024-02-29' AS DATE),'time',CAST('-838:59:59.123456' AS TIME(6)),'datetime',CAST('2024-02-29 12:34:56.123456' AS DATETIME(6)),'timestamp',ts,'tiny',b,'blob',c,'medium',d,'long',e,'varbinary',f,'binary',g,'bits',bits)",check:"SELECT COUNT(*)=2 FROM poc.matrix_typedjson WHERE JSON_TYPE(JSON_EXTRACT(doc,'$.decimal'))='DECIMAL' AND JSON_UNQUOTE(JSON_EXTRACT(doc,'$.decimal'))='-12345678901234567890123456789012345.123456789012345678901234567890' AND JSON_TYPE(JSON_EXTRACT(doc,'$.date'))='DATE' AND JSON_TYPE(JSON_EXTRACT(doc,'$.time'))='TIME' AND JSON_TYPE(JSON_EXTRACT(doc,'$.datetime'))='DATETIME' AND JSON_TYPE(JSON_EXTRACT(doc,'$.timestamp'))='TIMESTAMP' AND JSON_TYPE(JSON_EXTRACT(doc,'$.bits'))='BIT' AND JSON_TYPE(JSON_EXTRACT(doc,'$.tiny'))='BLOB' AND JSON_TYPE(JSON_EXTRACT(doc,'$.blob'))='BLOB' AND JSON_TYPE(JSON_EXTRACT(doc,'$.medium'))='BLOB' AND JSON_TYPE(JSON_EXTRACT(doc,'$.long'))='BLOB' AND JSON_TYPE(JSON_EXTRACT(doc,'$.varbinary'))='BLOB' AND JSON_TYPE(JSON_EXTRACT(doc,'$.binary'))='BLOB'"),
+            .init(sql:"UPDATE poc.matrix_typedjson SET doc=JSON_ARRAY(CAST('0000-00-00' AS DATE),CAST('0000-00-00 00:00:00' AS DATETIME),CAST('18446744073709551615' AS UNSIGNED),CAST('1.00' AS DECIMAL(3,2))) WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_typedjson WHERE id=1 AND JSON_TYPE(JSON_EXTRACT(doc,'$[0]'))='DATE' AND JSON_TYPE(JSON_EXTRACT(doc,'$[1]'))='DATETIME' AND JSON_TYPE(JSON_EXTRACT(doc,'$[2]'))='UNSIGNED INTEGER' AND JSON_TYPE(JSON_EXTRACT(doc,'$[3]'))='DECIMAL'"),
+            .init(sql:"DELETE FROM poc.matrix_typedjson",check:"SELECT COUNT(*)=0 FROM poc.matrix_typedjson")]),
+        Case(id:"jsonpartial",definition:"id INT PRIMARY KEY,doc JSON",phases:[
+            .init(sql:"INSERT INTO poc.matrix_jsonpartial VALUES(1,JSON_OBJECT('padding',REPEAT('x',1000),'a',JSON_ARRAY(1,2,3),'d',CAST('1.00' AS DECIMAL(3,2))))",check:"SELECT COUNT(*)=1 FROM poc.matrix_jsonpartial WHERE JSON_LENGTH(JSON_EXTRACT(doc,'$.a'))=3"),
+            .init(sql:"SET SESSION binlog_row_value_options='PARTIAL_JSON'; UPDATE poc.matrix_jsonpartial SET doc=JSON_SET(doc,'$.a[1]',CAST('123.45' AS DECIMAL(5,2)),'$.d',CAST('2024-02-29' AS DATE)) WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_jsonpartial WHERE JSON_TYPE(JSON_EXTRACT(doc,'$.a[1]'))='DECIMAL' AND JSON_UNQUOTE(JSON_EXTRACT(doc,'$.a[1]'))='123.45' AND JSON_TYPE(JSON_EXTRACT(doc,'$.d'))='DATE'",expectsJSONDiff:true),
+            .init(sql:"SET SESSION binlog_row_value_options='PARTIAL_JSON'; UPDATE poc.matrix_jsonpartial SET doc=JSON_REMOVE(doc,'$.a[0]') WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_jsonpartial WHERE JSON_LENGTH(JSON_EXTRACT(doc,'$.a'))=2 AND JSON_TYPE(JSON_EXTRACT(doc,'$.a[0]'))='DECIMAL'",expectsJSONDiff:true),
+            .init(sql:"DELETE FROM poc.matrix_jsonpartial",check:"SELECT COUNT(*)=0 FROM poc.matrix_jsonpartial")],source84OnlyReason:"Partial JSON row events require an 8.0 or later source; 5.7 writes complete JSON documents."),
         Case(id:"floating",definition:"id DOUBLE PRIMARY KEY,a FLOAT,b DOUBLE,c FLOAT UNSIGNED DEFAULT 1.23456789",phases:[
             .init(sql:"INSERT INTO poc.matrix_floating VALUES(0,0,0,0),(1,0.1,0.1,0.125),(2,-0.1,-0.1,NULL),(3,1.1754943508222875e-38,2.2250738585072014e-308,1),(4,NULL,NULL,NULL)",check:"SELECT COUNT(*)=5 AND SUM(a IS NULL)=1 AND SUM(c IS NULL)=2 FROM poc.matrix_floating"),
             .init(sql:"UPDATE poc.matrix_floating SET id=10.25,a=1.401298464324817e-45,b=4.9406564584124654e-324,c=DEFAULT WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=10.25 AND a>0 AND a<1e-40 AND b>0 AND b<1e-310 AND c>1.23456 AND c<1.23458"),
@@ -119,8 +135,7 @@ enum DMLCompatibilityCases {
         .init(id:"time-precision",sourceDefinition:"id INT PRIMARY KEY,v TIME(6)",targetDefinition:"id INT PRIMARY KEY,v TIME(3)",values:"(1,'12:34:56.123456')",reason:"precision"),
         .init(id:"blob-width",sourceDefinition:"id INT PRIMARY KEY,v MEDIUMBLOB",targetDefinition:"id INT PRIMARY KEY,v BLOB",values:"(1,0x00FF)",reason:"type"),
         .init(id:"generated",sourceDefinition:"id INT PRIMARY KEY,v INT",targetDefinition:"id INT PRIMARY KEY,v INT AS (id+1) STORED",values:"(1,3)",reason:"target generated-column values differ",postWriteCheck:"COUNT(*)=1 AND MIN(id)=1 AND MIN(v)=2"),
-        .init(id:"float-fixed-scale",sourceDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",targetDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",values:"(1,1.25)",reason:"fixed-scale floating-point"),
-        .init(id:"json",sourceDefinition:"id INT PRIMARY KEY,v JSON",targetDefinition:"id INT PRIMARY KEY,v JSON",values:"(1,JSON_OBJECT('a',1))",reason:"column type not supported")
+        .init(id:"float-fixed-scale",sourceDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",targetDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",values:"(1,1.25)",reason:"fixed-scale floating-point")
     ]
 
     static func transactionCount(_ set: String) throws -> Int {

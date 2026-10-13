@@ -1,5 +1,5 @@
 //! Strict bounded offline adapter around the pinned mysql_common codec.
-//! No transport, transaction/application policy, or JSON serialization lives here.
+//! No transport, transaction/application policy, or diagnostic serialization lives here.
 mod query_context;
 use mysql_common::{
     binlog::{
@@ -31,6 +31,7 @@ const SCHEMA: i32 = 7;
 const INTERNAL: i32 = 8;
 mod profiling;
 mod scalars;
+mod json_document;
 use profiling::{Profile, ProfileOutput};
 
 const MAX_COLUMNS: usize = 256;
@@ -127,6 +128,8 @@ enum Cell {
     Binary(Vec<u8>),
     Decimal(Vec<u8>),
     Temporal(Vec<u8>),
+    Json(Vec<u8>),
+    JsonDelta(Vec<u8>),
     Float32(u32),
     Float64(u64),
 }
@@ -139,6 +142,8 @@ impl Cell {
             bytes: Bytes::new(&[]),
         };
         match self {
+            Self::JsonDelta(x) => { v.kind = 11; v.bytes = Bytes::new(x); }
+            Self::Json(x) => { v.kind = 10; v.bytes = Bytes::new(x); }
             Self::Float32(bits) => { v.kind = 8; v.unsigned_value = u64::from(*bits); }
             Self::Float64(bits) => { v.kind = 9; v.unsigned_value = *bits; }
             Self::Absent => (),
@@ -302,6 +307,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
             kind == 4 || kind == 5
         }
         MYSQL_TYPE_ENUM | MYSQL_TYPE_SET | MYSQL_TYPE_BIT => kind == 3,
+        MYSQL_TYPE_JSON => kind == 10,
         MYSQL_TYPE_FLOAT => kind == 8,
         MYSQL_TYPE_DOUBLE => kind == 9,
         MYSQL_TYPE_NEWDECIMAL => kind == 6,
@@ -325,6 +331,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
     )?;
     let meta = table.get_column_metadata(index).unwrap_or(&[]);
     match ty {
+        MYSQL_TYPE_JSON => ensure(meta == [4], MALFORMED, "invalid JSON length metadata")?,
         MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => ensure(
             meta == [if ty == MYSQL_TYPE_FLOAT { 4 } else { 8 }],
             MALFORMED, "invalid floating-point width metadata",
@@ -376,6 +383,7 @@ fn image<'a>(
     present: &[bool],
     budget: &mut usize,
     maximum_output: usize,
+    partial: &[bool],
 ) -> Checked<Vec<Cell>> {
     let count = present.iter().filter(|x| **x).count();
     ensure(count > 0, MALFORMED, "empty row image bitmap")?;
@@ -392,12 +400,14 @@ fn image<'a>(
     let mut image_index = 0;
     for (index, included) in present.iter().enumerate() {
         if !included {
+            ensure(!partial.get(index).copied().unwrap_or(false), MALFORMED, "partial JSON column is absent")?;
             values.push(Cell::Absent);
             continue;
         }
         let is_null = nulls[image_index / 8] & (1 << (image_index % 8)) != 0;
         image_index += 1;
         if is_null {
+            ensure(!partial.get(index).copied().unwrap_or(false), MALFORMED, "partial JSON value is SQL NULL")?;
             ensure(
                 table.event.null_bitmask().get(index).is_some_and(|b| *b),
                 MALFORMED,
@@ -416,6 +426,15 @@ fn image<'a>(
                 value |= u64::from(*byte) << (shift * 8);
             }
             values.push(Cell::Unsigned(value));
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_JSON {
+            let length = u32::from_le_bytes(take(&mut buf.0, 4)?.try_into().unwrap()) as usize;
+            let raw = take(&mut buf.0, length)?;
+            let is_partial = partial.get(index).copied().unwrap_or(false);
+            let json = if is_partial { json_document::delta(raw, maximum_output.saturating_sub(*budget))? } else { json_document::decode(raw, maximum_output.saturating_sub(*budget))? };
+            *budget += json.len();
+            values.push(if is_partial { Cell::JsonDelta(json) } else { Cell::Json(json) });
             continue;
         }
         if ty == ColumnType::MYSQL_TYPE_FLOAT {
@@ -574,7 +593,7 @@ impl Decoder {
         ensure(
             matches!(
                 code,
-                2 | 3 | 4 | 15 | 16 | 19 | 23 | 24 | 25 | 30 | 31 | 32 | 33 | 34 | 35
+                2 | 3 | 4 | 15 | 16 | 19 | 23 | 24 | 25 | 30 | 31 | 32 | 33 | 34 | 35 | 39
             ),
             UNSUPPORTED,
             "unsupported binlog event type",
@@ -689,6 +708,7 @@ impl Decoder {
                     (30, 10),
                     (31, 10),
                     (32, 10),
+                    (39, 10),
                 ] {
                     if let Some(actual) = fde.event_type_header_lengths().get(ty as usize - 1) {
                         ensure(
@@ -863,6 +883,7 @@ impl Decoder {
                             16 | 247 | 248 => 3,
                             4 => 8,
                             5 => 9,
+                            245 => 10,
                             246 => 6,
                             10 | 14 | 13 | 17 | 18 | 19 => 7,
                             _ => {
@@ -911,7 +932,7 @@ impl Decoder {
                                     )?;
                                 }
                             }
-                        } else if scalar_kind != 7 {
+                        } else if scalar_kind != 7 && scalar_kind != 10 {
                             if let Some(charset) = charsets.next() {
                                 collation = parsed(charset)? as u32;
                                 kind = match collation {
@@ -1044,9 +1065,26 @@ impl Decoder {
                                 bits,
                                 &mut budget,
                                 self.max_event.saturating_mul(3).max(MIN_OUTPUT_BUDGET),
+                                &[],
                             )?,
                             None => vec![],
                         };
+                        let mut partial = vec![false; table.kinds.len()];
+                        if code == 39 {
+                            let options = json_document::length(&mut buf.0)?;
+                            ensure(options <= 1,MALFORMED,"unknown partial row value options")?;
+                            if options == 1 {
+                                let json_count = table.kinds.iter().filter(|kind| **kind == 10).count();
+                                let bits = take(&mut buf.0,json_count.div_ceil(8))?;
+                                let mut ordinal = 0;
+                                for (index,kind) in table.kinds.iter().enumerate() {
+                                    if *kind == 10 {
+                                        partial[index] = bits[ordinal/8] & (1 << (ordinal%8)) != 0;
+                                        ordinal += 1;
+                                    }
+                                }
+                            }
+                        }
                         let a = match &after {
                             Some(bits) => image(
                                 &mut buf,
@@ -1054,6 +1092,7 @@ impl Decoder {
                                 bits,
                                 &mut budget,
                                 self.max_event.saturating_mul(3).max(MIN_OUTPUT_BUDGET),
+                                &partial,
                             )?,
                             None => vec![],
                         };
@@ -1079,7 +1118,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    7
+    9
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {

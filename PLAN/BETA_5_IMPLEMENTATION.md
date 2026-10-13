@@ -51,8 +51,11 @@ The [column type audit](COLUMN_TYPE_SUPPORT_AUDIT.md) records the current
 four-profile matrix, test gaps, and acceptance checks for these increments.
 The audit is complete. The TEXT/BLOB limit increment is committed.
 [BIT support](BIT_SUPPORT.md) is committed. [FLOAT/DOUBLE support](FLOATING_POINT_SUPPORT.md)
-is implemented and has unit tests. Shared integration cases will run after the
-missing-type work. JSON remains the next separate increment.
+is committed as `e85ab64` and has unit tests. Shared integration cases will run
+after the missing-type work. [JSON support](JSON_SUPPORT.md) now has unit tests
+for ordinary values, typed values and partial updates. Database qualification
+and some legacy opaque SQL constructors remain pending.
+Do not add a policy to reject valid JSON values that the target can represent.
 
 ## Delivery
 
