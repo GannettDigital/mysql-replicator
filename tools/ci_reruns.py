@@ -119,7 +119,9 @@ def validate_results(manifest, records, context, builds, matrix_digest, dependen
     shards = {s['id']: s for s in manifest['include']}
     stale = []
     for image in {s['image'] for s in shards.values()}:
-        build = builds[image]
+        build = builds.get(image)
+        if build is None:
+            continue  # The report lists missing builds and remains incomplete.
         attempt = str(build.get('attempt', ''))
         if (build['commit'] != context['commit'] or build['run_id'] != context['run_id']
                 or build['image'] != image or not build.get('runtime') or not attempt.isdigit()
@@ -132,8 +134,9 @@ def validate_results(manifest, records, context, builds, matrix_digest, dependen
         if not attempt.isdigit() or not 1 <= int(attempt) <= int(context['attempt']):
             raise ValueError('invalid or future shard attempt')
         shard = shards[record['id']]
-        if (record.get('build') != builds[shard['image']]
-                or int(attempt) < int(builds[shard['image']]['attempt'])
+        build = builds.get(shard['image'])
+        if (build is None or record.get('build') != build
+                or int(attempt) < int(build['attempt'])
                 or record.get('matrix_sha256') != matrix_digest):
             stale.append(record['id'])
     return stale
