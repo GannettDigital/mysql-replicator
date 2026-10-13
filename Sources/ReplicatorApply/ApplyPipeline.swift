@@ -23,9 +23,10 @@ final class ApplyQueue<Element>: @unchecked Sendable {
     private var ended = false
     private var failure: Error?
     private var counters = PipelineSnapshot()
-    let byteLimit: Int, itemLimit: Int, groupLimit: Int
-    init(byteLimit: Int = 64*1024*1024, itemLimit: Int = 4096, groupLimit: Int = 64) {
+    let byteLimit: Int, itemLimit: Int, groupLimit: Int, maximumItemBytes: Int
+    init(byteLimit: Int = 64*1024*1024, itemLimit: Int = 4096, groupLimit: Int = 64, maximumItemBytes: Int? = nil) {
         self.byteLimit = byteLimit; self.itemLimit = itemLimit; self.groupLimit = groupLimit
+        self.maximumItemBytes = maximumItemBytes ?? byteLimit
     }
     var snapshot: PipelineSnapshot {
         condition.lock(); defer { condition.unlock() }; return counters
@@ -41,14 +42,14 @@ final class ApplyQueue<Element>: @unchecked Sendable {
         }
     }
     func push(_ item: Element, bytes: Int, groups: Int = 0, cancellation: CaptureCancellation) throws {
-        try require(bytes >= 0 && bytes <= byteLimit && (0...1).contains(groups),"decoded queue item exceeds capacity")
+        try require(bytes >= 0 && bytes <= maximumItemBytes && (0...1).contains(groups),"decoded queue item exceeds capacity")
         condition.lock(); defer { condition.unlock() }
         while true {
             if let failure { throw failure }
             if cancellation.isCancelled { throw CaptureCancelled() }
             try require(!ended,"decoded queue already finished")
-            if counters.queuedItems < itemLimit && counters.queuedBytes <= byteLimit-bytes
-                && counters.queuedGroups+groups <= groupLimit { break }
+            if counters.queuedItems == 0 || (counters.queuedItems < itemLimit && counters.queuedBytes <= byteLimit-bytes
+                && counters.queuedGroups+groups <= groupLimit) { break }
             _ = condition.wait(until:Date().addingTimeInterval(0.05))
         }
         items.append((item,bytes,groups))
@@ -136,7 +137,10 @@ enum ApplyMessage {
 /// request a schema interpretation from the consumer at an ordered barrier.
 /// Schema validation and durable intents precede any writes.
 final class ApplyPipeline {
-    let queue = ApplyQueue<ApplyMessage>()
+    let queue: ApplyQueue<ApplyMessage>
+    init(maximumItemBytes: Int = 64*1024*1024) {
+        queue = ApplyQueue(maximumItemBytes:maximumItemBytes)
+    }
     func run(cancellation: CaptureCancellation, producerTimings: StageTimings,
              produce: @escaping (CaptureCancellation, @escaping (ApplyMessage) throws -> Void) throws -> Void,
              consume: (ApplyMessage) throws -> Void, onWait: () throws -> Void,

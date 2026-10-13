@@ -14,7 +14,7 @@ enum RecoveryRelay {
         let row: Int
     }
     static func decode(file: URL, groups: inout [Recovery.Group], intents: [Intent], tables: [ApplyTable]) throws {
-        let decoder = try BinlogDecoder(maximumEventBytes:16*1024*1024)
+        let decoder = try BinlogDecoder(maximumEventBytes:BinlogLimits.maximumEventBytes)
         var format: Data?, offset: UInt64 = 4, found: Set<String> = []
         let byEvent = Dictionary(grouping:intents) { "\($0.group):\($0.offset)" }
         var identities: Set<Int> = [], committed: Set<Int> = []
@@ -35,7 +35,7 @@ enum RecoveryRelay {
             guard let format else { throw ApplyError("recovery relay lacks format context") }
             var schema: TableSchema?, filtered = false
             if raw[4] == 19 {
-                let probe = try BinlogDecoder(maximumEventBytes:16*1024*1024)
+                let probe = try BinlogDecoder(maximumEventBytes:BinlogLimits.maximumEventBytes)
                 _ = try probe.decode(format,at:4)
                 let identity = try probe.decode(raw,at:4+UInt64(format.count),filterTable:true)
                 let candidates = schemas[(identity.database ?? "")+"\0"+(identity.table ?? "")] ?? []

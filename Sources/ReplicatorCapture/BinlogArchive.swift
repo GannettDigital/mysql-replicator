@@ -174,7 +174,7 @@ public struct ArchivePreamble: Encodable {
     public let previousGTIDs: String
     public let bytesRead: UInt64
 
-    public static func read(file: URL, maximumEventBytes: UInt32 = 4*1024*1024) throws -> ArchivePreamble {
+    public static func read(file: URL, maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes) throws -> ArchivePreamble {
         struct Complete: Error {}
         let decoder=try BinlogDecoder(maximumEventBytes:maximumEventBytes)
         var version: String?, result: ArchivePreamble?

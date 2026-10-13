@@ -37,8 +37,8 @@ const MAX_COLUMNS: usize = 256;
 const MAX_ROWS: usize = 4096;
 const MAX_TABLES: usize = 1024;
 const MAX_TABLE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_VALUE: usize = 1024 * 1024;
-const MAX_OUTPUT: usize = 16 * 1024 * 1024;
+const MAX_EVENT: usize = 1024 * 1024 * 1024;
+const MIN_OUTPUT_BUDGET: usize = 16 * 1024 * 1024;
 type Failure = (i32, &'static str);
 type Checked<T> = Result<T, Failure>;
 fn ensure(ok: bool, code: i32, message: &'static str) -> Checked<()> {
@@ -359,6 +359,7 @@ fn image<'a>(
     table: &'a Table,
     present: &[bool],
     budget: &mut usize,
+    maximum_output: usize,
 ) -> Checked<Vec<Cell>> {
     let count = present.iter().filter(|x| **x).count();
     ensure(count > 0, MALFORMED, "empty row image bitmap")?;
@@ -367,7 +368,7 @@ fn image<'a>(
         .checked_add(present.len() * std::mem::size_of::<Cell>())
         .ok_or((LIMIT, "output overflow"))?;
     ensure(
-        *budget <= MAX_OUTPUT,
+        *budget <= maximum_output,
         LIMIT,
         "decoded output limit exceeded",
     )?;
@@ -409,7 +410,7 @@ fn image<'a>(
             };
             *budget += size;
             ensure(
-                *budget <= MAX_OUTPUT,
+                *budget <= maximum_output,
                 LIMIT,
                 "decoded output limit exceeded",
             )?;
@@ -430,14 +431,9 @@ fn image<'a>(
             // mysql_common emits INT24 UNSIGNED as nonnegative Value::Int.
             BinlogValue::Value(Value::Int(v)) if kind == 3 && v >= 0 => Cell::Unsigned(v as u64),
             BinlogValue::Value(Value::Bytes(v)) if kind == 4 || kind == 5 => {
-                ensure(
-                    v.len() <= MAX_VALUE,
-                    LIMIT,
-                    "individual value limit exceeded",
-                )?;
                 *budget += v.len();
                 ensure(
-                    *budget <= MAX_OUTPUT,
+                    *budget <= maximum_output,
                     LIMIT,
                     "decoded output limit exceeded",
                 )?;
@@ -470,7 +466,7 @@ fn image<'a>(
                         )?;
                         *budget += width - v.len();
                         ensure(
-                            *budget <= MAX_OUTPUT,
+                            *budget <= maximum_output,
                             LIMIT,
                             "decoded output limit exceeded",
                         )?;
@@ -1000,11 +996,23 @@ impl Decoder {
                         )?;
                         let old = buf.len();
                         let b = match &before {
-                            Some(bits) => image(&mut buf, table, bits, &mut budget)?,
+                            Some(bits) => image(
+                                &mut buf,
+                                table,
+                                bits,
+                                &mut budget,
+                                self.max_event.saturating_mul(3).max(MIN_OUTPUT_BUDGET),
+                            )?,
                             None => vec![],
                         };
                         let a = match &after {
-                            Some(bits) => image(&mut buf, table, bits, &mut budget)?,
+                            Some(bits) => image(
+                                &mut buf,
+                                table,
+                                bits,
+                                &mut budget,
+                                self.max_event.saturating_mul(3).max(MIN_OUTPUT_BUDGET),
+                            )?,
                             None => vec![],
                         };
                         ensure(buf.len() < old, MALFORMED, "row decoder made no progress")?;
@@ -1043,7 +1051,7 @@ pub unsafe extern "C" fn rc_decoder_create(max_event: u32, out: *mut *mut Decode
     unsafe {
         *out = ptr::null_mut();
     }
-    if !(23..=16 * 1024 * 1024).contains(&max_event) {
+    if !(23..=MAX_EVENT as u32).contains(&max_event) {
         return ARG;
     }
     match catch_unwind(|| Box::new(Decoder::new(max_event as usize))) {

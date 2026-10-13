@@ -20,7 +20,7 @@ public enum Inspection {
     /// records may already have been emitted; the caller must report failure.
     /// Cancellation happens between bounded frames and discards decoder state.
     public static func inspect(file: URL, history: SchemaHistory? = nil, includeRaw: Bool = false,
-                               maximumEventBytes: UInt32 = 4 * 1024 * 1024,
+                               maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes,
                                cancelled: () -> Bool = { false }, emit: (DecodedEvent) throws -> Void) throws {
         let schemas = try history?.indexed() ?? [:]
         let input = try FileHandle(forReadingFrom: file)

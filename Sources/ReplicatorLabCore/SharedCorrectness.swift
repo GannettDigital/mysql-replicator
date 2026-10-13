@@ -93,6 +93,7 @@ public enum SharedCorrectness {
                     try indexResume()
                     try forwardFailures()
                     try myisamRecovery()
+                    try largeValues()
                     try offline()
                     try skipErrors(offline:true)
                     try skipErrors(offline:false)

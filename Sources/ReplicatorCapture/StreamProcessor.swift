@@ -104,7 +104,7 @@ final class StreamProcessor {
     }
     func consume(_ frame: Data) throws {
         try check(!finished,"source event after stream completion")
-        try check(frame.count >= 23 && frame.count <= Int(config.maximumEventBytes ?? 4*1024*1024), "live event size limit or short header")
+        try check(frame.count >= 23 && frame.count <= Int(config.eventByteLimit), "live event size limit or short header")
         try check(Int(read(frame, 9, UInt32.self)) == frame.count, "live frame/header length mismatch")
         receivedBytes += UInt64(frame.count)
         let type = frame[4], next = read(frame, 13, UInt32.self), flags = read(frame, 17, UInt16.self)
@@ -141,13 +141,13 @@ final class StreamProcessor {
         if type == 15 {
             guard let start = announced else { throw CaptureError("format event without rotation announcement") }
             resolvedSchemas.removeAll(keepingCapacity:true)
-            let fresh = try BinlogDecoder(maximumEventBytes: config.maximumEventBytes ?? 4*1024*1024, timings:config.decoderProfiling == true ? timings : nil)
+            let fresh = try BinlogDecoder(maximumEventBytes: config.eventByteLimit, timings:config.decoderProfiling == true ? timings : nil)
             let event = try measureDecode("decode.call.format") { try fresh.decode(frame, at: 4, includeRaw: includeRaw) }
             let fullFile = start.position == 4
             try check(fullFile ? UInt64(next) == UInt64(frame.count)+4 : next == 0, "unexpected dump format-event position")
             let begin = BinlogCoordinate(file: start.file, position: fullFile ? UInt64(next) : start.position)
             assembler = try TransactionAssembler(validatedStreamStart: begin, allowPreviousGTIDs: fullFile,
-                acceptsExcludedRanges: config.mode == "gtid" && !excluded.isEmpty)
+                acceptsExcludedRanges: config.mode == "gtid" && !excluded.isEmpty, limits:config.transactionLimits)
             decoder = fresh; decoderOffset = UInt64(frame.count) + 4
             cursor = begin; announced = nil; rotatedTo = nil
             try emitEvent(LiveRecord(kind: "formatContext", file: start.file, observedPosition: String(begin.position), event: event, rawBase64: nil,rawBytes:retainRawBytes ? frame : nil))

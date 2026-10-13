@@ -10,6 +10,7 @@ final class TargetSession {
     let timings: StageTimings
     var statementTrace = TargetStatementTrace()
     var lockEpoch = TableLockEpoch()
+    var packetByteLimit = MySQLPacket.maximumMessageBytes
     var contract: TargetContract { config.replicationProfile.targetContract }
     let config: ApplyConfiguration
     init(configuration: ApplyConfiguration,password: String, timings: StageTimings = .init()) throws {
@@ -42,6 +43,11 @@ final class TargetSession {
     /// intent uncertain. Recovery is a later, separately qualified increment.
     func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false) throws -> ([MySQLRow],UInt64?) {
         try checkConnection()
+        let requestBytes = max(sql.utf8.count+1, textProtocol ? 0 : MySQLProtocol.COM_STMT_EXECUTE.payloadSize(values:binds))
+        if requestBytes > packetByteLimit {
+            if mutation { statementTrace = TargetStatementTrace(phase:.notIssued,sql:sql) }
+            throw ApplyError("target request is \(requestBytes) bytes; max_allowed_packet permits \(packetByteLimit) bytes; increase the target setting and reconnect")
+        }
         let timer = connection.eventLoop.scheduleTask(in:.seconds(Int64(timeoutSeconds))) { _ = self.connection.close() }
         defer { timer.cancel() }
         var affected: UInt64?
@@ -87,6 +93,7 @@ final class TargetSession {
         let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
         try require(encrypted == config.target.requireTLS,"target session TLS differs from configured transport")
         guard let packet = Int(try scalar("SELECT @@max_allowed_packet AS v") ?? ""), packet >= 4096 else { throw ApplyError("invalid target packet limit") }
+        packetByteLimit = min(packet,MySQLPacket.maximumMessageBytes)
         insertByteLimit = min(config.batchPolicy.maximumInsertBytes,packet/2)
         try nativeExclusion()
         let ownership=try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v")

@@ -24,7 +24,7 @@ public final class ArchiveReplay {
         try configuration.validate()
         _ = try source.validate(connection:false)
         directory=URL(fileURLWithPath:configuration.directory).standardizedFileURL
-        maximumEventBytes=source.maximumEventBytes ?? 4*1024*1024
+        maximumEventBytes=source.eventByteLimit
         let metadata=directory.appendingPathComponent("manifest.json")
         guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent("incomplete.json").path) else { throw CaptureError("fetch archive is incomplete") }
         if FileManager.default.fileExists(atPath:metadata.path) {

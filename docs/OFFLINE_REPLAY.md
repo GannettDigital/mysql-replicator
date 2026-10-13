@@ -8,6 +8,9 @@ binlogs through the same decoder, DDL policies, target execution, and SQLite
 journal as `run`. Replay never connects to the source. `support-bundle` collects
 local evidence into one uncompressed tar file without contacting either database.
 
+The `source.maximumEventBytes` and `source.maximumTransactionBytes` settings
+also apply to replay. See [large-value limits](LARGE_VALUES.md).
+
 Database cloning, restoration, and upgrades happen outside these commands. Supply
 the complete source GTID set corresponding to the target's existing data in
 `source.start.executedGTIDs`. Replay does not establish or verify that snapshot.

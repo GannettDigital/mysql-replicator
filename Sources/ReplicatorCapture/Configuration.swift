@@ -34,6 +34,12 @@ public struct CaptureConfiguration: Decodable {
     public var stopAfterGTIDs: String? = nil
     public let idleTimeoutSeconds: Int?
     public let maximumEventBytes: UInt32?
+    public var maximumTransactionBytes: UInt64? = nil
+    public var eventByteLimit: UInt32 { maximumEventBytes ?? BinlogLimits.defaultEventBytes }
+    public var transactionLimits: TransactionAssembler.Limits {
+        let bytes = maximumTransactionBytes ?? BinlogLimits.defaultTransactionBytes
+        return .init(wireBytes:bytes,retainedBytes:Int(bytes)*4)
+    }
     /// Optional detailed worker-local decoder timings; absent/false keeps coarse timings only.
     public let decoderProfiling: Bool?
     /// Bounded disposable download backlog; no fsync and never a restart checkpoint.
@@ -47,7 +53,7 @@ public struct CaptureConfiguration: Decodable {
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
             stopAfterGTIDs:stopAfterGTIDs,
-            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
+            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,maximumTransactionBytes:maximumTransactionBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
     }
 
     public func validate(connection: Bool = true) throws -> DumpStart {
@@ -62,7 +68,8 @@ public struct CaptureConfiguration: Decodable {
               serverID > 0, UUID(uuidString: sourceUUID) != nil,
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
               (1...300).contains(idleTimeoutSeconds ?? 15),
-              (23...16*1024*1024).contains(maximumEventBytes ?? 4*1024*1024),
+              (23...BinlogLimits.maximumEventBytes).contains(eventByteLimit),
+              (UInt64(eventByteLimit)...UInt64(BinlogLimits.maximumEventBytes)).contains(maximumTransactionBytes ?? BinlogLimits.defaultTransactionBytes),
               (20*1024*1024...1024*1024*1024).contains(downloadCacheBytes ?? 256*1024*1024),
               stopAfterTransactions == nil || (1...1_000_000).contains(stopAfterTransactions!) else {
             throw CaptureError("invalid live capture configuration")
@@ -85,7 +92,7 @@ extension CaptureConfiguration {
     enum CodingKeys: String, CodingKey {
         case version, host, port, username, passwordEnvironment, password, requireTLS, serverHostname, caFile
         case serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions, stopAfterGTIDs
-        case idleTimeoutSeconds, maximumEventBytes, decoderProfiling, downloadCacheBytes
+        case idleTimeoutSeconds, maximumEventBytes, maximumTransactionBytes, decoderProfiling, downloadCacheBytes
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,6 +116,7 @@ extension CaptureConfiguration {
         stopAfterGTIDs = try c.decodeIfPresent(String.self, forKey: .stopAfterGTIDs)
         idleTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .idleTimeoutSeconds)
         maximumEventBytes = try c.decodeIfPresent(UInt32.self, forKey: .maximumEventBytes)
+        maximumTransactionBytes = try c.decodeIfPresent(UInt64.self, forKey: .maximumTransactionBytes)
         decoderProfiling = try c.decodeIfPresent(Bool.self, forKey: .decoderProfiling)
         downloadCacheBytes = try c.decodeIfPresent(Int.self, forKey: .downloadCacheBytes)
     }

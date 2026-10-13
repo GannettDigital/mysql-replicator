@@ -228,7 +228,8 @@ that is not excluded by the table filters. Tables need primary keys that meet
 the [DML requirements](PLAN/DML_APPLY.md). FLOAT/DOUBLE, BIT, JSON, and spatial
 columns are not supported. Other untested behavior is not necessarily
 unsupported. Check the [test inventory](docs/TEST_LAB.md),
-[DML limits](PLAN/DML_APPLY.md), and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
+[DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),
+and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
 
 This project uses **AI-assisted development with human review and direction**.
 AI agents write much of the code. A human directs the work, reviews decisions,

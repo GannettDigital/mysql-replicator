@@ -29,6 +29,20 @@ extension MySQLProtocol {
     ///
     /// https://dev.mysql.com/doc/internals/en/com-stmt-execute.html#packet-COM_STMT_EXECUTE
     public struct COM_STMT_EXECUTE: MySQLPacketEncodable {
+        /// Logical payload size, before protocol packet fragmentation.
+        public static func payloadSize(values: [MySQLData]) -> Int {
+            guard !values.isEmpty else { return 10 }
+            var size = 11 + (values.count + 7)/8 + values.count*2
+            for value in values {
+                guard let buffer = value.buffer else { continue }
+                let count = buffer.readableBytes
+                size += count
+                if value.type.encodingLength == nil {
+                    size += count < 251 ? 1 : count < 65536 ? 3 : count < 16777216 ? 4 : 9
+                }
+            }
+            return size
+        }
         /// stmt-id
         public var statementID: UInt32
         
@@ -37,6 +51,9 @@ extension MySQLProtocol {
         
         /// The values to bind
         public var values: [MySQLData]
+        public init(statementID: UInt32, flags: ExecuteFlags, values: [MySQLData]) {
+            self.statementID = statementID; self.flags = flags; self.values = values
+        }
         
         /// `MySQLPacketEncodable` conformance.
         public func encode(to packet: inout MySQLPacket, capabilities: CapabilityFlags) throws {

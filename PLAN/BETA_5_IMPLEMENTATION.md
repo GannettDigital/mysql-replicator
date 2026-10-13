@@ -47,6 +47,10 @@ Each type increment needs INSERT, UPDATE, DELETE, boundary-value, and restart
 tests. A target must reject source types or values that it cannot represent.
 Do not infer support from a parser accepting a type name.
 
+The [column type audit](COLUMN_TYPE_SUPPORT_AUDIT.md) records the current
+four-profile matrix, test gaps, and acceptance checks for these increments.
+The audit is complete. Type implementation has not started.
+
 ## Delivery
 
 Keep these changes in separate reviewable increments. Run the checks for each
@@ -132,3 +136,29 @@ Logs: `/tmp/beta5-cli-tests.log`, `/tmp/beta5-cli-focused.log`,
 `/tmp/beta5-cli-tools.log`.
 Database integration and static Linux packaging were not rerun in this increment.
 The package and lockfile changes select full CI under the existing path rules.
+
+## Large TEXT/BLOB increment
+
+The decoder no longer has a separate 1 MiB value limit. Live capture and replay
+use configurable event and transaction limits. Defaults are 64 MiB per event and
+256 MiB per transaction. The maximum setting is 1 GiB. The applier checks target
+requests against `max_allowed_packet`. The SQL client now splits and reassembles
+protocol packets for large requests and returned rows. Queue admission and
+recovery inspection also accept large events within their limits.
+See [configuration and limits](../docs/LARGE_VALUES.md).
+
+The shared `large-values` case covers all four profiles. It includes large DML,
+restart, source-free replay, limit rejection, and pending-row inspection. This
+case is added but is not yet qualified. At the user's request, the integration
+run was stopped during the Linux image build. Run integration tests after the
+missing-type work is complete. Do not treat this increment as a completed
+four-profile qualification.
+
+Swift unit tests passed: 430. Rust unit tests passed: 8. Python checks completed
+148 tests with no failures and two optional cache checks skipped. Periphery found
+no unused code. The vendor file hashes and complete patch were checked against
+the pinned upstream revision. `git diff --check` passed.
+
+Logs: `/tmp/beta5-large-values-full-swift.log`,
+`/tmp/beta5-large-values-rust.log`, `/tmp/beta5-large-values-python.log`, and
+`/tmp/beta5-large-values-periphery.log`.

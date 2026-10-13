@@ -86,17 +86,17 @@
     {
       "path": "Sources/MySQLNIO/Packet/MySQLPacket.swift",
       "upstream_sha256": "9e7e679eefe5c6a66b8c2c6de9cd4c6c27b5864126669e5aaf9f00db18083b7e",
-      "vendored_sha256": "9e7e679eefe5c6a66b8c2c6de9cd4c6c27b5864126669e5aaf9f00db18083b7e"
+      "vendored_sha256": "9730e22f7c7bbdaa757e30fa26c6436ccc2995e62e97c82cbb6f814dae7c43de"
     },
     {
       "path": "Sources/MySQLNIO/Packet/MySQLPacketDecoder.swift",
       "upstream_sha256": "826a9a5cc19d1dc6ad3244cba1237e66c002991d13fafc33165eda1be5d93f77",
-      "vendored_sha256": "826a9a5cc19d1dc6ad3244cba1237e66c002991d13fafc33165eda1be5d93f77"
+      "vendored_sha256": "1541c7df9ecc123b0e112ea0928e5db88d7ad7ebe7ec0cc453a0ef9b0970b484"
     },
     {
       "path": "Sources/MySQLNIO/Packet/MySQLPacketEncoder.swift",
       "upstream_sha256": "b88ff98f5c9dbccf26586bd47fdc6471fd15ac79b5e21b073e32d9a028f3c658",
-      "vendored_sha256": "b88ff98f5c9dbccf26586bd47fdc6471fd15ac79b5e21b073e32d9a028f3c658"
+      "vendored_sha256": "05900d9bd504e8fc1ce6925ddb9d92e41b46b66fa12b56e5057f48ac467b208f"
     },
     {
       "path": "Sources/MySQLNIO/Packet/MySQLPacketSequence.swift",
@@ -131,7 +131,7 @@
     {
       "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_EXECUTE.swift",
       "upstream_sha256": "b8432c5893f7e467a7d73645b26495c071df2062ee1b853bc5211f8a3f047638",
-      "vendored_sha256": "b8432c5893f7e467a7d73645b26495c071df2062ee1b853bc5211f8a3f047638"
+      "vendored_sha256": "565d57295478f2494f3e00ede38f33443f81e7f73ecc1262ce92f23459556586"
     },
     {
       "path": "Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_PREPARE.swift",

@@ -53,7 +53,7 @@ public enum ArchiveFetch {
             let connection=try connect(); defer { try? connection.close().wait() }
             guard try query(connection,"SELECT @@server_uuid AS uuid").first?.column("uuid")?.string?.lowercased() == source.sourceUUID.lowercased() else { throw CaptureError("source identity changed during fetch") }
             _ = try query(connection,contract.dumpSessionSQL)
-            let maximum=Int(source.maximumEventBytes ?? 4*1024*1024)
+            let maximum=Int(source.eventByteLimit)
             let queue=PacketQueue(byteLimit:maximum+256*1024), channel=connection.channel
             try channel.setOption(ChannelOptions.autoRead,value:false).wait()
             try channel.setOption(ChannelOptions.maxMessagesPerRead,value:1).wait()

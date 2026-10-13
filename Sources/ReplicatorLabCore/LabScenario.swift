@@ -13,7 +13,7 @@ struct LabScenario {
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
         if let reason=variant.reason(profile) { return reason }
-        if ["offline-replay","offline-skip-errors","runtime-control"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
+        if ["offline-replay","offline-skip-errors","runtime-control","large-values"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
         if id == "live-skip-errors" && variant == .positionMinimal { return "Skip/resume fixture uses exact GTID stop boundaries; use default or gtid-full variants." }
         if profile.sourceVersion != .mysql84, let reason=source84OnlyReason { return reason }
         if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
@@ -47,6 +47,7 @@ struct LabScenario {
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",smoke:$0.id == "composite") }
+        cases.append(.init(test:.init("large-values","Large TEXT/BLOB writes, packet fragmentation, restart, replay and recovery"),family:"dml"))
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
         cases.append(.init(test:.init("foreign-key-safety","Foreign-key exclusions, rollback and recovery evidence"),family:"foreign-keys",requiresTransactionalTarget:true,intent:"reject unsafe relationships; retain rollback and cascade evidence"))
         cases.append(.init(test:.init("foreign-keys","InnoDB foreign-key DDL, cascades, composite keys and restart"),family:"foreign-keys",requiresTransactionalTarget:true))

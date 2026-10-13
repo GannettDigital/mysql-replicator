@@ -5,6 +5,17 @@ import ReplicatorConfiguration
 import ReplicatorCapture
 
 final class ConfigurationFileTests: XCTestCase {
+    func testConfigurableEventAndTransactionLimitsSurviveResume() throws {
+        let original=try example()
+        for (event,transaction,valid) in [(67108864,268435456,true),(1073741824,1073741824,true),(1048576,2097152,true),(67108864,1048576,false),(1073741825,1073741825,false)] {
+            let yaml=original.replacingOccurrences(of:"source:\n",with:"source:\n  maximumEventBytes: \(event)\n  maximumTransactionBytes: \(transaction)\n")
+            let config=try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(yaml.utf8))
+            if valid { try config.validate() } else { XCTAssertThrowsError(try config.validate()) }
+            let resumed=config.source.resuming(file:nil,position:nil,executedGTIDs:"")
+            XCTAssertEqual(resumed.eventByteLimit,UInt32(event))
+            XCTAssertEqual(resumed.transactionLimits.wireBytes,UInt64(transaction))
+        }
+    }
     let root = URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     func example() throws -> String {
         try String(contentsOf:root.appendingPathComponent("examples/apply.example.yaml"),encoding:.utf8)

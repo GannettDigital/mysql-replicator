@@ -4,6 +4,22 @@ import ReplicatorCodec
 @testable import ReplicatorApply
 
 final class PipelineTests: XCTestCase {
+    func testOversizedItemWaitsForEmptyQueueAndRemainsBounded() throws {
+        let queue=ApplyQueue<Int>(byteLimit:8,maximumItemBytes:32)
+        try queue.push(1,bytes:1,cancellation:.init())
+        let done=DispatchSemaphore(value:0)
+        DispatchQueue.global().async {
+            do { try queue.push(2,bytes:32,cancellation:.init()) }
+            catch { XCTFail(String(describing:error)) }
+            done.signal()
+        }
+        XCTAssertEqual(done.wait(timeout:.now()+0.1),.timedOut)
+        XCTAssertEqual(try queue.next(onWait:{}),1)
+        XCTAssertEqual(done.wait(timeout:.now()+2),.success)
+        XCTAssertEqual(queue.snapshot.queuedBytes,32)
+        XCTAssertEqual(try queue.next(onWait:{}),2)
+        XCTAssertThrowsError(try queue.push(3,bytes:33,cancellation:.init()))
+    }
     func testQueueDrainsSuccessfulProducerInOrder() throws {
         let queue = ApplyQueue<Int>(byteLimit:8,itemLimit:3,groupLimit:2)
         try queue.push(1,bytes:3,groups:1,cancellation:.init())

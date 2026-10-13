@@ -1,4 +1,5 @@
 import Foundation
+import ReplicatorCodec
 
 /// Outer relay framing remains two UInt32 LE lengths, metadata, then raw event.
 /// Binary metadata v1: "RMD", version byte, kind byte, UInt64 LE source position,
@@ -89,7 +90,7 @@ public enum RelayInspection {
             let eventLength=Int(RelayMetadata.read(header,at:4,as:UInt32.self))
             // Legacy JSON can escape every byte of a 255-byte filename. Bounds
             // are checked before allocation, independent of untrusted lengths.
-            try require((1...4096).contains(metadataLength) && (1...16*1024*1024).contains(eventLength),"invalid relay frame lengths at byte \(offset)")
+            try require((1...4096).contains(metadataLength) && (1...Int(BinlogLimits.maximumEventBytes)).contains(eventLength),"invalid relay frame lengths at byte \(offset)")
             let metadata=try read(metadataLength), raw=try read(eventLength)
             try require(metadata.count == metadataLength && raw.count == eventLength,"truncated relay frame at byte \(offset)")
             let (value,version)=try RelayMetadata.decoded(metadata)

@@ -32,8 +32,8 @@ public final class TransactionAssembler {
         public let events: Int
         public let wireBytes: UInt64
         public let retainedBytes: Int
-        public init(events: Int = 4096, wireBytes: UInt64 = 16 * 1024 * 1024,
-                    retainedBytes: Int = 32 * 1024 * 1024) {
+        public init(events: Int = 4096, wireBytes: UInt64 = BinlogLimits.defaultTransactionBytes,
+                    retainedBytes: Int = Int(BinlogLimits.defaultTransactionBytes)*4) {
             self.events = events; self.wireBytes = wireBytes; self.retainedBytes = retainedBytes
         }
     }

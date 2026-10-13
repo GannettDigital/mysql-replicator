@@ -59,6 +59,10 @@ catch-up and intent completion, and reopens saved schemas before applying anothe
 transaction. Engine differences are checked against the profile before schema
 comparison; arbitrary data/DDL differences are not normalized away.
 
+The full `dml` family includes `large-values` on all four profiles. This case
+checks large TEXT/BLOB values, packet limits, restart, offline replay, and
+recovery inspection. It requires GTID mode. See [large-value limits and tests](LARGE_VALUES.md).
+
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
 after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.
