@@ -38,6 +38,39 @@ def api_pages(endpoint):
         time.sleep(delay)
 
 
+def unique_jobs(jobs, run_id):
+    groups = {}
+    ids = set()
+    for job in jobs:
+        if str(job['run_id']) != str(run_id) or job['id'] in ids:
+            raise ValueError('Wrong run or duplicate job ID in GitHub response')
+        ids.add(job['id'])
+        groups.setdefault(job['name'], []).append(job)
+    result = []
+    for name, candidates in groups.items():
+        if len(candidates) == 1:
+            result.append(candidates[0])
+            continue
+        # A matrix rerun can leave a queued copy beside the completed job.
+        # Accept only an unassigned copy of the same creation and attempt.
+        # Do not choose by conclusion or ID: the unused copy can have a newer ID.
+        completed = [j for j in candidates if j.get('status') == 'completed'
+                     and j.get('started_at') and j.get('completed_at') and j.get('steps')]
+        if len(completed) == 1:
+            actual = completed[0]
+            identity = ('run_attempt', 'head_sha', 'created_at')
+            copies = [j for j in candidates if j is not actual]
+            if (all(actual.get(k) is not None for k in identity)
+                    and all(all(j.get(k) == actual[k] for k in identity)
+                            and j.get('status') == 'queued' and j.get('conclusion') is None
+                            and j.get('completed_at') is None and j.get('steps') == []
+                            and not j.get('runner_id') and not j.get('runner_name') for j in copies)):
+                result.append(actual)
+                continue
+        raise ValueError('Conflicting duplicate job name in GitHub response: ' + name)
+    return result
+
+
 def job_history(repository, run_id, attempt):
     # GitHub copies successful jobs into later attempts with NEW job IDs and
     # run_attempt values, but keeps their original execution timestamps.
@@ -48,12 +81,8 @@ def job_history(repository, run_id, attempt):
         jobs = [job for page in pages for job in page['jobs']]
         if not pages or len(jobs) != pages[0]['total_count']:
             raise ValueError('Incomplete GitHub job listing')
-        names = set()
         latest = []
-        for job in jobs:
-            if str(job['run_id']) != str(run_id) or job['name'] in names:
-                raise ValueError('Wrong run or duplicate job name in GitHub response')
-            names.add(job['name'])
+        for job in unique_jobs(jobs, run_id):
             key = (job['name'], job.get('started_at'), job.get('completed_at'))
             execution = executions.setdefault(key, number)
             latest.append(dict(job, execution_attempt=str(execution)))
