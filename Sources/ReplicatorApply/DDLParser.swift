@@ -6,11 +6,13 @@ struct DDLParser {
     var tokens: [DDLToken]
     var index = 0
     var engine = "MyISAM"
+    let realAsFloat: Bool
     let database: String?
     var compatibility = CompatibilityPolicy()
     var defaultUTF8MB4Collation: UInt32 = 255
     var edits: [DDLSQLEdit] = []
     init(_ data: Data, database: String?, sqlMode: UInt64 = 0) throws {
+        realAsFloat = sqlMode & 1 != 0
         self.database = database; tokens = try DDLTokens.lex(data,sqlMode:sqlMode)
     }
     func isNext(_ word: String) -> Bool { index < tokens.count && tokens[index].keyword == word }
@@ -64,16 +66,24 @@ struct DDLParser {
         }
         if index < tokens.count, let value = tokens[index].literal { index += 1; return value }
         let sign = take("-") ? "-" : (take("+") ? "+" : "")
-        try require(index < tokens.count && !tokens[index].text.isEmpty && tokens[index].text.utf8.allSatisfy({(48...57).contains($0)}),"invalid numeric default")
-        var value = tokens[index].text; index += 1
+        try require(index < tokens.count,"missing numeric default")
+        var value=tokens[index].text; index += 1
         if take(".") {
-            try require(index < tokens.count && tokens[index].text.utf8.allSatisfy({(48...57).contains($0)}),"invalid decimal default")
+            try require(index < tokens.count,"missing fractional default")
             value += "."+tokens[index].text; index += 1
         }
+        if value.hasSuffix("e") || value.hasSuffix("E") {
+            value += take("-") ? "-" : (take("+") ? "+" : "")
+            try require(index < tokens.count,"missing default exponent")
+            value += tokens[index].text; index += 1
+        }
+        try require(value.range(of:#"^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$"#,options:.regularExpression) != nil,"invalid numeric default")
         return sign+value
     }
     mutating func column() throws -> (ApplyColumn,Bool) {
         let name = try identifier(); var base = try identifier().lowercased()
+        if base == "real" { base = realAsFloat ? "float" : "double" }
+        if base == "double" { _ = take("PRECISION") }
         if base == "integer" { base = "int" }
         if base == "numeric" || base == "dec" { base = "decimal" }
         var type = base
@@ -90,7 +100,10 @@ struct DDLParser {
         } else if take("(") {
             var values = [try number()]
             if take(",") { values.append(try number()) }; try expect(")")
-            if ["tinyint","smallint","mediumint","int","bigint","year"].contains(base) {
+            if base == "float", values.count == 1 {
+                try require((0...53).contains(values[0]),"invalid FLOAT binary precision")
+                base = values[0] <= 24 ? "float" : "double"; type = base
+            } else if ["tinyint","smallint","mediumint","int","bigint","year"].contains(base) {
                 try require(values.count == 1 && (base != "year" || values[0] == 4),"unsupported display width")
             } else {
                 if base == "decimal" && values.count == 1 { values.append(0) }
@@ -338,6 +351,7 @@ struct DDLParser {
 
 func normalizedDefault(_ value: String?,type: DMLColumnType) throws -> String? {
     guard var value else { return nil }
+    if type.floatingWidth != nil { return try FloatingPointSQL.defaultValue(value,type:type) }
     if type.bitWidth != nil {
         let number: UInt64?
         if value.hasPrefix("b'"), value.hasSuffix("'") {

@@ -50,9 +50,9 @@ Do not infer support from a parser accepting a type name.
 The [column type audit](COLUMN_TYPE_SUPPORT_AUDIT.md) records the current
 four-profile matrix, test gaps, and acceptance checks for these increments.
 The audit is complete. The TEXT/BLOB limit increment is committed.
-[BIT support](BIT_SUPPORT.md) is implemented and has unit tests. Its shared
-integration cases will run after the missing-type work. FLOAT/DOUBLE and JSON
-remain separate increments.
+[BIT support](BIT_SUPPORT.md) is committed. [FLOAT/DOUBLE support](FLOATING_POINT_SUPPORT.md)
+is implemented and has unit tests. Shared integration cases will run after the
+missing-type work. JSON remains the next separate increment.
 
 ## Delivery
 

@@ -284,6 +284,7 @@ final class TargetSession {
     }
     func bind(_ value: DecodedValue) throws -> MySQLData {
         switch value {
+        case .float32, .float64: return try FloatingPointSQL.bind(value)
         case .null: return .null
         case .text(let s), .decimal(let s), .temporal(let s): return .init(string:s)
         case .binary(let data): return .init(type:.blob,buffer:ByteBuffer(bytes:data))
@@ -310,6 +311,7 @@ final class TargetSession {
                 guard let value = row.column(c.name) else { throw ApplyError("missing target column") }
                 if value.buffer == nil { return .null }
                 switch type.interpretation {
+                case .float32,.float64: return try FloatingPointSQL.read(value,type:type)
                 case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
                 case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
                 case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)

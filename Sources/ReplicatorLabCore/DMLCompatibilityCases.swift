@@ -13,6 +13,12 @@ enum DMLCompatibilityCases {
         var rowMetadata: String? = nil
     }
     static let cases: [Case] = [
+        Case(id:"floating",definition:"id DOUBLE PRIMARY KEY,a FLOAT,b DOUBLE,c FLOAT UNSIGNED DEFAULT 1.23456789",phases:[
+            .init(sql:"INSERT INTO poc.matrix_floating VALUES(0,0,0,0),(1,0.1,0.1,0.125),(2,-0.1,-0.1,NULL),(3,1.1754943508222875e-38,2.2250738585072014e-308,1),(4,NULL,NULL,NULL)",check:"SELECT COUNT(*)=5 AND SUM(a IS NULL)=1 AND SUM(c IS NULL)=2 FROM poc.matrix_floating"),
+            .init(sql:"UPDATE poc.matrix_floating SET id=10.25,a=1.401298464324817e-45,b=4.9406564584124654e-324,c=DEFAULT WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=10.25 AND a>0 AND a<1e-40 AND b>0 AND b<1e-310 AND c>1.23456 AND c<1.23458"),
+            .init(sql:"UPDATE poc.matrix_floating SET a=3.4028234663852886e38,b=1.7976931348623157e308 WHERE id=2",check:"SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=2 AND a>3.40282e38 AND b>1.79769e308"),
+            .init(sql:"ALTER TABLE poc.matrix_floating ADD d DOUBLE PRECISION DEFAULT 1.25e-2, MODIFY c FLOAT(25) UNSIGNED DEFAULT 0.125; UPDATE poc.matrix_floating SET c=0.1,d=-1.25e12 WHERE id=3",check:"SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=3 AND c=0.1 AND d=-1.25e12"),
+            .init(sql:"DELETE FROM poc.matrix_floating WHERE id IN (0,2,3,10.25)",check:"SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=4 AND a IS NULL AND b IS NULL")]),
         Case(id:"bits",definition:"id BIT(64) PRIMARY KEY,a BIT DEFAULT b'1',b BIT(7),c BIT(8),d BIT(9),e BIT(63)",phases:[
             .init(sql:"INSERT INTO poc.matrix_bits VALUES(0,0,0,0,0,0),(18446744073709551615,1,127,255,511,9223372036854775807),(9223372036854775808,NULL,NULL,NULL,NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE CAST(id AS UNSIGNED)=18446744073709551615 AND a+0=1 AND b+0=127 AND c+0=255 AND d+0=511 AND e+0=9223372036854775807"),
             .init(sql:"UPDATE poc.matrix_bits SET id=72623859790382856,a=DEFAULT,b=64,c=128,d=256,e=4611686018427387904 WHERE id=0",check:"SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE id=72623859790382856 AND a+0=1 AND b+0=64 AND c+0=128 AND d+0=256 AND e+0=4611686018427387904"),
@@ -113,7 +119,7 @@ enum DMLCompatibilityCases {
         .init(id:"time-precision",sourceDefinition:"id INT PRIMARY KEY,v TIME(6)",targetDefinition:"id INT PRIMARY KEY,v TIME(3)",values:"(1,'12:34:56.123456')",reason:"precision"),
         .init(id:"blob-width",sourceDefinition:"id INT PRIMARY KEY,v MEDIUMBLOB",targetDefinition:"id INT PRIMARY KEY,v BLOB",values:"(1,0x00FF)",reason:"type"),
         .init(id:"generated",sourceDefinition:"id INT PRIMARY KEY,v INT",targetDefinition:"id INT PRIMARY KEY,v INT AS (id+1) STORED",values:"(1,3)",reason:"target generated-column values differ",postWriteCheck:"COUNT(*)=1 AND MIN(id)=1 AND MIN(v)=2"),
-        .init(id:"float",sourceDefinition:"id INT PRIMARY KEY,v FLOAT",targetDefinition:"id INT PRIMARY KEY,v FLOAT",values:"(1,1.25)",reason:"column type not supported"),
+        .init(id:"float-fixed-scale",sourceDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",targetDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",values:"(1,1.25)",reason:"fixed-scale floating-point"),
         .init(id:"json",sourceDefinition:"id INT PRIMARY KEY,v JSON",targetDefinition:"id INT PRIMARY KEY,v JSON",values:"(1,JSON_OBJECT('a',1))",reason:"column type not supported")
     ]
 

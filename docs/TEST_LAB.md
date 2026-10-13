@@ -68,6 +68,11 @@ CREATE and existing-table discovery. They check widths through 64 bits, defaults
 primary-key changes, ADD/MODIFY, and DML. These new cases await integration
 qualification. See the [BIT increment](../PLAN/BIT_SUPPORT.md).
 
+`matrix-floating` and `bootstrap-matrix-floating` add FLOAT/DOUBLE DML and DDL
+cases for all four profiles. The fixed-scale refusal cases are now
+`reject-float-fixed-scale` and `matrix-reject-float-fixed-scale`. These cases await
+integration qualification. See the [floating-point increment](../PLAN/FLOATING_POINT_SUPPORT.md).
+
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
 after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.

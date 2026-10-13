@@ -163,7 +163,12 @@ BIT(1) through BIT(64) use unsigned values with exact width checks. This include
 primary keys. The [BIT increment](BIT_SUPPORT.md) has unit tests; its shared
 integration cases have not yet run.
 
-This is not complete 5.7 support: FLOAT/DOUBLE, JSON,
+Finite FLOAT/DOUBLE values retain their exact IEEE bits through decoding, binary
+SQL parameters, target reads, and recovery. The [floating-point increment](FLOATING_POINT_SUPPORT.md)
+has unit tests; integration qualification is pending. Fixed-scale FLOAT/DOUBLE
+forms, NaN, and infinity remain unsupported.
+
+This is not complete 5.7 support: JSON,
 spatial types and multi-statement transactions
 remain outside this increment. The source DDL grammar now accepts these DML types,
 including ENUM/SET, together with bounded defaults and schema operations described

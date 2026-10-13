@@ -17,8 +17,8 @@ public struct DecoderError: Error, CustomStringConvertible {
     }
 }
 public enum ColumnInterpretation: String, Codable {
-    case signed, unsigned, utf8, binary, decimal, temporal
-    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7 } }
+    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64
+    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7; case .float32: return 8; case .float64: return 9 } }
 }
 public struct TableSchema: Codable {
     public let offset: UInt64
@@ -51,8 +51,8 @@ public struct SchemaHistory: Codable {
 }
 
 public enum DecodedValue: Equatable, Encodable {
-    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data), decimal(String), temporal(String)
-    private enum Keys: String, CodingKey { case kind, value }
+    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data), decimal(String), temporal(String), float32(UInt32), float64(UInt64)
+    private enum Keys: String, CodingKey { case kind, value, ieeeBits }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: Keys.self)
         switch self {
@@ -63,6 +63,14 @@ public enum DecodedValue: Equatable, Encodable {
         case .text(let value): try container.encode("utf8", forKey: .kind); try container.encode(value, forKey: .value)
         case .decimal(let value): try container.encode("decimal", forKey: .kind); try container.encode(value, forKey: .value)
         case .temporal(let value): try container.encode("temporal", forKey: .kind); try container.encode(value, forKey: .value)
+        case .float32(let bits):
+            try container.encode("float32",forKey:.kind)
+            try container.encode(String(Float(bitPattern:bits)),forKey:.value)
+            try container.encode(String(format:"%08x",bits),forKey:.ieeeBits)
+        case .float64(let bits):
+            try container.encode("float64",forKey:.kind)
+            try container.encode(String(Double(bitPattern:bits)),forKey:.value)
+            try container.encode(String(format:"%016llx",bits),forKey:.ieeeBits)
         case .binary(let value): try container.encode("binary", forKey: .kind); try container.encode(value.base64EncodedString(), forKey: .value)
         }
     }
@@ -134,7 +142,7 @@ public final class BinlogDecoder {
     /// When supplied, the collector and this decoder's lifetime belong to one worker.
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
         self.timings = timings
-        guard Codec.abiVersion == 6, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 7, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -237,6 +245,8 @@ public final class BinlogDecoder {
                         return .text(text)
                     case 5: return .binary(bytes(value.bytes))
                     case 6: return .decimal(String(decoding:bytes(value.bytes),as:UTF8.self))
+                    case 8: return .float32(UInt32(value.unsigned_value))
+                    case 9: return .float64(value.unsigned_value)
                     case 7: return .temporal(String(decoding:bytes(value.bytes),as:UTF8.self))
                     default: throw DecoderError(code: 8, offset: offset, reason: "unknown ABI value kind")
                     }
@@ -293,7 +303,7 @@ public final class BinlogDecoder {
                     try (0..<info.column_count).map { index in
                         var c = rc_column()
                         guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
-                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal][c.kind]
+                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal,8:.float32,9:.float64][c.kind]
                         let packedLabels = bytes(c.labels)
                         var labels: [Data] = [], labelOffset = 0
                         while labelOffset < packedLabels.count {

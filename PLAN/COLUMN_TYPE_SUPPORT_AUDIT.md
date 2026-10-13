@@ -5,8 +5,9 @@ This report checks code and test definitions. It does not claim a new four-profi
 integration qualification. The limits below describe that baseline. The subsequent
 [large-value increment](../docs/LARGE_VALUES.md) changes the TEXT/BLOB size limits
 and adds tests. The subsequent [BIT increment](BIT_SUPPORT.md) adds BIT support
-and unit tests. Its integration qualification is pending. Other type gaps in
-this audit remain open.
+and unit tests. [FLOAT/DOUBLE support](FLOATING_POINT_SUPPORT.md) is also
+implemented with unit tests. Integration qualification for these increments
+is pending. Other type gaps in this audit remain open.
 
 ## Findings
 

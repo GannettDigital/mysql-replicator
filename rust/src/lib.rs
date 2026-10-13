@@ -127,6 +127,8 @@ enum Cell {
     Binary(Vec<u8>),
     Decimal(Vec<u8>),
     Temporal(Vec<u8>),
+    Float32(u32),
+    Float64(u64),
 }
 impl Cell {
     fn view(&self) -> ValueView {
@@ -137,6 +139,8 @@ impl Cell {
             bytes: Bytes::new(&[]),
         };
         match self {
+            Self::Float32(bits) => { v.kind = 8; v.unsigned_value = u64::from(*bits); }
+            Self::Float64(bits) => { v.kind = 9; v.unsigned_value = *bits; }
             Self::Absent => (),
             Self::Null => v.kind = 1,
             Self::Signed(x) => {
@@ -298,6 +302,8 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
             kind == 4 || kind == 5
         }
         MYSQL_TYPE_ENUM | MYSQL_TYPE_SET | MYSQL_TYPE_BIT => kind == 3,
+        MYSQL_TYPE_FLOAT => kind == 8,
+        MYSQL_TYPE_DOUBLE => kind == 9,
         MYSQL_TYPE_NEWDECIMAL => kind == 6,
         MYSQL_TYPE_DATE
         | MYSQL_TYPE_NEWDATE
@@ -319,6 +325,10 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
     )?;
     let meta = table.get_column_metadata(index).unwrap_or(&[]);
     match ty {
+        MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => ensure(
+            meta == [if ty == MYSQL_TYPE_FLOAT { 4 } else { 8 }],
+            MALFORMED, "invalid floating-point width metadata",
+        )?,
         MYSQL_TYPE_BIT => ensure(
             meta.len() == 2 && meta[0] <= 7
                 && (1..=64).contains(&(u16::from(meta[1]) * 8 + u16::from(meta[0]))),
@@ -406,6 +416,18 @@ fn image<'a>(
                 value |= u64::from(*byte) << (shift * 8);
             }
             values.push(Cell::Unsigned(value));
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_FLOAT {
+            let bits = u32::from_le_bytes(take(&mut buf.0, 4)?.try_into().unwrap());
+            ensure(f32::from_bits(bits).is_finite(), UNSUPPORTED, "non-finite FLOAT value")?;
+            values.push(Cell::Float32(bits));
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_DOUBLE {
+            let bits = u64::from_le_bytes(take(&mut buf.0, 8)?.try_into().unwrap());
+            ensure(f64::from_bits(bits).is_finite(), UNSUPPORTED, "non-finite DOUBLE value")?;
+            values.push(Cell::Float64(bits));
             continue;
         }
         if ty == ColumnType::MYSQL_TYPE_BIT {
@@ -839,6 +861,8 @@ impl Decoder {
                         let numeric = ty.is_numeric_type();
                         let scalar_kind = match ty as u8 {
                             16 | 247 | 248 => 3,
+                            4 => 8,
+                            5 => 9,
                             246 => 6,
                             10 | 14 | 13 | 17 | 18 | 19 => 7,
                             _ => {
@@ -1055,7 +1079,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    6
+    7
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {

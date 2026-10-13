@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 6. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 7. Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -28,8 +28,11 @@ typedef struct {
     rc_bytes name, database, table, detail, raw, error, fingerprint;
 } rc_event;
 /* Value kinds: 0 absent, 1 SQL NULL, 2 signed integer, 3 unsigned integer,
- * 4 UTF-8 text, 5 binary, 6 exact decimal text, 7 canonical temporal text. Text/binary are pointer+length, including embedded NUL.
- * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7, in column order.
+ * 4 UTF-8 text, 5 binary, 6 exact decimal text, 7 canonical temporal text,
+ * 8 FLOAT IEEE-754 binary32 bits, 9 DOUBLE IEEE-754 binary64 bits.
+ * Kinds 8/9 use unsigned_value, with zero high bits for kind 8. Non-finite values fail.
+ * Text/binary are pointer+length, including embedded NUL.
+ * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7/8/9, in column order.
  * History is mandatory for rows, even if optional wire metadata happens to exist.
  */
 typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; rc_bytes bytes; } rc_value;
