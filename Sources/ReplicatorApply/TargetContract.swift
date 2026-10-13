@@ -29,7 +29,7 @@ extension MySQL57TargetContract {
     func defaultUTF8MB4Collation(_ target: TargetSession) throws -> String? {
         try target.scalar("SELECT DEFAULT_COLLATE_NAME AS v FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME='utf8mb4'")
     }
-    func columnDefault(_ value: String?, type: String) throws -> String? { value }
+    func columnDefault(_ value: String?, type: String) throws -> String? { try TargetColumnMetadata.defaultValue(value,type:type,mysql84:false) }
     func columnExtra(_ value: String?, defaultValue: String?, type: String) -> String? { value.flatMap { $0.isEmpty ? nil : $0 } }
 }
 

@@ -30,6 +30,7 @@ extension ApplyTable {
         guard let old=columns.firstIndex(where:{$0.name == column.name}) else {throw ApplyError("MODIFY column is absent")}
         func family(_ column:ApplyColumn) -> String {
             guard let type=try? DMLColumnType(column.type) else {return "unsupported"}
+            if type.bitWidth != nil {return "bit"}
             if type.integerBits != nil {return "integer"}
             return type.interpretation.rawValue
         }
@@ -79,6 +80,7 @@ extension TargetSession {
                 var column = try resolveColumn(definition,parent:encoding,context:context)
                 guard let i = result.columns.firstIndex(where:{$0.name == old}) else { throw ApplyError("MODIFY/CHANGE column is absent") }
                 let oldType = try DMLColumnType(result.columns[i].type), newType = try DMLColumnType(column.type)
+                try require((oldType.bitWidth == nil) == (newType.bitWidth == nil),"cross-family BIT MODIFY/CHANGE is unsupported")
                 try require((oldType.integerBits != nil && newType.integerBits != nil) || (oldType.integerBits == nil && newType.integerBits == nil && oldType.interpretation == newType.interpretation),"cross-family MODIFY/CHANGE is unsupported")
                 if old != column.name {
                     try require(!result.columns.contains{$0.name == column.name},"CHANGE destination column exists")

@@ -4,7 +4,9 @@ Audit baseline: `3fcf9dd` (beta.5 command help).
 This report checks code and test definitions. It does not claim a new four-profile
 integration qualification. The limits below describe that baseline. The subsequent
 [large-value increment](../docs/LARGE_VALUES.md) changes the TEXT/BLOB size limits
-and adds tests. Other type gaps in this audit remain open.
+and adds tests. The subsequent [BIT increment](BIT_SUPPORT.md) adds BIT support
+and unit tests. Its integration qualification is pending. Other type gaps in
+this audit remain open.
 
 ## Findings
 

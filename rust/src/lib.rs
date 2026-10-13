@@ -297,7 +297,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING | MYSQL_TYPE_BLOB => {
             kind == 4 || kind == 5
         }
-        MYSQL_TYPE_ENUM | MYSQL_TYPE_SET => kind == 3,
+        MYSQL_TYPE_ENUM | MYSQL_TYPE_SET | MYSQL_TYPE_BIT => kind == 3,
         MYSQL_TYPE_NEWDECIMAL => kind == 6,
         MYSQL_TYPE_DATE
         | MYSQL_TYPE_NEWDATE
@@ -319,6 +319,12 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
     )?;
     let meta = table.get_column_metadata(index).unwrap_or(&[]);
     match ty {
+        MYSQL_TYPE_BIT => ensure(
+            meta.len() == 2 && meta[0] <= 7
+                && (1..=64).contains(&(u16::from(meta[1]) * 8 + u16::from(meta[0]))),
+            MALFORMED,
+            "invalid BIT width metadata",
+        )?,
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING => {
             ensure(meta.len() == 2, MALFORMED, "invalid string metadata")?
         }
@@ -399,6 +405,16 @@ fn image<'a>(
             for (shift, byte) in raw.iter().enumerate() {
                 value |= u64::from(*byte) << (shift * 8);
             }
+            values.push(Cell::Unsigned(value));
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_BIT {
+            // Field_bit::pack writes the partial high byte first, then the
+            // big-endian whole bytes. Unlike integer/SET events, this is not LE.
+            let width = usize::from(meta[1]) * 8 + usize::from(meta[0]);
+            let raw = take(&mut buf.0, width.div_ceil(8))?;
+            let value = raw.iter().fold(0u64, |n, b| (n << 8) | u64::from(*b));
+            ensure(width == 64 || value < (1u64 << width), MALFORMED, "nonzero BIT padding")?;
             values.push(Cell::Unsigned(value));
             continue;
         }
@@ -822,7 +838,7 @@ impl Decoder {
                             .ok_or((MALFORMED, "missing column type"))?;
                         let numeric = ty.is_numeric_type();
                         let scalar_kind = match ty as u8 {
-                            247 | 248 => 3,
+                            16 | 247 | 248 => 3,
                             246 => 6,
                             10 | 14 | 13 | 17 | 18 | 19 => 7,
                             _ => {
@@ -842,7 +858,9 @@ impl Decoder {
                         let is_enum = ty as u8 == 247;
                         let is_set = ty as u8 == 248;
                         let mut labels = Vec::new();
-                        if is_enum || is_set {
+                        if ty == ColumnType::MYSQL_TYPE_BIT {
+                            kind = 3;
+                        } else if is_enum || is_set {
                             kind = 3;
                             if let Some(charset) = enum_charsets.next() {
                                 collation = parsed(charset)? as u32;

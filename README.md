@@ -225,8 +225,9 @@ Some tests use additional helper containers.
 This is a test summary, not a claim of complete MySQL compatibility. MyISAM
 profiles accept one DML statement per source transaction, affecting one table
 that is not excluded by the table filters. Tables need primary keys that meet
-the [DML requirements](PLAN/DML_APPLY.md). FLOAT/DOUBLE, BIT, JSON, and spatial
-columns are not supported. Other untested behavior is not necessarily
+the [DML requirements](PLAN/DML_APPLY.md). FLOAT/DOUBLE, JSON, and spatial
+columns are not supported. [BIT support](PLAN/BIT_SUPPORT.md) has unit tests;
+its shared integration tests have not yet run. Other untested behavior is not necessarily
 unsupported. Check the [test inventory](docs/TEST_LAB.md),
 [DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),
 and [DDL limits](PLAN/DDL_COMPATIBILITY.md).

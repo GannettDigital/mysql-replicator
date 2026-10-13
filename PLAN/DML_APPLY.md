@@ -159,7 +159,11 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
 
 MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
 `.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
-This is not complete 5.7 support: FLOAT/DOUBLE, BIT, JSON,
+BIT(1) through BIT(64) use unsigned values with exact width checks. This includes
+primary keys. The [BIT increment](BIT_SUPPORT.md) has unit tests; its shared
+integration cases have not yet run.
+
+This is not complete 5.7 support: FLOAT/DOUBLE, JSON,
 spatial types and multi-statement transactions
 remain outside this increment. The source DDL grammar now accepts these DML types,
 including ENUM/SET, together with bounded defaults and schema operations described

@@ -8,6 +8,7 @@ struct DMLColumnType {
     let unsigned: Bool
     let integerBits: Int?
     let labels: [Data]
+    var bitWidth: Int? { base == "bit" ? (arguments.first ?? 1) : nil }
     var isChoice: Bool { base == "enum" || base == "set" }
     var isText: Bool { base == "char" || base == "varchar" || base.hasSuffix("text") || isChoice }
     init(_ definition: String) throws {
@@ -34,6 +35,7 @@ struct DMLColumnType {
         if integerBits != nil { try require(arguments.isEmpty,"integer display width must be normalized"); return }
         try require(!unsigned || base == "decimal","unsupported unsigned column type")
         switch base {
+        case "bit": try require(arguments.isEmpty || (arguments.count == 1 && (1...64).contains(arguments[0])),"invalid BIT width")
         case "char","binary": try require(arguments.count == 1 && (0...255).contains(arguments[0]),"unsupported fixed column width")
         case "varchar","varbinary": try require(arguments.count == 1 && (1...16383).contains(arguments[0]),"unsupported declared column type")
         case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year":
@@ -70,7 +72,7 @@ struct DMLColumnType {
         throw ApplyError("unterminated ENUM/SET definition")
     }
     var interpretation: ColumnInterpretation {
-        if isChoice { return .unsigned }
+        if isChoice || bitWidth != nil { return .unsigned }
         if integerBits != nil { return unsigned ? .unsigned : .signed }
         if base == "decimal" { return .decimal }
         if base == "char" || base == "varchar" || base.hasSuffix("text") { return .utf8 }
@@ -96,6 +98,7 @@ struct DMLColumnType {
             return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && matchingInterpretation
         }
         switch base {
+        case "bit": return code == 16 && wire.interpretation == .unsigned && meta == [UInt8(bitWidth! % 8),UInt8(bitWidth! / 8)]
         case "enum","set":
             return code == (base == "enum" ? 247 : 248) && wire.interpretation == .unsigned && meta.count == 2 && Int(meta[1]) == (base == "enum" ? (labels.count < 256 ? 1 : 2) : (labels.count+7)/8)
         case "char","binary": return code == 254 && matchingInterpretation && wire.maximumBytes == UInt32(maximumBytes!)
@@ -111,6 +114,11 @@ struct DMLColumnType {
         }
     }
     func validate(_ value: DecodedValue) throws {
+        if let width = bitWidth {
+            guard case .unsigned(let n) = value else { throw ApplyError("BIT requires an unsigned value") }
+            try require(width == 64 || n < (UInt64(1) << width),"BIT value exceeds declared width")
+            return
+        }
         if isChoice {
             guard case .unsigned(let n) = value else { throw ApplyError("ENUM/SET requires an ordinal or bitmask") }
             try require(base == "enum" ? (n > 0 && n <= UInt64(labels.count)) : (labels.count == 64 || n < (UInt64(1) << labels.count)),"ENUM/SET value out of range")

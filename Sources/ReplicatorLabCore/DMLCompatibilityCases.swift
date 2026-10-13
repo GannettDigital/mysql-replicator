@@ -13,6 +13,11 @@ enum DMLCompatibilityCases {
         var rowMetadata: String? = nil
     }
     static let cases: [Case] = [
+        Case(id:"bits",definition:"id BIT(64) PRIMARY KEY,a BIT DEFAULT b'1',b BIT(7),c BIT(8),d BIT(9),e BIT(63)",phases:[
+            .init(sql:"INSERT INTO poc.matrix_bits VALUES(0,0,0,0,0,0),(18446744073709551615,1,127,255,511,9223372036854775807),(9223372036854775808,NULL,NULL,NULL,NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE CAST(id AS UNSIGNED)=18446744073709551615 AND a+0=1 AND b+0=127 AND c+0=255 AND d+0=511 AND e+0=9223372036854775807"),
+            .init(sql:"UPDATE poc.matrix_bits SET id=72623859790382856,a=DEFAULT,b=64,c=128,d=256,e=4611686018427387904 WHERE id=0",check:"SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE id=72623859790382856 AND a+0=1 AND b+0=64 AND c+0=128 AND d+0=256 AND e+0=4611686018427387904"),
+            .init(sql:"ALTER TABLE poc.matrix_bits MODIFY d BIT(16) DEFAULT b'100000000', ADD f BIT(8) DEFAULT b'11111111'; UPDATE poc.matrix_bits SET d=65535 WHERE id=18446744073709551615",check:"SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE id=18446744073709551615 AND d+0=65535 AND f+0=255"),
+            .init(sql:"DELETE FROM poc.matrix_bits WHERE id IN (72623859790382856,18446744073709551615)",check:"SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE id=9223372036854775808 AND a IS NULL AND e IS NULL")]),
         Case(id:"generated",definition:"id INT PRIMARY KEY,n INT,v INT AS (n+1) STORED",phases:[
             .init(sql:"INSERT INTO poc.matrix_generated(id,n) VALUES(1,1),(2,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_generated WHERE id=1 AND v=2"),
             .init(sql:"UPDATE poc.matrix_generated SET n=3 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_generated WHERE id=1 AND v=4"),

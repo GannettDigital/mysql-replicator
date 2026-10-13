@@ -30,7 +30,7 @@ struct DMLSQLPlan {
         let sqlName = try table.sqlName
         let predicate = try table.primaryKeyColumns.map { try quoted($0) + "=?" }.joined(separator:" AND ")
         let reads = zip(columnTypes,names).map { type,name in
-            if type.isChoice { return "CAST(\(name) AS UNSIGNED) AS \(name)" }
+            if type.isChoice || type.bitWidth != nil { return "CAST(\(name) AS UNSIGNED) AS \(name)" }
             return [.decimal,.temporal].contains(type.interpretation) ? "CAST(\(name) AS CHAR) AS \(name)" : name
         }.joined(separator:",")
         select = "SELECT \(reads) FROM \(sqlName) WHERE \(predicate)"

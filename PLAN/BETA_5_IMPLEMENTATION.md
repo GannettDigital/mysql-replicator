@@ -49,7 +49,10 @@ Do not infer support from a parser accepting a type name.
 
 The [column type audit](COLUMN_TYPE_SUPPORT_AUDIT.md) records the current
 four-profile matrix, test gaps, and acceptance checks for these increments.
-The audit is complete. Type implementation has not started.
+The audit is complete. The TEXT/BLOB limit increment is committed.
+[BIT support](BIT_SUPPORT.md) is implemented and has unit tests. Its shared
+integration cases will run after the missing-type work. FLOAT/DOUBLE and JSON
+remain separate increments.
 
 ## Delivery
 

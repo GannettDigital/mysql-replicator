@@ -63,6 +63,11 @@ The full `dml` family includes `large-values` on all four profiles. This case
 checks large TEXT/BLOB values, packet limits, restart, offline replay, and
 recovery inspection. It requires GTID mode. See [large-value limits and tests](LARGE_VALUES.md).
 
+`matrix-bits` and `bootstrap-matrix-bits` use the same BIT workload for replicated
+CREATE and existing-table discovery. They check widths through 64 bits, defaults,
+primary-key changes, ADD/MODIFY, and DML. These new cases await integration
+qualification. See the [BIT increment](../PLAN/BIT_SUPPORT.md).
+
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
 after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.

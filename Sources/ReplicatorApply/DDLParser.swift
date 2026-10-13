@@ -42,8 +42,22 @@ struct DDLParser {
         }
         throw ApplyError("unbalanced DDL parentheses")
     }
-    mutating func defaultValue() throws -> String? {
+    mutating func defaultValue(bit: Bool = false) throws -> String? {
         if take("NULL") { return nil }
+        if bit, take("B") {
+            guard index < tokens.count, let digits=tokens[index].literal,
+                  !digits.isEmpty, digits.allSatisfy({ $0 == "0" || $0 == "1" }),
+                  let value=UInt64(digits,radix:2) else { throw ApplyError("invalid BIT default literal") }
+            index += 1
+            return String(value)
+        }
+        if bit, index < tokens.count, tokens[index].text.hasPrefix("0b") {
+            let digits=tokens[index].text.dropFirst(2)
+            guard !digits.isEmpty, digits.allSatisfy({ $0 == "0" || $0 == "1" }),
+                  let value=UInt64(digits,radix:2) else { throw ApplyError("invalid BIT default literal") }
+            index += 1
+            return String(value)
+        }
         if take("CURRENT_TIMESTAMP") {
             if take("(") { let precision = try number(); try require(precision <= 6,"invalid timestamp precision"); try expect(")"); return precision == 0 ? "CURRENT_TIMESTAMP" : "CURRENT_TIMESTAMP(\(precision))" }
             return "CURRENT_TIMESTAMP"
@@ -83,7 +97,7 @@ struct DDLParser {
                 if !(["time","datetime","timestamp"].contains(base) && values == [0]) { type += "("+values.map(String.init).joined(separator:",")+")" }
             }
         } else if base == "decimal" { type += "(10,0)" }
-        else if base == "char" || base == "binary" { type += "(1)" }
+        else if base == "char" || base == "binary" || base == "bit" { type += "(1)" }
         if take("UNSIGNED") { type += " unsigned" }
         let parsed: DMLColumnType
         do { parsed = try DMLColumnType(type) }
@@ -96,7 +110,7 @@ struct DDLParser {
             if take("NOT") { try expect("NULL"); column.nullable = false; attribute = "nullability" }
             else if take("NULL") { column.nullable = true; attribute = "nullability" }
             else if take("PRIMARY") { try expect("KEY"); primary = true; attribute = "primary" }
-            else if take("DEFAULT") { column.defaultValue = try defaultValue(); attribute = "default" }
+            else if take("DEFAULT") { column.defaultValue = try defaultValue(bit:parsed.bitWidth != nil); attribute = "default" }
             else if take("AUTO_INCREMENT") { column.extra = "auto_increment"; column.nullable = false; attribute = "extra" }
             else if take("ON") { try expect("UPDATE"); guard let value = try defaultValue(), value.hasPrefix("CURRENT_TIMESTAMP") else { throw ApplyError("unsupported ON UPDATE expression") }; column.extra = "on update "+value; attribute = "extra" }
             else if take("CHARACTER") { try expect("SET"); column.characterSet = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; attribute = "charset" }
@@ -324,6 +338,16 @@ struct DDLParser {
 
 func normalizedDefault(_ value: String?,type: DMLColumnType) throws -> String? {
     guard var value else { return nil }
+    if type.bitWidth != nil {
+        let number: UInt64?
+        if value.hasPrefix("b'"), value.hasSuffix("'") {
+            let digits=value.dropFirst(2).dropLast()
+            number = !digits.isEmpty && digits.allSatisfy({ $0 == "0" || $0 == "1" }) ? UInt64(digits,radix:2) : nil
+        } else { number = UInt64(value) }
+        guard let number else { throw ApplyError("invalid BIT default") }
+        try type.validate(.unsigned(number))
+        return "b'"+String(number,radix:2)+"'"
+    }
     if type.base.hasSuffix("text") || type.base.hasSuffix("blob") { throw ApplyError("MySQL 5.7 TEXT/BLOB columns cannot have non-NULL defaults") }
     if type.base == "year" {
         guard let year=Int(value),year == 0 || (1901...2155).contains(year) else {throw ApplyError("YEAR default must be zero or a four-digit year")}
