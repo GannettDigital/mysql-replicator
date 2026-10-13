@@ -206,6 +206,13 @@ struct ArchiveFileIdentity: Equatable {
     let changedSeconds: Int64
     let changedNanoseconds: Int64
 
+    // Explicit reads keep the file identity contract visible to static analysis.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.size == rhs.size && lhs.device == rhs.device && lhs.inode == rhs.inode &&
+        lhs.modifiedSeconds == rhs.modifiedSeconds && lhs.modifiedNanoseconds == rhs.modifiedNanoseconds &&
+        lhs.changedSeconds == rhs.changedSeconds && lhs.changedNanoseconds == rhs.changedNanoseconds
+    }
+
     init(_ file: URL) throws {
         var value=stat()
         guard lstat(file.path,&value) == 0, value.st_mode & S_IFMT == S_IFREG, value.st_size >= 0 else {
