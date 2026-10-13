@@ -58,6 +58,14 @@ Run the Rust unit tests and Swift unit test suite:
 make test
 ```
 
+Command parsing lives in `ReplicatorCommandLine`. It has no database dependencies.
+Its tests check help, argument validation, and parsed requests. CLI process tests
+also check stdout, JSON errors on stderr, and exit status without MySQL:
+
+```sh
+swift test --filter ReplicatorCommandLineTests
+```
+
 For AddressSanitizer testing:
 
 ```sh

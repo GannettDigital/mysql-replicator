@@ -105,3 +105,30 @@ PR selections and all five full-suite families. The workflow YAML parsed, and
 `make test-selection` produced valid JSON. No database suite was run for this
 Python/workflow change. The changed CI job graph still needs a GitHub run after
 push. This increment does not change the full CI matrix or the selected PR cases.
+
+## Command-help increment verification
+
+Swift Argument Parser 1.7.0 now parses commands in `ReplicatorCommandLine`.
+That module has no database or replication dependencies. It returns typed
+requests. `ReplicatorCLI` executes them and retains the JSON error categories,
+exit status 1 for failures, and the existing version output. Help works for each
+command and nested command without a configuration file. Configuration remains
+in YAML; the existing source-only inspection flags remain available.
+
+The dependency is pinned in `Package.resolved` and included in the Swift dependency
+build layer. Release notice collection reads the locked dependency list. The
+command reference is `docs/COMMAND_LINE.md`.
+
+The Swift suite passed 422 tests. The final argument-validation checks passed
+all six CLI tests. Periphery found assign-only warnings for fields read by the
+archive identity's synthesized equality method. An explicit comparison of the
+same seven fields removed those warnings without ignore annotations. All 12
+archive/startup tests passed after that change. Periphery then reported no unused
+code. Python checks completed 148 tests with no failures and two optional cache
+checks skipped. Release version consistency and `git diff --check` passed.
+
+Logs: `/tmp/beta5-cli-tests.log`, `/tmp/beta5-cli-focused.log`,
+`/tmp/beta5-cli-archive-tests.log`, `/tmp/beta5-cli-periphery.log`, and
+`/tmp/beta5-cli-tools.log`.
+Database integration and static Linux packaging were not rerun in this increment.
+The package and lockfile changes select full CI under the existing path rules.

@@ -124,6 +124,8 @@ describes the optional settings. To start live replication, run:
 The installer selects the latest published release, including beta releases.
 It checks the archive checksum and keeps the configuration and state.
 Pass `--version VERSION` to `install.sh` to select a specific release.
+Use `mysql-replicator COMMAND --help` for command options. See the
+[command-line reference](docs/COMMAND_LINE.md).
 Use `--initialize` only for the first start. Omit it to resume saved state.
 
 For Debian or Ubuntu, download the `.deb` and `SHA256SUMS` files for the selected

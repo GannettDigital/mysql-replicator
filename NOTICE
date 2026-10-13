@@ -71,3 +71,9 @@ and notice files collected from the locked Swift and Rust source dependencies,
 toolchain runtime notices, the musl copyright notice, and the Static Linux SDK's
 SPDX inventory. Its manifest.json records dependency revisions and declared
 licenses. This inventory may include build-time or otherwise unlinked components.
+
+Swift Argument Parser
+Copyright (c) 2020 Apple Inc. and the Swift project authors.
+Licensed under Apache License 2.0 with Runtime Library Exception.
+Source: https://github.com/apple/swift-argument-parser
+The release package includes the original license in its third-party notices.

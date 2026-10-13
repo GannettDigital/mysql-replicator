@@ -1,5 +1,8 @@
 # Offline binlogs and support bundles
 
+Use `mysql-replicator replay --help` for command options. See the
+[command-line reference](COMMAND_LINE.md) for all commands.
+
 `fetch` downloads a finite archive from a source. `replay` applies local raw
 binlogs through the same decoder, DDL policies, target execution, and SQLite
 journal as `run`. Replay never connects to the source. `support-bundle` collects

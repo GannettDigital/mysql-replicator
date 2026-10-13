@@ -14,6 +14,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.37.0"),
         .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2"),
         .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2"),
+        .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.7.0"),
     ],
     targets: [
         .systemLibrary(name: "CReplicatorCodec"),
@@ -35,7 +36,9 @@ let package = Package(
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl")]),
         .target(name: "ReplicatorConfiguration", dependencies: [.product(name: "Yams", package: "Yams")]),
-        .executableTarget(name: "ReplicatorCLI", dependencies: ["ReplicatorCodec", "ReplicatorCapture", "ReplicatorApply", "ReplicatorConfiguration"]),
+        .target(name: "ReplicatorCommandLine", dependencies: [.product(name: "ArgumentParser", package: "swift-argument-parser")]),
+        .testTarget(name: "ReplicatorCommandLineTests", dependencies: ["ReplicatorCommandLine"], path: "tests/ReplicatorCommandLineTests"),
+        .executableTarget(name: "ReplicatorCLI", dependencies: ["ReplicatorCommandLine", "ReplicatorCodec", "ReplicatorCapture", "ReplicatorApply", "ReplicatorConfiguration"]),
         .testTarget(name: "ReplicatorConfigurationTests", dependencies: ["ReplicatorConfiguration", "ReplicatorApply", "ReplicatorCapture"], path: "tests/ReplicatorConfigurationTests"),
         .testTarget(name: "ReplicatorApplyTests", dependencies: ["ReplicatorApply", "ReplicatorCapture", "ReplicatorCodec", "ReplicatorConfiguration", "CSQLite",
             .product(name: "NIOEmbedded", package: "swift-nio")], path: "tests/ReplicatorApplyTests"),

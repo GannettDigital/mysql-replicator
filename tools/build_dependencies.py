@@ -31,7 +31,7 @@ def main():
     package = json.loads(subprocess.check_output(['swift', 'package', 'dump-package'], text=True))
     paths = placeholders(root, package)
     try:
-        for target in ('MySQLNIO', 'Crypto', 'Yams'):
+        for target in ('MySQLNIO', 'Crypto', 'Yams', 'ArgumentParser'):
             subprocess.run(['swift', 'build', '--target', target, *sys.argv[1:]], check=True)
         subprocess.run(['python3', 'tools/swift_cache.py', 'save', '--scratch-path', '.build'], check=True)
     finally:
