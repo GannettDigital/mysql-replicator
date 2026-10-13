@@ -1,6 +1,6 @@
 # PR test selection
 
-Ordinary PR checks run unit tests, Periphery, and two integration jobs. Unit tests
+Runtime PR checks run unit tests, Periphery, and two integration jobs. Unit tests
 and Periphery run in parallel with the integration build path. The integration
 jobs share one instrumented image build, then run in parallel:
 
@@ -12,6 +12,84 @@ jobs share one instrumented image build, then run in parallel:
 Both jobs run the same 11 named cases. This gives 22 profile/case obligations
 and two integration coverage collections. `pr-smoke` remains the CI scope name.
 The job area, logs, step summary, and matrix show the actual selection.
+
+## Select checks from changed files
+
+[tools/test_selection.py](../tools/test_selection.py) contains the path rules for
+local checks and PR CI. The selector combines all changed paths. The broadest
+required scope wins.
+
+| Changed files | Scope | Checks |
+|---|---|---|
+| Recognized documentation | `docs` | Python tool tests; no application build |
+| Listed report tools, test selectors, and their tests | `tools` | Python tool tests; no application build |
+| Runtime Swift/Rust, unit tests, example configuration, `Makefile`, or `.github/workflows/ci.yml` | `pr-smoke` | Python tests, Swift/Rust unit tests, catalog check, Periphery, and the two profile selections below |
+| Harness, fixtures, dependency/package build inputs, other CI workflows, release tools, or unknown paths | `full` | Full existing CI suite |
+
+The report-tool list is explicit. It includes coverage reports, PR coverage
+comments, timing reports, and saved-result comparisons. A new file under `tools/`
+does not get this exemption. Build scripts, coverage collection, test execution,
+and release checks can change the tested binary or the test process. They need
+full CI, except for the main `Makefile` and `ci.yml` entry points. Those two files
+select the shorter two-profile PR checks. This verifies their build/test path
+without selecting every correctness variant. Use `ci-full` when a change needs
+all profiles, package checks, or all variants.
+
+Changes to `tools/ci_scope.py`, `tools/test_selection.py`, and their tests select
+Python checks. These tests verify path rules, Git diffs, CI outputs, overrides,
+and the result gate. They do not need a database to check the selection policy.
+The output's `selected_by` field lists the paths that set the final scope.
+
+The CLI still starts capture and application from `main.swift`. Changes to this
+file retain integration checks. Logging and timing changes inside runtime files
+also retain those checks. Do not skip database tests from a PR title or a text
+diff that appears to change only logging. A future command-help module can get a
+narrower rule after it has its own tests and no runtime responsibilities.
+
+CI compares the PR head with its merge base. A stacked PR uses its own base
+branch. Deletions count. Renames count at both the old and new paths. CI reads the
+Git diff without an API file-count limit. A missing base, an unreadable diff, or
+an empty change list selects full checks.
+
+`ci-full` and `ci-expanded-coverage` override path selection. Main pushes still
+run full CI. Manual runs use their explicit suite input. The selection step saves
+`test-selection.json` and lists the reason for each path in its job summary.
+The required **Debian Packaging & Integration Smoke** check uses `always()` and
+verifies all selected jobs. This follows GitHub guidance for
+[required checks with job dependencies](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks). It accepts a skipped job only when the selector excluded that job.
+
+Documentation and tool-only runs do not collect Swift coverage. Coverage and
+measurement jobs skip those runs. Their absence is not a coverage decrease.
+
+## Use the selector locally
+
+Inspect a branch, including local edits, against its PR base:
+
+```sh
+make test-selection ARGS="--base origin/main" | jq
+```
+
+For a stacked branch, replace `origin/main` with the preceding branch. To select
+checks for local edits only, use `--base HEAD`. Local selection includes staged,
+unstaged, and untracked files. Add `--head HEAD` to inspect committed changes only.
+The command does not fetch refs. Fetch the base first if it is not present.
+
+Run the selected local commands:
+
+```sh
+make test-selected ARGS="--base HEAD"
+```
+
+Use `--commands` with `test-selection` to print copyable commands. Use `--full`
+to force the full scope. JSON stays on stdout. Test output goes to stderr.
+Execution stops at the first failure.
+
+Local checks use existing commands and the same PR case IDs from
+`tools/ci_matrix.json`. They run in sequence and use normal lab binaries.
+They do not publish CI coverage or release evidence. CI retains parallel jobs,
+instrumented collections, package checks, and the exact release-binary checks.
+The full local selection runs all catalog suites and variants. Use CI to certify
+the release packages.
 
 ## Selected cases
 
@@ -73,7 +151,8 @@ and collection counts remain unchanged.
 case IDs and job area. The lab catalog defines each case and its prerequisites.
 The CI planner resolves the IDs against the full catalog, adds prerequisites,
 and preserves catalog order. Missing, inapplicable, duplicate, or cyclic selected
-cases fail planning. Adding an unrelated full-suite case does not enlarge PR CI.
+cases fail planning. Adding an unrelated full-suite case does not change these
+selected IDs. A harness change still selects full CI through the path rules.
 
 Generate the exact commands locally:
 

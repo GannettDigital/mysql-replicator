@@ -49,3 +49,43 @@ class ScopeTests(unittest.TestCase):
         for event, payload in [('push', {'ref': 'refs/heads/feature'}), ('release', {})]:
             with self.assertRaises(ValueError):
                 select(event, payload)
+
+
+class ChangedScopeTests(unittest.TestCase):
+    def test_labels_main_and_manual_selection_override_safe_paths(self):
+        from ci_scope import resolve
+        from test_selection import select_changes
+        docs = select_changes(['README.md'])
+        pr = ScopeTests().pr()
+        self.assertEqual(resolve('pull_request', pr, docs)['scope'], 'docs')
+        for label in ('ci-full', 'ci-expanded-coverage'):
+            result = resolve('pull_request', ScopeTests().pr(labels=[label]), docs)
+            self.assertEqual(result['scope'], 'full')
+            self.assertEqual(result['selected_by'], [])
+            self.assertTrue(result['checks']['integration'])
+        for event, data, scope in [('push', {'ref': 'refs/heads/main'}, 'full'),
+                                   ('workflow_dispatch', {}, 'full'),
+                                   ('workflow_dispatch', {'inputs': {'suite': 'pr-smoke'}}, 'pr-smoke')]:
+            self.assertEqual(resolve(event, data, docs)['scope'], scope)
+        self.assertEqual(resolve('pull_request', pr)['scope'], 'full')
+        self.assertIsNone(resolve('pull_request', ScopeTests().pr('labeled', changed='unrelated'), docs))
+
+    def test_gate_requires_selected_checks_and_exact_intentional_skips(self):
+        from ci_scope import check_results
+        for scope in ('docs', 'tools', 'pr-smoke', 'full'):
+            results = {job: {'result': 'success'} for job in
+                       ('select-suite', 'tool-tests', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration')}
+            if scope in ('docs', 'tools'):
+                for job in ('unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration'):
+                    results[job]['result'] = 'skipped'
+            check_results(scope, results)
+            for job in results:
+                for bad in ('failure', 'cancelled', None):
+                    changed = dict(results, **{job: {'result': bad}})
+                    with self.subTest(scope=scope, job=job, result=bad), self.assertRaises(ValueError):
+                        check_results(scope, changed)
+            unexpected = dict(results, **{'tool-tests': {'result': 'skipped'}})
+            with self.assertRaises(ValueError):
+                check_results(scope, unexpected)
+        with self.assertRaises(ValueError):
+            check_results('pr-smoke', {job: {'result': 'skipped'} for job in results})

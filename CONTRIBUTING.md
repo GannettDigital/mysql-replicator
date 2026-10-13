@@ -33,7 +33,24 @@ make build
 .build/debug/mysql-replicator --help
 ```
 
-### 2. Running Unit Tests
+### 2. Select checks for a change
+
+Use the same changed-file rules as PR CI:
+
+```sh
+make test-selection ARGS="--base origin/main" | jq
+make test-selected ARGS="--base origin/main"
+```
+
+For a stacked PR, use the preceding branch as the base. Use `--base HEAD` for
+local edits only. Documentation and listed report tools do not need an
+application build. Test-selector changes also use Python checks. Runtime changes,
+`Makefile`, and `ci.yml` retain unit tests, Periphery, and two profile selections.
+Dependency/package builds, fixtures, other workflows, and unknown paths select
+full checks.
+See [PR test selection](docs/PR_TEST_SELECTION.md) for the rules and limits.
+
+### 3. Running Unit Tests
 
 Run the Rust unit tests and Swift unit test suite:
 
@@ -136,7 +153,7 @@ record these in `code-coverage/profile-status.json`. Missing profiles after a
 normal exit fail collection. Do not interpret absent crash coverage as an
 unexercised path. Failed suites retain the evidence available before cleanup.
 
-Ordinary PR CI combines one unit report and two integration smoke collections:
+Runtime PR CI combines one unit report and two integration smoke collections:
 `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Unit tests, Periphery and the build for the smoke suites start independently.
 The two smoke suites run in parallel after their shared build finishes.
@@ -158,8 +175,8 @@ and PRs with `ci-full`, plus full manual runs. There is no separate release
 qualification workflow.
 
 CI builds the lab executable once, bundles its Linux runtime libraries, and
-builds only the instrumented image for ordinary PRs. Full CI builds the release and
-instrumented images in parallel. It generates the test
+builds only the instrumented image for the runtime PR selection. Full CI builds
+the release and instrumented images in parallel. It generates the test
 matrix from the lab catalog, grouping correctness families by area and splitting
 larger areas into case chunks. Jobs name the profile, area, variant and image;
 up to 16 run concurrently with `--skip-build`. Dependent operations within a
@@ -171,9 +188,10 @@ plan is retained in the `ci-lab` artifact. See [the test lab](docs/TEST_LAB.md)
 for local plan inspection and reproduction.
 
 The existing **Debian Packaging & Integration Smoke** check keeps its historical
-name for branch protection. It requires all planned builds and integration shards
-to pass. Ordinary PRs do not build packages. Full CI also checks packages, native-reference
-DDL, recovery and demos. A successful PR smoke run is not release certification.
+name for branch protection. It requires all selected checks to pass. It accepts
+skips only for jobs excluded by the selector. The runtime PR selection does not
+build packages. Full CI also checks packages, native-reference DDL, recovery and
+demos. A successful PR smoke run is not release certification.
 
 Test jobs verify image digests or archive checksums and the lab source/fixture fingerprint, and
 release shards check that their applier matches the release archive binary.

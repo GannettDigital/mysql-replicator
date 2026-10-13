@@ -36,13 +36,33 @@ jobs:
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       expanded: ${{ steps.scope.outputs.expanded }}
+      unit: ${{ steps.scope.outputs.unit }}
+      periphery: ${{ steps.scope.outputs.periphery }}
+      integration: ${{ steps.scope.outputs.integration }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: scope
         run: python3 tools/ci_scope.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-selection
+          overwrite: true
+          path: artifacts/ci/test-selection.json
+          if-no-files-found: error
+
+  tool-tests:
+    needs: select-suite
+    name: Python Tool Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tools -p 'test_*.py'
 
   unit-tests:
     needs: select-suite
+    if: needs.select-suite.outputs.unit == 'true'
     name: Unit Tests & Catalog Check
     runs-on: ubuntu-24.04
     steps:
@@ -83,10 +103,10 @@ jobs:
       - name: Save successful Swift build timestamps
         run: python3 tools/swift_cache.py save --scratch-path .build/code-coverage
 
-      - name: Test CI tooling and Swift cache reuse
+      - name: Test Swift cache reuse
         env:
           SWIFT_CACHE_INTEGRATION: '1'
-        run: python3 -m unittest discover -s tools -p 'test_*.py'
+        run: python3 -m unittest discover -s tools -p 'test_swift_cache.py'
 
       - name: Upload unit coverage
         if: always()
@@ -102,6 +122,7 @@ jobs:
 
   lab-tools:
     needs: select-suite
+    if: needs.select-suite.outputs.integration == 'true'
     name: Build shared lab runner
     runs-on: ubuntu-24.04
     outputs:
@@ -158,6 +179,7 @@ jobs:
       packages: write
       actions: read
     needs: lab-tools
+    if: needs.lab-tools.result == 'success'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -290,6 +312,7 @@ jobs:
       packages: read
       actions: read
     needs: [lab-tools, build-images]
+    if: needs.lab-tools.result == 'success' && needs.build-images.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -377,19 +400,16 @@ jobs:
   packaging-and-smoke:
     # Preserve the required check name. Full scope also requires packages.
     name: Debian Packaging & Integration Smoke
-    needs: [select-suite, lab-tools, build-images, integration]
+    needs: [select-suite, tool-tests, unit-tests, periphery, lab-tools, build-images, integration]
     if: always() && needs.select-suite.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
-      - name: Require all builds and integration shards
+      - uses: actions/checkout@v4
+      - name: Require all selected checks
         env:
+          SELECTED_SCOPE: ${{ needs.select-suite.outputs.scope }}
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          python3 - <<'PY'
-          import json, os
-          results = json.loads(os.environ['RESULTS'])
-          assert all(job['result'] == 'success' for job in results.values()), results
-          PY
+        run: python3 tools/ci_scope.py --check-results
 
   combined-coverage:
     name: Combined Swift Coverage
@@ -433,6 +453,7 @@ jobs:
 
   periphery:
     needs: select-suite
+    if: needs.select-suite.outputs.periphery == 'true'
     name: Unused Swift Code
     runs-on: macos-15
     steps:

@@ -18,18 +18,23 @@
 Archive files must remain unchanged while replay runs. Header checks alone do
 not prove that all required transactions are present.
 
-## 2. Command help
-
-Use Swift Argument Parser for commands, options, and help. Keep the existing
-commands, YAML configuration, and JSON result format. Add help for each command.
-Do not add a command-line option for each YAML setting.
-
-## 3. Test selection
+## 2. Test selection
 
 Use one path-to-test map for local checks and PR checks. Separate report tools
 from build, release, fixture, and runtime code. Use the broader checks for unknown
 paths. Keep full main and release checks until a separate change is approved.
 Test the selector against saved examples of changed files.
+
+The user moved this step before command help. Documentation, report tools, and
+test selectors can skip application builds. Changes to `Makefile` and
+`ci.yml` select the two-profile PR checks, not all correctness variants.
+Keep runtime CLI and logging changes in the PR integration selection until a separate module and tests justify a narrower rule.
+
+## 3. Command help
+
+Use Swift Argument Parser for commands, options, and help. Keep the existing
+commands, YAML configuration, and JSON result format. Add help for each command.
+Do not add a command-line option for each YAML setting.
 
 ## 4. Column types
 
@@ -85,3 +90,18 @@ The runtime image was `sha256:ad4cc59ee31e774edf08f218830b9fc632fbe8a27c76422679
 The build input digest was `74ccb930336fe42a8038523da707b6ea18651852c243bed494e2a26fd1e93e55`.
 The logs show one validation scan per invocation and reuse before application.
 These small fixtures do not measure throughput on a 300 GB archive.
+
+## Test-selection increment verification
+
+Python tool checks completed: 148 tests, no failures, and two optional Swift
+cache integration tests skipped. The selector tests use temporary Git repositories
+to check renames, deletions, merge bases, more than 300 changed files, local edits,
+and unavailable history. They also exercise the CI entry point and its outputs.
+Result-gate tests reject failed, cancelled, missing, and unexpected skipped jobs.
+Log: `/tmp/beta5-test-selection-tools.log`.
+
+The local command plans were accepted by the existing lab with `--list` for both
+PR selections and all five full-suite families. The workflow YAML parsed, and
+`make test-selection` produced valid JSON. No database suite was run for this
+Python/workflow change. The changed CI job graph still needs a GitHub run after
+push. This increment does not change the full CI matrix or the selected PR cases.

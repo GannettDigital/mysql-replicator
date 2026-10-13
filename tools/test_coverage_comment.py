@@ -58,7 +58,9 @@ class CommentTests(unittest.TestCase):
             self.assertFalse(publisher.comparable(current, bad))
             self.assertIn("Base comparison unavailable", publisher.comment(current, run, "owner/repo", bad))
         self.assertIn("PARTIAL", publisher.comment(dict(current, complete=False), run, "owner/repo", base))
-        self.assertIn("unavailable", publisher.comment(None, run, "owner/repo"))
+        missing = publisher.comment(None, run, "owner/repo")
+        self.assertIn("Check the test selection and job results", missing)
+        self.assertNotIn("downloadable HTML", missing)
 
     def test_instrumentation_scope_is_explicit_and_bounded(self):
         report = dict(metrics(), ci_suite='full', coverage_mode='expanded', integration_jobs=227,

@@ -76,8 +76,8 @@ These measurements guide later CI work. They do not add another release build.
    installer/package tests, production-image checks, full correctness and
    source/target reconnect for all four profiles and applicable capture variants,
    offline replay/control, native-reference DDL, recovery, demos, coverage and
-   Periphery. Ordinary PRs use smoke checks. The labeled final PR and main use the same
-   full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
+   Periphery. Other PRs use [changed-file selection](PR_TEST_SELECTION.md).
+   The labeled final PR and main use the same full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
    checks integration uses those same bytes.
 2. Review `docs/releases/0.1.0-beta.4.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.

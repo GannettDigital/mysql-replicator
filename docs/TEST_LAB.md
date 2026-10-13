@@ -264,14 +264,19 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-Ordinary PR CI runs unit tests, Periphery and two explicit correctness selections. The
+Runtime PR CI runs unit tests, Periphery and two explicit correctness selections. The
 profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Both use the default variant and run in parallel after one shared image build.
 Unit tests and Periphery do not wait for this build. Coverage and timing reports
-remain enabled. Ordinary PRs do not build release packages or run the full catalog.
+remain enabled. This scope does not build release packages or run the full catalog.
 Each integration job runs 11 named cases in the `ddl-dml-policy-replay` area.
 See [PR test selection](PR_TEST_SELECTION.md) for case IDs, assertions, timing
 estimates, limits, and commands to reproduce the selection.
+Documentation, listed report tools, and test selectors use Python checks without
+an application build. `Makefile` and `ci.yml` use the two-profile PR checks.
+Dependency/package builds, fixtures, other workflows, and unknown paths select
+full CI. The same changed-file
+rules are available locally through `make test-selection` and `make test-selected`.
 
 Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
 See [release testing](RELEASE_TESTING.md) for the stack workflow and evidence.
