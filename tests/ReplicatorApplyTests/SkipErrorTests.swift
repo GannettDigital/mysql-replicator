@@ -42,7 +42,7 @@ extension ApplyTests {
             XCTAssertEqual(($0 as? ApplyError)?.code,.multipleStatements)
         }
     }
-    func testSkipErrorInnoDBRollbackThenContinuesAndDoesNotCountSkippedRows() throws {
+    func testSkipErrorInnoDBAutocommitRejectionContinuesAndDoesNotCountSkippedRows() throws {
         for audit in [false,true] {
             let settings: [String:Any]=["codes":["mysql.1062"],"recordSkippedTransactions":audit]
             try withBatchFixture(profile:ReplicationProfile.mysql57To84InnoDB.rawValue,skipErrors:settings) { store,batch in
@@ -52,7 +52,7 @@ extension ApplyTests {
                     skipErrors:try skipPolicy(["mysql.1062"],audit:audit),begin:{},commit:{ commits+=1 },rollback:{ rollbacks+=1 },
                     write:{ _ in writes+=1;if writes == 2 { throw self.duplicate } },insert:{_ in XCTFail("unexpected coalescing")},resetTrace:{},trace:{.init(phase:.possiblyExecuted)})
                 XCTAssertNil(result.failure);XCTAssertEqual(result.acknowledged,[1,0,1,1]);XCTAssertEqual(Set(result.skipped.keys),[1])
-                XCTAssertEqual(commits,3);XCTAssertEqual(rollbacks,1)
+                XCTAssertEqual(commits,0);XCTAssertEqual(rollbacks,0)
                 try result.record(in:store)
                 XCTAssertEqual(store.transactions,4);XCTAssertEqual(store.rows,3)
                 XCTAssertEqual(store.skippedTransactionsByCode,["mysql.1062":1]);XCTAssertNil(store.pendingGTID)
@@ -72,8 +72,9 @@ extension ApplyTests {
     }
     func testSkipErrorInnoDBNeverSkipsCommitOrUnconfirmedRollback() throws {
         for failCommit in [false,true] {
-            try withBatchFixture { _,batch in
-                let result=InnoDBExecution.run(batch,cancellation:.init(),maximumInsertRows:32,maximumInsertBytes:1048576,
+            try withBatchFixture { _,input in
+                let batch=input.map { PreparedDMLGroup(group:$0.group,mutations:$0.mutations+$0.mutations,relayEnd:$0.relayEnd) }
+                let result=InnoDBExecution.run(batch,cancellation:.init(),maximumInsertRows:1,maximumInsertBytes:1048576,
                     skipErrors:try skipPolicy(["mysql.1062"]),begin:{},commit:{ throw self.duplicate },
                     rollback:{ throw ApplyError("rollback failed") },write:{_ in if !failCommit { throw self.duplicate } },insert:{_ in},resetTrace:{},trace:{.init(phase:.possiblyExecuted)})
                 XCTAssertNotNil(result.failure);XCTAssertTrue(result.skipped.isEmpty)

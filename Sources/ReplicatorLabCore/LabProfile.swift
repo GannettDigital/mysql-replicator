@@ -6,8 +6,40 @@ public enum LabProfile: String, CaseIterable, Codable {
     case forward = "mysql84-to-mysql57-myisam"
     case reverse = "mysql57-to-mysql84-innodb"
 
+    case mysql57MyISAM = "mysql57-to-mysql57-myisam"
+
+    case mysql57InnoDB = "mysql57-to-mysql57-innodb"
+
     enum Role: String, CaseIterable { case source, native, target }
-    var targetEngine: String { self == .reverse ? "InnoDB" : "MyISAM" }
+
+    var transactionalTarget: Bool { targetEngine == "InnoDB" }
+    var targetEngine: String { (self == .reverse || self == .mysql57InnoDB) ? "InnoDB" : "MyISAM" }
+    var sourceVersion: LabMySQLVersion {
+        switch self {
+        case .forward: return .mysql84
+        case .reverse, .mysql57MyISAM, .mysql57InnoDB: return .mysql57
+        }
+    }
+    var targetVersion: LabMySQLVersion { self == .reverse ? .mysql84 : .mysql57 }
+    var nativeVersion: LabMySQLVersion { sourceVersion }
+    var hasOptionalMetadata: Bool { sourceVersion == .mysql84 }
+    var supportsPositionCapture: Bool { sourceVersion == .mysql84 }
+    var composeOverlay: String {
+        switch self {
+        case .forward: return "docker/dml/compose.yaml"
+        case .reverse: return "docker/reverse/compose.yaml"
+        case .mysql57MyISAM: return "docker/mysql57-myisam/compose.yaml"
+        case .mysql57InnoDB: return "docker/mysql57-innodb/compose.yaml"
+        }
+    }
+    var evidenceVariable: String {
+        switch self {
+        case .forward: return "REPLICATOR_DML_EVIDENCE_VOLUME"
+        case .reverse: return "REPLICATOR_REVERSE_EVIDENCE_VOLUME"
+        case .mysql57MyISAM: return "REPLICATOR_MYSQL57_EVIDENCE_VOLUME"
+        case .mysql57InnoDB: return "REPLICATOR_MYSQL57_INNODB_EVIDENCE_VOLUME"
+        }
+    }
     func service(_ role: Role) -> String {
         switch role {
         case .source: return self == .reverse ? "target57" : "source"
@@ -16,10 +48,7 @@ public enum LabProfile: String, CaseIterable, Codable {
         }
     }
     func version(_ role: Role) -> String {
-        switch role {
-        case .source, .native: return self == .reverse ? "5.7" : "8.4"
-        case .target: return self == .reverse ? "8.4" : "5.7"
-        }
+        (role == .target ? targetVersion : sourceVersion).rawValue
     }
     func engine(_ role: Role) -> String { role == .source ? "InnoDB" : targetEngine }
     var session: String { session(.source) }

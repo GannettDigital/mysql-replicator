@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 
+from coverage_scope import description, plan_scope
 from code_coverage import combine, load_reports, render, source_hashes
 
 SCOPES = {
@@ -48,7 +49,7 @@ def badge(count, complete):
             f'<text x="80" y="14">{label}</text><text x="192" y="14">{value}</text></g></svg>\n')
 
 
-def policy_hash(root):
+def policy_hash(root, selection='full', coverage_mode='unknown'):
     # Baseline deltas require identical test/toolchain/reporting inputs. Runtime
     # changes are intentionally excluded; tests and their selection are not.
     paths = [root / ".github/workflows/ci.yml", root / "Package.swift", root / "Package.resolved"]
@@ -56,6 +57,8 @@ def policy_hash(root):
         paths.extend(p for p in (root / directory).rglob("*")
                      if p.is_file() and "__pycache__" not in p.parts)
     digest = hashlib.sha256()
+    # A PR smoke report cannot use full main coverage as a comparable baseline.
+    digest.update(selection.encode() + b'\0' + coverage_mode.encode() + b'\0')
     for path in sorted(set(paths)):
         if path.exists():
             digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
@@ -63,15 +66,16 @@ def policy_hash(root):
 
 
 def downloaded_inputs(directory):
-    # Demo teardown copies /evidence, including coverage, into evidence-RUN_ID.
-    # Those snapshots are troubleshooting copies, not new measurements. Keep
+    # Lifecycle teardown copies /evidence into evidence/; demos use evidence-RUN_ID.
+    # Both include coverage snapshots, not new measurements. Keep
     # the originals; load_reports still rejects overlapping original inputs.
     return sorted(path for path in directory.rglob("coverage.json")
-                  if not any(part.startswith("evidence-") for part in path.relative_to(directory).parts[:-1]))
+                  if not any(part == "evidence" or part.startswith("evidence-")
+                             for part in path.relative_to(directory).parts[:-1]))
 
 
 def write_reports(root, output, inputs, unit_result="unknown", integration_result="unknown",
-                  expected_integration=None, metadata=None):
+                  expected_integration=None, metadata=None, matrix=None):
     reports = load_reports(root, inputs)
     unit, integration = [], []
     for report in reports:
@@ -90,7 +94,14 @@ def write_reports(root, output, inputs, unit_result="unknown", integration_resul
         "runtime-integration": [select(r, False) for r in integration],
         "harness": [select(r, True) for r in unit],
     }
-    metrics = {**(metadata or {}), "version": 1, "complete": complete, "policy": policy_hash(root),
+    if matrix is not None:
+        planned = plan_scope(matrix)
+        if expected_integration is not None and expected_integration != planned['expected_integration_reports']:
+            raise ValueError('coverage collection count differs from CI matrix')
+        complete = complete and len(integration) == planned['expected_integration_reports']
+        metadata = {**(metadata or {}), **planned}
+    selection = (metadata or {}).get('ci_suite', 'full')
+    metrics = {**(metadata or {}), "version": 1, "complete": complete, "policy": policy_hash(root, selection, (metadata or {}).get('coverage_mode', 'unknown')),
                "unit_result": unit_result, "integration_result": integration_result,
                "integration_reports": len(integration), "scopes": {}}
     output.mkdir(parents=True, exist_ok=True)
@@ -109,7 +120,8 @@ def write_reports(root, output, inputs, unit_result="unknown", integration_resul
     note = ("First-party Swift line coverage only; excludes Rust and dependencies. "
             "Harness coverage uses unit tests only. Runtime combined coverage is a union, not a sum. "
             "Each view uses its own mapped executable lines; unmapped code is not measured. "
-            "Integration line coverage measures selected smoke/demo runs. Full correctness/reconnect tests run against the release image in the same CI workflow; this percentage does not measure MySQL catalog coverage.")
+            "This percentage does not measure MySQL catalog coverage.")
+    note = description(metrics) + " " + note
     provenance = "\n".join(f'{key}: {metrics[key]}' for key in ["commit", "run_id", "run_attempt"] if metrics.get(key))
     summary = (f'{status}\n\n| Scope | Covered / mapped lines | Coverage |\n|---|---:|---:|\n'
                + '\n'.join(rows) + '\n\n' + note + '\n\n' + provenance + '\n')
@@ -130,6 +142,7 @@ def main():
     parser.add_argument("--integration-result", default="unknown")
     parser.add_argument("--expected-integration", type=int)
     parser.add_argument("--ci", action="store_true")
+    parser.add_argument("--matrix", type=Path, help="exact CI instrumentation plan")
     parser.add_argument("--downloaded", type=Path, help="discover downloaded collections, excluding demo evidence snapshots")
     parser.add_argument("inputs", type=Path, nargs="*")
     args = parser.parse_args()
@@ -142,9 +155,10 @@ def main():
         pr = event.get("pull_request", {})
         metadata = dict(commit=os.environ["GITHUB_SHA"], head_sha=pr.get("head", {}).get("sha", os.environ["GITHUB_SHA"]),
                         base_sha=pr.get("base", {}).get("sha"), run_id=os.environ["GITHUB_RUN_ID"],
-                        run_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
+                        run_attempt=os.environ["GITHUB_RUN_ATTEMPT"], ci_suite=os.environ.get('CI_SUITE', 'full'))
     write_reports(args.root.resolve(), args.output, inputs, args.unit_result,
-                  args.integration_result, args.expected_integration, metadata)
+                  args.integration_result, args.expected_integration, metadata,
+                  json.loads(args.matrix.read_text()) if args.matrix else None)
     if args.ci:
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
             summary.write((args.output / "summary.md").read_text())

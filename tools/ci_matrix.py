@@ -1,12 +1,74 @@
 """Plan CI from the lab's complete catalog; policy controls grouping, not inventory."""
 from collections import Counter, defaultdict
 
+SMOKE_PROFILES = ('mysql84-to-mysql57-myisam', 'mysql57-to-mysql84-innodb')
+
+
+def generate_smoke(catalogs, selection):
+    """Resolve the explicit PR selection against the full lab catalog."""
+    requested = selection['cases']
+    if not isinstance(requested, list) or not requested or any(not isinstance(c, str) for c in requested):
+        raise ValueError('PR cases must be a nonempty list of case IDs')
+    if len(set(requested)) != len(requested):
+        raise ValueError('duplicate PR case IDs')
+    if not isinstance(selection.get('area'), str) or not selection['area'].strip():
+        raise ValueError('PR selection requires a descriptive area')
+    inventory, shards = [], []
+    for profile in SMOKE_PROFILES:
+        rows = [dict(r, variant=r.get('variant', 'default'))
+                for catalog in catalogs for r in catalog['scenarios'] if r['profile'] == profile]
+        if not rows or len({key(r) for r in rows}) != len(rows):
+            raise ValueError(f'empty or duplicate smoke catalog: {profile}')
+        if any(r['suite'] != 'correctness' or r['variant'] != 'default' or
+               r['status'] not in ('not_run', 'not_applicable') for r in rows):
+            raise ValueError(f'invalid smoke catalog: {profile}')
+        applicable = {r['id']: r for r in rows if r['status'] == 'not_run'}
+        if not set(requested) <= set(applicable):
+            raise ValueError(f'missing or inapplicable PR cases: {profile}: {sorted(set(requested) - set(applicable))}')
+
+        selected = set()
+        def check_dependencies(identifier, visiting=()):
+            if identifier in visiting or identifier not in applicable:
+                raise ValueError(f'missing or cyclic smoke dependency: {identifier}')
+            for dependency in applicable[identifier].get('dependencies', []):
+                check_dependencies(dependency, visiting + (identifier,))
+            selected.add(identifier)
+
+        for identifier in requested:
+            check_dependencies(identifier)
+        inventory.extend(r for r in rows if r['id'] in selected)
+        shards.append(dict(id=f'coverage-{profile}-default-smoke', profile=profile,
+                           variant='default', suite='correctness', area=selection['area'], image='coverage',
+                           reports=1, tier='full', cases=[r['id'] for r in rows if r['id'] in selected],
+                           requested_cases=requested, owns_obligations=True))
+    return dict(scope='pr-smoke', images=['coverage'], coverage_mode='selected', include=shards,
+                coverage_reports=len(shards), obligations=sum(len(s['cases']) for s in shards),
+                inventory=inventory)
+
 
 def key(row):
     return (row['profile'], row.get('variant', 'default'), row['suite'], row['id'])
 
 
-def generate(catalogs, policy):
+def case_groups(members, area):
+    """Keep catalog order. Use reviewed time-based boundaries or fixed sizes."""
+    if 'split_after' in area:
+        anchors = area['split_after']
+        if 'size' in area or not isinstance(anchors, list) or not anchors:
+            raise ValueError('split_after requires a nonempty list and cannot use size')
+        if any(not isinstance(anchor, str) or anchor not in members for anchor in anchors):
+            raise ValueError(f"split_after case is not applicable in area {area['name']}")
+        ends = [members.index(anchor) + 1 for anchor in anchors]
+        if ends != sorted(set(ends)) or ends[-1] == len(members):
+            raise ValueError('split_after boundaries must be ordered, unique, and leave a final group')
+        return [members[start:end] for start, end in zip([0] + ends, ends + [len(members)])]
+    size = area.get('size', len(members))
+    if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+        raise ValueError('area size must be a positive integer')
+    return [members[offset:offset + size] for offset in range(0, len(members), size)]
+
+
+def generate(catalogs, policy, expanded_coverage=False):
     inventory = {}
     for catalog in catalogs:
         for item in catalog['scenarios']:
@@ -60,16 +122,13 @@ def generate(catalogs, policy):
                 members = [r['id'] for r in rows if r['family'] in area['families']]
                 if not members:
                     continue
-                size = area.get('size', len(members))
-                if size < 1:
-                    raise ValueError('area size must be positive')
-                for offset in range(0, len(members), size):
-                    roots = members[offset:offset + size]
+                chunks = case_groups(members, area)
+                for index, roots in enumerate(chunks, 1):
                     selected = closure(roots)
                     # Dependencies may be repeated, but each primary obligation
                     # must have exactly one owning shard.
                     cases = [r['id'] for r in rows if r['id'] in selected]
-                    name = area['name'] + (f'-{offset // size + 1}' if len(members) > size else '')
+                    name = area['name'] + (f'-{index}' if len(chunks) > 1 else '')
                     add(profile, variant, suite, name, cases, count=False)
                     owners.update((profile, variant, suite, case) for case in roots)
         elif suite in ('lifecycle', 'recovery', 'native', 'demo'):
@@ -84,9 +143,16 @@ def generate(catalogs, policy):
 
     # Instrumentation supplements full release-binary assertions. Keep collection
     # boundaries stable so coverage aggregation can detect missing fixture reports.
+    pr_shards = {}
+    if 'pr_smoke' in policy:
+        catalog = [r for r in inventory.values() if r['suite'] == 'correctness' and r['variant'] == 'default']
+        pr_shards = {s['profile']: s for s in generate_smoke([dict(scenarios=catalog)], policy['pr_smoke'])['include']}
     for profile, variant, suite in sorted(groups):
         if suite == 'correctness' and variant == 'default':
-            add(profile, variant, suite, 'smoke', [], image='coverage', reports=1, tier='smoke', count=False)
+            if profile in pr_shards:
+                shards.append(dict(pr_shards[profile], owns_obligations=False))
+            else:
+                add(profile, variant, suite, 'smoke', [], image='coverage', reports=1, tier='smoke', count=False)
     sample = policy['sample']
     for identifier in sample['cases']:
         if (sample['profile'], 'default', 'correctness', identifier) not in applicable:
@@ -94,6 +160,14 @@ def generate(catalogs, policy):
     for image in ('release', 'coverage'):
         add(sample['profile'], 'default', 'correctness', 'sample', sample['cases'],
             image=image, reports=int(image == 'coverage'), count=False)
+    # Keep release-binary obligations intact. These extra runs measure the same
+    # shared scenarios with instrumentation; adapters have no coverage contract.
+    if expanded_coverage:
+        for shard in list(shards):
+            if shard['image'] == 'release' and shard['suite'] in ('correctness', 'lifecycle') and shard['area'] != 'sample':
+                measured = dict(shard, id=shard['id'].replace('release-', 'coverage-', 1),
+                                image='coverage', reports=1)
+                shards.append(measured)
     # Start the longest stateful suites early to avoid a serial tail after the
     # shorter case chunks finish. GitHub may further limit runner concurrency.
     priority = {'failure-recovery-offline': 0, 'native-ddl': 1, 'demo': 2, 'reconnect': 3}
@@ -102,5 +176,5 @@ def generate(catalogs, policy):
         raise ValueError('duplicate shard identifiers')
     if len(shards) > 256:
         raise ValueError('CI matrix exceeds GitHub limit of 256 jobs')
-    return dict(include=shards, coverage_reports=sum(s['reports'] for s in shards),
+    return dict(scope='full', images=['release', 'coverage'], coverage_mode='expanded' if expanded_coverage else 'selected', include=shards, coverage_reports=sum(s['reports'] for s in shards),
                 obligations=len(applicable), inventory=list(inventory.values()))

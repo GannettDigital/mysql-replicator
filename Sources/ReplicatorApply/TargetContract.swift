@@ -6,6 +6,7 @@ import ReplicatorCodec
 protocol TargetContract {
     var versionPrefix: String { get }
     var engine: String { get }
+    var transactional: Bool { get }
     var statusSQL: String { get }
     var gtidMode: String { get }
     var gtidConsistency: String { get }
@@ -18,9 +19,11 @@ protocol TargetContract {
     func validateTable(_ table: ApplyTable, target: TargetSession) throws
 }
 
-struct MySQL57MyISAMContract: TargetContract {
-    let versionPrefix = "5.7.", engine = "MyISAM", statusSQL = "SHOW SLAVE STATUS"
-    let gtidMode = "OFF_PERMISSIVE", gtidConsistency = "WARN"
+protocol MySQL57TargetContract: TargetContract {}
+
+extension MySQL57TargetContract {
+    var versionPrefix: String { "5.7." }
+    var statusSQL: String { "SHOW SLAVE STATUS" }
     func configureDDL(_ target: TargetSession, context: QuerySessionContext) throws {}
     func ddlSQLMode(_ mode: UInt64) -> UInt64 { mode }
     func defaultUTF8MB4Collation(_ target: TargetSession) throws -> String? {
@@ -28,15 +31,19 @@ struct MySQL57MyISAMContract: TargetContract {
     }
     func columnDefault(_ value: String?, type: String) throws -> String? { value }
     func columnExtra(_ value: String?, defaultValue: String?, type: String) -> String? { value.flatMap { $0.isEmpty ? nil : $0 } }
+}
+
+struct MySQL57MyISAMContract: MySQL57TargetContract {
+    let transactional = false
+    let engine = "MyISAM", gtidMode = "OFF_PERMISSIVE", gtidConsistency = "WARN"
     func configure(_ target: TargetSession) throws {
         _ = try target.query("SET @@SESSION.GTID_NEXT = 'AUTOMATIC'")
     }
     func validateTable(_ table: ApplyTable, target: TargetSession) throws {}
 }
 
-struct MySQL84InnoDBContract: TargetContract {
-    let versionPrefix = "8.4.", engine = "InnoDB", statusSQL = "SHOW REPLICA STATUS"
-    let gtidMode = "ON", gtidConsistency = "ON"
+struct MySQL84InnoDBContract: InnoDBTargetContract {
+    let versionPrefix = "8.4.", statusSQL = "SHOW REPLICA STATUS"
     func ddlSQLMode(_ mode: UInt64) -> UInt64 {
         // MySQL 8.4 system_variables.h MODE_IGNORED_MASK and
         // Query_log_event::do_apply_event discard these obsolete 5.7 bits.
@@ -57,6 +64,15 @@ struct MySQL84InnoDBContract: TargetContract {
         try require(context.defaultUTF8MB4Collation == 45,"unexpected 5.7 default utf8mb4 collation")
         _ = try target.query("SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci")
     }
+}
+
+protocol InnoDBTargetContract: TargetContract {}
+
+extension InnoDBTargetContract {
+    var transactional: Bool { true }
+    var engine: String { "InnoDB" }
+    var gtidMode: String { "ON" }
+    var gtidConsistency: String { "ON" }
     func configure(_ target: TargetSession) throws {
         // Avoid a privileged GTID_NEXT assignment on managed targets. These
         // writes generate target-local GTIDs; upstream progress lives in SQLite.
@@ -64,17 +80,18 @@ struct MySQL84InnoDBContract: TargetContract {
         _ = try target.query("SET SESSION foreign_key_checks=1,unique_checks=1")
     }
     func validateTable(_ table: ApplyTable, target: TargetSession) throws {
-        let binds: [MySQLData] = [.init(string:table.database),.init(string:table.table)]
-        // Qualify FK/cascade semantics separately before permitting them.
-        try require(try target.scalar("SELECT COUNT(*) AS v FROM information_schema.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_NAME IS NOT NULL AND ((TABLE_SCHEMA=? AND TABLE_NAME=?) OR (REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME=?))",binds+binds) == "0","InnoDB reverse profile does not yet support foreign keys or cascades")
+        try target.validateForeignKeys(table)
     }
 }
+
+struct MySQL57InnoDBContract: MySQL57TargetContract, InnoDBTargetContract {}
 
 extension ReplicationProfile {
     var targetContract: TargetContract {
         switch self {
-        case .mysql84To57MyISAM: return MySQL57MyISAMContract()
+        case .mysql84To57MyISAM, .mysql57To57MyISAM: return MySQL57MyISAMContract()
         case .mysql57To84InnoDB: return MySQL84InnoDBContract()
+        case .mysql57To57InnoDB: return MySQL57InnoDBContract()
         }
     }
 }

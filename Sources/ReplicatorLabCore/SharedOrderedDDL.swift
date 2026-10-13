@@ -18,7 +18,7 @@ extension SharedCorrectness.Run {
             let applying=try isolated.start("ddl",config:config)
             for (index,change) in changes.enumerated() {
                 try reporter.run(change.test) {
-                    let prefix=change.table=="defaults" ? (f.profile == .forward ? "SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; " : "") : ""
+                    let prefix=change.table=="defaults" ? (f.profile.hasOptionalMetadata ? "SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; " : "") : ""
                     let assertionID = DDLCoverageCases.assertion(for: change.test.id)
                     let warnings = try f.sql(.source,session+prefix+change.sql + (assertionID == nil ? "" : "; SHOW WARNINGS"))
                     try isolated.barrier(applying,count:index+1)

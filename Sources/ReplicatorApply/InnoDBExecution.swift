@@ -1,7 +1,7 @@
 import ReplicatorCapture
 
-/// Acknowledges only committed source transactions. Successful row statements
-/// are provisional until COMMIT; never expose them as a durable prefix.
+/// Acknowledges only committed source transactions. A single eligible mutation
+/// commits with its statement; all other groups remain provisional until COMMIT.
 enum InnoDBExecution {
     static func run(_ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
                     maximumInsertRows: Int, maximumInsertBytes: Int,
@@ -13,11 +13,23 @@ enum InnoDBExecution {
         var acknowledged = Array(repeating:0,count:groups.count)
         var skipped: [Int:SkippedApplyError] = [:]
         for (index,group) in groups.enumerated() {
-            var started = false, committing = false
+            var started = false, committing = false, autocommitting = false
             do {
                 resetTrace()
                 try require(!cancellation.isCancelled,"apply cancelled")
                 try prepare(group)
+                if DMLExecution.canAutocommit(group,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) {
+                    try require(!cancellation.isCancelled,"apply cancelled")
+                    // Session preflight sets autocommit=1. Keep each source group
+                    // separate, even when adjacent groups could share an INSERT.
+                    autocommitting = true
+                    resetTrace()
+                    if group.mutations.count == 1 { try write(group.mutations[0]) }
+                    else { try insert(group.mutations) }
+                    // A stop received during the request cannot undo its commit.
+                    acknowledged[index] = group.mutations.count
+                    continue
+                }
                 try begin(); started = true
                 let result = DMLExecution.run([group],cancellation:cancellation,
                     maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes,
@@ -31,6 +43,17 @@ enum InnoDBExecution {
             } catch {
                 let failedTrace = trace()
                 var outcome = committing ? "commitUncertain" : "notStarted"
+                if autocommitting && failedTrace.phase != .notIssued {
+                    let rejection = error as? ApplyError
+                    if failedTrace.phase == .possiblyExecuted && rejection?.code == .duplicateKey && rejection?.mysqlErrorNumber == 1062 {
+                        // Plain InnoDB INSERT/UPDATE is atomic. A received 1062
+                        // rejects the entire autocommit statement, including a chunk.
+                        outcome = "rolledBack"
+                    } else {
+                        outcome = failedTrace.phase == .acknowledged ? "committed" : "commitUncertain"
+                    }
+                    // A later ROLLBACK cannot disprove an autocommit write.
+                }
                 if started && !committing {
                     do { try rollback(); outcome = "rolledBack" }
                     catch { outcome = "rollbackUnconfirmed" }
@@ -44,7 +67,9 @@ enum InnoDBExecution {
                 let diagnostic = TargetFailureDiagnostic(reason:String(describing:error),statement:failedTrace,
                     rows:diagnosticRows(groups,failedIndex:index,outcome:outcome,skipped:skipped),
                     ddlGTID:nil,ddlSQL:nil,transactionOutcome:outcome)
-                return .init(acknowledged:acknowledged,failure:error,diagnostic:diagnostic,skipped:skipped)
+                return .init(acknowledged:acknowledged,failure:error,diagnostic:diagnostic,
+                             discardUnwritten:error is TargetConnectionFailure && outcome == "notStarted" && failedTrace.phase == .notIssued,
+                             skipped:skipped)
             }
         }
         return .init(acknowledged:acknowledged,failure:nil,skipped:skipped)

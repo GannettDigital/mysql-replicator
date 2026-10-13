@@ -39,7 +39,9 @@ enum DDLCoverageEvidence {
     /// Includes dirty/untracked relevant sources and fixture inputs; documentation
     /// and generated caches do not stale evidence. Dependency versions are locked.
     static func inputs(root: URL) throws -> [String: String] {
-        var paths = ["Package.swift", "Package.resolved", "compose.yaml", "Makefile", ".dockerignore"]
+        var paths = ["Package.swift", "Package.resolved", "compose.yaml", "Makefile", ".dockerignore",
+                     "tools/build_dependencies.py", "tools/coverage_runtime.py",
+                     "tools/swift_cache.py", "tools/code_coverage.py", "tools/release_version.py"]
         let excluded: Set<String> = [".git", ".build", ".swiftpm", "target", "__pycache__"]
         for directory in ["Sources", "rust", "Vendor", "packaging", "docker", "tests"] {
             let url = root.appendingPathComponent(directory)

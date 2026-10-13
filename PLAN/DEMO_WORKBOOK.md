@@ -1,9 +1,11 @@
 # Demo workbook: four terminals
 
 For common profile-based test, demo and benchmark commands, see the [test lab](../docs/TEST_LAB.md).
-Both profiles use the shared retained-session implementation. Set `PROFILE` in each host terminal as shown below.
+All profiles use the shared retained-session implementation. Set `PROFILE` in each host terminal as shown below.
 
-This workbook covers **8.4 → 5.7 MyISAM**. For **5.7 → 8.4 InnoDB**, use the
+This workbook covers **8.4 → 5.7 MyISAM** and **5.7 → 5.7 MyISAM**.
+For the latter, export `PROFILE=mysql57-to-mysql57-myisam` and use
+`SHOW SLAVE STATUS`, `STOP SLAVE`, and `START SLAVE` on the native server. For **5.7 → 8.4 InnoDB**, use the
 [reverse demo workbook](REVERSE_DEMO_WORKBOOK.md).
 
 The shared demo starts three databases and an idle applier. Repeating `up`
@@ -16,11 +18,11 @@ identifier; the replicator configuration is `/evidence/apply.yaml`.
 
 ```sh
 cd /path/to/mysql-replicator
-export PROFILE=mysql84-to-mysql57-myisam
+export PROFILE=${PROFILE:-mysql84-to-mysql57-myisam}
 make lab-demo ACTION=up
 export DEMO_STACK="replicator-lab-$(swift -e '
 import Foundation
-let data = try Data(contentsOf: URL(fileURLWithPath: "artifacts/demos/mysql84-to-mysql57-myisam/current.json"))
+let data = try Data(contentsOf: URL(fileURLWithPath: "artifacts/demos/\(ProcessInfo.processInfo.environment["PROFILE"]!)/current.json"))
 let session = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 print((session["identifier"] as! String).lowercased())
 ')"
@@ -280,6 +282,10 @@ workbook, use a fresh demo built from the current code. Do not change SQLite's
 version number manually. See [relay format and compatibility](PERFORMANCE_BENCHMARK.md#binary-metadata-and-cached-timestamps).
 
 ## Longer DDL/DML validation on separate stacks
+
+The following commands select the 8.4-source metadata variants explicitly.
+For 5.7 → 5.7, use `make correctness PROFILE=mysql57-to-mysql57-myisam`
+and its default variant.
 
 ```sh
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--variant all"

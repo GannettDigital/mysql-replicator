@@ -17,7 +17,7 @@ enum LabVariant: String, CaseIterable {
         }
     }
     func reason(_ profile: LabProfile) -> String? {
-        self != .standard && profile == .reverse ? "Historical forward capture variant; MySQL 5.7 does not expose binlog_row_metadata. Reverse uses its default GTID/bootstrap contract." : nil
+        self != .standard && !profile.hasOptionalMetadata ? "MySQL 5.7 does not expose binlog_row_metadata; use its default GTID/bootstrap variant." : nil
     }
     func start(_ boundary: Boundary) -> [String:Any] {
         var result: [String:Any] = ["executedGTIDs":boundary.gtids]

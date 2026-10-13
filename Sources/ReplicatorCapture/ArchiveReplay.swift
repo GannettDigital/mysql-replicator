@@ -143,14 +143,14 @@ public final class ArchiveReplay {
         }
     }
 
-    public func run(configuration: CaptureConfiguration, cancellation: CaptureCancellation,
+    public func run(configuration: CaptureConfiguration, cancellation: CaptureCancellation, retainRawBytes: Bool = false,
                     emitEvent: @escaping (LiveRecord) throws -> Void,
                     emitTransaction: @escaping (CompleteTransaction) throws -> Void,
                     resolveSchema: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])?,
                     timings: StageTimings, ignoreTable: ((String,String) -> Bool)?) throws {
         let excluded=try GTIDSet(configuration.start.executedGTIDs)
         try validate(baseline:excluded.canonical,stopAfterGTIDs:configuration.stopAfterGTIDs)
-        let processor=try StreamProcessor(config:configuration,includeRaw:true,emitEvent:emitEvent,
+        let processor=try StreamProcessor(config:configuration,includeRaw:!retainRawBytes,retainRawBytes:retainRawBytes,emitEvent:emitEvent,
             emitTransaction:emitTransaction,resolveSchema:resolveSchema,timings:timings,allowDDL:true,ignoreTable:ignoreTable)
         struct Limit: Error {}
         if processor.stopReason != nil { return }

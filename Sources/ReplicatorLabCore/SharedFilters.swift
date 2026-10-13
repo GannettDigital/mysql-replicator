@@ -7,8 +7,8 @@ extension SharedCorrectness.Run {
         guard selects(DDLCoverageCases.wildcardFilter.id) else { return }
         let original=f.config
         defer { f.config=original }
-        let stop=f.profile == .reverse ? "STOP SLAVE" : "STOP REPLICA"
-        let start=f.profile == .reverse ? "START SLAVE" : "START REPLICA"
+        let stop=f.profile.nativeVersion.stopReplica
+        let start=f.profile.nativeVersion.startReplica
         let patterns=["temp.%","poc.ignore\\_%","scratch_.%"]
         let nativePatterns=patterns.map { "'"+$0.replacingOccurrences(of:"\\",with:"\\\\")+"'" }.joined(separator:",")
         try f.awaitNative()
@@ -84,7 +84,7 @@ extension SharedCorrectness.Run {
                     try require(f.sql(role,"SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN ('temp','scratch1')") == "0","excluded schema reached replica")
                     try require(f.sql(role,"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='ignore_table'") == "0","escaped wildcard did not exclude table")
                 }
-                return ["patterns":patterns,"workload":workload,"summary":result,"source_before":before.json,"source_after":end.json,"reference_decoder":referenceDecoderVersion,"native_status":try f.h.sql("native",f.profile == .reverse ? "SHOW SLAVE STATUS\\G" : "SHOW REPLICA STATUS\\G",headers:true)]
+                return ["patterns":patterns,"workload":workload,"summary":result,"source_before":before.json,"source_after":end.json,"reference_decoder":referenceDecoderVersion,"native_status":try f.h.sql("native",f.profile.nativeVersion.replicaStatus+"\\G",headers:true)]
             }
             try reporter.assertion("normalized-binlog",evidence:test.id+"-binlogs.json") {
                 let expected=[RowOperation("insert",after:["91","included","1"]),RowOperation("update",before:["91","included","1"],after:["91","included","2"]),RowOperation("delete",before:["91","included","2"])]

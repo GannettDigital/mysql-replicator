@@ -31,8 +31,19 @@ public final class NativeHarness {
     var report: [String: Any]
     let services = ["source", "native", "target57"]
 
+    var serverVersions: [String:LabMySQLVersion] = ["source":.mysql84,"native":.mysql84,"target57":.mysql57]
     var composeOverlays: [String] = []
     var composeEnvironment: [String: String] = [:]
+    private var sqlCalls = 0
+    private var sqlFailures = 0
+    private var sqlSeconds = 0.0
+    private var sqlBatchCalls = 0
+    private var sqlBatchQueries = 0
+
+    var sqlClientMeasurements: [String: Any] {
+        ["calls": sqlCalls, "failures": sqlFailures, "seconds": sqlSeconds,
+         "batch_calls": sqlBatchCalls, "batch_queries": sqlBatchQueries]
+    }
 
     public init(root: URL, config: NativeCase, artifactCategory: String = "native-suite", identifier: String = runID()) {
         self.root = root; self.runner = ProcessRunner(root: root); self.config = config
@@ -53,18 +64,38 @@ public final class NativeHarness {
                        timeout: timeout, checked: checked, onOutput: onOutput)
     }
     func sql(_ service: String, _ statement: String, headers: Bool = false, preserveWhitespace: Bool = false) throws -> String {
-        let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
-        let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
-                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
-                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+        let result = try sqlCommand(service, statement, headers: headers)
         if preserveWhitespace {
             let output=String(decoding:result.stdout,as:UTF8.self)
             return output.hasSuffix("\n") ? String(output.dropLast()) : output
         }
         return result.text
     }
+    func sqlBatch(_ service: String, _ queries: [LabSQLBatch.Query]) throws -> [String: String] {
+        guard !queries.isEmpty else { return [:] }
+        let batch = LabSQLBatch(queries: queries)
+        sqlBatchCalls += 1
+        sqlBatchQueries += queries.count
+        let result = try sqlCommand(service, batch.statement, headers: false)
+        return try batch.decode(String(decoding: result.stdout, as: UTF8.self))
+    }
+    private func sqlCommand(_ service: String, _ statement: String, headers: Bool) throws -> CommandResult {
+        let started = ProcessInfo.processInfo.systemUptime
+        sqlCalls += 1
+        var succeeded = false
+        defer {
+            sqlSeconds += ProcessInfo.processInfo.systemUptime - started
+            if !succeeded { sqlFailures += 1 }
+        }
+        let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
+        let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
+                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
+                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+        succeeded = true
+        return result
+    }
     func boundary(_ service: String, statusCommand: String? = nil) throws -> Boundary {
-        let fields = try sql(service, statusCommand ?? (service == "target57" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS")).components(separatedBy: "\t")
+        let fields = try sql(service, statusCommand ?? serverVersions[service]!.binlogStatus).components(separatedBy: "\t")
         guard fields.count >= 2, let position = UInt64(fields[1]) else { throw LabError("invalid binlog boundary") }
         try require(fields[0].range(of: #"^binlog\.[0-9]+$"#, options: .regularExpression) != nil, "unexpected binlog filename")
         return Boundary(file: fields[0], position: position, gtids: try sql(service, "SELECT @@GLOBAL.gtid_executed"))
@@ -76,7 +107,7 @@ public final class NativeHarness {
         try sql(service, "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items'")
     }
     func status() throws -> [String: String] {
-        let text = try sql("native", "SHOW REPLICA STATUS\\G", headers: true)
+        let text = try sql("native", serverVersions["native"]!.replicaStatus+"\\G", headers: true)
         try text.write(to: output.appendingPathComponent("native-status.txt"), atomically: true, encoding: .utf8)
         var result: [String: String] = [:]
         for line in text.components(separatedBy: "\n") {

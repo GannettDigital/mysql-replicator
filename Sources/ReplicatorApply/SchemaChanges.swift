@@ -5,17 +5,22 @@ enum IndexChange: Equatable {
     case add(ApplyIndex), drop(String), rename(String,String), replace(String,ApplyIndex)
     func applying(to table: ApplyTable) throws -> ApplyTable {
         var indexes=table.secondaryIndexes
+        func validateAddition(_ index: ApplyIndex) throws {
+            try require(!table.foreignKeys.contains { key in
+                key.child == table.identity && Array(index.parts.prefix(key.columns.count)).map(\.column) == key.columns
+            },"adding a replacement foreign-key supporting index is unsupported; its implicit index removal requires qualification")
+        }
         func remove(_ name:String) throws -> ApplyIndex {
             guard name.uppercased() != "PRIMARY",let i=indexes.firstIndex(where:{$0.name.lowercased() == name.lowercased()}) else {throw ApplyError("secondary index is absent or PRIMARY is unsupported")}
             return indexes.remove(at:i)
         }
         switch self {
-        case .add(let index): indexes.append(index)
+        case .add(let index): try validateAddition(index); indexes.append(index)
         case .drop(let name): _ = try remove(name)
         case .rename(let old,let new):
             let index=try remove(old)
             indexes.append(ApplyIndex(name:new,unique:index.unique,parts:index.parts,type:index.type))
-        case .replace(let old,let index): _ = try remove(old);indexes.append(index)
+        case .replace(let old,let index): try validateAddition(index); _ = try remove(old);indexes.append(index)
         }
         let result=table.replacing(indexes:indexes);try result.validate();return result
     }
@@ -54,6 +59,10 @@ extension TargetSession {
         let encoding = DDLEncoding(characterSet:table.defaultCharacterSet!,collation:table.defaultCollation!)
         for action in actions {
             switch action {
+            case .addForeignKey(let key,let index): result = try result.addingForeignKey(key,indexName:index)
+            case .dropForeignKey(let name):
+                guard let i = result.foreignKeys.firstIndex(where: { $0.child == result.identity && $0.name.lowercased() == name.lowercased() }) else { throw ApplyError("DROP foreign key is absent") }
+                result.foreignKeys.remove(at:i)
             case .add(let definition,let placement):
                 let column = try resolveColumn(definition,parent:encoding,context:context)
                 try require(!result.columns.contains{$0.name == column.name},"DDL ADD column already exists")

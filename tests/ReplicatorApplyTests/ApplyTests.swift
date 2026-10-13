@@ -8,7 +8,7 @@ import CSQLite
 final class ApplyTests: XCTestCase {
     let sid = "8ba09bde-bc41-11f1-8272-ba06e9024a03"
     var root: URL { URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
-    func config(_ path: String = "/tmp/unused-state", storage: [String:Any]? = nil, applierProfiling: Bool? = nil, collations: [String:String]? = nil, profile: String? = nil, skipErrors: [String:Any]? = nil) throws -> ApplyConfiguration {
+    func config(_ path: String = "/tmp/unused-state", storage: [String:Any]? = nil, applierProfiling: Bool? = nil, collations: [String:String]? = nil, profile: String? = nil, skipErrors: [String:Any]? = nil, mode: String = "gtid") throws -> ApplyConfiguration {
         var object: [String:Any] = ["version":1,"stateDirectory":path,
             "source":["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":"gtid","start":["executedGTIDs":sid+":1-10"],"tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]],
             "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true],
@@ -19,7 +19,7 @@ final class ApplyTests: XCTestCase {
         object["applierProfiling"]=applierProfiling
         if let collations { object["compatibility"] = ["collations":collations] }
         object["version"]=2; object.removeValue(forKey:"tables")
-        var source=object["source"] as! [String:Any]; source["version"]=2; source.removeValue(forKey:"tables"); object["source"]=source
+        var source=object["source"] as! [String:Any]; source["mode"]=mode; if mode == "file-position" { source["start"]=["file":"binlog.000001","position":4,"executedGTIDs":sid+":1-10"] }; source["version"]=2; source.removeValue(forKey:"tables"); object["source"]=source
         return try JSONDecoder().decode(ApplyConfiguration.self,from:JSONSerialization.data(withJSONObject:object))
     }
     func tables() -> [ApplyTable] {

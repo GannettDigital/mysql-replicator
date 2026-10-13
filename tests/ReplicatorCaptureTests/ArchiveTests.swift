@@ -33,6 +33,19 @@ final class ArchiveTests: XCTestCase {
             XCTAssertEqual(groups.compactMap{$0.gtid?.sequence},["12","14"])
         }
     }
+    func testArchiveCanHandRawBytesDirectlyToRelay() throws {
+        try fixture { _,source,config in
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)
+            var expected:[Data]=[],actual:[Data]=[]
+            try archive.run(configuration:source,cancellation:.init(),emitEvent:{ record in
+                expected.append(try XCTUnwrap((record.event?.rawBase64 ?? record.rawBase64).flatMap { Data(base64Encoded:$0) }))
+            },emitTransaction:{ _ in },resolveSchema:nil,timings:.init(),ignoreTable:nil)
+            try archive.run(configuration:source,cancellation:.init(),retainRawBytes:true,emitEvent:{ record in
+                actual.append(try XCTUnwrap(record.rawBytes)); XCTAssertNil(record.event?.rawBase64); XCTAssertNil(record.rawBase64)
+            },emitTransaction:{ _ in },resolveSchema:nil,timings:.init(),ignoreTable:nil)
+            XCTAssertEqual(actual,expected); XCTAssertFalse(actual.isEmpty)
+        }
+    }
     func testArchiveRejectsCorruptionTruncationAndMissingBaselineHistory() throws {
         try fixture { dir,source,config in
             let original=try Data(contentsOf:dir.appendingPathComponent("binlog.000003"))

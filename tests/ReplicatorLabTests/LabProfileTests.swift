@@ -2,6 +2,61 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testMySQL57MyISAMReusesCapabilitiesAndSharedScenarios() throws {
+        let profile=LabProfile.mysql57MyISAM
+        XCTAssertEqual(profile.sourceVersion,.mysql57)
+        XCTAssertEqual(profile.targetVersion,.mysql57)
+        XCTAssertEqual(profile.nativeVersion,.mysql57)
+        XCTAssertFalse(profile.transactionalTarget)
+        XCTAssertFalse(profile.hasOptionalMetadata)
+        XCTAssertFalse(profile.supportsPositionCapture)
+        for id in ["myisam-recovery","offline-replay","live-skip-errors","ddl-compat-temporary"] {
+            XCTAssertNil(try XCTUnwrap(LabScenario.correctness.first { $0.id == id }).reason(profile))
+        }
+        for id in ["reverse-database-table-defaults","forward-failures"] {
+            XCTAssertNotNil(try XCTUnwrap(LabScenario.correctness.first { $0.id == id }).reason(profile))
+        }
+        let demo=LabDemoQualification.scenarios.filter { $0.applies(profile) }.map(\.id)
+        XCTAssertEqual(demo.count,11)
+        XCTAssertTrue(demo.contains("demo-fail-stop"))
+        XCTAssertTrue(demo.contains("demo-resume-applied-gtid"))
+        XCTAssertFalse(demo.contains("demo-resume-applied-position"))
+        XCTAssertNotNil(LabVariant.positionMinimal.reason(profile))
+        XCTAssertNoThrow(try LabTestOptions(["--profile",profile.rawValue,"--suite","recovery","--coverage"]))
+        XCTAssertThrowsError(try LabBenchmark.Options(["--profile",profile.rawValue,"--workload","multi-table-transaction"]))
+    }
+    func testMySQL57InnoDBUsesSharedTransactionalSuites() throws {
+        let profile=LabProfile.mysql57InnoDB
+        XCTAssertEqual(profile.sourceVersion,.mysql57)
+        XCTAssertEqual(profile.targetVersion,.mysql57)
+        XCTAssertEqual(profile.nativeVersion,.mysql57)
+        XCTAssertTrue(profile.transactionalTarget)
+        XCTAssertFalse(profile.hasOptionalMetadata)
+        XCTAssertFalse(profile.supportsPositionCapture)
+        XCTAssertEqual(profile.service(.source),"source")
+        XCTAssertEqual(profile.service(.target),"target57")
+        for scenario in LabScenario.correctness {
+            XCTAssertEqual(scenario.reason(profile),scenario.reason(.reverse),scenario.id)
+        }
+        XCTAssertEqual(LabLifecycle.fields(profile).compactMap { $0["status"] as? String },
+                       LabLifecycle.fields(.reverse).compactMap { $0["status"] as? String })
+        XCTAssertEqual(LabDemoQualification.scenarios.filter { $0.applies(profile) }.map(\.id),
+                       LabDemoQualification.scenarios.filter { $0.applies(.reverse) }.map(\.id))
+        XCTAssertEqual(LabTests.adapter(profile:profile,suite:"recovery")["status"] as? String,"not_run")
+        XCTAssertNoThrow(try LabBenchmark.Options(["--profile",profile.rawValue,"--workload","multi-table-transaction"]))
+    }
+
+    func testServerDialectDoesNotDependOnEngine() {
+        let boundary=Boundary(file:"binlog.000003",position:123,gtids:"")
+        for profile in LabProfile.allCases {
+            let version=profile.nativeVersion
+            let sql=version.connect(host:profile.service(.source),caFile:"/ca.pem",boundary:boundary,autoPosition:true)
+            XCTAssertTrue(sql.contains(version.sourcePrefix+"AUTO_POSITION=1"))
+            XCTAssertTrue(version.position(boundary).contains(version.sourcePrefix+"LOG_POS=123"))
+            XCTAssertEqual(version.startReplica,profile.sourceVersion == .mysql57 ? "START SLAVE" : "START REPLICA")
+        }
+    }
+
     func testLogicalRolesAndNativeReferencesAreExplicit() {
         XCTAssertEqual(LabProfile.forward.version(.native),"8.4")
         XCTAssertEqual(LabProfile.reverse.version(.native),"5.7")
@@ -13,7 +68,7 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,80+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
+        XCTAssertEqual(cases.count,82+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         for (id,family) in [("offline-skip-errors","offline"),("live-skip-errors","policy")] {
             let skipping=try XCTUnwrap(cases.first { $0.id == id })
@@ -93,7 +148,7 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(charset.prefix57,"")
         XCTAssertFalse(charset.prefix.isEmpty)
         let temporary=DDLCompatibilityCases.cases.first { $0.test.id == "ddl-compat-temporary" }!
-        XCTAssertTrue(temporary.steps.contains { $0.sql.contains("ENGINE=MyISAM") && $0.sql57.contains("ENGINE=InnoDB") })
+        XCTAssertTrue(temporary.steps.contains { $0.sql.contains("ENGINE=MyISAM") && $0.sqlTransactional.contains("ENGINE=InnoDB") })
     }
     func testInvalidSelectionsFailBeforeProvisioning() {
         for args in [["--suite","demo","--tier","smoke"],["--profile","wrong"],["--suite","wrong"],["--tier","wrong"],["--suite","demo","--case","matrix-values"],["--coverage","--suite","recovery"]] {
@@ -161,12 +216,19 @@ final class LabProfileTests: XCTestCase {
         XCTAssertThrowsError(try LabBenchmark.Options([]))
         let backlog=try LabBenchmark.Options(["--profile",reverse,"--events","100","--workload","multi-table-transaction"])
         XCTAssertEqual(backlog.mode,"backlog"); XCTAssertEqual(backlog.events,100)
+        XCTAssertEqual(backlog.batchTransactions,8)
+        XCTAssertFalse(backlog.serverProfiling)
+        XCTAssertTrue(backlog.applierProfiling); XCTAssertFalse(backlog.decoderProfiling)
+        let profiled=try LabBenchmark.Options(["--profile",reverse,"--decoder-profile","on","--applier-profile","off","--batch-transactions","32","--server-profile","on"])
+        XCTAssertTrue(profiled.serverProfiling)
+        XCTAssertTrue(profiled.decoderProfiling); XCTAssertFalse(profiled.applierProfiling)
+        XCTAssertEqual(profiled.batchTransactions,32)
         for mode in ["streaming","capture"] {
             let options=try LabBenchmark.Options(["--mode",mode,"--profile",forward,"--threads","2"])
             XCTAssertEqual(options.forwardedArguments,["--threads","2"])
             XCTAssertThrowsError(try LabBenchmark.Options(["--mode",mode,"--profile",reverse]))
         }
-        for args in [["--mode","invalid"],["--mode","backlog","--mode","capture"],["--events","0"],["--threads","2"],["--workload","multi-table-transaction"]] {
+        for args in [["--mode","invalid"],["--mode","backlog","--mode","capture"],["--events","0"],["--threads","2"],["--workload","multi-table-transaction"],["--batch-transactions","0"],["--batch-transactions","257"],["--decoder-profile","yes"],["--applier-profile","yes"],["--server-profile","yes"]] {
             XCTAssertThrowsError(try LabBenchmark.Options(["--profile",forward]+args))
         }
     }

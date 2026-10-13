@@ -121,7 +121,7 @@ enum ApplyMessage {
     case idle
     var cost: Int {
         switch self {
-        case .event(let record): return 256 + (record.event?.retainedByteCost ?? record.rawBase64?.utf8.count ?? 0)
+        case .event(let record): return 256 + (record.event?.retainedByteCost ?? record.rawBase64?.utf8.count ?? 0) + (record.rawBytes?.count ?? 0)
         case .transaction(let group): return 1024 + group.events.reduce(0) { $0 + $1.retainedByteCost }
         case .schema(let request): return 256 + request.event.retainedByteCost
         case .idle: return 1

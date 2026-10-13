@@ -57,7 +57,7 @@ final class ForwardBenchmarkFixture {
         try FileManager.default.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(manifest!).write(to: manifestURL, options: .atomic)
     }
-    func up(build: Bool, targetTransport: String = "tcp-tls", batchTransactions: Int = 32, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false, explicitTableLocks: Bool = false, codeCoverage: Bool = false) throws {
+    func up(build: Bool, targetTransport: String = "tcp-tls", batchTransactions: Int = 8, decoderProfiling: Bool = false, applierProfiling: Bool = false, insertRows: Int = 32, overlapPreparation: Bool = true, flushOnTableChange: Bool = false, explicitTableLocks: Bool = false, codeCoverage: Bool = false) throws {
         try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"invalid target transport")
         try require((1...256).contains(batchTransactions),"invalid DML batch size")
         try require(!FileManager.default.fileExists(atPath: manifestURL.path), "a fixture session already exists; clean it up before retrying (up never resets data)")

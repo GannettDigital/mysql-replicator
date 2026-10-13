@@ -21,7 +21,7 @@ struct TableRename: Equatable {
 extension ApplyTable {
     func renamed(to name: TableName) -> ApplyTable {
         ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:primaryKeyColumns,
-                   defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions)
+                   defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions,foreignKeys:foreignKeys.map { $0.renamed(TableRename(from:TableName(database:database,table:table),to:name)) })
     }
 }
 
@@ -40,7 +40,7 @@ extension TargetSession {
         let finalNames = changes.compactMap{$0.after?.identity}
         try require(Set(discovered.keys).subtracting(names.keys).union(finalNames).count <= maximumCachedTables,"discovered schema limit reached")
         try setDDLSession(context,source:source)
-        return PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes)
+        return try prepareForeignKeyTransitions(PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes))
     }
     func applyRenames(_ plan: PreparedDDL) throws {
         // One server-side statement, never split into separately visible renames.

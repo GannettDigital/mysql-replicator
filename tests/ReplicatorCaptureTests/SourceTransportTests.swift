@@ -5,6 +5,33 @@ import NIOSSL
 @testable import ReplicatorCapture
 
 final class SourceTransportTests: XCTestCase {
+    func testSourceTLSDefaultsAndExplicitPlaintextSurviveResume() throws {
+        func decode(_ options: [String:Any]) throws -> CaptureConfiguration {
+            let base: [String:Any] = ["version":2,"host":"127.0.0.1","port":3306,
+                "username":"capture","password":"secret","serverID":9100,
+                "sourceUUID":"00000000-0000-0000-0000-000000000001",
+                "mode":"gtid","start":["executedGTIDs":""]]
+            return try JSONDecoder().decode(CaptureConfiguration.self,from:JSONSerialization.data(withJSONObject:base.merging(options){_,new in new}))
+        }
+        let encrypted = try decode(["serverHostname":"source"])
+        _ = try encrypted.validate()
+        XCTAssertTrue(encrypted.requireTLS)
+        XCTAssertEqual(encrypted.tlsConfiguration()?.certificateVerification, .fullVerification)
+        let plaintext = try decode(["requireTLS":false])
+        _ = try plaintext.validate()
+        XCTAssertNil(plaintext.tlsConfiguration())
+        XCTAssertNil(plaintext.serverHostname)
+        let resumed = plaintext.resuming(file:"binlog.000001",position:4,executedGTIDs:"")
+        _ = try resumed.validate()
+        XCTAssertFalse(resumed.requireTLS)
+        XCTAssertNil(resumed.tlsConfiguration())
+        for options: [String:Any] in [[:], ["serverHostname":""],
+            ["requireTLS":false,"serverHostname":"source"],
+            ["requireTLS":false,"caFile":"/ca.pem"]] {
+            XCTAssertThrowsError(try decode(options).validate())
+        }
+    }
+
     func testOnlyTransientSourceNetworkErrorsAreRetryable() throws {
         for error: Error in [MySQLError.closed, ChannelError.eof, ChannelError.connectTimeout(.seconds(10)),
                             SocketAddressError.unknown(host:"source",port:3306), NIOSSLError.uncleanShutdown,

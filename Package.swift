@@ -49,3 +49,19 @@ let package = Package(
     ],
     swiftLanguageModes: [.v5]
 )
+
+// Build the packaging probe only in the static Docker builder. It shares the
+// production dependency graph and objects without entering unit/Periphery builds.
+if ProcessInfo.processInfo.environment["REPLICATOR_PACKAGING"] == "1" {
+    package.products.append(.executable(name: "packaging-probe", targets: ["PackagingProbe"]))
+    package.targets += [
+        .systemLibrary(name: "CPackagingRust", path: "packaging/Probe/Sources/CPackagingRust"),
+        .executableTarget(name: "PackagingProbe", dependencies: ["CSQLite", "CPackagingRust",
+            .product(name: "MySQLNIO", package: "mysql-nio"),
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOSSL", package: "swift-nio-ssl")],
+            path: "packaging/Probe/Sources/PackagingProbe",
+            linkerSettings: [.unsafeFlags(["-L", codecLibraryPath])])
+    ]
+}

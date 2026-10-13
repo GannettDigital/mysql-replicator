@@ -1,33 +1,49 @@
 # Release procedure
 
-The next release is `v0.1.0-beta.3` (Debian `0.1.0~beta.3-1`). Application versions
+The next release is `v0.1.0-beta.4` (Debian `0.1.0~beta.4-1`). Application versions
 follow [SemVer](https://semver.org/); Debian's `~` keeps a beta older than its final
 release. Config, state schema and codec ABI versions remain independent.
 Only Linux x86_64 binaries and Linux/amd64 containers are distributed.
 
-## Review and merge beta.3
+## Review and merge beta.4
 
-This stack includes all five committed changes after upstream `main` at
-`c2e4dea`, plus release preparation. Each PR targets the preceding branch;
-the release PR is last. Existing feature commits are preserved without rewriting.
+This stack starts at upstream `main` commit `5d877f0`. It includes the 13 local
+feature commits, CI measurement tools, and release preparation. Each PR targets
+the preceding branch. CI improvements follow the release preparation PR. Existing feature commits
+remain unchanged.
 
 | Order | Branch | Scope |
 | --- | --- | --- |
-| 1 | `beta/3/01-unified-ci` | Qualification cleanup fixes; full parallel PR/main CI replaces the separate qualification workflow |
-| 2 | `beta/3/02-tls-config` | Target verify-ca, TLS tests, complete configuration reference and minimal live/replay templates |
-| 3 | `beta/3/03-replay-skips` | Live/replay error allowlist, optional audit, confirmed InnoDB rollback, shared integration checks |
-| 4 | `beta/3/04-release` | Version 0.1.0-beta.3, release notes, installation docs and packaged/downloadable minimal templates |
+| 1 | `beta/4/01-mysql57-myisam` | MySQL 5.7 InnoDB to MySQL 5.7 MyISAM profile |
+| 2 | `beta/4/02-apply-performance` | Autocommit, durable preparation queues, schema cache and timing |
+| 3 | `beta/4/03-innodb-foreign-keys` | InnoDB foreign keys, validation and recovery evidence |
+| 4 | `beta/4/04-connections-support` | Profile documentation, plaintext connections and automatic support bundles |
+| 5 | `beta/4/05-mysql57-innodb` | MySQL 5.7 InnoDB to MySQL 5.7 InnoDB profile |
+| 6 | `beta/4/06-ci-measurements` | Timing and profile coverage measurements |
+| 7 | `beta/4/07-release` | Version 0.1.0-beta.4, release notes and installation guide |
+| 8 | `beta/4/08-pr-smoke` | Parallel PR smoke checks and Periphery |
+| 9 | `beta/4/09-ghcr-layers` | GHCR dependency layers and smaller coverage runtime |
+| 10 | `beta/4/10-release-testing` | Full tests on the top PR and release evidence |
+| 11 | `beta/4/11-static-build-reuse` | Reuse static build components |
+| 12 | `beta/4/12-coverage-value` | Expanded coverage and suite value reports |
+| 13 | `beta/4/13-test-suite-cost` | Shared suite groups and native binlog checks |
+| 14 | `beta/4/14-balanced-shards` | Balance full-suite shards by measured time |
+| 15 | `beta/4/15-pr-test-selection` | Explicit PR test selection, README and release controls |
 
-The first PR targets `main`. The local `artifacts/release-stack-beta3/` directory
+The complete [GitHub stack #35](https://github.com/GannettDigital/mysql-replicator/pull/35)
+contains PRs #28–#34 and #36–#43. PR #43 is the final candidate.
+The [release plan](releases/0.1.0-beta.4.plan.json) lists every required PR.
+
+The first PR targets `main`. The local `artifacts/release-stack-beta4/` directory
 contains the exact SHA manifest, PR descriptions, validation notes and helpers:
 
 ```sh
-bash artifacts/release-stack-beta3/push-branches.sh
-bash artifacts/release-stack-beta3/open-prs.sh
+bash artifacts/release-stack-beta4/push-branches.sh
+bash artifacts/release-stack-beta4/open-prs.sh
 ```
 
 The maintainer runs these commands. The push helper checks the recorded upstream
-and local branch tips, then pushes the four branches atomically without force.
+and local branch tips, then pushes the recorded branches atomically without force.
 It never pushes `main` or tags. The PR helper checks the remote tips, creates or
 reuses draft PRs, and registers their ordered numbers using the
 [native GitHub stack API](https://docs.github.com/en/rest/pulls/stacks#create-a-pull-request-stack).
@@ -43,16 +59,27 @@ local `main` to bypass review. After all merges, update local `main` from upstre
 preserving unrelated edits. Every PR needs its own CI; local final-tree tests do
 not replace checks on intermediate branches.
 
+## Measure the release candidate
+
+Use the final PR for the [CI measurement study](CI_MEASUREMENTS.md).
+For the beta.4 measurement study, collect the expanded four-profile report.
+These are research results, not release gates.
+Keep the normal release-binary checks. Do not infer test redundancy from line
+coverage alone. Record run links with the stack's validation notes.
+These measurements guide later CI work. They do not add another release build.
+
 ## Qualify the release
 
-1. Require green CI on the final **main commit**, including unit/catalog checks,
+1. Add `ci-full` to the final PR in the stack. Require its full checks to pass
+   before merge. See [release testing](RELEASE_TESTING.md) for the trigger and evidence.
+   Then require green CI on the final **main commit**, including unit/catalog checks,
    installer/package tests, production-image checks, full correctness and
-   source/target reconnect for both profiles and applicable capture variants,
+   source/target reconnect for all four profiles and applicable capture variants,
    offline replay/control, native-reference DDL, recovery, demos, coverage and
-   Periphery. The same suite gates PRs and main; no additional qualification
-   workflow is needed before tagging. CI packages the static binary once and
+   Periphery. Ordinary PRs use smoke checks. The labeled final PR and main use the same
+   full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
    checks integration uses those same bytes.
-2. Review `docs/releases/0.1.0-beta.3.md`, the install guide and dependency notices.
+2. Review `docs/releases/0.1.0-beta.4.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.
 3. For a new deployment environment, qualify service/container start, acknowledged
    drain and clean resume on a representative host with persistent state and the
@@ -73,43 +100,81 @@ make release-image
 
 Assets in `artifacts/release/` include:
 
-- `mysql-replicator-0.1.0-beta.3-linux-x86_64.tar.gz`: standalone binary and notices.
-- `mysql-replicator_0.1.0~beta.3-1_amd64.deb`: Debian package and systemd service.
-- `mysql-replicator-0.1.0-beta.3-linux-x86_64-image.tar.gz`: tested `docker save`
-  image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.3`.
+- `mysql-replicator-0.1.0-beta.4-linux-x86_64.tar.gz`: standalone binary and notices.
+- `mysql-replicator_0.1.0~beta.4-1_amd64.deb`: Debian package and systemd service.
+- `mysql-replicator-0.1.0-beta.4-linux-x86_64-image.tar.gz`: tested `docker save`
+  image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.4`.
 - `install.sh`, `apply.example.yaml`, `run.minimal.yaml`, `replay.minimal.yaml`,
   `LICENSE`, `NOTICE`, build evidence and
-  `SHA256SUMS`, covering the downloadable artifacts.
+  `SHA256SUMS`, covering the build artifacts.
+- `release-test-evidence.json`: added by CI after the full suite passes. It records
+  the test run and a digest of the build checksum manifest.
 
-After merging the **release PR** and obtaining green main CI, create an annotated
-tag on that exact commit (not on the pre-merge local branch):
+After merging the **complete stack**, update your checkout to upstream `main`.
+Keep the checkout clean. Install Python 3, Git, and `gh`. Use `gh auth login`
+with a maintainer account that can read CI artifacts, push tags, and publish
+releases. Use the same Git credentials for the HTTPS repository URL.
+
+First, run the release check:
 
 ```sh
-git tag -a v0.1.0-beta.3 <TESTED_MAIN_COMMIT> -m 'Third beta'
-git push origin v0.1.0-beta.3
+python3 tools/release_cut.py check
 ```
 
-The maintainer pushes the tag when ready. `release.yml` requires main ancestry,
+The script reads `VERSION` and the matching `docs/releases/VERSION.plan.json`.
+It checks that every listed PR is merged and that HEAD is the current upstream
+main commit. It requires successful main push CI on that exact commit. It downloads
+the tested packages to a temporary directory, verifies full-suite evidence and
+all asset checksums, then removes the temporary files. Allow space for the binary
+archive, Debian package, and saved container image. The check does not change
+Git refs or GitHub releases. It stops if the release tag already exists.
+
+When the check passes and you are ready to create the draft, run:
+
+```sh
+python3 tools/release_cut.py tag
+```
+
+This command repeats the checks, creates an annotated tag, and pushes **only that
+tag** to the repository in the release plan. It does not merge PRs or push branches.
+If the push fails, the local tag remains. Inspect it before retrying the push;
+the script does not delete or move tags. Do not run this command to repair an
+existing draft. Inspect the release workflow instead.
+
+For later releases, add a matching plan with the repository and required PR numbers.
+The existing workflow and script accept prerelease versions only.
+
+The maintainer runs the tag command when ready. `release.yml` requires main ancestry,
 matching `VERSION`, and a successful main push CI run for that SHA. It downloads
-that run's tested artifacts, verifies checksums and creates a **draft prerelease**.
+that run's tested artifacts and `release-test-evidence`. It verifies the commit,
+run attempt, full test scope, version and package checksums. It then creates a
+**draft prerelease** with the evidence file.
 It does not push an image or start another test suite at this point. If CI was
 still running, rerun the release workflow on the tag when it finishes. Existing
 drafts are not overwritten.
-If CI artifacts have expired, regenerate CI evidence for that exact commit; never
-substitute an untested local rebuild. Leave the release unpublished until ready.
+If CI artifacts have expired, rerun all jobs of the original main push CI run for
+that exact commit. Do not substitute a manual smoke run or a local rebuild. Leave the release unpublished until ready.
 
 ## Publish binaries and the image
 
-Review the draft notes and downloaded asset checksums. Publish the draft as a
-prerelease with a maintainer account (the UI or `gh release edit --draft=false`),
-without marking it latest stable. Maintainer publication triggers the
-`release: published` job. A publication performed with a workflow's `GITHUB_TOKEN`
+Wait for the **Prepare beta release** workflow to create the draft. Review its
+notes and assets. From a clean checkout of the tagged commit, publish it with:
+
+```sh
+python3 tools/release_cut.py publish
+```
+
+This command checks the annotated remote tag, merged PRs, main ancestry, successful
+CI, and the draft's evidence and asset checksums. It publishes the draft as a
+prerelease without marking it latest stable. It stops if the release is already
+public or if the evidence belongs to another CI attempt. Use a maintainer account.
+Maintainer publication triggers the `release: published` job. A publication performed with a workflow's `GITHUB_TOKEN`
 may not trigger another workflow, so do not replace this step with an automatic
 publish using that token.
 
 The publication job downloads the saved image from the release, verifies its
 checksum, architecture, version and exact source revision, then loads and pushes
-it to `ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.3`. It does not build
+it to `ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.4`. It does not build
 anything or publish `latest`. Existing image tags are not deliberately overwritten.
 A failed GHCR step does not undo the published binary downloads; fix permissions
 and rerun the failed job. If an image tag already exists, inspect it before retrying.

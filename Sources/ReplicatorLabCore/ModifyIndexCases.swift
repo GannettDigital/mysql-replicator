@@ -212,7 +212,7 @@ enum ModifyIndexCases {
         try h.sql(service,"SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(table) ORDER BY id",preserveWhitespace:true)
     }
     static func waitNative(_ h:NativeHarness,_ end:Boundary) throws {
-        let wait=try h.sql("native","SELECT SOURCE_POS_WAIT('\(end.file)',\(end.position),20)")
+        let wait=try h.sql("native","SELECT \(h.serverVersions["native"]!.positionWait)('\(end.file)',\(end.position),20)")
         try require(wait != "NULL" && wait != "-1" && h.status()["Last_SQL_Errno"]=="0","native MODIFY/index did not converge")
     }
     static func observeNative(_ h:NativeHarness,reporter:QualificationReporter) throws {

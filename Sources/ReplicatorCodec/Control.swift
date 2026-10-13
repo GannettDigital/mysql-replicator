@@ -59,6 +59,7 @@ public enum BinlogControl: Equatable, Encodable {
 }
 
 public struct QuerySessionContext {
+    public let foreignKeyChecks: Bool
     public let sqlMode: UInt64
     public let clientCharset: UInt32
     public let connectionCollation: UInt32
@@ -77,6 +78,7 @@ public struct QuerySessionContext {
         guard status==0, value.present & required == required else {
             throw NSError(domain:"QuerySessionContext",code:Int(status),userInfo:[NSLocalizedDescriptionKey:"missing, unknown or malformed DDL query context"])
         }
+        foreignKeyChecks = value.flags2 & (1 << 26) == 0
         sqlMode=value.sql_mode;clientCharset=value.charset_client
         connectionCollation=value.collation_connection;serverCollation=value.collation_server
         databaseCollation=value.present & (1<<8) != 0 ? value.collation_database : nil

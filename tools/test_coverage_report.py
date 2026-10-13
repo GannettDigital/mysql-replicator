@@ -58,6 +58,29 @@ class ScopedCoverageTests(unittest.TestCase):
         self.assertEqual(metrics["scopes"]["runtime"], {"covered": 1, "total": 1})
         self.assertEqual((metrics["commit"], metrics["run_id"]), ("a" * 40, "123"))
 
+    def test_smoke_coverage_cannot_compare_against_full_main_baseline(self):
+        unit = self.report('unit', {self.runtime: {'1': 1}, self.harness: {'1': 1}})
+        full = write_reports(self.root, self.output, [unit], metadata=dict(ci_suite='full'))
+        smoke = write_reports(self.root, self.output, [unit], metadata=dict(ci_suite='pr-smoke'))
+        self.assertNotEqual(full['policy'], smoke['policy'])
+        self.assertEqual(smoke['ci_suite'], 'pr-smoke')
+
+    def test_matrix_identifies_instrumentation_and_separates_expanded_baseline(self):
+        unit = self.report('unit', {self.runtime: {'1': 1}, self.harness: {'1': 1}})
+        integration = self.report('integration', {self.runtime: {'2': 1}})
+        matrix = dict(scope='full', coverage_mode='selected', include=[dict(reports=0), dict(reports=1)])
+        selected = write_reports(self.root, self.output, [unit, integration], 'success', 'success', 1, matrix=matrix)
+        self.assertEqual((selected['integration_jobs'], selected['instrumented_jobs']), (2, 1))
+        self.assertIn('smoke suites, demos and sample only', (self.output / 'summary.md').read_text())
+        expanded = write_reports(self.root, self.output, [unit, integration], 'success', 'success', 1,
+                                 matrix=dict(matrix, coverage_mode='expanded'))
+        self.assertNotEqual(selected['policy'], expanded['policy'])
+        self.assertIn('instrumented correctness and reconnect', (self.output / 'summary.md').read_text())
+        with self.assertRaisesRegex(ValueError, 'differs from CI matrix'):
+            write_reports(self.root, self.output, [unit, integration], 'success', 'success', 2, matrix=matrix)
+        partial = write_reports(self.root, self.output, [unit], 'success', 'success', matrix=matrix)
+        self.assertFalse(partial['complete'])
+
     def test_missing_failed_and_unverified_suites_are_partial(self):
         unit = self.report("unit", {self.runtime: {"1": 1}, self.harness: {"1": 1}})
         integration = self.report("integration", {self.runtime: {"2": 1}})
@@ -88,7 +111,7 @@ class ScopedCoverageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source mismatch"):
             write_reports(self.root, self.output, [unit])
 
-    def test_downloaded_collections_exclude_demo_snapshots_but_reject_duplicate_originals(self):
+    def test_downloaded_collections_exclude_lifecycle_and_demo_snapshots_but_reject_duplicate_originals(self):
         downloaded = self.root / "downloaded"
         unit = downloaded / "coverage-unit/coverage.json"
         unit.parent.mkdir(parents=True)
@@ -100,8 +123,8 @@ class ScopedCoverageTests(unittest.TestCase):
             original.parent.mkdir(parents=True)
             original.write_bytes(self.report(f"apply-{i}", {self.runtime: {"2": 1}}).read_bytes())
             originals.append(original)
-            if i >= 3:  # Nine demo sessions also retain an evidence snapshot.
-                snapshot = fixture / "evidence-saved/code-coverage/combined/coverage.json"
+            for evidence in ("evidence", "evidence-saved"):
+                snapshot = fixture / evidence / "code-coverage/combined/coverage.json"
                 snapshot.parent.mkdir(parents=True)
                 snapshot.write_bytes(original.read_bytes())
         with self.assertRaisesRegex(ValueError, "duplicate coverage inputs"):

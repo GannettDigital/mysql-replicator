@@ -1,10 +1,33 @@
+import json
+from contextlib import nullcontext
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import ci_lab
 
 
 class CIShardsTests(unittest.TestCase):
+    def test_pr_plan_resolves_explicit_policy_against_full_catalogs(self):
+        from ci_matrix import SMOKE_PROFILES
+        policy = json.loads((ci_lab.ROOT / 'tools/ci_matrix.json').read_text())
+        catalogs = [dict(scenarios=[dict(id=c, profile=p, suite='correctness',
+                                       variant='default', status='not_run')
+                                   for c in policy['pr_smoke']['cases'] + ['full-only']]) for p in SMOKE_PROFILES]
+        query = Mock(side_effect=[json.dumps(c) for c in catalogs])
+        with patch.dict(ci_lab.os.environ, CI_SUITE='pr-smoke', CI_EXPANDED_COVERAGE='true'):
+            result = ci_lab.select_plan(query)
+        self.assertEqual(result['obligations'], 2 * len(policy['pr_smoke']['cases']))
+        for call, profile in zip(query.call_args_list, SMOKE_PROFILES):
+            self.assertEqual(call.args, ('test', '--profile', profile, '--suite', 'correctness',
+                                        '--variant', 'default', '--tier', 'full', '--list'))
+        self.assertTrue(all('full-only' not in s['cases'] for s in result['include']))
+
+    def test_unknown_selection_fails_before_catalog_queries(self):
+        query = Mock()
+        with patch.dict(ci_lab.os.environ, CI_SUITE='typo'), self.assertRaisesRegex(ValueError, 'CI_SUITE'):
+            ci_lab.select_plan(query)
+        query.assert_not_called()
+
     def test_bundle_keeps_swift_runtime_but_uses_workers_system_loader_and_libc(self):
         listing = '''libswiftCore.so => /opt/swift/usr/lib/swift/linux/libswiftCore.so (0x1)
 libFoundation.so => /opt/swift/usr/lib/swift/linux/libFoundation.so (0x2)
@@ -41,7 +64,7 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
              patch.object(ci_lab, 'matrix', return_value={'include': [dict(id='sample')]}), \
              patch.object(ci_lab.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'inputs differ'):
-                ci_lab.run_shard('sample')
+                ci_lab._run_shard('sample')
             run.assert_not_called()
 
     def test_wrong_matrix_fails_before_any_docker_or_suite_commands(self):
@@ -50,8 +73,18 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
              patch.object(ci_lab, 'matrix', return_value={'inputs': 'old'}), \
              patch.object(ci_lab.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'matrix inputs differ'):
-                ci_lab.run_shard('sample')
+                ci_lab._run_shard('sample')
             run.assert_not_called()
+
+    def test_shard_wrapper_records_build_inputs_only_in_actions(self):
+        for actions, expected in [('true', True), ('false', False), ('', False)]:
+            with self.subTest(actions=actions), \
+                 patch.dict(ci_lab.os.environ, GITHUB_ACTIONS=actions), \
+                 patch('ci_measurements.record_shard', return_value=nullcontext()) as record, \
+                 patch.object(ci_lab, '_run_shard') as run:
+                ci_lab.run_shard('sample')
+                record.assert_called_once_with(ci_lab.ROOT, 'sample', build_inputs=expected)
+                run.assert_called_once_with('sample')
 
 
 if __name__ == '__main__':

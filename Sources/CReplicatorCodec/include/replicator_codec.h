@@ -53,7 +53,7 @@ typedef struct {
 } rc_query_context;
 int32_t rc_query_context_decode(const uint8_t *bytes, uint64_t length, rc_query_context *out);
 uint32_t replicator_codec_abi_version(void);
-uint64_t replicator_codec_capabilities(void); /* bit 0: bounded decoder; bit 1: per-feed profiling */
+uint64_t replicator_codec_capabilities(void); /* bit 0: bounded decoder; bit 1: per-feed profiling; bit 2: table probe */
 int32_t rc_decoder_create(uint32_t max_event_bytes, rc_decoder **out);
 int32_t rc_decoder_reset(rc_decoder *decoder);
 void rc_decoder_free(rc_decoder *decoder);
@@ -74,6 +74,13 @@ typedef struct { rc_stage_timing stages[7]; } rc_decode_profile;
 int32_t rc_decoder_feed_profiled(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
     uint64_t offset, const uint32_t *column_kinds, uint32_t column_count, uint32_t filter_table,
     rc_result **out, rc_decode_profile *profile);
+/* Additive ABI 6 API, capability bit 2. Probe the next TABLE_MAP with the
+ * decoder's validated FDE. Offset must equal the next feed offset. Success does
+ * not advance the stream or install table metadata; the caller must feed the
+ * same event with resolved history/filtering afterward. Normal frame/CRC checks
+ * apply. Failure poisons the live context. NULL profile disables native clocks. */
+int32_t rc_decoder_probe_table(rc_decoder *decoder, const uint8_t *bytes, uint64_t length,
+    uint64_t offset, uint32_t filter_table, rc_result **out, rc_decode_profile *profile);
 uint32_t rc_result_is_filtered(const rc_result *result);
 int32_t rc_result_event(const rc_result *result, rc_event *out);
 /* image: 0 before, 1 after. A missing image has only absent values.

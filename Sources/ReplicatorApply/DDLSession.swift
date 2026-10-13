@@ -30,6 +30,9 @@ extension TargetSession {
         let exists = try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:name)]) != "0"
         try require(exists || conditional,"DDL DROP DATABASE target is absent")
         let before = exists ? try databaseEncoding(name) : nil
+        if contract.transactional && exists {
+            try require(try scalar("SELECT COUNT(*) AS v FROM information_schema.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_NAME IS NOT NULL AND (TABLE_SCHEMA=? OR REFERENCED_TABLE_SCHEMA=?)",[.init(string:name),.init(string:name)]) == "0","DROP DATABASE with foreign keys is unsupported; drop constraints first")
+        }
         // Retire every known table in this database atomically with the GTID.
         // Unseen objects need no invented table-schema records.
         let changes = discovered.values.filter{$0.database == name}.map{SchemaTransition(before:$0,after:nil)}

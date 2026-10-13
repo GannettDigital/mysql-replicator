@@ -18,11 +18,12 @@ final class LabFixture {
     var helper: String { h.project + "-copy" }
     init(root: URL, category: String = "reverse-suite", identifier: String = runID(), image: String = "mysql-replicator-packaging:reverse", profile: LabProfile = .reverse, codeCoverage: Bool = false, variant: LabVariant = .standard) {
         self.profile=profile; self.codeCoverage=codeCoverage; self.variant=variant
-        var nativeCase=NativeCase(); nativeCase.autoPosition=variant.mode == "gtid"; nativeCase.nativeEngine=profile.targetEngine; nativeCase.transaction=profile == .reverse
+        var nativeCase=NativeCase(); nativeCase.autoPosition=variant.mode == "gtid"; nativeCase.nativeEngine=profile.targetEngine; nativeCase.transaction=profile.transactionalTarget
         h=NativeHarness(root:root,config:nativeCase,artifactCategory:category,identifier:identifier)
         self.image=image
-        h.composeOverlays=[root.appendingPathComponent(profile == .reverse ? "docker/reverse/compose.yaml" : "docker/dml/compose.yaml").path]
-        h.composeEnvironment=[profile == .reverse ? "REPLICATOR_REVERSE_EVIDENCE_VOLUME" : "REPLICATOR_DML_EVIDENCE_VOLUME":volume]
+        h.composeOverlays=[root.appendingPathComponent(profile.composeOverlay).path]
+        h.serverVersions=Dictionary(uniqueKeysWithValues:LabProfile.Role.allCases.map { (profile.service($0),$0 == .target ? profile.targetVersion : profile.sourceVersion) })
+        h.composeEnvironment=[profile.evidenceVariable:volume]
     }
     func stage(_ message: String) { FileHandle.standardError.write(Data((profile.rawValue + ": " + message + "\n").utf8)) }
     func docker(_ args: [String], checked: Bool = true) throws -> CommandResult { try runner.run(["docker"]+args,checked:checked) }
@@ -45,6 +46,9 @@ final class LabFixture {
         _ = try docker(["volume","create",volume])
         _ = try docker(["create","--name",helper,"--platform","linux/amd64","--mount","type=volume,src=\(volume),dst=/evidence","--entrypoint","/bin/true",image])
         _ = try docker(["cp",tls.path,helper+":/evidence/tls"])
+        let bundles=output.appendingPathComponent("support-bundles")
+        try FileManager.default.createDirectory(at:bundles,withIntermediateDirectories:true)
+        _ = try docker(["cp",bundles.path,helper+":/evidence/support-bundles"])
 
         stage("starting source, native reference and target: " + profile.rawValue)
         _ = try h.compose(["up","-d","--build","--wait","--wait-timeout","300","target57","source","native"],timeout:360,onOutput:{ FileHandle.standardError.write($0) })
@@ -60,25 +64,26 @@ final class LabFixture {
             INSERT INTO reverse_poc.items VALUES ('2026-10-06',1,'seed',1.00,'ready','a',X'00FF');
             """
         for role in LabProfile.Role.allCases {
-            if profile == .forward {
+            if !profile.transactionalTarget {
                 _ = try sql(role,"SET GLOBAL default_storage_engine=\(profile.engine(role)); SET GLOBAL default_tmp_storage_engine=\(profile.engine(role))")
             }
             _ = try sql(role,"SET GLOBAL collation_server=utf8mb4_bin")
             _ = try sql(role,seed.replacingOccurrences(of:"ENGINE=InnoDB",with:"ENGINE="+profile.engine(role)))
         }
-        if profile == .forward { _ = try sql(.source,"SET PERSIST binlog_row_metadata="+variant.metadata) }
+        if profile.hasOptionalMetadata { _ = try sql(.source,"SET PERSIST binlog_row_metadata="+variant.metadata) }
         _ = try sql(.source,"CREATE USER 'capture_fixture'@'%' IDENTIFIED BY 'fixture-capture-only' REQUIRE SSL; GRANT REPLICATION SLAVE,REPLICATION CLIENT ON *.* TO 'capture_fixture'@'%'")
-        _ = try sql(.target,"CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'" + (profile == .reverse ? "; GRANT SET_ANY_DEFINER ON *.* TO 'apply_fixture'@'%'" : ""))
+        _ = try sql(.target,"CREATE USER 'apply_fixture'@'%' IDENTIFIED BY 'fixture-apply-only' REQUIRE SSL; GRANT ALL PRIVILEGES ON *.* TO 'apply_fixture'@'%'" + (profile.targetVersion == .mysql84 ? "; GRANT SET_ANY_DEFINER ON *.* TO 'apply_fixture'@'%'" : ""))
         let baseline = try boundary(), uuid = try sql(.source,"SELECT @@server_uuid")
         // Reset only the disposable reference's locally generated seed GTIDs.
-        if profile == .reverse {
-            _ = try sql(.native,"RESET MASTER; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE MASTER TO MASTER_HOST='target57',MASTER_USER='capture_fixture',MASTER_PASSWORD='fixture-capture-only',MASTER_SSL=1,MASTER_SSL_CA='/evidence/tls/ca.pem',MASTER_SSL_VERIFY_SERVER_CERT=1,MASTER_AUTO_POSITION=1; START SLAVE")
-        } else {
+        let native=profile.nativeVersion
+        let caFile: String
+        if native == .mysql57 { caFile="/evidence/tls/ca.pem" }
+        else {
+            caFile="/tmp/lab-ca.pem"
             let nativeID=try h.compose(["ps","-q","native"]).text
-            _ = try docker(["cp",tls.appendingPathComponent("ca.pem").path,nativeID+":/tmp/lab-ca.pem"])
-            let positioning=variant == .positionMinimal ? "SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(baseline.file)',SOURCE_LOG_POS=\(baseline.position)" : "SOURCE_AUTO_POSITION=1"
-            _ = try sql(.native,"RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(baseline.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_HOST='source',SOURCE_USER='capture_fixture',SOURCE_PASSWORD='fixture-capture-only',SOURCE_SSL=1,SOURCE_SSL_CA='/tmp/lab-ca.pem',SOURCE_SSL_VERIFY_SERVER_CERT=1,\(positioning); START REPLICA")
+            _ = try docker(["cp",tls.appendingPathComponent("ca.pem").path,nativeID+":"+caFile])
         }
+        _ = try sql(.native,native.resetBinlogs+"; SET GLOBAL gtid_purged='\(baseline.gtids)'; "+native.connect(host:profile.service(.source),caFile:caFile,boundary:baseline,autoPosition:variant.mode == "gtid")+"; "+native.startReplica)
         versions["native_version"] = try h.sql("native","SELECT VERSION()")
         bootstrap = baseline.json
         versions["source_version"] = try sql(.source,"SELECT VERSION()")
@@ -86,7 +91,8 @@ final class LabFixture {
         config = ["applierProfiling":true,"version":2,"profile":profile.rawValue,"stateDirectory":"/evidence/state",
             "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","serverID":9101,"sourceUUID":uuid,"mode":variant.mode,"start":variant.start(baseline),"stopAfterTransactions":2],
             "target":["host":profile.service(.target),"port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":profile.service(.target),"caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
-            "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024]]
+            "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024],
+            "supportBundle":["onBlocked":true,"directory":"/evidence/support-bundles","format":"directory","maximumBytes":64*1024*1024]]
     }
     func sql(_ role: LabProfile.Role, _ statement: String, preserveWhitespace: Bool = false) throws -> String {
         try h.sql(profile.service(role),statement,preserveWhitespace:preserveWhitespace)
@@ -97,7 +103,7 @@ final class LabFixture {
     func awaitNative() throws {
         let end = try boundary()
         let waited = try h.sql("native","SELECT WAIT_FOR_EXECUTED_GTID_SET('\(end.gtids)',90)")
-        try h.sql("native",profile == .reverse ? "SHOW SLAVE STATUS\\G" : "SHOW REPLICA STATUS\\G",headers:true).write(to:output.appendingPathComponent("native-status.txt"),atomically:true,encoding:.utf8)
+        try h.sql("native",profile.nativeVersion.replicaStatus+"\\G",headers:true).write(to:output.appendingPathComponent("native-status.txt"),atomically:true,encoding:.utf8)
         try require(waited == "0","native reference failed to catch up; inspect native-status.txt")
     }
 
@@ -136,7 +142,7 @@ final class LabFixture {
         for role in LabProfile.Role.allCases {
             let id=try h.compose(["ps","-q",profile.service(role)]).text
             let image=try docker(["inspect",id,"--format","{{.Image}}"] ).text
-            let settings=try sql(role,"SHOW VARIABLES WHERE Variable_name IN ('gtid_mode','enforce_gtid_consistency','binlog_format','binlog_row_image','binlog_row_metadata','default_storage_engine','sql_mode','character_set_server','collation_server')")
+            let settings=try sql(role,"SHOW VARIABLES WHERE Variable_name IN ('gtid_mode','enforce_gtid_consistency','binlog_format','binlog_row_image','binlog_row_metadata','default_storage_engine','sql_mode','character_set_server','collation_server','sync_binlog','innodb_flush_log_at_trx_commit','log_slave_updates','log_replica_updates','slave_parallel_workers','replica_parallel_workers')")
             let version=try sql(role,"SELECT VERSION()")
             try require(version.hasPrefix(profile.version(role)+"."),"unexpected server version for "+role.rawValue+": "+version)
             if role == .source {
@@ -177,10 +183,20 @@ final class LabFixture {
     func cleanup() throws {
         // Retained demo applier has a stable name; suite clients are tracked.
         for client in clients {
-            if try docker(["inspect",client],checked:false).status == 0 { _ = try docker(["rm","-f",client]) }
+            if try docker(["inspect",client],checked:false).status == 0 {
+                let logs = try docker(["logs",client],checked:false)
+                try (logs.stdout+logs.stderr).write(to:output.appendingPathComponent(client+".log"))
+                _ = try docker(["rm","-f",client])
+            }
+        }
+        var bundleFailure: Error?
+        if !config.isEmpty, try docker(["inspect",helper],checked:false).status == 0 {
+            do { _ = try docker(["cp",helper+":/evidence/support-bundles/.",output.appendingPathComponent("support-bundles").path]) }
+            catch { bundleFailure=error }
         }
         _ = try h.compose(["down","-v","--remove-orphans"])
         if try docker(["inspect",helper],checked:false).status == 0 { _ = try docker(["rm","-f",helper]) }
         if try docker(["volume","inspect",volume],checked:false).status == 0 { _ = try docker(["volume","rm",volume]) }
+        if let bundleFailure { throw bundleFailure }
     }
 }

@@ -1033,7 +1033,7 @@ pub extern "C" fn replicator_codec_abi_version() -> u32 {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
-    3
+    7
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_decoder_create(max_event: u32, out: *mut *mut Decoder) -> i32 {
@@ -1131,6 +1131,60 @@ pub unsafe extern "C" fn rc_decoder_feed_profiled(
     out: *mut *mut Batch,
     profile_out: *mut ProfileOutput,
 ) -> i32 {
+    unsafe {
+        decoder_feed(
+            context,
+            bytes,
+            length,
+            offset,
+            kinds,
+            count,
+            filter_table,
+            out,
+            profile_out,
+            false,
+        )
+    }
+}
+/// Probe the next TABLE_MAP with the validated FDE, without advancing or replacing
+/// the live decoder's offset/table cache. Failures still poison the live context.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_decoder_probe_table(
+    context: *mut Decoder,
+    bytes: *const u8,
+    length: u64,
+    offset: u64,
+    filter_table: u32,
+    out: *mut *mut Batch,
+    profile_out: *mut ProfileOutput,
+) -> i32 {
+    unsafe {
+        decoder_feed(
+            context,
+            bytes,
+            length,
+            offset,
+            ptr::null(),
+            0,
+            filter_table,
+            out,
+            profile_out,
+            true,
+        )
+    }
+}
+unsafe fn decoder_feed(
+    context: *mut Decoder,
+    bytes: *const u8,
+    length: u64,
+    offset: u64,
+    kinds: *const u32,
+    count: u32,
+    filter_table: u32,
+    out: *mut *mut Batch,
+    profile_out: *mut ProfileOutput,
+    probe_table: bool,
+) -> i32 {
     if !profile_out.is_null() {
         unsafe {
             *profile_out = ProfileOutput::default();
@@ -1176,7 +1230,29 @@ pub unsafe extern "C" fn rc_decoder_feed_profiled(
             unsafe { slice::from_raw_parts(kinds, count as usize) }
         };
         ensure(filter_table <= 1, ARG, "invalid filter mode")?;
-        context.decode_filtered(bytes, offset, kinds, filter_table == 1, &profile)
+        if probe_table {
+            ensure(
+                context.fde.is_some(),
+                MALFORMED,
+                "table probe requires a validated format",
+            )?;
+            ensure(
+                offset == context.next_offset,
+                MALFORMED,
+                "noncontiguous table probe offset",
+            )?;
+            ensure(
+                bytes.get(4) == Some(&19),
+                ARG,
+                "table probe requires TABLE_MAP",
+            )?;
+            let mut probe = Decoder::new(context.max_event);
+            probe.fde = context.fde.clone();
+            probe.next_offset = offset;
+            probe.decode_filtered(bytes, offset, &[], filter_table == 1, &profile)
+        } else {
+            context.decode_filtered(bytes, offset, kinds, filter_table == 1, &profile)
+        }
     }));
     if !profile_out.is_null() {
         unsafe {

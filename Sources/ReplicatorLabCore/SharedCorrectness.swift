@@ -43,7 +43,7 @@ public enum SharedCorrectness {
             var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"variant":f.variant.rawValue,"slice":slice,
                 "scope":"Shared replicated and bootstrapped DML, ordered DDL, collation, failure and discovery fixtures; explicit capture variant. Native reference is profile-specific.",
                 "adaptations":["Source-version session settings and explicit temporary-table engine are declared in the fixtures", "Source/target/native table engines are checked before comparing normalized metadata"],
-                "not_covered":["Foreign keys/cascades are tested as refusals, not supported behavior", "Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner", "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage"]]
+                "not_covered":["Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner", "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage"]]
             var failure: Error?
             let catalogInputs=try DDLCoverageEvidence.inputs(root:f.h.root)
             let catalogContracts=try DDLCoverageEvidence.hashes(root:f.h.root,paths:DDLCoverageEvidence.contractPaths)
@@ -63,12 +63,13 @@ public enum SharedCorrectness {
                 if slice == "all" || slice == "dml" { try dml() }
                 if slice == "all" || slice == "indexes" { try indexes() }
                 if slice == "all" || slice == "policy" { try policies() }
+                if slice == "all" { try foreignKeys() }
                 try applier.drain()
                 _ = try f.docker(["cp",f.helper+":/evidence/state",f.output.path])
                 let state=f.output.appendingPathComponent("state/state.sqlite").path
                 let saved=try f.runner.run(["sqlite3",state,"SELECT lifecycle FROM state; SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'; SELECT COUNT(*) FROM row_intents WHERE status!='DONE'"]).text
                 try require(saved == "STOPPED\n0\n0","unclean final checkpoint or unfinished intents: " + saved)
-                if f.profile == .reverse && selects("ddl-compat-temporary") && (slice == "all" || slice == "ddl") {
+                if f.profile.sourceVersion == .mysql57 && selects("ddl-compat-temporary") && (slice == "all" || slice == "ddl") {
                     let count=try f.runner.run(["sqlite3",state,"SELECT COUNT(*) FROM ddl_skips WHERE reason='row replication temporary-table cleanup'"]).text
                     try require((Int(count) ?? 0) > 0,"temporary-table cleanup missing from durable audit")
                 }
@@ -82,6 +83,7 @@ public enum SharedCorrectness {
                 report["steps"]=observation
                 if slice == "all" || slice == "rejections" { try rejections() }
                 if slice == "all" {
+                    try foreignKeySafety()
                     try basicDML()
                     try bootstrapDML()
                     try dmlRefusals()
@@ -122,6 +124,8 @@ public enum SharedCorrectness {
             report["cleanup"]=cleanupErrors.isEmpty ? "passed" : cleanupErrors.joined(separator:"; ")
             if !cleanupErrors.isEmpty { report["result"]="failed"; if failure == nil { failure=LabError(cleanupErrors.joined(separator:"; ")) } }
             report["cases"]=reporter.results
+            report["sql_client"]=f.h.sqlClientMeasurements
+            try writeJSON(f.h.sqlClientMeasurements,to:f.output.appendingPathComponent("sql-client.json"))
             try writeJSON(report,to:f.output.appendingPathComponent("result.json"))
             if let runtime=catalogRuntime, let profile=f.variant.catalogProfile {
                 try SharedCatalogSupport.export(root:f.h.root,output:f.output,profile:profile,inputs:catalogInputs,contracts:catalogContracts,runtime:runtime,results:reporter.results,result:report)
@@ -178,26 +182,30 @@ public enum SharedCorrectness {
                 func sql(_ statement: String, preserveWhitespace: Bool = false) throws -> String {
                     try f.sql(role,"SET NAMES utf8mb4; "+statement,preserveWhitespace:preserveWhitespace)
                 }
-                var snapshot: [String:String]=[:]
-                snapshot["database"]=try sql("SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'")
-                snapshot["tables"]=try sql("SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME")
+                var snapshot = try f.h.sqlBatch(f.profile.service(role), [
+                    .init(name: "database", sql: "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"),
+                    .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME"),
+                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
+                    .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
+                    .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX"),
+                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
+                ])
                 let actualTables=snapshot["tables"]!
                 rawTables[service]=actualTables
                 try actualTables.write(to:f.output.appendingPathComponent("tables-"+service+".tsv"),atomically:true,encoding:.utf8)
                 snapshot["tables"]=try actualTables.components(separatedBy:"\n").map { line in
                     var fields=line.components(separatedBy:"\t")
                     if fields.count >= 4 && fields[1] == "BASE TABLE" {
-                        let explicitTemporaryClone=f.profile == .forward && role == .source && database == "ddlcompat" && fields[0] == "cloned"
+                        let explicitTemporaryClone = !f.profile.transactionalTarget && role == .source && database == "ddlcompat" && fields[0] == "cloned"
                         let expected=explicitTemporaryClone ? "MyISAM" : role == .native && nativeInnoDB ? "InnoDB" : f.profile.engine(role)
                         try require(fields[2] == expected,"unexpected \(service) engine: " + fields[2])
                         fields[2]="<profile-engine>"
                     }
                     return fields.joined(separator:"\t")
                 }.joined(separator:"\n")
-                let columns=try sql("SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION",preserveWhitespace:true)
+                let columns = snapshot["columns"]!
                 snapshot["columns"]=try ReverseSchemaComparison.columns(columns,mysql84:f.profile.version(role) == "8.4")
-                snapshot["indexes"]=try sql("SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX")
-                snapshot["partitions"]=try ReverseSchemaComparison.partitions(sql("SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION",preserveWhitespace:true))
+                snapshot["partitions"]=try ReverseSchemaComparison.partitions(snapshot["partitions"]!)
                 let tables=snapshot["tables"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }.filter { $0.count >= 2 && $0[1] == "BASE TABLE" }.map { $0[0] }
                 let columnRows=columns.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 let indexRows=snapshot["indexes"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
@@ -224,7 +232,7 @@ public enum SharedCorrectness {
             try step("CREATE DATABASE otherdb CHARACTER SET latin1 COLLATE latin1_bin",database:"otherdb")
             for test in DatabaseCreationCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
-                    let prefix=f.profile == .reverse ? test.prefix57 : test.prefix
+                    let prefix=f.profile.sourceVersion == .mysql57 ? test.prefix57 : test.prefix
                     let before=try applier.latestProgress() ?? [:]
                     let observation=try step(prefix+test.sql,database:test.database,checks:[.init(test.metadataSQL,test.expected)],warning:test.existing ? 1007 : nil,checkWarnings:true)
                     let table=test.database+".probe"
@@ -267,7 +275,7 @@ public enum SharedCorrectness {
                     try wait()
                 }
             }
-            if f.profile == .reverse && selects("reverse-database-table-defaults") { try reporter.run(QualificationCase("reverse-database-table-defaults","Preserve 5.7 utf8mb4 defaults through CREATE, LIKE, implicit DDL commit and RENAME")) {
+            if f.profile.transactionalTarget && selects("reverse-database-table-defaults") { try reporter.run(QualificationCase("reverse-database-table-defaults","Preserve 5.7 utf8mb4 defaults through CREATE, LIKE, implicit DDL commit and RENAME")) {
                 try step("CREATE TABLE created_charset.t(id INT PRIMARY KEY,n VARCHAR(20))",database:"created_charset")
                 try step("CREATE TABLE created_charset.explicit_charset(id INT PRIMARY KEY,n VARCHAR(20)) ENGINE=InnoDB CHARACTER SET utf8mb4",database:"created_charset")
                 try step("CREATE TABLE created_charset.explicit_default(id INT PRIMARY KEY,n INT) ENGINE='DEFAULT'",database:"created_charset")
@@ -291,7 +299,7 @@ public enum SharedCorrectness {
                     }
                     let before=try applier.latestProgress() ?? [:], begin=try f.boundary()
                     for item in test.steps {
-                        let sql=f.profile == .reverse ? item.sql57 : item.sql
+                        let sql=f.profile.transactionalTarget ? item.sqlTransactional : item.sql
                         if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
                             // Neither table is rediscovered by DML after resume.
                             // DROP must still retire both durable schema records.
@@ -305,7 +313,7 @@ public enum SharedCorrectness {
                     try applier.drain()
                     let end=try f.boundary(), result=try applier.latestProgress() ?? [:]
                     let count=try DMLCompatibilityCases.transactionCount(f.sql(.source,"SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')"))
-                    if f.profile == .forward { try require(count == test.steps.reduce(0,{$0+$1.transactions}),"compatibility source event count differs") }
+                    if f.profile.hasOptionalMetadata { try require(count == test.steps.reduce(0,{$0+$1.transactions}),"compatibility source event count differs") }
                     try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
                     let saved=try snapshot(test.test.id)
                     try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0","unfinished compatibility DDL")
@@ -321,7 +329,7 @@ public enum SharedCorrectness {
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"poc")
             for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) {
                 try reporter.run(QualificationCase("matrix-"+test.id,"Shared DML matrix: "+test.id)) {
-                    if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
+                    if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
                     try step("CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",database:"poc")
                     if !test.setup.isEmpty { try step(test.setup,database:"poc") }
                     for phase in test.phases { try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")]) }
@@ -329,7 +337,7 @@ public enum SharedCorrectness {
             }
         }
         func indexes() throws {
-            if f.profile == .forward { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
+            if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
             try resetNativeEngine()
             for test in ModifyIndexCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
@@ -392,25 +400,25 @@ public enum SharedCorrectness {
         /// oracle. Preserve its failure evidence, then skip that rejected range
         /// so later scenarios can establish their own equivalent table snapshots.
         func reseedNativeAfterRejections(_ label: String) throws {
-            try require(f.profile == .forward,"native rejection cleanup requires the forward fixture")
-            try f.h.sql("native","SHOW REPLICA STATUS\\G",headers:true).write(to:f.output.appendingPathComponent(label+"-native-before-reset.txt"),atomically:true,encoding:.utf8)
+            try require(!f.profile.transactionalTarget,"native rejection cleanup requires a MyISAM fixture")
+            try f.h.sql("native",f.profile.nativeVersion.replicaStatus+"\\G",headers:true).write(to:f.output.appendingPathComponent(label+"-native-before-reset.txt"),atomically:true,encoding:.utf8)
             let end=try f.boundary()
             try writeJSON(end.json,to:f.output.appendingPathComponent(label+"-native-reset-boundary.json"))
-            _ = try f.sql(.native,"STOP REPLICA; RESET BINARY LOGS AND GTIDS; SET GLOBAL gtid_purged='\(end.gtids)'; CHANGE REPLICATION SOURCE TO SOURCE_AUTO_POSITION=0,SOURCE_LOG_FILE='\(end.file)',SOURCE_LOG_POS=\(end.position); START REPLICA")
+            _ = try f.sql(.native,f.profile.nativeVersion.stopReplica+"; "+f.profile.nativeVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(end.gtids)'; "+f.profile.nativeVersion.position(end)+"; "+f.profile.nativeVersion.startReplica)
             // The seeded GTID set alone cannot prove that replication resumed.
             let status=try f.h.status()
-            try require(status["Replica_SQL_Running"] == "Yes" && status["Last_SQL_Errno"] == "0","native reference did not resume after rejected scenarios")
+            try require(status[f.profile.nativeVersion.sqlRunningField] == "Yes" && status["Last_SQL_Errno"] == "0","native reference did not resume after rejected scenarios")
         }
         func resetNativeEngine() throws {
             nativeInnoDB=false
             try setNativeEngine("MyISAM")
         }
         func setNativeEngine(_ engine: String) throws {
-            guard f.profile == .forward else { return }
+            guard !f.profile.transactionalTarget else { return }
             // A running SQL thread retains its session default. Restart it only
             // after catching up, so the next scenario uses the declared engine.
             try f.awaitNative()
-            _ = try f.sql(.native,"STOP REPLICA SQL_THREAD; SET GLOBAL default_storage_engine="+engine+"; START REPLICA SQL_THREAD")
+            _ = try f.sql(.native,f.profile.nativeVersion.stopReplica+" SQL_THREAD; SET GLOBAL default_storage_engine="+engine+"; "+f.profile.nativeVersion.startReplica+" SQL_THREAD")
         }
         func policies() throws {
             guard selects(DDLCompatibilityCases.skipTrigger.id) else { return }

@@ -60,6 +60,19 @@ class CommentTests(unittest.TestCase):
         self.assertIn("PARTIAL", publisher.comment(dict(current, complete=False), run, "owner/repo", base))
         self.assertIn("unavailable", publisher.comment(None, run, "owner/repo"))
 
+    def test_instrumentation_scope_is_explicit_and_bounded(self):
+        report = dict(metrics(), ci_suite='full', coverage_mode='expanded', integration_jobs=227,
+                      instrumented_jobs=116, integration_reports=130, expected_integration_reports=130)
+        text = publisher.comment(publisher.validate(report), dict(id=12, run_attempt=1), 'owner/repo')
+        self.assertIn('jobs that collect coverage: 116', text)
+        self.assertIn('130 / 130 expected', text)
+        self.assertIn('instrumented correctness and reconnect', text)
+        self.assertNotIn('integration smoke only', text)
+        for key, value in [('coverage_mode', '@everyone'), ('ci_suite', 'bad'),
+                           ('instrumented_jobs', 228), ('integration_reports', True)]:
+            with self.assertRaises(ValueError):
+                publisher.validate(dict(report, **{key: value}))
+
     def test_artifact_must_match_run_and_attempt(self):
         run = dict(id=12, run_attempt=1, head_sha="b" * 40)
         item = dict(name="coverage-summary", expired=False, size_in_bytes=100, id=3)

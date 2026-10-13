@@ -27,6 +27,11 @@ def source_hashes(root):
 
 def llvm_tool(name):
     # Swift's LLVM must read Swift's profiles, not the system LLVM installation.
+    if os.environ.get('REPLICATOR_LLVM_BIN'):
+        path = Path(os.environ['REPLICATOR_LLVM_BIN']) / name
+        if not path.is_file():
+            raise ValueError(f'missing matching LLVM tool: {path}')
+        return str(path)
     if sys.platform == "darwin":
         return subprocess.check_output(["xcrun", "--find", name], text=True).strip()
     path = Path(shutil.which("swift") or "/missing/swift").resolve().parent / name

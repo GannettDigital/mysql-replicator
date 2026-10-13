@@ -30,13 +30,26 @@ def command(shard):
     return args
 
 
-def plan(query):
-    from ci_matrix import generate
+def select_plan(query):
+    from ci_matrix import SMOKE_PROFILES, generate, generate_smoke
+    scope = os.environ.get('CI_SUITE', 'full')
+    policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())
+    if scope == 'pr-smoke':
+        return generate_smoke([json.loads(query('test', '--profile', profile, '--suite', 'correctness',
+                                               '--variant', 'default', '--tier', 'full', '--list'))
+                               for profile in SMOKE_PROFILES], policy['pr_smoke'])
+    if scope != 'full':
+        raise ValueError(f'unknown CI_SUITE: {scope}')
     catalogs = [json.loads(query('test', '--profile', 'all', '--suite', suite,
                                 '--variant', 'all', '--list'))
                 for suite in ('correctness', 'lifecycle')]
     catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
-    result = generate(catalogs, json.loads((ROOT / 'tools/ci_matrix.json').read_text()))
+    return generate(catalogs, policy,
+                    expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true')
+
+
+def plan(query):
+    result = select_plan(query)
     result['inputs'] = query('build-inputs').strip()
     destination = ROOT / 'artifacts/ci/matrix.json'
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +87,8 @@ def bundle(binary):
         output.write('inputs=' + digest + '\n')
         output.write('matrix=' + json.dumps({'include': result['include']}, separators=(',', ':')) + '\n')
         output.write('coverage_reports=' + str(result['coverage_reports']) + '\n')
+        output.write('images=' + json.dumps(result['images']) + '\n')
+        output.write('scope=' + result['scope'] + '\n')
 
 
 def runtime_libraries(listing):
@@ -96,6 +111,12 @@ def validate_bundle():
 
 
 def run_shard(identifier):
+    from ci_measurements import record_shard
+    with record_shard(ROOT, identifier, build_inputs=os.environ.get('GITHUB_ACTIONS') == 'true'):
+        _run_shard(identifier)
+
+
+def _run_shard(identifier):
     validate_bundle()
     manifest = matrix()
     if manifest['inputs'] != (BUNDLE / 'inputs.sha256').read_text().strip():
@@ -104,6 +125,14 @@ def run_shard(identifier):
     if len(matches) != 1:
         raise ValueError(f'unknown or ambiguous shard: {identifier}')
     shard = matches[0]
+    selection = f"{shard['profile']} / {shard['area']} / {shard.get('variant', 'default')} / {shard['image']}"
+    print('Test selection: ' + selection, flush=True)
+    if shard['cases']:
+        print('Cases: ' + ', '.join(shard['cases']), flush=True)
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+            summary.write('### Test selection\n\n' + selection + '\n\n')
+            summary.writelines(f'- `{case}`\n' for case in shard['cases'])
     if shard['suite'] == 'recovery':
         subprocess.run(['docker', 'tag', 'mysql-replicator-packaging:lab', 'mysql-replicator-packaging:reverse'], check=True)
     if shard['image'] == 'release':

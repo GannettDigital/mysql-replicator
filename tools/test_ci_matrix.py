@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from ci_matrix import generate, key
+from ci_matrix import SMOKE_PROFILES, case_groups, generate, generate_smoke, key
 
 
 def row(identifier, family='database', suite='correctness', profile='forward',
@@ -39,11 +39,54 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(second['cases'], ['create', 'drop'])
         self.assertEqual(len(result['include']), len({s['id'] for s in result['include']}))
 
+    def test_expanded_coverage_adds_runs_without_replacing_release_obligations(self):
+        baseline = self.generate()
+        measured = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=True)
+        self.assertEqual(baseline['inventory'], measured['inventory'])
+        self.assertEqual(baseline['obligations'], measured['obligations'])
+        self.assertTrue(all(s in measured['include'] for s in baseline['include']))
+        self.assertGreater(measured['coverage_reports'], baseline['coverage_reports'])
+        for s in measured['include']:
+            if s not in baseline['include']:
+                self.assertEqual(s['image'], 'coverage')
+                self.assertIn(s['suite'], ['correctness', 'lifecycle'])
+                original = next(b for b in baseline['include'] if b['id'] == s['id'].replace('coverage-', 'release-', 1))
+                self.assertEqual(original['cases'], s['cases'])
+
     def test_new_case_and_variant_automatically_enter_ci(self):
         self.rows += [row('new-case'), row('new-mode', variant='new-variant')]
         result = self.generate()
         self.assertTrue(any('new-case' in s['cases'] for s in result['include']))
         self.assertTrue(any(s['variant'] == 'new-variant' for s in result['include']))
+
+    def test_reviewed_boundaries_preserve_order_and_include_new_cases(self):
+        area = dict(name='ddl', split_after=['b', 'd'])
+        self.assertEqual(case_groups(['a', 'b', 'c', 'd', 'e'], area),
+                         [['a', 'b'], ['c', 'd'], ['e']])
+        self.assertEqual(case_groups(['a', 'new', 'b', 'c', 'd', 'e', 'later'], area),
+                         [['a', 'new', 'b'], ['c', 'd'], ['e', 'later']])
+
+    def test_invalid_boundaries_fail_before_planning_jobs(self):
+        for anchors in [[], 'b', ['missing'], [None], ['b', 'b'], ['c', 'b'], ['d']]:
+            with self.subTest(anchors=anchors), self.assertRaisesRegex(ValueError, 'split_after'):
+                case_groups(['a', 'b', 'c', 'd'], dict(name='ddl', split_after=anchors))
+        with self.assertRaisesRegex(ValueError, 'cannot use size'):
+            case_groups(['a', 'b'], dict(name='ddl', split_after=['a'], size=1))
+
+    def test_reviewed_boundary_keeps_dependency_closure_and_coverage_copies(self):
+        # Each profile/variant needs both sides of its declared boundary.
+        rows = [row('create'), row('alter'), dict(row('drop'), dependencies=['create'])]
+        policy = copy.deepcopy(self.policy)
+        policy['areas'][0].pop('size')
+        policy['areas'][0]['split_after'] = ['alter']
+        result = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
+        for image in ['release', 'coverage']:
+            groups = [s for s in result['include'] if s['image'] == image and s['area'].startswith('database-')]
+            self.assertEqual([s['cases'] for s in groups], [['create', 'alter'], ['create', 'drop']])
+        self.assertEqual(result['obligations'], 3)
+        self.assertEqual(result['inventory'], rows)
+        with self.assertRaisesRegex(ValueError, 'not applicable'):
+            generate([dict(scenarios=[rows[0], rows[2]])], policy)
 
     def test_unknown_family_or_suite_fails_instead_of_omitting_coverage(self):
         for extra, reason in [(row('new', family='new-family'), 'unassigned correctness families'),
@@ -96,6 +139,60 @@ class MatrixTests(unittest.TestCase):
         self.rows += [row('create', variant=f'variant-{i}') for i in range(260)]
         with self.assertRaisesRegex(ValueError, '256 jobs'):
             self.generate()
+
+    def test_smoke_owns_only_two_default_profile_selections(self):
+        rows = [row('create', profile=p) for p in SMOKE_PROFILES]
+        rows += [row('new-smoke', profile=p) for p in SMOKE_PROFILES]
+        rows[2]['dependencies'] = ['create']
+        rows.append(dict(row('unavailable', profile=SMOKE_PROFILES[0]), status='not_applicable'))
+        rows += [row('full-only', profile=p) for p in SMOKE_PROFILES]
+        selection = dict(area='ddl-dml-policy-replay', cases=['new-smoke', 'create'])
+        result = generate_smoke([dict(scenarios=rows)], selection)
+        self.assertEqual(result['scope'], 'pr-smoke')
+        self.assertEqual(result['images'], ['coverage'])
+        self.assertEqual(result['obligations'], 4)
+        self.assertEqual({key(r) for r in result['inventory']}, {key(r) for r in rows[:4]})
+        self.assertEqual(result['coverage_reports'], 2)
+        self.assertEqual(len(result['include']), 2)
+        for shard in result['include']:
+            self.assertTrue(shard['owns_obligations'])
+            self.assertEqual(shard['cases'], ['create', 'new-smoke'])
+            self.assertEqual((shard['suite'], shard['tier'], shard['variant']), ('correctness', 'full', 'default'))
+            self.assertEqual(shard['area'], selection['area'])
+
+    def test_pr_selection_expands_dependencies_and_is_reused_in_full_ci(self):
+        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'alter', 'full-only']]
+        for r in rows:
+            if r['id'] == 'alter':
+                r['dependencies'] = ['create']
+        policy = dict(areas=[dict(name='database', families=['database'])],
+                      sample=dict(profile=SMOKE_PROFILES[0], cases=['create']), demo_reports={},
+                      pr_smoke=dict(area='ddl-dml-policy-replay', cases=['alter']))
+        pr = generate_smoke([dict(scenarios=rows)], policy['pr_smoke'])
+        full = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
+        self.assertEqual(pr['obligations'], 4)
+        self.assertEqual(full['obligations'], 6)
+        for shard in pr['include']:
+            self.assertEqual(shard['cases'], ['create', 'alter'])
+            supplement = next(s for s in full['include'] if s['id'] == shard['id'])
+            self.assertEqual(supplement, dict(shard, owns_obligations=False))
+
+    def test_pr_selection_rejects_empty_duplicate_and_unknown_cases(self):
+        rows = [row('create', profile=p) for p in SMOKE_PROFILES]
+        for cases in ([], ['create', 'create'], ['typo'], 'create', [None]):
+            with self.subTest(cases=cases), self.assertRaises(ValueError):
+                generate_smoke([dict(scenarios=rows)], dict(area='selected', cases=cases))
+
+    def test_smoke_rejects_missing_profiles_variants_duplicates_and_dependencies(self):
+        rows = [row('create', profile=p) for p in SMOKE_PROFILES]
+        invalid = [rows[:1], rows + rows[:1],
+                   [dict(rows[0], variant='position-minimal'), rows[1]],
+                   [dict(rows[0], dependencies=['missing']), rows[1]],
+                   [dict(rows[0], dependencies=['create']), rows[1]],
+                   [dict(rows[0], status='not_applicable'), rows[1]]]
+        for selected in invalid:
+            with self.subTest(rows=selected), self.assertRaises(ValueError):
+                generate_smoke([dict(scenarios=selected)], dict(area='selected', cases=['create']))
 
 
 if __name__ == '__main__':

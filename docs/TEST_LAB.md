@@ -1,5 +1,12 @@
 # Testing replication by profile
 
+Shared fixtures enable automatic support bundles when the applier enters
+`BLOCKED`. They use `format: directory` so you can read the files without extraction.
+After a test, look in its `support-bundles/` artifact directory. Start with
+`failure.json`, then check `state.sqlite`, `relay.frames`, and `bundle.json`.
+The rejection tests check that the bundle preserves the failure and the blocked
+checkpoint. A test failure outside the applier does not cause a support bundle.
+
 The lab runs shared experiments against a source, an external-applier target,
 and a native reference. A profile identifies the topology and replication
 contract; it does not mean every feature of those MySQL versions is supported.
@@ -8,13 +15,15 @@ contract; it does not mean every feature of those MySQL versions is supported.
 | --- | --- | --- | --- |
 | `mysql84-to-mysql57-myisam` | 8.4 InnoDB | 5.7 MyISAM | 8.4 MyISAM |
 | `mysql57-to-mysql84-innodb` | 5.7 InnoDB | 8.4 InnoDB | 5.7 InnoDB |
+| `mysql57-to-mysql57-myisam` | 5.7 InnoDB | 5.7 MyISAM | 5.7 MyISAM |
+| `mysql57-to-mysql57-innodb` | 5.7 InnoDB | 5.7 InnoDB | 5.7 InnoDB |
 
-Partition experiments explicitly use an InnoDB native reference where 8.4 cannot
-create the corresponding MyISAM table. The forward temporary-table LIKE case
-also declares a MyISAM source template explicitly. These exceptions are checked
+Partition experiments explicitly use an InnoDB native reference on all profiles
+to preserve the same fixture; 8.4 cannot create the corresponding MyISAM table. Both MyISAM temporary-table LIKE cases
+also declare a MyISAM source template explicitly. These exceptions are checked
 before metadata comparison. The actual servers, settings, image IDs,
 and applier binary hash are recorded. The native reference is a behavior/control
-comparison; it is not the same server version as the external target.
+comparison; its version matches the source. In the 5.7 → 5.7 profiles, all three servers use 5.7.
 
 ## List and run
 
@@ -28,7 +37,7 @@ make correctness
 
 The list is an offline JSON inventory: no Docker provisioning or implicit use of
 old evidence. `make correctness` runs the shared full correctness catalog for
-both profiles; `TIER=smoke` selects a small representative subset. Use the full
+all profiles; `TIER=smoke` selects a small representative subset. Use the full
 tier for every applicable family. Unit tests remain `make test`. Select one topology or an ordered scenario with:
 
 ```sh
@@ -52,11 +61,19 @@ comparison; arbitrary data/DDL differences are not normalized away.
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
-after the changes on both profiles. Foreign keys and CHECK constraints remain
-outside the supported DDL contract.
+after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.
+InnoDB profiles support foreign keys with the limits below.
+
+The `foreign-keys` family applies to both InnoDB target profiles. It compares
+parent/child rows, constraint metadata and supporting indexes with native 5.7
+replication, exercises cascades, composite references, ordered DDL and restart,
+and checks exclusions, rollback and offline recovery relationship evidence.
+It runs as its own parallel CI area. Use
+`make correctness PROFILE=mysql57-to-mysql84-innodb ARGS="--family foreign-keys"`.
+MyISAM profiles retain `reject-foreign-key`.
 
 The `filters` family runs wildcard exclusions, saved-state resume and included-DDL
-refusal on both profiles. It keeps the independent native/target binlog oracle as
+refusal on all profiles. It keeps the independent native/target binlog oracle as
 well as row, checkpoint and intent checks. MySQL 8.4 `mysqlbinlog` must be on PATH
 (or set `MYSQLBINLOG` to its path); this is checked before fixture startup. Smoke
 includes the wildcard workload; full includes resume and refusal. Selecting
@@ -122,21 +139,21 @@ both remain available, without presenting one as a substitute for the other.
 ## Existing specialized qualification
 
 These suites use the common profile interface. Correctness, lifecycle and demo run
-shared, individually declared cases on both profiles. Forward recovery uses the
-shared MyISAM workflow. Other specialized suites retain their established
+shared, individually declared cases on all profiles. Both MyISAM profiles use the
+shared recovery workflow. Other specialized suites retain their established
 runners/assertions and are labeled adapters in the inventory.
 
 | `--suite` | Scope |
 | --- | --- |
 | `correctness` | Shared replicated-DDL, DML, indexes, policies, filters and refusals |
 | `lifecycle` | Shared source/target reconnect, restart, drain and uncertain-write cases |
-| `recovery` | Shared forward MyISAM workflow; retained InnoDB rollback/inspection/audited retry runner |
+| `recovery` | Shared MyISAM workflow; retained InnoDB rollback/inspection/audited retry runner |
 | `demo` | Shared workbook, manual start, heartbeats, signals/resume, shell repair; profile-specific failure/skip and recovery |
 | `native` | Original 8.4-source native DDL observation suite |
 | `all` | All of the above; any missing required case makes the run incomplete |
 
 For example: `make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"`.
-Recovery qualification omits the old embedded benchmark. Forward `recovery` selects
+Recovery qualification omits the old embedded benchmark. MyISAM `recovery` selects
 the same `myisam-recovery` group included in full correctness; `--suite all` runs
 that group once. Its ordered child cases are listed in the offline inventory.
 The `dml-suite`, `ddl-suite`, `legacy-dml` and `legacy-ddl` commands are removed.
@@ -149,7 +166,7 @@ one, use `make lab-demo PROFILE=PROFILE ACTION=legacy-down`.
 
 Demo selection supports `--family lifecycle|workbook|failure|resume` and `--case ID`.
 Dependencies are included automatically; profile-specific cases report
-`not_applicable` on the other topology. For example:
+`not_applicable` on topologies without the required capabilities. For example:
 
 ```sh
 make lab-list ARGS="--suite demo" | jq '.scenarios'
@@ -162,7 +179,7 @@ Each independent session records assertions, comparisons, pinned runtime metadat
 archived SQLite/relay state and, when enabled, `code-coverage/combined/`. These
 workbook checks do not claim additional MySQL catalog coverage.
 
-Run reconnect qualification for both profiles, or select one:
+Run reconnect qualification for all profiles, or select one:
 
 ```sh
 make lab-test ARGS="--suite lifecycle"
@@ -235,9 +252,9 @@ The native adapter lists registered cases; reverse recovery and other specialize
 adapters explicitly report suite-level inventory.
 
 For shared correctness and lifecycle, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
-matches the checkout. Both profiles use the same pinned image in a combined run. Changing fixture or
+matches the checkout. All profiles use the same pinned image in a combined run. Changing fixture or
 implementation inputs during qualification fails the aggregate.
-For `correctness`, `lifecycle`, and explicitly forward-only `recovery`, `--coverage` builds the instrumented image and exports each profile's coverage
+For `correctness`, `lifecycle`, and MyISAM `recovery`, `--coverage` builds the instrumented image and exports each profile's coverage
 separately. Merge explicitly selected reports with the existing `make coverage-report`
 command. Its published runtime views exclude `ReplicatorLab*`; a separate harness
 view uses only unit-test coverage. Raw per-fixture collections remain available
@@ -247,33 +264,65 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-PR and main CI run the full catalog through one parallel matrix. Correctness and
-source/target reconnect run for both default profiles, plus the forward
+Ordinary PR CI runs unit tests, Periphery and two explicit correctness selections. The
+profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
+Both use the default variant and run in parallel after one shared image build.
+Unit tests and Periphery do not wait for this build. Coverage and timing reports
+remain enabled. Ordinary PRs do not build release packages or run the full catalog.
+Each integration job runs 11 named cases in the `ddl-dml-policy-replay` area.
+See [PR test selection](PR_TEST_SELECTION.md) for case IDs, assertions, timing
+estimates, limits, and commands to reproduce the selection.
+
+Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
+See [release testing](RELEASE_TESTING.md) for the stack workflow and evidence.
+Correctness and
+source/target reconnect run for all default profiles, plus the forward
 `position-minimal` and `gtid-full` capture variants. Demo, reverse recovery and
 the applicable native-reference DDL suite run in the same workflow. There is no
 separate weekly or release-tag qualification workflow.
 
-The lab catalog generates the matrix; `tools/ci_matrix.json` only assigns
-correctness families to areas and sets chunk sizes. New cases automatically join
+The lab catalog generates both matrices. PR planning resolves the explicit
+`pr_smoke` case IDs in `tools/ci_matrix.json` against the full catalog and adds
+prerequisites. New full-suite cases do not enter PR checks until selected.
+Full CI uses the same selection for its two cross-version coverage supplements.
+Local `--tier smoke` keeps its existing convenience selection.
+`tools/ci_matrix.json` also assigns full CI
+correctness families to areas and sets group sizes or explicit case boundaries.
+New cases automatically join
 their area, while an unassigned family or suite fails planning. The generated
 `ci-lab` artifact contains `matrix.json`, including all obligations, explicit
 not-applicable entries and exact shard selections. Each applicable obligation
 has one owning shard; prerequisites can also run in dependent shards.
 
+For groups balanced by measured time, `split_after` lists the final case in each
+group except the last. DDL splits after `ddl-compat-generated`. Bootstrap splits
+after `bootstrap-matrix-upsert`. Each area has two groups per profile and variant.
+These boundaries come from the [PR #41 review](../PLAN/PR41_TEST_SUITE_RESULTS.md).
+The planner preserves catalog order and adds prerequisites to each group.
+Missing, repeated, or reversed boundaries fail planning. A boundary cannot
+select the last applicable case, because that would leave an empty final group.
+Do not combine `split_after` with `size`. Keep `size` for groups with fixed counts.
+Review the timing report after adding cases; boundaries do not enforce a time limit.
+
 Jobs show profile, area, capture variant and image type. Large DDL, index and
 bootstrap areas are split into case groups, with up to 16 jobs running at once.
 Each job owns a fresh fixture. Ordered scenarios and the forward
 failure → recovery → offline/control sequence stay together. CI builds the lab
-once and each applier image once, then shares checksummed artifacts with the
-whole matrix. Release jobs verify they use the packaged binary.
+once and each applier image once. Test jobs pull images from GHCR by digest;
+fork PRs use checksummed image archives. Release jobs verify they use the
+packaged binary. See [CI build caching](CI_BUILD_CACHE.md).
 
 Generate and inspect the same plan locally:
 
 ```sh
 swift build --product replicator-lab
-python3 tools/ci_lab.py --plan .build/debug/replicator-lab
+CI_SUITE=pr-smoke python3 tools/ci_lab.py --plan .build/debug/replicator-lab
 jq '.include[] | {profile, variant, area, suite, cases}' artifacts/ci/matrix.json
 ```
+
+Use `CI_SUITE=full` for the main plan. It is also the local default.
+The manifest and timing report identify the scope. A complete smoke report means
+that all selected smoke obligations passed. It does not certify all profiles.
 
 Reproduce a shard with the usual `make lab-test PROFILE=...` command
 and its `ARGS="--suite ... --variant ... --case ..."` selections. Only correctness
@@ -289,7 +338,8 @@ make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--case myisam-recovery 
 ```
 
 CI uploads each shard's evidence separately. Published code coverage combines
-unit tests with instrumented smoke and demo runs. Full correctness and reconnect
+unit tests with instrumented smoke runs. Full CI adds sample and demo coverage.
+Full correctness and reconnect
 runs use the release image and do not contribute to line coverage.
 See [coverage reports and publication](../CONTRIBUTING.md#code-coverage) for PR
 comments and downloading the HTML/LCOV reports linked from the README.
@@ -320,8 +370,8 @@ Audited `inspect`/`resolve` actions are available only for the InnoDB profile.
 
 The [forward workbook](../PLAN/DEMO_WORKBOOK.md) and
 [reverse workbook](../PLAN/REVERSE_DEMO_WORKBOOK.md) use these same commands for
-multi-terminal experiments. The forward profile also provides `fail`, `skip GTID`
-and `compare --expect-blocked` actions for its controlled explicit-engine rejection.
+multi-terminal experiments. Both MyISAM profiles also provide `fail`, `skip GTID`
+and `compare --expect-blocked` actions for their controlled explicit-engine rejection.
 
 For instrumentation, create the session with `ACTION=up ARGS=--coverage`.
 Coverage mode and the image are pinned in `artifacts/demos/PROFILE/current.json`;
@@ -343,9 +393,112 @@ rows/checkpoints, and record wall time, target counters and stage timings. Start
 and polling overhead are included. `--workload multi-table-transaction` is an
 explicit InnoDB-only experiment, never silently substituted for `insert`.
 
+Backlog profiling controls keep the historical defaults: `--applier-profile on`,
+`--decoder-profile off`, and `--batch-transactions 8`. For a detailed 10K run:
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --decoder-profile on"
+```
+
+Repeat with `--skip-build --applier-profile off --decoder-profile off` to measure
+without detailed profiling. `--batch-transactions 32` changes the execution batch
+limit and scales the journal preparation window; InnoDB still commits each source
+transaction separately. The 25 ms age limit can produce smaller batches. Results include `stage-timings.json`,
+optional `applier-profile.tsv` / `decoder-profile.tsv`, server durability settings,
+and native/target binlog boundaries. `apply.detail.transaction.begin` and
+`apply.detail.transaction.commit` include the SQL round trip; `capture.schema_wait`
+measures time waiting for historical schema interpretation in the apply loop.
+
+For server-side SQL profiling, add `--server-profile on` (backlog mode only;
+default off). This enables timed Performance Schema statements, SQL stages,
+transactions and waits on the disposable native and target servers. It writes
+`server-profile-{native,target}.json`, sorted `.tsv` reports, and instrument
+settings. Target foreground counters use the `apply_fixture` user, retaining
+results after disconnect; native foreground counters use its new SQL/worker
+threads. File I/O is server-wide and includes background redo work. Background
+waits include idle time. These are nested elapsed timers, not additive CPU costs;
+file `misc` includes sync and other operations, not just fsync. Autocommit commit
+work appears inside INSERT execution and server commit stages, not a separate
+client COMMIT. No durability settings change.
+
+```sh
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--events 10000 --applier-profile off --server-profile off"
+make lab-benchmark PROFILE=mysql57-to-mysql84-innodb ARGS="--skip-build --events 10000 --applier-profile off --server-profile on"
+```
+
+Compare profiling off/on to assess overhead. Statement and stage names differ
+between native row replication and SQL clients, and the reverse reference is
+MySQL 5.7 while the external target is 8.4. The gap between client `target.sql`
+and server statement time includes scheduling, protocol and transport overhead;
+it is not a direct measurement of network latency. `target.connect`,
+`capture.resolve`, `capture.connect` and `capture.preflight` separately time
+connection and source setup before useful replay work. `capture.shutdown.receiver`,
+`capture.shutdown.connection` and `capture.shutdown.event_loop` measure teardown
+in the final apply timings. Snapshot queries run outside
+the timed replay windows and use the separate root observer account.
+
+The application and benchmark default to eight source transactions per execution
+batch. `batch.maximumPreparedBatches` accepts 1..16 and defaults to eight. It bounds
+all submitted batches, including completed batches awaiting a checkpoint. One
+slot retains overlap of row planning but serializes durable preparation with
+completion. `batch.overlapPreparation: false` also disables coordinator planning
+overlap at batch handoff and uses one slot.
+
+With four or more slots, the coordinator collects a preparation window of up to
+half the queue capacity, shares one relay sync and one FULL SQLite commit across
+that window, then submits its execution batches in order. For example, eight
+slots and eight transactions per execution batch can prepare four batches (32
+source transactions) together. The existing row, byte, age and table-change
+limits apply to the whole preparation window; a single oversized source group
+still runs alone. DDL, schema, stop and reconnect barriers retain their ordering.
+Published completions can also share one SQLite checkpoint commit. Larger queues
+increase the bounded set of durable intents that can remain pending after a crash.
+
+For a backlog comparison with the same binary, use `--prepared-batches 2` and
+`--prepared-batches 8`, keeping `--batch-transactions 8` and profiling settings
+unchanged. This controls durable preparation and queue depth, not the number of
+target connections or InnoDB source transactions committed together. MyISAM
+INSERT coalescing remains bounded by each execution batch. Timer and size limits
+can produce smaller batches.
+
+The final summary's `applyQueue` reports the current target session's queue
+capacity, maximum outstanding batches, executed/unissued batch counts, and
+worker `busySeconds`, `idleSeconds`, and `spanSeconds`. Span covers the first
+batch start through the last completed batch, excluding startup before the first
+batch and shutdown afterward. Idle includes any gap between batches, including
+source starvation and DDL barriers; it is most useful on a DML-only backlog.
+Busy includes target execution and its checks. These are elapsed durations,
+not CPU measurements. While execution is active, busy time includes only
+completed batches and idle time includes gaps preceding batches already started.
+
+The decoder caches those interpretations by database, table and wire column
+metadata. `capture.schema_cache.hit` / `.miss` report reuse; a repeated numeric
+table ID alone is insufficient. DDL, new format contexts and skipped ranges
+invalidate the cache; reconnect creates a new cache. Retention is bounded to
+1,024 table entries, with eviction causing a fresh ordered lookup. Checksums,
+table-map decoding and consumer-side schema validation still run for each map.
+The live/offline stream reuses the codec's validated format context for TABLE_MAP
+probes. With no table filter, each included map uses one metadata probe and one
+normal decode that installs the resolved schema. With a filter, an identity probe
+runs first so excluded tables can retain opaque unsupported columns. Probes do
+not advance the decoder or change its live table cache; framing/CRC and schema
+checks remain enforced. The old per-map `decode.call.probe_format` calls disappear;
+`decode.call.probe_identity` is needed only when a table-filter callback is present.
+GTID UUID text is cached for the last source SID, with byte comparison on each GTID.
+
+Apply/replay carry raw event bytes directly to the relay writer. External inspection
+output still uses Base64 when requested; the internal byte buffer is not a JSON
+field. Decoded-queue byte accounting includes that buffer. Existing relay files
+and recovery/inspection formats are unchanged.
+
+Timers from different workers overlap. Inclusive and self times are elapsed time,
+not CPU time, and must not be summed as end-to-end duration.
+See the [reverse InnoDB investigation](../PLAN/REVERSE_INNODB_PERFORMANCE.md)
+for the 10K measurements, native binlog behavior, and proposed optimization order.
+
 The historical forward sysbench streaming and blackhole capture experiments are
 available with `--mode streaming` and `--mode capture`, respectively. These are
-separate measurements and are currently unavailable for the reverse profile.
+separate measurements and are currently unavailable for the 5.7-source profiles.
 All modes require one explicit profile. For example:
 
 ```sh
@@ -360,3 +513,29 @@ Backlog evidence lives in `artifacts/lab-benchmark/PROFILE/`; historical measure
 adapters retain their original categories. Do not compare timings across different
 workloads, modes, instrumentation, durability settings or transports as applier
 speed alone.
+
+## Adding a profile
+
+Production `ReplicationProfile` selects a `SourceContract` and a target engine/version
+contract independently. The lab declares the same topology in `LabProfile` and its
+Compose overlay. `LabMySQLVersion` supplies server administration SQL; engine
+capabilities select rollback, failure and recovery expectations. Add the profile
+to these registries, then run the existing catalog. Do not copy a suite.
+
+The full CI matrix is generated from this catalog. New profiles automatically receive
+applicable correctness, lifecycle and demo jobs; update `tools/ci_matrix.json` for
+the expected demo coverage report count. Keep version-specific exclusions explicit.
+The 5.7 MyISAM profile reuses MyISAM recovery and the GTID demo resume workflow.
+8.4 optional-metadata refusals, 0900 translation and the historical 8.4-specific
+failure group do not apply. Streaming/capture benchmarks remain 8.4-only; the
+shared backlog benchmark supports all profiles.
+
+See [5.7 MyISAM setup](MYSQL57_MYISAM.md) for deployment boundaries.
+
+## CI cost and coverage reports
+
+See [CI measurements](CI_MEASUREMENTS.md) for case and shard timing, profile
+catalog results, expanded line coverage, and test-area cost comparisons.
+The same catalog drives PR smoke, full and expanded CI. Full and expanded plans
+retain release-binary checks. These measurements do not change the supported
+profiles or assertions.

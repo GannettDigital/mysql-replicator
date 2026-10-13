@@ -181,6 +181,15 @@ private struct FilterSQL {
                 } else { i += 1 }
             }
         }
+        // Even a skipped child DDL must not introduce a relationship to an
+        // included parent: its future cascades are not separate row events.
+        i = 0
+        while i < tokens.count {
+            if take("REFERENCES") {
+                let first = try identifier()
+                names.append(take(".") ? Target(database:first,table:try identifier()) : Target(database:names[0].database,table:first))
+            } else { i += 1 }
+        }
         return names
     }
 }

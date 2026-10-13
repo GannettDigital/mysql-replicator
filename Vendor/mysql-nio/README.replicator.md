@@ -12,6 +12,10 @@ before writing authentication. Existing callers retain their default behavior.
 It also adds an optional handshake timeout and a ten-second TCP connect timeout;
 the capture caller requests a ten-second handshake deadline.
 
+The patch installs the MySQL protocol handlers in the channel initializer,
+before TCP connects. This prevents loss of an immediate server greeting while
+the caller registers the callback on the connect future.
+
 Dump framing and commands remain in ReplicatorCapture. After authentication it
 replaces the packet decoder to validate sequences, assemble multipart responses
 and bound allocations. The upstream TLS/authentication/command lifecycle remains
