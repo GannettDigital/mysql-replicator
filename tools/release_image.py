@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -35,6 +36,22 @@ def command(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
+def verify_help(executable):
+    for arguments, expected in (
+        ([], {'run', 'fetch', 'replay', 'ctl', 'support-bundle', 'inspect',
+              'inspect-relay', 'blackhole', 'skip', 'recovery'}),
+        (['ctl'], {'status', 'stop', 'reload'}),
+    ):
+        output = command(*executable, *arguments, '--help')
+        # Argument Parser lists nested commands in their own help page.
+        section = output.partition('SUBCOMMANDS:\n')[2].split('\n\n', 1)[0]
+        commands = set(re.findall(r'^  ([a-z][a-z-]*)(?:\s|$)', section, re.MULTILINE))
+        missing = expected - commands
+        if missing:
+            page = ' '.join([*arguments, '--help'])
+            raise ValueError(f'Missing commands in {page}: ' + ', '.join(sorted(missing)))
+
+
 def main():
     version, _ = versions((ROOT / 'VERSION').read_text().strip())
     release = ROOT / 'artifacts/release'
@@ -58,7 +75,7 @@ def main():
         assert config['Config']['StopSignal'] == 'SIGTERM'
         run = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--read-only', '--network', 'none']
         assert command(*run, image, '--version').startswith(f'mysql-replicator {version} (')
-        assert 'ctl status|stop|reload' in command(*run, image, '--help')
+        verify_help([*run, image])
         # Copy from the image rather than running a shell: the production image has none.
         container = command('docker', 'create', '--platform', 'linux/amd64', image)
         try:

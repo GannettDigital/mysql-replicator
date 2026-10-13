@@ -17,7 +17,7 @@ final class CLIProcessTests: XCTestCase {
     }
 
     func testHelpAndVersionUseStdoutAndExitZero() throws {
-        for args in [[], ["--help"], ["--version"], ["replay", "--help"], ["ctl", "stop", "--help"], ["help", "recovery", "resolve"]] {
+        for args in [[], ["--help"], ["--version"], ["replay", "--help"], ["ctl", "--help"], ["ctl", "stop", "--help"], ["help", "recovery", "resolve"]] {
             let (status, out, error) = try run(args)
             XCTAssertEqual(status, 0, String(decoding: error, as: UTF8.self))
             XCTAssertFalse(out.isEmpty)
