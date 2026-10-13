@@ -113,4 +113,117 @@ final class ArchiveTests: XCTestCase {
             XCTAssertFalse(emitted)
         }
     }
+    func testMissingHistoryFailsBeforeReadingPayloadAndReportsGTIDs() throws {
+        try fixture { dir,source,config in
+            let file=dir.appendingPathComponent("binlog.000003")
+            var bytes=try Data(contentsOf:file)
+            bytes[bytes.count-12] ^= 1 // Invalid payload must not mask the earlier history error.
+            try bytes.write(to:file)
+            var progress:[ArchiveReplay.Progress]=[]
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84,progress:{ progress.append($0) })
+            XCTAssertThrowsError(try archive.validate(baseline:"")) {
+                let reason=String(describing:$0)
+                XCTAssertTrue(reason.contains("file=binlog.000003"))
+                XCTAssertTrue(reason.contains("requiredGTIDs="+source.sourceUUID+":1-5"))
+                XCTAssertTrue(reason.contains("appliedGTIDs="))
+                XCTAssertFalse(reason.contains("CRC"))
+            }
+            XCTAssertEqual(progress.map(\.phase),["preamble"])
+            XCTAssertThrowsError(try archive.validate(baseline:source.start.executedGTIDs)) {
+                XCTAssertTrue(String(describing:$0).contains("CRC"))
+            }
+        }
+    }
+
+    func testValidationIsReusedButStillChecksNewLimitsAndFileChanges() throws {
+        try fixture { dir,source,config in
+            var progress:[ArchiveReplay.Progress]=[]
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84,progress:{ progress.append($0) })
+            try archive.validate(baseline:source.start.executedGTIDs)
+            XCTAssertEqual(progress.last?.phase,"validated")
+            XCTAssertEqual(progress.last?.bytesRead,archive.manifest.files[0].bytes)
+            XCTAssertEqual(progress.last?.filesCompleted,1)
+            progress=[]
+            try archive.validate(baseline:source.sourceUUID+":1-12",stopAfterGTIDs:source.sourceUUID+":14")
+            XCTAssertEqual(progress.map(\.phase),["validation_reused"])
+            XCTAssertEqual(progress.last?.bytesRead,0)
+            XCTAssertThrowsError(try archive.validate(baseline:""))
+            XCTAssertThrowsError(try archive.validate(baseline:source.start.executedGTIDs,stopAfterGTIDs:source.sourceUUID+":999"))
+            // A GTID already in the baseline need not occur in the archive.
+            let other="00000000-0000-0000-0000-000000000001:1-5"
+            try archive.validate(baseline:source.start.executedGTIDs+","+other,stopAfterGTIDs:other)
+            let file=dir.appendingPathComponent("binlog.000003")
+            let bytes=try Data(contentsOf:file)
+            // Atomic replacement has the same length and content, but a new inode.
+            try bytes.write(to:file,options:.atomic)
+            var emitted=false
+            XCTAssertThrowsError(try archive.run(configuration:source,cancellation:.init(),emitEvent:{_ in emitted=true},
+                emitTransaction:{_ in emitted=true},resolveSchema:nil,timings:.init(),ignoreTable:nil)) {
+                XCTAssertTrue(String(describing:$0).contains("archive changed"))
+            }
+            XCTAssertFalse(emitted)
+        }
+    }
+
+    func testNewManifestHasNoHashesAndReplays() throws {
+        try fixture { dir,source,config in
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)
+            XCTAssertEqual(archive.manifest.version,2)
+            let encoded=try JSONEncoder().encode(archive.manifest)
+            let object=try XCTUnwrap(JSONSerialization.jsonObject(with:encoded) as? [String:Any])
+            let files=try XCTUnwrap(object["files"] as? [[String:Any]])
+            XCTAssertNil(files[0]["sha256"])
+            try encoded.write(to:dir.appendingPathComponent("manifest.json"))
+            let fetched=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)
+            var groups:[String]=[]
+            try fetched.run(configuration:source,cancellation:.init(),emitEvent:{_ in},
+                emitTransaction:{ groups.append($0.gtid!.sequence) },resolveSchema:nil,timings:.init(),ignoreTable:nil)
+            XCTAssertEqual(groups,["11","12","13","14"])
+        }
+    }
+
+    func testLegacyManifestIgnoresHashButChecksCRCAndVersion() throws {
+        try fixture { dir,source,config in
+            let file=dir.appendingPathComponent("binlog.000003")
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)
+            var object=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(archive.manifest)) as? [String:Any])
+            object["version"]=1
+            object["files"]=[["name":"binlog.000003","bytes":archive.manifest.files[0].bytes,"sha256":String(repeating:"0",count:64)]]
+            let metadata=dir.appendingPathComponent("manifest.json")
+            try JSONSerialization.data(withJSONObject:object).write(to:metadata)
+            let legacy=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)
+            var groups:[String]=[]
+            try legacy.run(configuration:source,cancellation:.init(),emitEvent:{_ in},
+                emitTransaction:{ groups.append($0.gtid!.sequence) },resolveSchema:nil,timings:.init(),ignoreTable:nil)
+            XCTAssertEqual(groups,["11","12","13","14"])
+            var bytes=try Data(contentsOf:file)
+            bytes[bytes.count-12] ^= 1
+            try bytes.write(to:file)
+            XCTAssertThrowsError(try ArchiveReplay(configuration:config,source:source,contract:.mysql84).validate(baseline:source.start.executedGTIDs)) {
+                XCTAssertTrue(String(describing:$0).contains("CRC mismatch"))
+            }
+            object["version"]=3
+            try JSONSerialization.data(withJSONObject:object).write(to:metadata)
+            XCTAssertThrowsError(try ArchiveReplay(configuration:config,source:source,contract:.mysql84)) {
+                XCTAssertTrue(String(describing:$0).contains("identity/settings"))
+            }
+        }
+    }
+
+    func testValidationCancellationDoesNotCachePartialScan() throws {
+        try fixture { _,source,config in
+            var progress:[String]=[]
+            let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84,progress:{ progress.append($0.phase) })
+            var calls=0
+            XCTAssertThrowsError(try archive.validate(baseline:source.start.executedGTIDs,isCancelled:{ calls += 1;return calls > 3 })) {
+                XCTAssertTrue($0 is CaptureCancelled)
+            }
+            XCTAssertFalse(progress.contains("validated"))
+            progress=[]
+            try archive.validate(baseline:source.start.executedGTIDs)
+            XCTAssertTrue(progress.contains("validation"))
+            XCTAssertFalse(progress.contains("validation_reused"))
+        }
+    }
+
 }

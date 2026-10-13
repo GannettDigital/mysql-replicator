@@ -151,7 +151,9 @@ func main() throws {
         let reloadIdentity=try ConfigurationFile.reloadIdentity(from:configData)
         let offline=args[0] == "replay"
         struct ArchiveOptions:Decodable { let archive:ArchiveConfiguration }
-        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:(config.profile ?? .mysql84To57MyISAM).sourceContract,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty) : nil
+        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:(config.profile ?? .mysql84To57MyISAM).sourceContract,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty,progress: { progress in
+            if let data=try? JSONEncoder().encode(progress) { try? FileHandle.standardError.write(contentsOf:data+Data([10])) }
+        }) : nil
         let sourcePassword=try offline ? "" : PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
         let targetPassword=try PasswordConfiguration.resolve(password:config.target.password,environmentVariable:config.target.passwordEnvironment,endpoint:"target")
         let cancellation = CaptureCancellation(), drain = CaptureCancellation()

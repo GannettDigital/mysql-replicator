@@ -89,9 +89,9 @@ public enum ArchiveFetch {
             // CRC and framing validation does not limit which column types may
             // be downloaded, and detects truncation before publishing a manifest.
             try ArchiveFileReader(file:path,maximumEventBytes:UInt32(maximum)).scan { _,_ in }
-            entries.append(.init(name:name,bytes:size,sha256:try ArchiveIO.hash(path)))
+            entries.append(.init(name:name,bytes:size))
         }
-        let manifest=ArchiveManifest(version:1,sourceUUID:source.sourceUUID,sourceVersion:version,settings:settings,files:entries,capturedAt:ISO8601DateFormatter().string(from:Date()))
+        let manifest=ArchiveManifest(version:2,sourceUUID:source.sourceUUID,sourceVersion:version,settings:settings,files:entries,capturedAt:ISO8601DateFormatter().string(from:Date()))
         try ArchiveIO.write(manifest,to:directory.appendingPathComponent("manifest.json"))
         let handle=try FileHandle(forWritingTo:directory.appendingPathComponent("manifest.json"));try handle.synchronize();try handle.close()
         try ArchiveIO.syncDirectory(directory)

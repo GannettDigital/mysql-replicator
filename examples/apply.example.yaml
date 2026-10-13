@@ -170,7 +170,9 @@ batch:                             # Prepare and apply bounded groups of source 
 #   directory: ./support-bundles    # Required when onBlocked is true. Must be outside stateDirectory.
 #                                  # Each error gets a unique name. Old bundles are not removed.
 #   format: tar                    # tar packs the files. directory leaves them unpacked for inspection.
-#   output: ./support.tar          # Required only for manual collection. Use a new path outside stateDirectory.
+#   output: ./support.tar          # Optional manual path. Must be new and outside stateDirectory.
+#                                  # Default: a unique name in directory. If directory is absent,
+#                                  # use support-bundles beside stateDirectory.
 #                                  # For format: directory, this is a new directory path.
 #   maximumBytes: 2147483648        # Default 2 GiB including tar overhead; minimum 1 MiB.
 #                                  # This limit applies to each bundle, including directory output.

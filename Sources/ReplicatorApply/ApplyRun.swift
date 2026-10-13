@@ -102,7 +102,15 @@ public enum ApplyRun {
         do {
           control?.publish(summary("STARTING"))
           try control?.start(directory:state.directory)
-          if let archive { try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs) }
+          if let archive {
+              do {
+                  try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs,
+                      isCancelled:{ cancellation.isCancelled || drain.isCancelled })
+              } catch is CaptureCancelled {
+                  try require(state.targetUUID != nil,"archive validation cancelled before target identity was established; no target writes were issued")
+                  try state.stopped();return stoppedResult()
+              }
+          }
           while true {
            do {
             let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
