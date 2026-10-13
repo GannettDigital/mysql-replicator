@@ -498,16 +498,22 @@ jobs:
         with:
           pattern: ci-build-*
           path: artifacts/ci/builds
-      - name: Read job history with retries
+      # Timing is diagnostic. Required results come from `needs` and the
+      # same-run artifacts, whose uploads must succeed in each test job.
+      - name: Read optional job timing with retries
+        continue-on-error: true
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 tools/ci_reruns.py jobs --output artifacts/ci/jobs.json
       - name: Report timing, catalog results and profile line coverage
+        env:
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
           python3 tools/ci_measurements.py --matrix artifacts/ci/matrix.json \
             --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json --builds artifacts/ci/builds \
-            --unit-coverage artifacts/ci/unit/coverage.json
+            --unit-coverage artifacts/ci/unit/coverage.json --optional-job-timings
       - uses: actions/upload-artifact@v4
         if: always()
         with:

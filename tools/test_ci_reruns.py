@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ci_reruns import api_pages, build_identity, job_history, validate_results
+from ci_reruns import api_pages, build_identity, job_history, validate_results, REQUIRED_DEPENDENCIES
 from ci_measurements import record_shard, summarize
 
 
@@ -104,12 +104,13 @@ class ResultReuseTests(unittest.TestCase):
         self.records = [dict(id=n, commit='a', run_id='9', attempt=str(a), status='passed', build=self.build,
                              matrix_sha256='matrix', seconds=1, scenarios=[dict(self.rows[i], status='passed')])
                         for i, (n, a) in enumerate((('one', 1), ('two', 2)))]
+        self.dependencies = {name: dict(result='success') for name in REQUIRED_DEPENDENCIES}
         self.jobs = [dict(jobs=[dict(name='Build release once', conclusion='success', execution_attempt='1'),
                                dict(name='Integration / p / one / default / release', conclusion='success', execution_attempt='1'),
                                dict(name='Integration / p / two / default / release', conclusion='success', execution_attempt='2')])]
 
     def summary(self):
-        return summarize(self.manifest, self.records, self.jobs, self.context, self.builds, 'matrix')
+        return summarize(self.manifest, self.records, self.jobs, self.context, self.builds, 'matrix', self.dependencies)
 
     def test_mixed_attempts_same_run_and_build_produce_complete_report(self):
         report = self.summary()
@@ -124,23 +125,20 @@ class ResultReuseTests(unittest.TestCase):
                 records = copy.deepcopy(self.records)
                 records[0].update(change)
                 with self.assertRaises(ValueError):
-                    validate_results(self.manifest, records, self.jobs, self.context, self.builds, 'matrix')
+                    validate_results(self.manifest, records, self.context, self.builds, 'matrix', self.dependencies)
 
-    def test_failed_job_stale_attempt_changed_build_or_matrix_cannot_pass(self):
-        for field, value in (('attempt', '1'), ('build', dict(self.build, runtime='other')), ('matrix_sha256', 'other')):
+    def test_failed_job_changed_build_or_matrix_cannot_pass(self):
+        for field, value in (('build', dict(self.build, runtime='other')), ('matrix_sha256', 'other')):
             with self.subTest(field=field):
                 original = self.records[1]
                 self.records[1] = dict(original, **{field: value})
                 self.assertFalse(self.summary()['complete'])
                 self.assertEqual(self.summary()['stale_shards'], ['two'])
                 self.records[1] = original
-        self.jobs[0]['jobs'][2]['conclusion'] = 'failure'
+        self.dependencies['packaging-and-smoke']['result'] = 'failure'
         self.assertFalse(self.summary()['complete'])
 
     def test_rerun_build_requires_matching_latest_receipt(self):
-        self.jobs[0]['jobs'][0]['execution_attempt'] = '2'
-        with self.assertRaisesRegex(ValueError, 'Build identity differs'):
-            self.summary()
         self.builds = {'release': dict(self.build, attempt='2')}
         self.assertFalse(self.summary()['complete'])
 
@@ -148,6 +146,9 @@ class ResultReuseTests(unittest.TestCase):
         self.jobs[0]['jobs'].append(dict(name='Full Suite / Release Evidence', conclusion='failure'))
         self.assertTrue(self.summary()['complete'])
         self.jobs[0]['jobs'].append(dict(name='Unit Tests & Catalog Check', conclusion='failure'))
+        # REST history is diagnostic. The workflow dependency reports the latest result.
+        self.assertTrue(self.summary()['complete'])
+        self.dependencies['unit-tests']['result'] = 'failure'
         self.assertFalse(self.summary()['complete'])
 
     def test_missing_record_still_fails(self):
@@ -170,18 +171,61 @@ class ResultReuseTests(unittest.TestCase):
             builds.mkdir(parents=True)
             (builds / 'build.json').write_text(json.dumps(self.build))
             output = root / 'output'
-            env = dict(os.environ, GITHUB_ACTIONS='true', GITHUB_SHA='a', GITHUB_RUN_ID='9', GITHUB_RUN_ATTEMPT='3')
+            env = dict(os.environ, GITHUB_ACTIONS='true', GITHUB_SHA='a', GITHUB_RUN_ID='9', GITHUB_RUN_ATTEMPT='3',
+                       CI_JOB_RESULTS=json.dumps(self.dependencies))
             env.pop('GITHUB_STEP_SUMMARY', None)
-            result = subprocess.run([sys.executable, str(Path(__file__).with_name('ci_measurements.py')),
-                                     '--matrix', str(matrix), '--records', str(records), '--jobs', str(jobs),
-                                     '--builds', str(builds.parent), '--output', str(output)],
-                                    env=env, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            report = json.loads((output / 'report.json').read_text())
-            self.assertTrue(report['complete'])
-            self.assertEqual(report['provenance'], self.context)
-            self.assertEqual(report['shard_attempts'], {'one': '1', 'two': '2'})
-            self.assertEqual(json.loads((output / 'test-value.json').read_text())['provenance'], self.context)
+            command = [sys.executable, str(Path(__file__).with_name('ci_measurements.py')),
+                       '--matrix', str(matrix), '--records', str(records), '--jobs', str(jobs),
+                       '--builds', str(builds.parent), '--output', str(output), '--optional-job-timings']
+            for timing in ('valid', 'missing', 'invalid'):
+                if timing == 'missing':
+                    jobs.unlink()
+                elif timing == 'invalid':
+                    jobs.write_text('truncated API response')
+                with self.subTest(timing=timing):
+                    result = subprocess.run(command, env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = json.loads((output / 'report.json').read_text())
+                    self.assertTrue(report['complete'])
+                    self.assertEqual(report['provenance'], self.context)
+                    self.assertEqual(report['shard_attempts'], {'one': '1', 'two': '2'})
+                    self.assertEqual(report['job_timing_status'], 'available' if timing == 'valid' else 'unavailable')
+                    if timing != 'valid':
+                        self.assertIsNone(report['completed_job_seconds'])
+                        self.assertIn('timing unavailable', (output / 'summary.md').read_text())
+                    self.assertEqual(json.loads((output / 'test-value.json').read_text())['provenance'], self.context)
+            # An API outage cannot turn a failed rerun with old successful artifacts into a pass.
+            self.dependencies['packaging-and-smoke']['result'] = 'failure'
+            env['CI_JOB_RESULTS'] = json.dumps(self.dependencies)
+            self.assertNotEqual(subprocess.run(command, env=env, capture_output=True).returncode, 0)
+            env.pop('CI_JOB_RESULTS')
+            self.assertNotEqual(subprocess.run(command, env=env, capture_output=True).returncode, 0)
+
+    def test_missing_or_failed_workflow_dependencies_block_without_history(self):
+        self.jobs = None
+        self.assertTrue(self.summary()['complete'])
+        for name in REQUIRED_DEPENDENCIES:
+            for status in ('failure', 'cancelled', 'skipped', None):
+                self.dependencies[name]['result'] = status
+                with self.subTest(name=name, status=status):
+                    self.assertFalse(self.summary()['complete'])
+                self.dependencies[name]['result'] = 'success'
+            saved = self.dependencies.pop(name)
+            with self.assertRaisesRegex(ValueError, 'workflow dependencies'):
+                self.summary()
+            self.dependencies[name] = saved
+
+    def test_bad_build_origin_and_shards_before_build_are_rejected_without_history(self):
+        self.jobs = None
+        for changes in (dict(commit='b'), dict(run_id='10'), dict(attempt='4'), dict(attempt=None), dict(runtime='')):
+            with self.subTest(changes=changes):
+                self.builds = {'release': dict(self.build, **changes)}
+                with self.assertRaisesRegex(ValueError, 'Build identity differs'):
+                    self.summary()
+        self.builds = {'release': dict(self.build, attempt='2')}
+        for record in self.records:
+            record['build'] = self.builds['release']
+        self.assertEqual(self.summary()['stale_shards'], ['one'])
 
     def test_shard_records_build_identity_before_execution(self):
         with tempfile.TemporaryDirectory() as folder:
