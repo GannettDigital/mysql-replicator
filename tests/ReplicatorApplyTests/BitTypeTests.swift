@@ -28,6 +28,15 @@ final class BitTypeTests: XCTestCase {
         XCTAssertThrowsError(try normalizedDefault("2",type:DMLColumnType("bit")))
         XCTAssertThrowsError(try normalizedDefault("b'102'",type:DMLColumnType("bit(8)")))
     }
+    func testNativeBitLiteralCaseRules() throws {
+        for literal in ["b'101'", "B'101'", "0b101"] {
+            guard case .create(let table,_) = try parse("CREATE TABLE bits(id INT PRIMARY KEY, v BIT(3) DEFAULT " + literal + ")") else { return XCTFail("not CREATE") }
+            XCTAssertEqual(table.columns[1].defaultValue,"b'101'")
+        }
+        // MySQL permits B'...', but its unquoted 0b prefix is case-sensitive.
+        XCTAssertThrowsError(try parse("CREATE TABLE bits(id INT PRIMARY KEY, v BIT(3) DEFAULT 0B101)"))
+    }
+
     func testDDLKeyPlansAndSavedMetadata() throws {
         guard case .create(let table,_) = try parse("CREATE TABLE bits(id BIT(64) PRIMARY KEY, a BIT DEFAULT b'1', b BIT(9) DEFAULT 0b100000001, c BIT(8) DEFAULT 255)") else { return XCTFail("not CREATE") }
         XCTAssertEqual(table.columns.map(\.type),["bit(64)","bit(1)","bit(9)","bit(8)"])
