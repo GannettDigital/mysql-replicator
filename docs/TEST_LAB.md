@@ -1,5 +1,9 @@
 # Testing replication by profile
 
+Use `swift run replicator-lab --help` to list commands. Each command and demo
+action has its own `--help`. Help does not start containers. See
+[command help](COMMAND_LINE.md#test-lab-commands).
+
 Shared fixtures enable automatic support bundles when the applier enters
 `BLOCKED`. They use `format: directory` so you can read the files without extraction.
 After a test, look in its `support-bundles/` artifact directory. Start with

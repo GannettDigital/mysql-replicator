@@ -45,7 +45,9 @@ let package = Package(
         .testTarget(name: "ReplicatorCaptureTests", dependencies: ["ReplicatorCapture", "ReplicatorCodec",
             .product(name: "NIOEmbedded", package: "swift-nio")], path: "tests/ReplicatorCaptureTests"),
         .target(name: "ReplicatorLabCore", dependencies: ["ReplicatorConfiguration", .product(name: "Yams", package: "Yams")]),
-        .executableTarget(name: "ReplicatorLab", dependencies: ["ReplicatorLabCore"]),
+        .target(name: "ReplicatorLabCommandLine", dependencies: ["ReplicatorLabCore", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
+        .testTarget(name: "ReplicatorLabCommandLineTests", dependencies: ["ReplicatorLabCommandLine"], path: "tests/ReplicatorLabCommandLineTests"),
+        .executableTarget(name: "ReplicatorLab", dependencies: ["ReplicatorLabCore", "ReplicatorLabCommandLine"]),
         .testTarget(name: "ReplicatorCodecTests", dependencies: ["ReplicatorCodec", "CReplicatorCodec", "ReplicatorLabCore"], path: "tests/ReplicatorCodecTests", exclude: ["Schema", "Synthetic"]),
         .testTarget(name: "ReplicatorLabTests", dependencies: ["ReplicatorLabCore"], path: "tests/ReplicatorLabTests",
                     resources: [.copy("Fixtures")])
