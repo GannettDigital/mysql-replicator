@@ -11,22 +11,40 @@ enum JSONSQL {
     static func scalar(_ s: JSONTypedScalar) -> JSONSQLValue? {
         let cast: String
         switch s.type {
-        case 1000: cast="SIGNED"
-        case 1001: cast="UNSIGNED"
-        case 246: cast="DECIMAL(\(s.precision),\(s.scale))"
-        case 10,11,12: return .init(sql:"JSON_EXTRACT(JSON_ARRAY(?),'$[0]')",binds:[temporal(s)])
+        case 1000,1001:
+            // MySQL 8.4 can coerce a string parameter before CAST runs.
+            // Send the validated integer with its binary protocol signedness.
+            var bytes=ByteBufferAllocator().buffer(capacity:8)
+            let unsigned=s.type == 1001
+            bytes.writeInteger(unsigned ? UInt64(s.value)! : UInt64(bitPattern:Int64(s.value)!),endianness:.little)
+            let sql="JSON_EXTRACT(JSON_ARRAY(CAST(? AS \(unsigned ? "UNSIGNED" : "SIGNED"))),'$[0]')"
+            return .init(sql:sql,binds:[.init(type:.longlong,buffer:bytes,isUnsigned:unsigned)])
+        case 246:
+            let integer=s.value.drop(while:{$0 == "-"}).prefix(while:{$0 != "."}).drop(while:{$0 == "0"})
+            guard integer.count+s.scale <= 65 else { return nil }
+            cast="DECIMAL(\(min(65,s.precision)),\(s.scale))"
+        case 10,11,12:
+            // Set the SQL expression type as well as the protocol parameter type.
+            // MySQL 8.4 can otherwise infer DATETIME for a TIME parameter.
+            let type=[10:"DATE",11:"TIME(6)",12:"DATETIME(6)"][s.type]!
+            guard let value=temporal(s) else { return nil }
+            return .init(sql:"JSON_EXTRACT(JSON_ARRAY(CAST(? AS \(type))),'$[0]')",binds:[value])
         case 253: return .init(sql:"JSON_EXTRACT(JSON_ARRAY(CAST(? AS BINARY)),'$[0]')",binds:[.init(type:.blob,buffer:ByteBuffer(bytes:s.rawBytes))])
         default: return nil
         }
         return .init(sql:"JSON_EXTRACT(JSON_ARRAY(CAST(? AS \(cast))),'$[0]')",binds:[.init(string:s.value)])
     }
-    static func temporal(_ s:JSONTypedScalar) -> MySQLData {
+    static func temporal(_ s:JSONTypedScalar) -> MySQLData? {
         let bits=s.rawBytes.enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << ($1.offset*8) }
         let packed=Int64(bitPattern:bits), magnitude=packed.magnitude
         let whole=magnitude >> 24, micros=UInt32(magnitude & 0xffffff)
         var buffer=ByteBufferAllocator().buffer(capacity:12)
         if s.type == 11 {
-            let hour=UInt32((whole >> 12)&1023)
+            let storedHour=UInt32((whole >> 12)&1023)
+            // Native JSON construction unpacks TIME as DATETIME, then packs
+            // day*24+hour. Invert that conversion to preserve the stored hours.
+            // See sql/item_json_func.cc and TIME_to_longlong_time_packed.
+            guard let hour=(UInt32(0)...838).first(where:{ ($0 >> 5)*24+($0 & 31) == storedHour }) else { return nil }
             buffer.writeInteger(UInt8(packed < 0 ? 1 : 0))
             buffer.writeInteger(hour/24,endianness:.little)
             buffer.writeInteger(UInt8(hour%24)); buffer.writeInteger(UInt8((whole >> 6)&63)); buffer.writeInteger(UInt8(whole&63))
@@ -102,7 +120,7 @@ extension TargetSession {
         let (definition,_)=try JSONSQL.scratchDefinition(s)
         let name=try quoted(database)+"."+quoted("_replicator_json_"+jsonScratchID+"_\(ordinal)")
         if !jsonScratchTables.contains(name) {
-            _ = try query("CREATE TEMPORARY TABLE "+name+" (id BIGINT UNSIGNED PRIMARY KEY,v "+definition+") ENGINE=InnoDB",textProtocol:true)
+            _ = try query("CREATE TEMPORARY TABLE "+name+" (id BIGINT UNSIGNED PRIMARY KEY,v "+definition+",j JSON) ENGINE=InnoDB",textProtocol:true)
             jsonScratchTables.insert(name)
         }
         return name
@@ -114,7 +132,10 @@ extension TargetSession {
         if contract.transactional { try require(jsonScratchTables.contains(name),"JSON scratch table must be created before BEGIN") }
         else { _ = try createJSONScratch(s,database:database,ordinal:jsonScratchOrdinal) }
         _ = try query("INSERT INTO "+name+" (id,v) VALUES (1,?)",[bind])
-        return .init(sql:"(SELECT JSON_EXTRACT(JSON_ARRAY(v),'$[0]') FROM "+name+" WHERE id=1)",binds:[])
+        // MySQL 5.7 converts a JSON expression subquery to a string. A
+        // stored JSON field retains its binary subtype across the subquery.
+        _ = try query("UPDATE "+name+" SET j=JSON_EXTRACT(JSON_ARRAY(v),'$[0]') WHERE id=1",textProtocol:true)
+        return .init(sql:"JSON_EXTRACT((SELECT j FROM "+name+" WHERE id=1),'$')",binds:[])
     }
     func prepareJSONValue(_ value:DecodedValue,database:String) throws -> JSONSQLValue {
         guard case .json(let document)=value else { return .init(sql:"?",binds:[try bind(value)]) }

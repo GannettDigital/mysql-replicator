@@ -89,7 +89,12 @@ impl Writer {
                     246 => {
                         ensure(raw.len() >= 2, MALFORMED, "truncated JSON DECIMAL")?;
                         let p = raw[0] as usize; let s = raw[1] as usize;
-                        ensure((1..=65).contains(&p) && s <= p && s <= 30 && raw.len() == 2 + decimal_bin_size(p,s), MALFORMED, "invalid JSON DECIMAL metadata")?;
+                        // Json_decimal stores my_decimal's internal precision. Its
+                        // integer part can be padded to a nine-digit word, so a
+                        // SQL DECIMAL(65,30) can carry precision 66 here.
+                        ensure((1..=81).contains(&p) && s <= p && s <= 30
+                            && (p-s).div_ceil(9) + s.div_ceil(9) <= 9
+                            && raw.len() == 2 + decimal_bin_size(p,s), MALFORMED, "invalid JSON DECIMAL metadata")?;
                         (parsed(Decimal::read_packed(raw, false))?.to_string(), p, s)
                     }
                     7 | 10 | 11 | 12 => {

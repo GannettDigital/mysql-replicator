@@ -1,8 +1,8 @@
 # JSON support work
 
 Status: the ordinary-value, typed-value and partial-update paths have unit tests.
-Shared database tests are added but have not run. Do not call JSON support fully
-qualified. Some legacy opaque types still have SQL transport gaps, listed below.
+The selected live, bootstrap and recovery cases now pass on all four profiles.
+Some legacy opaque types still have SQL transport gaps, listed below.
 
 ## Required behavior
 
@@ -97,6 +97,10 @@ These are SQL transport gaps, not invalid source JSON:
   on another version. The current target check stops if the subtype or bytes
   differ. Other opaque subtypes without an implemented SQL constructor stop
   with the numeric type. The original bytes remain available.
+- The native JSON SQL constructor changes long TIME hours when it converts
+  through a DATETIME structure. The applier compensates for this conversion.
+  A stored TIME that has no exact constructor within the target TIME range
+  still stops before the business write.
 - Temporary-field construction depends on target field limits. For example,
   a stored JSON TIMESTAMP outside that target's TIMESTAMP range has no exact
   constructor in this path. The server error stops application.
@@ -125,10 +129,10 @@ Ordinary and typed cases apply to all four profiles. Bootstrap cases restart the
 applier between phases. The former `matrix-reject-json-opaque` case is removed;
 DECIMAL is now a positive case. The former JSON DDL refusal uses GEOMETRY.
 
-Integration execution remains deferred until the missing-type work is complete,
-as requested. Include live apply, source-free replay, clean restart and pending
-recovery in that qualification. Do not infer database compatibility from unit
-SQL-string checks.
+Database qualification now runs the selected live, bootstrap and partial-update
+cases. The large-value case also checks source-free replay, clean restart and
+pending recovery. Do not infer database compatibility from unit SQL-string
+checks.
 
 ## Local checks
 
@@ -149,3 +153,53 @@ sources (`/tmp/beta5-json-selection-final.json`).
 
 Additional logs: `/tmp/beta5-json-periphery-final.log` and
 `/tmp/beta5-json-tools-final.log`.
+
+## Beta.5 CI corrections
+
+The integration runs found these implementation faults:
+
+- MySQL 8.4 can coerce a string parameter before an unsigned CAST. Integer
+  parameters now use the binary protocol with the correct signedness.
+- Binary JSON DECIMAL metadata uses the internal MySQL decimal precision.
+  Padding can make `DECIMAL(65,30)` report precision 66. The decoder accepts
+  the native layout. SQL construction reduces padding only when the value
+  fits exactly within precision 65.
+- A temporal parameter needs an explicit SQL expression type on MySQL 8.4.
+  TIME construction also needs the inverse of MySQL's DATETIME packing step.
+  For example, native SQL stores `-838:59:58.123456` in JSON as
+  `-630:59:58.123456`. Replication must retain the stored value.
+- MySQL 5.7 can convert a JSON expression subquery to a string. Temporary
+  typed fields now construct a stored JSON column. JSON_EXTRACT keeps that
+  column's JSON type when a subquery is materialized.
+
+The tests now compare each JSON path's type and value. They normalize only
+DOUBLE display differences between MySQL versions. They retain exact integer,
+DECIMAL, string and opaque-value text. SQL NULL and JSON null remain distinct.
+The comparison uses the servers, not the production decoder, as its reference.
+
+The partial-update test uses the host MySQL 8.4 `mysqlbinlog` command. The
+minimal MySQL 8.4 server image does not include that command. CI already installs
+it and sets `MYSQLBINLOG`.
+
+Local default-profile results after the fixes:
+
+| Profile | Evidence under `artifacts/lab/` |
+| --- | --- |
+| 5.7 InnoDB → 8.4 InnoDB | `20261014T025002Z-aa175cbc` |
+| 8.4 InnoDB → 5.7 MyISAM | `20261014T025706Z-d994e77b` |
+| 5.7 InnoDB → 5.7 MyISAM | `20261014T025845Z-143ca58d` |
+| 5.7 InnoDB → 5.7 InnoDB | `20261014T030419Z-bea87d63` |
+
+These runs include ordinary and typed JSON DML, bootstrap phases, table-filter
+refusal, and the large-value workflow. The forward run also includes partial
+JSON and the forward failure workflow. The reverse run preceded the final
+5.7 subquery wrapper and host-decoder harness corrections.
+
+The forward file-position/MINIMAL run passed all three JSON DML cases:
+`20261014T030651Z-68376af0`. Its large-value replay case is explicitly not
+applicable because offline replay uses GTIDs. This is not evidence for replay
+from file-position-only configuration.
+
+The affected Swift unit targets passed 392 tests. The Rust suite passed nine
+tests. The DDL catalog structure check passed with 63 scenarios and 186
+registered cases. These checks do not qualify unselected MySQL features.

@@ -180,7 +180,7 @@
       "id": "column.types",
       "family": "C",
       "name": "Column Types",
-      "grammar": "Reject unsupported JSON column before mutation",
+      "grammar": "Reject unsupported GEOMETRY column before mutation",
       "scenario_ids": [
         "ddl.reject.ddl-unsupported"
       ]
@@ -2173,7 +2173,7 @@
     },
     {
       "id": "ddl.reject.ddl-unsupported",
-      "name": "Reject unsupported JSON column before mutation",
+      "name": "Reject unsupported GEOMETRY column before mutation",
       "family": "C",
       "feature": "column.types",
       "scope": "in_scope",
@@ -2184,7 +2184,7 @@
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "Reject unsupported JSON column before mutation"
+        "Reject unsupported GEOMETRY column before mutation"
       ],
       "following_workload": [
         "A later event must remain unapplied."

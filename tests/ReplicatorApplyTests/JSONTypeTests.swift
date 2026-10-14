@@ -48,7 +48,11 @@ extension JSONTypeTests {
         let doc=try JSONDocument(source:JSONSerialization.data(withJSONObject:source))
         let expression=JSONSQL.document(doc,scalars:try doc.typedValues.map { try XCTUnwrap(JSONSQL.scalar($0.scalar)) })
         XCTAssertEqual(expression.sql,"JSON_SET(CAST(? AS JSON),?,JSON_EXTRACT(JSON_ARRAY(CAST(? AS DECIMAL(5,2))),'$[0]'),?,JSON_EXTRACT(JSON_ARRAY(CAST(? AS UNSIGNED)),'$[0]'))")
-        XCTAssertEqual(expression.binds.map(\.string),[doc.text,#"$."a\"b""#,"123.45",#"$."n""#,"18446744073709551615"])
+        XCTAssertEqual(expression.binds.prefix(4).map(\.string),[doc.text,#"$."a\"b""#,"123.45",#"$."n""#])
+        let integerBind=try XCTUnwrap(expression.binds.last)
+        XCTAssertEqual(integerBind.type,.longlong)
+        XCTAssertTrue(integerBind.isUnsigned)
+        XCTAssertEqual(integerBind.buffer.map { Array($0.readableBytesView) },Array(repeating:255,count:8))
         let signed=try document(1000,"9223372036854775807")
         XCTAssertTrue(try XCTUnwrap(JSONSQL.scalar(signed.typedValues[0].scalar)).sql.contains("AS SIGNED"))
         let value=DecodedValue.json(doc)
@@ -58,6 +62,24 @@ extension JSONTypeTests {
         XCTAssertTrue(try doc.matchesTargetText(#"{"a\"b":123.45,"n":18446744073709551615}"#))
         XCTAssertFalse(try doc.matchesTargetText(#"{"a\"b":123.46,"n":18446744073709551615}"#))
     }
+    func testIntegerParametersKeepFullSignedAndUnsignedRanges() throws {
+        for (type,value,bits) in [(1000,"-9223372036854775808",UInt64(1)<<63),
+                                  (1000,"9223372036854775807",UInt64(Int64.max)),
+                                  (1001,"18446744073709551615",UInt64.max)] {
+            let doc=try document(type,value)
+            let bind=try XCTUnwrap(JSONSQL.scalar(doc.typedValues[0].scalar)?.binds.first)
+            XCTAssertEqual(bind.type,.longlong)
+            XCTAssertEqual(bind.isUnsigned,type == 1001)
+            XCTAssertEqual(bind.buffer?.getInteger(at:0,endianness:.little,as:UInt64.self),bits)
+        }
+    }
+    func testPaddedJSONDecimalUsesAnExactSQLPrecision() throws {
+        let value="-12345678901234567890123456789012345.123456789012345678901234567890"
+        let doc=try document(246,value,precision:66,scale:30)
+        let expression=try XCTUnwrap(JSONSQL.scalar(doc.typedValues[0].scalar))
+        XCTAssertTrue(expression.sql.contains("DECIMAL(65,30)"))
+        XCTAssertEqual(expression.binds.first?.string,value)
+    }
     func testTemporalParametersUseBinaryProtocolIncludingZeroDates() throws {
         func raw(_ packed:Int64) -> String {
             var n=packed.littleEndian
@@ -66,17 +88,18 @@ extension JSONTypeTests {
         let whole=((((Int64(2024)*13+2)<<5)|29)<<17)|(12<<12)|(34<<6)|56
         let datetime=try document(12,"2024-02-29 12:34:56.123456",raw((whole<<24)|123456))
         let expression=try XCTUnwrap(JSONSQL.scalar(datetime.typedValues[0].scalar))
-        XCTAssertEqual(expression.sql,"JSON_EXTRACT(JSON_ARRAY(?),'$[0]')")
+        XCTAssertEqual(expression.sql,"JSON_EXTRACT(JSON_ARRAY(CAST(? AS DATETIME(6))),'$[0]')")
         XCTAssertEqual(expression.binds.first?.type,.datetime)
         XCTAssertEqual(expression.binds.first?.buffer.map { Array($0.readableBytesView) },[0xe8,7,2,29,12,34,56,0x40,0xe2,1,0])
         let zero=try document(10,"0000-00-00","0000000000000000")
         let date=try XCTUnwrap(JSONSQL.scalar(zero.typedValues[0].scalar))
         XCTAssertEqual(date.binds.first?.type,.date)
         XCTAssertEqual(date.binds.first?.buffer.map { Array($0.readableBytesView) },[0,0,0,0])
-        let time=try document(11,"-838:59:59.123456",raw(-(((Int64(838)<<12)|(59<<6)|59)<<24|123456)))
+        let time=try document(11,"-630:59:58.123456",raw(-(((Int64(630)<<12)|(59<<6)|58)<<24|123456)))
         let t=try XCTUnwrap(JSONSQL.scalar(time.typedValues[0].scalar))
+        XCTAssertTrue(t.sql.contains("CAST(? AS TIME(6))"))
         XCTAssertEqual(t.binds.first?.type,.time)
-        XCTAssertEqual(t.binds.first?.buffer.map { Array($0.readableBytesView) },[1,34,0,0,0,22,59,59,0x40,0xe2,1,0])
+        XCTAssertEqual(t.binds.first?.buffer.map { Array($0.readableBytesView) },[1,34,0,0,0,14,59,58,0x40,0xe2,1,0])
     }
     func testOpaqueFieldConstructorsRetainSubtypeAndBytes() throws {
         for (code,name) in [(249,"TINYBLOB"),(250,"MEDIUMBLOB"),(251,"LONGBLOB"),(252,"BLOB"),(15,"VARBINARY(2)"),(254,"BINARY(2)"),(16,"BIT(16)")] {

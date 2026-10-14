@@ -50,6 +50,18 @@ final class JSONValueTests: XCTestCase, BinlogFixtures {
             }
         }
     }
+    func testNativeJSONDecimalUsesInternalPaddedPrecision() throws {
+        // MySQL 8.4 JSON_OBJECT('decimal', CAST(value AS DECIMAL(65,30))).
+        // The opaque payload uses precision 66, not SQL's limit of 65.
+        let native=Data([15,246,32,66,30,127,67,158,177,202,72,64,120,202,241,203,63,208,248,160,134,248,164,50,234,255,67,158,177,202,72,64,120,252,133])
+        let (decoder,at)=try fixture()
+        let row=try decoder.decode(event(30,body(native,operation:30),at:at),at:at).rows[0]
+        guard case .json(let doc)=row.after?[0] else { return XCTFail("missing JSON decimal") }
+        XCTAssertEqual(doc.typedValues[0].scalar.precision,66)
+        XCTAssertEqual(doc.typedValues[0].scalar.scale,30)
+        XCTAssertEqual(doc.typedValues[0].scalar.value,"-12345678901234567890123456789012345.123456789012345678901234567890")
+        XCTAssertEqual(doc.typedValues[0].scalar.rawBytes,Data(native.dropFirst(3)))
+    }
     func testMalformedOpaqueAndPartialValuesFail() throws {
         for metadata:UInt8 in [0,1,2,3,5] { XCTAssertThrowsError(try fixture(metadata:metadata)) }
         for doc in [Data([4,3]),Data([4,0,0]),Data([12,1,255]),Data([2,1,0,4,0]),Data([2,1,0,7,0,12,255,255]),Data([11])+le(UInt64(0x7ff0000000000000)),Data([15,246,0])] {
