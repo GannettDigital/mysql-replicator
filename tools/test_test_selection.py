@@ -1,3 +1,5 @@
+import io
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -7,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_selection import ROOT, changed_files, checks_for, from_git, local_commands, select_changes
+from test_selection import ROOT, changed_files, checks_for, from_git, local_commands, select_changes, main
 
 
 class SelectionTests(unittest.TestCase):
@@ -58,6 +60,25 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(select_changes(['README.md'], fallback='diff failed')['scope'], 'full')
         with patch('test_selection.changed_files', side_effect=subprocess.CalledProcessError(128, 'git')):
             self.assertEqual(from_git('missing')['scope'], 'full')
+
+    def test_failed_diff_includes_git_diagnostic(self):
+        error = subprocess.CalledProcessError(128, 'git', stderr=b'fatal: bad revision missing\n')
+        with patch('test_selection.changed_files', side_effect=error):
+            result = from_git('missing')
+        self.assertEqual(result['scope'], 'full')
+        self.assertIn('fatal: bad revision missing', result['reason'])
+
+    def test_run_stops_with_child_status(self):
+        for status, expected in [(3, 3), (-15, 143)]:
+            with patch('sys.argv', ['test_selection.py', '--run']), \
+                 patch('test_selection.from_git', return_value=select_changes(['README.md'])), \
+                 patch('test_selection.local_commands', return_value=[['first'], ['second']]), \
+                 patch('test_selection.subprocess.run', return_value=subprocess.CompletedProcess(['first'], status)) as run, \
+                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    main()
+                self.assertEqual(failure.exception.code, expected)
+                run.assert_called_once()
 
     def test_local_commands_keep_one_case_inventory(self):
         policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())['pr_smoke']

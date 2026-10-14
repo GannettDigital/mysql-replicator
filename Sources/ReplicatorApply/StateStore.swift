@@ -195,8 +195,22 @@ final class StateStore {
                 "saved state must be cleanly STOPPED; BLOCKED, unfinished and crash recovery require explicit resolution")
         }
         try require(r[1]?.lowercased() == c.source.sourceUUID.lowercased(),"saved source UUID differs from configuration")
-        guard let uuid = r[2], UUID(uuidString:uuid) != nil else { throw ApplyError("saved target UUID is missing or invalid") }
-        targetUUID = uuid.lowercased()
+        if let uuid = r[2] {
+            try require(UUID(uuidString:uuid) != nil,"saved target UUID is invalid")
+            targetUUID = uuid.lowercased()
+        } else {
+            // Archive validation can stop before the first target connection.
+            // Only an empty, clean checkpoint may establish identity on resume.
+            try require(try number("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='startup_cancelled'") == 1,
+                "saved target UUID is missing without an archive cancellation record")
+            try require(skipGTIDs == nil && r[6] == nil && r[7] == nil
+                && r[8] == "0" && r[9] == "0" && r[10] == "0" && r[11] == "0" && r[12] == "0",
+                "saved target UUID is missing from nonempty state")
+            for table in ["groups", "schemas", "row_intents", "ddl_intents", "ddl_details", "ddl_skips"] {
+                try require(try number("SELECT COUNT(*) FROM " + table) == 0,
+                    "saved target UUID is missing from nonempty state")
+            }
+        }
         baseline = try coordinate(r[3],r[4]); applied = try coordinate(r[6],r[7])
         guard let baseText = r[5], let seq = Int64(r[8] ?? ""), seq >= 0, seq < Int64.max,
               let tx = Int(r[9] ?? ""), tx >= 0, Int64(tx) == seq,
@@ -549,6 +563,7 @@ final class StateStore {
             return
         }
         try execute("UPDATE state SET target_uuid=?,updated_at=? WHERE id=1 AND target_uuid IS NULL",[uuid.lowercased(),timestamp()])
+        try execute("DROP TABLE IF EXISTS startup_cancelled")
         targetUUID=uuid.lowercased()
     }
     func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
@@ -782,6 +797,12 @@ final class StateStore {
         completedGTIDs=next; applied=group.end; transactions+=1; rows+=rowCount; sequence=pendingSequence
         self.pendingGTID=nil; groupStart=relayLength
         if sequence-snapshotSequence >= policy.snapshotEveryTransactions {try snapshot()}
+    }
+    func archiveValidationStopped() throws {
+        if targetUUID == nil {
+            try execute("CREATE TABLE IF NOT EXISTS startup_cancelled(id INTEGER PRIMARY KEY CHECK(id=1))")
+        }
+        try stopped()
     }
     func stopped() throws {
         try require(pendingGTID == nil,"cannot stop cleanly with a pending apply group")
