@@ -4,6 +4,41 @@ import Foundation
 @testable import ReplicatorCapture
 
 final class ArchiveStartupTests: XCTestCase {
+    func testFreshReplayCancellationSavesResumableStateWithoutTargetAccess() throws {
+        #if os(Linux)
+        let helper=ApplyTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let helper=ApplyTests()
+        #endif
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:root) }
+        let c=try helper.config(root.appendingPathComponent("state").path)
+        let directory=root.appendingPathComponent("archive")
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false)
+        let fixture=try Data(contentsOf:helper.root.appendingPathComponent("tests/ReplicatorLabTests/Fixtures/source-positive.binlog"))
+        try fixture.write(to:directory.appendingPathComponent("binlog.000003"))
+        let archiveConfig=try JSONDecoder().decode(ArchiveConfiguration.self,from:JSONSerialization.data(withJSONObject:["directory":directory.path]))
+        for initialize in [true,false] {
+            let drain=CaptureCancellation()
+            let archive=try ArchiveReplay(configuration:archiveConfig,source:c.source,contract:.mysql84,progress:{ progress in
+                if progress.phase == "validation" { drain.cancel() }
+            })
+            let result=try ApplyRun.run(configuration:c,sourcePassword:"",targetPassword:"",initialize:initialize,drain:drain,archive:archive)
+            XCTAssertEqual(result.lifecycle,"STOPPED")
+            XCTAssertEqual(result.stopReason,"drainRequested")
+            XCTAssertEqual(result.transactionsApplied,0)
+        }
+        do {
+            let reopened=try StateStore(configuration:c,initialize:false)
+            XCTAssertNil(reopened.targetUUID)
+            try reopened.bindTargetIdentity("00000000-0000-0000-0000-000000000002")
+            try reopened.stopped()
+        }
+        let bound=try StateStore(configuration:c,initialize:false)
+        XCTAssertEqual(bound.targetUUID,"00000000-0000-0000-0000-000000000002")
+    }
+
     func testReplayUsesSavedGTIDsAndCanStopValidationWithoutTargetAccess() throws {
         #if os(Linux)
         let helper=ApplyTests(name:"fixtures",testClosure:{_ in})

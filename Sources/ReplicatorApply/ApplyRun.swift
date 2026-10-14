@@ -107,8 +107,7 @@ public enum ApplyRun {
                   try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs,
                       isCancelled:{ cancellation.isCancelled || drain.isCancelled })
               } catch is CaptureCancelled {
-                  try require(state.targetUUID != nil,"archive validation cancelled before target identity was established; no target writes were issued")
-                  try state.stopped();return stoppedResult()
+                  try state.archiveValidationStopped();return stoppedResult()
               }
           }
           while true {
