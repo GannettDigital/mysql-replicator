@@ -98,6 +98,7 @@ pub struct ColumnView {
     metadata: Bytes,
     unsigned_flag: u32,
     labels: Bytes,
+    geometry_type: u32, // 0 absent, native type + 1 otherwise
 }
 struct MapColumn {
     kind: u32,
@@ -110,6 +111,7 @@ struct MapColumn {
     metadata: Vec<u8>,
     unsigned_flag: u32,
     labels: Vec<u8>,
+    geometry_type: u32,
 }
 #[repr(C)]
 pub struct ValueView {
@@ -307,6 +309,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
             kind == 4 || kind == 5
         }
         MYSQL_TYPE_ENUM | MYSQL_TYPE_SET | MYSQL_TYPE_BIT => kind == 3,
+        MYSQL_TYPE_GEOMETRY => kind == 5,
         MYSQL_TYPE_JSON => kind == 10,
         MYSQL_TYPE_FLOAT => kind == 8,
         MYSQL_TYPE_DOUBLE => kind == 9,
@@ -331,6 +334,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
     )?;
     let meta = table.get_column_metadata(index).unwrap_or(&[]);
     match ty {
+        MYSQL_TYPE_GEOMETRY => ensure(meta == [4], MALFORMED, "invalid GEOMETRY length metadata")?,
         MYSQL_TYPE_JSON => ensure(meta == [4], MALFORMED, "invalid JSON length metadata")?,
         MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => ensure(
             meta == [if ty == MYSQL_TYPE_FLOAT { 4 } else { 8 }],
@@ -781,6 +785,7 @@ impl Decoder {
                     let mut enum_charset = false;
                     let mut enum_labels: Vec<Vec<u8>> = Vec::new();
                     let mut set_labels: Vec<Vec<u8>> = Vec::new();
+                    let mut geometry_types: Option<Vec<u32>> = None;
                     for field in table.iter_optional_meta() {
                         let field = parsed(field)?;
                         ensure(
@@ -837,6 +842,14 @@ impl Decoder {
                                     set_labels.push(packed);
                                 }
                             }
+                            OptionalMetadataField::GeometryType(ref values) => {
+                                let types=values.iter_geometry_types().take(n+1)
+                                    .map(|value| parsed(value).map(|t| t as u32+1))
+                                    .collect::<Checked<Vec<_>>>()?;
+                                let count=(0..n).filter(|&i| table.get_column_type(i).ok().flatten() == Some(ColumnType::MYSQL_TYPE_GEOMETRY)).count();
+                                ensure(types.len() == count, MALFORMED, "geometry type count differs")?;
+                                geometry_types=Some(types);
+                            }
                             OptionalMetadataField::SimplePrimaryKey(_)
                             | OptionalMetadataField::PrimaryKeyWithPrefix(_) => {
                                 ensure(!primary, MALFORMED, "conflicting primary key metadata")?;
@@ -847,6 +860,7 @@ impl Decoder {
                     }
                     let optional = parsed(OptionalMetaExtractor::new(table.iter_optional_meta()))?;
                     let mut signedness = optional.iter_signedness();
+                    let mut geometries=geometry_types.unwrap_or_default().into_iter();
                     let mut charsets = optional.iter_charset();
                     let mut enum_charsets = optional.iter_enum_and_set_charset();
                     let has_enum_labels = !enum_labels.is_empty();
@@ -903,7 +917,11 @@ impl Decoder {
                         let is_enum = ty as u8 == 247;
                         let is_set = ty as u8 == 248;
                         let mut labels = Vec::new();
-                        if ty == ColumnType::MYSQL_TYPE_BIT {
+                        let mut geometry_type=0;
+                        if ty == ColumnType::MYSQL_TYPE_GEOMETRY {
+                            kind=5;
+                            geometry_type=geometries.next().unwrap_or(0);
+                        } else if ty == ColumnType::MYSQL_TYPE_BIT {
                             kind = 3;
                         } else if is_enum || is_set {
                             kind = 3;
@@ -961,6 +979,7 @@ impl Decoder {
                             metadata: meta.to_vec(),
                             unsigned_flag,
                             labels,
+                            geometry_type,
                         });
                     }
                     ensure(
@@ -1118,7 +1137,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    9
+    10
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
@@ -1411,6 +1430,7 @@ pub unsafe extern "C" fn rc_result_column(
             metadata: Bytes::new(&c.metadata),
             unsigned_flag: c.unsigned_flag,
             labels: Bytes::new(&c.labels),
+            geometry_type: c.geometry_type,
         };
     }
     0

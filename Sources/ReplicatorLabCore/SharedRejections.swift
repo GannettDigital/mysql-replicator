@@ -12,7 +12,7 @@ extension SharedCorrectness.Run {
             ("event","CREATE EVENT rejected.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO rejected.parent VALUES(99,99)","DDL policy rejects events"),
             ("trigger","CREATE TRIGGER rejected.tr BEFORE INSERT ON rejected.parent FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers"),
             ("float-fixed-scale","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n FLOAT(10,2))","unsupported"),
-            ("geometry","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n GEOMETRY)","unsupported")
+            ("fulltext","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n TEXT,FULLTEXT INDEX ft(n))","unsupported")
         ]
         let original=f.config
         defer { f.config=original }

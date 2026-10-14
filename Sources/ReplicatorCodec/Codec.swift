@@ -94,6 +94,7 @@ public struct WireColumn: Codable, Equatable {
     public var metadata: Data = Data()
     public var isUnsigned: Bool? = nil
     public var labels: [Data]? = nil
+    public var geometryType: UInt32? = nil
 }
 public struct DecodedEvent: Equatable, Encodable {
     public let schemaVersion = 4
@@ -147,7 +148,7 @@ public final class BinlogDecoder {
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
         self.maximumEventBytes=Int(maximumEventBytes)
         self.timings = timings
-        guard Codec.abiVersion == 9, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 10, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -324,7 +325,7 @@ public final class BinlogDecoder {
                             labels.append(packedLabels.subdata(in:labelOffset..<labelOffset+length)); labelOffset += length
                         }
                         return WireColumn(interpretation:kind,type:c.column_type,maximumBytes:c.maximum_bytes,nullable:c.nullable != 0,
-                            collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name),metadata:bytes(c.metadata),isUnsigned:c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2,labels:packedLabels.isEmpty ? nil : labels)
+                            collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name),metadata:bytes(c.metadata),isUnsigned:c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2,labels:packedLabels.isEmpty ? nil : labels,geometryType:c.geometry_type == 0 ? nil : c.geometry_type-1)
                     }
                 }
             }

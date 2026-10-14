@@ -217,7 +217,7 @@ Some tests use additional helper containers.
 | Area | Tested cases |
 | --- | --- |
 | Row changes | INSERT, UPDATE, DELETE, multiple rows, primary-key changes, upsert, REPLACE, IGNORE, INSERT SELECT, joined updates/deletes, and LOAD DATA as row events |
-| Data types | Signed/unsigned integers, DECIMAL, date/time types, CHAR/VARCHAR, binary strings, TEXT/BLOB families, ENUM, SET, and NULL values |
+| Data types | Signed/unsigned integers, DECIMAL, date/time types, CHAR/VARCHAR, binary strings, TEXT/BLOB families, ENUM, SET, BIT, FLOAT/DOUBLE, JSON, spatial types, and NULL values |
 | Keys and transactions | Composite primary keys, secondary and unique indexes; InnoDB multi-statement transactions and foreign keys within the profile limits |
 | DDL | Database create/alter/drop; table create/alter/drop, LIKE, rename, truncate, column and index changes, defaults, generated columns, partitions, views, and stored routines within the supported SQL syntax |
 | Process control and failures | Starting positions, resume from saved state, source/target restarts, table filters, selected error skips, offline replay, and support bundles |
@@ -225,11 +225,12 @@ Some tests use additional helper containers.
 This is a test summary, not a claim of complete MySQL compatibility. MyISAM
 profiles accept one DML statement per source transaction, affecting one table
 that is not excluded by the table filters. Tables need primary keys that meet
-the [DML requirements](PLAN/DML_APPLY.md). Spatial columns are not supported.
-[JSON](PLAN/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md) and
-[FLOAT/DOUBLE](PLAN/FLOATING_POINT_SUPPORT.md) have unit tests. Their shared
-integration tests have not yet run. JSON also has some legacy opaque-value
-transport gaps. Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
+the [DML requirements](PLAN/DML_APPLY.md). See the type-specific limits for
+[JSON](PLAN/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md),
+[FLOAT/DOUBLE](PLAN/FLOATING_POINT_SUPPORT.md), and
+[spatial columns](PLAN/SPATIAL_SUPPORT.md). JSON has some legacy opaque-value
+transport gaps. Spatial values retain their stored SRID and coordinate bytes;
+this does not make spatial function behavior equal across MySQL versions. Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
 [DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),
 and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
 

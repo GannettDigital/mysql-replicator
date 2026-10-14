@@ -15,7 +15,7 @@ final class FloatingValueTests: XCTestCase, BinlogFixtures {
         return (decoder,at+UInt64(map.count))
     }
     func testIEEEBitsSurviveAllRowOperations() throws {
-        XCTAssertEqual(Codec.abiVersion,9)
+        XCTAssertEqual(Codec.abiVersion,10)
         let singles:[UInt64]=[0,0x80000000,0x3dcccccd,0xbdcccccd,1,0x80000001,0x007fffff,0x00800000,0x7f7fffff,0xff7fffff,0x3f800001]
         let doubles:[UInt64]=[0,0x8000000000000000,0x3fb999999999999a,0xbfb999999999999a,1,0x8000000000000001,0x000fffffffffffff,0x0010000000000000,0x7fefffffffffffff,0xffefffffffffffff,0x3ff0000000000001]
         for (code,width,kind,values):(UInt8,UInt8,ColumnInterpretation,[UInt64]) in [(4,4,.float32,singles),(5,8,.float64,doubles)] {

@@ -8,6 +8,9 @@ struct DMLColumnType {
     let unsigned: Bool
     let integerBits: Int?
     let labels: [Data]
+    static let spatialTypes = ["geometry","point","linestring","polygon","multipoint","multilinestring","multipolygon","geometrycollection"]
+    var geometryType: UInt32? { Self.spatialTypes.firstIndex(of:base).map(UInt32.init) }
+    var isSpatial: Bool { geometryType != nil }
     var floatingWidth: Int? { base == "float" ? 32 : base == "double" ? 64 : nil }
     var bitWidth: Int? { base == "bit" ? (arguments.first ?? 1) : nil }
     var isChoice: Bool { base == "enum" || base == "set" }
@@ -35,6 +38,7 @@ struct DMLColumnType {
         integerBits = ["tinyint":8,"smallint":16,"mediumint":24,"int":32,"bigint":64][base]
         if integerBits != nil { try require(arguments.isEmpty,"integer display width must be normalized"); return }
         try require(!unsigned || base == "decimal" || floatingWidth != nil,"unsupported unsigned column type")
+        if isSpatial { try require(arguments.isEmpty,"spatial types have no type arguments"); return }
         switch base {
         case "float","double": try require(arguments.isEmpty,"fixed-scale floating-point columns are unsupported")
         case "bit": try require(arguments.isEmpty || (arguments.count == 1 && (1...64).contains(arguments[0])),"invalid BIT width")
@@ -74,6 +78,7 @@ struct DMLColumnType {
         throw ApplyError("unterminated ENUM/SET definition")
     }
     var interpretation: ColumnInterpretation {
+        if isSpatial { return .binary }
         if base == "json" { return .json }
         if let width=floatingWidth { return width == 32 ? .float32 : .float64 }
         if isChoice || bitWidth != nil { return .unsigned }
@@ -84,6 +89,7 @@ struct DMLColumnType {
         return .temporal
     }
     var maximumBytes: Int? {
+        if isSpatial { return 4294967295 }
         switch base {
         case "char","varchar": return arguments[0]*4
         case "binary","varbinary": return arguments[0]
@@ -98,6 +104,9 @@ struct DMLColumnType {
     func matches(_ wire: WireColumn, legacyMetadata: Bool = false) -> Bool {
         let code = wire.type, meta = Array(wire.metadata)
         let matchingInterpretation = wire.interpretation == interpretation || (legacyMetadata && wire.interpretation == nil)
+        if let geometryType {
+            return code == 255 && meta == [4] && matchingInterpretation && (wire.geometryType == nil || wire.geometryType == geometryType)
+        }
         if integerBits != nil {
             return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && matchingInterpretation
         }

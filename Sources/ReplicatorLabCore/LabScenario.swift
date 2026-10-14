@@ -56,8 +56,8 @@ struct LabScenario {
         cases.append(.init(test:.init("live-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"policy",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
         cases.append(.init(test:.init("runtime-control","Exact GTID limits, reload, status, and graceful stop"),family:"offline"))
         cases.append(.init(test:DDLCompatibilityCases.skipTrigger,family:"policy",intent:"skip definitions; apply row effects",smoke:true))
-        cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float-fixed-scale","geometry"].map {
-            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "geometry")
+        cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float-fixed-scale","fulltext"].map {
+            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "fulltext")
         }
         cases += [
             .init(test:DDLCoverageCases.wildcardFilter,family:"filters",intent:"skip excluded events; apply included rows",smoke:true),

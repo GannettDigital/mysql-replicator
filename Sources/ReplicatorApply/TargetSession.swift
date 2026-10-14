@@ -178,7 +178,8 @@ final class TargetSession {
         }
     }
     private func normalizeType(_ type: String) -> String {
-        type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
+        if type == "geomcollection" { return "geometrycollection" }
+        return type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
     func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
         let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
@@ -187,7 +188,12 @@ final class TargetSession {
             guard let name=row.column("INDEX_NAME")?.string, let column=row.column("COLUMN_NAME")?.string,
                   let unique=row.column("NON_UNIQUE")?.int, [0,1].contains(unique), let ordinal=row.column("SEQ_IN_INDEX")?.int,
                   let type=row.column("INDEX_TYPE")?.string,let direction=row.column("COLLATION")?.string else {throw ApplyError("incomplete index metadata")}
-            let prefix=row.column("SUB_PART")?.int
+            var prefix=row.column("SUB_PART")?.int
+            if type == "SPATIAL" {
+                // MySQL reports the implicit 32-byte bounding box as SUB_PART.
+                try require(prefix == 32,"unexpected spatial index metadata")
+                prefix=nil
+            }
             if name == "PRIMARY" {
                 primary += 1
                 try require(primary <= primaryKey.count && column == primaryKey[primary-1] && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")

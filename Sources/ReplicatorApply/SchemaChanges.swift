@@ -30,6 +30,7 @@ extension ApplyTable {
         guard let old=columns.firstIndex(where:{$0.name == column.name}) else {throw ApplyError("MODIFY column is absent")}
         func family(_ column:ApplyColumn) -> String {
             guard let type=try? DMLColumnType(column.type) else {return "unsupported"}
+            if type.isSpatial {return "spatial"}
             if type.floatingWidth != nil {return "floating"}
             if type.bitWidth != nil {return "bit"}
             if type.integerBits != nil {return "integer"}

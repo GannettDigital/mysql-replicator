@@ -59,8 +59,8 @@ final class DecoderTests: XCTestCase, BinlogFixtures {
     func testFilteredUnsupportedColumnMapIsOpaqueButStillChecksRowsAndClearsMaps() throws {
         let fde = frames(try Data(contentsOf:recorded.appendingPathComponent("source-positive.binlog")))[0].1
         let at = UInt64(fde.count+4)
-        // One geometry column, nullable; still outside the decoder subset.
-        let body = Data([123,0,0,0,0,0,0,0,3])+Data("tmp".utf8)+Data([0,1,120,0,1,255,1,4,1])
+        // One legacy DECIMAL column, nullable; still outside the decoder subset.
+        let body = Data([123,0,0,0,0,0,0,0,3])+Data("tmp".utf8)+Data([0,1,120,0,1,0,0,1])
         let map = event(19,body,at:at)
         let strict = try BinlogDecoder(); _ = try strict.decode(fde,at:4)
         failure(4) { _ = try strict.decode(map,at:at) }

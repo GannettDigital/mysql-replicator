@@ -78,7 +78,8 @@ scalar gets a separate temporary table because MySQL cannot open one temporary
 table twice in one statement. The next group removes the tables. Closing the
 connection also removes them.
 
-The codec ABI is 9. Kind 10 carries a typed JSON document envelope. Kind 11
+The JSON increment introduced codec ABI 9. Spatial subtype metadata raises it
+to ABI 10. Kind 10 carries a typed JSON document envelope. Kind 11
 carries a JSON change vector. SQLite needs no schema migration. Decode output,
 typed annotations, traversal and reconstructed documents have size limits.
 The existing event-size configuration controls these limits.

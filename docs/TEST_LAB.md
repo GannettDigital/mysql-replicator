@@ -88,8 +88,15 @@ integration qualification. See the [floating-point increment](../PLAN/FLOATING_P
 binary JSON types. All four profiles select these cases. `matrix-jsonpartial`
 and `bootstrap-matrix-jsonpartial` check partial updates on an 8.4 source.
 They inspect mysqlbinlog output to confirm that the source emitted a change
-record. These new cases have not run. The old `matrix-reject-json-opaque` case
+record. These cases passed on the applicable profiles. The old `matrix-reject-json-opaque` case
 is removed. See [JSON paths and remaining limits](../PLAN/JSON_SUPPORT.md).
+
+`matrix-spatial` and `bootstrap-matrix-spatial` check all eight spatial types,
+SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key
+changes, added columns, and SPATIAL index changes. They compare stored bytes
+and SRIDs with the native replica. They do not compare WKT output across server
+versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
+The former `reject-geometry` case is now `reject-fulltext`.
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
