@@ -85,7 +85,11 @@ def changed_files(base, head='HEAD', include_worktree=False, root=ROOT):
 def from_git(base, head='HEAD', include_worktree=False, root=ROOT):
     try:
         return select_changes(changed_files(base, head, include_worktree, root))
-    except (subprocess.CalledProcessError, UnicodeError, OSError) as error:
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or b'').decode('utf-8', errors='replace').strip()
+        return select_changes([], fallback='cannot read complete git diff; use full checks (CalledProcessError'
+                              + (': ' + detail if detail else '') + ')')
+    except (UnicodeError, OSError) as error:
         return select_changes([], fallback='cannot read complete git diff; use full checks (' + type(error).__name__ + ')')
 
 
@@ -130,7 +134,10 @@ def main():
     if args.run:
         for command in commands:
             print('+ ' + shlex.join(command), file=sys.stderr, flush=True)
-            subprocess.run(command, cwd=ROOT, check=True, stdout=sys.stderr)
+            result = subprocess.run(command, cwd=ROOT, stdout=sys.stderr)
+            if result.returncode:
+                # Preserve command failure without reporting a tool traceback.
+                raise SystemExit(result.returncode if result.returncode > 0 else 128 - result.returncode)
 
 
 if __name__ == '__main__':
