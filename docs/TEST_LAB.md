@@ -54,10 +54,20 @@ positioning, FULL row images, FULL optional metadata on 8.4, and the metadata av
 also available, as described below; unsupported combinations are not inferred.
 
 The shared runner creates schemas through source-side DDL, executes the same
-DML/index/DDL fixtures, compares exact row bytes and expected metadata, checks
+DML/index/DDL fixtures, compares row values and expected metadata, checks
 catch-up and intent completion, and reopens saved schemas before applying another
 transaction. Engine differences are checked against the profile before schema
 comparison; arbitrary data/DDL differences are not normalized away.
+
+Ordinary columns use exact row bytes. JSON comparisons read every path, type,
+and scalar value from each server. Only DOUBLE display text is normalized to
+its binary value because 5.7 can print `1` where 8.4 prints `1.0`. Integer,
+DECIMAL, string, temporal and binary values remain exact. These checks keep
+JSON null separate from SQL NULL and detect changes in JSON scalar types.
+The large-value case checks blocked-state retention on all profiles. InnoDB
+uses audited retry. MyISAM checks restart refusal, verifies that the target row
+is absent, then uses a separate state at the saved source boundary. This is a
+controlled test of manual reconciliation, not automatic MyISAM recovery.
 
 The full `dml` family includes `large-values` on all four profiles. This case
 checks large TEXT/BLOB values, packet limits, restart, offline replay, and

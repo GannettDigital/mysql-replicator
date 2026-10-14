@@ -211,14 +211,32 @@ public enum SharedCorrectness {
                 let columnRows=columns.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 let indexRows=snapshot["indexes"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 var rowQueries: [String]=[]
+                var jsonRows:[String:String]=[:]
                 for table in tables {
                     let names=columnRows.filter { $0.count >= 2 && $0[0] == table }.map { $0[1] }
                     let expressions=names.map { "IFNULL(HEX(CAST(`\($0)` AS BINARY)),'<NULL>')" }.joined(separator:",")
                     let keys=indexRows.filter { $0.count >= 5 && $0[0] == table && $0[1] == "PRIMARY" }.map { "`\($0[4])`" }.joined(separator:",")
                     try require(!keys.isEmpty,"fixture table missing primary key")
+                    let jsonColumns=Set(columnRows.filter { $0.count >= 4 && $0[0] == table && $0[3] == "json" }.map { $0[1] })
+                    if !jsonColumns.isEmpty {
+                        jsonRows[table]=try f.comparisonRows(role,table:"`\(database)`.`\(table)`",columns:names,jsonColumns:jsonColumns,orderBy:keys)
+                    }
                     rowQueries.append("SELECT '\(table)',\(expressions) FROM `\(database)`.`\(table)` ORDER BY \(keys)")
                 }
                 snapshot["rows"]=rowQueries.isEmpty ? "" : try sql("SET time_zone='+00:00'; "+rowQueries.joined(separator:"; "),preserveWhitespace:true)
+                // Keep ordinary row bytes. Replace only JSON-bearing table rows
+                // with the independent value/type comparison from the servers.
+                if !jsonRows.isEmpty {
+                    var next:[String:Int]=[:]
+                    let replacements=jsonRows.mapValues { $0.isEmpty ? [] : $0.components(separatedBy:"\n") }
+                    snapshot["rows"]=try snapshot["rows"]!.components(separatedBy:"\n").map { line in
+                        let table=String(line.prefix(while:{$0 != "\t"}))
+                        guard let rows=replacements[table] else { return line }
+                        let index=next[table,default:0]; next[table]=index+1
+                        try require(index < rows.count,"JSON comparison row count changed")
+                        return table+"\t"+rows[index]
+                    }.joined(separator:"\n")
+                }
                 values[service]=snapshot
             }
             try writeJSON(values,to:f.output.appendingPathComponent("latest-comparison.json"))

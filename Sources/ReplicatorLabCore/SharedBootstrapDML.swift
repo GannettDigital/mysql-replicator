@@ -56,8 +56,6 @@ extension SharedCorrectness.Run {
                 for role in LabProfile.Role.allCases {
                     _ = try f.sql(role,f.profile.session(role)+"USE poc; SET sql_log_bin=0; DROP TABLE IF EXISTS \(table); CREATE TABLE \(table)(\(test.definition)) ENGINE=\(f.profile.engine(role)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; "+test.setup)
                 }
-                let columns=try f.sql(.source,"SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_\(test.id)' ORDER BY ORDINAL_POSITION").split(separator:"\n")
-                let fields=columns.map { "IFNULL(HEX(CAST(`"+$0.replacingOccurrences(of:"`",with:"``")+"` AS BINARY)),'<NULL>')" }.joined(separator:",")
                 for (ordinal,phase) in test.phases.enumerated() {
                     let label=id+"-\(ordinal+1)"
                     try reporter.run(QualificationCase(label,"Bootstrapped DML phase \(ordinal+1): "+test.id)) {
@@ -79,10 +77,11 @@ extension SharedCorrectness.Run {
                         var observed: [String:String] = [:]
                         for role in LabProfile.Role.allCases {
                             try require(f.sql(role,f.profile.session(role)+"USE poc; "+phase.check) == "1","independent bootstrap expectation failed: "+role.rawValue)
-                            observed[role.rawValue]=try f.sql(role,f.profile.session(role)+"SELECT \(fields) FROM \(table) ORDER BY \(test.orderBy)",preserveWhitespace:true)
+                            let metadata=try f.sql(role,"SELECT COLUMN_NAME,DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_\(test.id)' ORDER BY ORDINAL_POSITION").components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
+                            observed[role.rawValue]=try f.comparisonRows(role,table:table,columns:metadata.map{$0[0]},jsonColumns:Set(metadata.filter{$0[1] == "json"}.map{$0[0]}),orderBy:test.orderBy)
                         }
-                        try require(Set(observed.values).count == 1,"bootstrap exact row bytes differ")
                         try writeJSON(["sql":sql,"check":phase.check,"observations":observed,"source_before":before.json,"source_after":end.json,"gtid_count":count],to:f.output.appendingPathComponent(label+"-comparison.json"))
+                        try require(Set(observed.values).count == 1,"bootstrap row values or JSON types differ")
                     }
                 }
             }
@@ -97,7 +96,14 @@ extension SharedCorrectness.Run {
     func verifyJSONDiff(_ before:Boundary,label:String) throws {
         let end=try f.boundary()
         try require(before.file == end.file,"JSON diff fixture rotated within one phase")
-        let output=try f.h.compose(["exec","-T",f.profile.service(.source),"mysqlbinlog","--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(before.position)","--stop-position=\(end.position)","/var/lib/mysql/"+before.file]).stdout
+        // The minimal 8.4 server image has no mysqlbinlog executable.
+        // Use the same independent host decoder as the other binlog checks.
+        let version=try f.runner.run([f.h.decoder,"--no-defaults","--version"]).text
+        try require(version.contains("Ver 8.4."),"Partial JSON checks require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
+        let container=try f.h.compose(["ps","-q",f.profile.service(.source)]).text
+        let file=f.output.appendingPathComponent(label+"-source.binlog")
+        _ = try f.docker(["cp",container+":/var/lib/mysql/"+before.file,file.path])
+        let output=try f.runner.run([f.h.decoder,"--no-defaults","--verify-binlog-checksum","--base64-output=DECODE-ROWS","-vv","--start-position=\(before.position)","--stop-position=\(end.position)",file.path]).stdout
         try output.write(to:f.output.appendingPathComponent(label+"-source-diff.txt"))
         let text=String(decoding:output,as:UTF8.self)
         try require(["JSON_REPLACE(","JSON_INSERT(","JSON_REMOVE("].contains(where:text.contains),"source did not emit a partial JSON change")

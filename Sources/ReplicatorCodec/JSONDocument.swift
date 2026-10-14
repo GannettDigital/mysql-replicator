@@ -37,7 +37,7 @@ public struct JSONTypedScalar: Codable, Equatable {
         switch type {
         case 1000: try jsonRequire(Int64(value) != nil,"invalid signed JSON integer")
         case 1001: try jsonRequire(UInt64(value) != nil,"invalid unsigned JSON integer")
-        case 246: try jsonRequire((1...65).contains(precision) && (0...min(precision,30)).contains(scale) && value.range(of:#"^-?[0-9]+(?:\.[0-9]+)?$"#,options:.regularExpression) != nil,"invalid JSON decimal")
+        case 246: try jsonRequire((1...81).contains(precision) && (0...min(precision,30)).contains(scale) && (precision-scale+8)/9+(scale+8)/9 <= 9 && value.range(of:#"^-?[0-9]+(?:\.[0-9]+)?$"#,options:.regularExpression) != nil,"invalid JSON decimal")
         case 7,10,11,12: try jsonRequire(rawBytes.count == 8,"invalid JSON temporal bytes")
         default: try jsonRequire((0...255).contains(type),"invalid JSON opaque type")
         }
