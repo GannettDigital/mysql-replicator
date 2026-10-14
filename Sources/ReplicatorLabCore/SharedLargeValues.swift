@@ -96,18 +96,29 @@ extension SharedCorrectness.Run {
             let rejected=try isolated.start("large-target-limit",config:recovery)
             _ = try isolated.finish(rejected,label:"large-target-limit",config:recovery,reason:"max_allowed_packet")
             try require(f.sql(.target,"SELECT COUNT(*) FROM large_poc.t WHERE id=9") == "0","packet refusal wrote target")
-            f.config=recovery; try f.installConfig()
-            let report=try f.recovery(["inspect"],label:"large-recovery-inspection")
-            guard let pending=report["pending"] as? [[String:Any]], pending.count == 1,
-                  let rows=pending[0]["rows"] as? [[String:Any]], rows.count == 1,
-                  let after=rows[0]["after"] as? [[String:Any]], after.count == 3,
-                  let encoded=after[1]["value"] as? String,
-                  Data(base64Encoded:encoded) == Data(repeating:0xAB,count:17825795) else { throw LabError("large recovery image differs") }
-            _ = try f.sql(.target,"SET GLOBAL max_allowed_packet=67108864")
-            let gtid=pending[0]["gtid"] as! String
-            _ = try f.recovery(["resolve","retry","--gtids",gtid,"--reason","fixture confirmed request was not issued"],label:"large-recovery-resolution")
-            config=recovery
-            _ = try live("large-recovery-resume",count:1)
+            try require(isolated.state("large-target-limit","SELECT lifecycle||'|'||transactions_applied||'|'||(SELECT COUNT(*) FROM row_intents WHERE status='PENDING') FROM state") == "BLOCKED|0|1","packet refusal lost the pending row or advanced progress")
+            if f.profile.transactionalTarget {
+                f.config=recovery; try f.installConfig()
+                let report=try f.recovery(["inspect"],label:"large-recovery-inspection")
+                guard let pending=report["pending"] as? [[String:Any]], pending.count == 1,
+                      let rows=pending[0]["rows"] as? [[String:Any]], rows.count == 1,
+                      let after=rows[0]["after"] as? [[String:Any]], after.count == 3,
+                      let encoded=after[1]["value"] as? String,
+                      Data(base64Encoded:encoded) == Data(repeating:0xAB,count:17825795) else { throw LabError("large recovery image differs") }
+                _ = try f.sql(.target,"SET GLOBAL max_allowed_packet=67108864")
+                let gtid=pending[0]["gtid"] as! String
+                _ = try f.recovery(["resolve","retry","--gtids",gtid,"--reason","fixture confirmed request was not issued"],label:"large-recovery-resolution")
+            } else {
+                // MyISAM has no audited retry command. Keep its blocked state.
+                // This fixture proves the write was not issued, checks the
+                // target, then starts a separate state at the saved boundary.
+                let resumed=try isolated.start("large-blocked-resume",config:recovery,initialize:false)
+                _ = try isolated.finish(resumed,label:"large-blocked-resume",config:recovery,reason:"cleanly STOPPED")
+                try require(f.sql(.target,"SELECT COUNT(*) FROM large_poc.t WHERE id=9") == "0","blocked restart wrote target")
+                _ = try f.sql(.target,"SET GLOBAL max_allowed_packet=67108864")
+            }
+            config=f.profile.transactionalTarget ? recovery : isolated.configuration("large-reconciled",at:before,count:1)
+            _ = try live("large-recovery-resume",count:1,initialize:!f.profile.transactionalTarget)
             try compareValues("large-recovery",count:3)
         }
     }
