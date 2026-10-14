@@ -43,6 +43,19 @@ final class CommandLineTests: XCTestCase {
         }
     }
 
+    func testOptionLikeValuesUseEqualsSyntax() throws {
+        for value in ["--config", "--reason", "--version"] {
+            let args=["recovery", "resolve", "retry", "--config", "a.yaml", "--gtids", "uuid:1"]
+            XCTAssertEqual(try ReplicatorCommandLine.parse(args + ["--reason=" + value]),
+                           .recoveryResolve(config:"a.yaml",action:"retry",gtids:"uuid:1",reason:value))
+            // ArgumentParser rejects an option token as a separate value before
+            // the duplicate check runs. Quoting does not change argv tokens.
+            XCTAssertThrowsError(try ReplicatorCommandLine.parse(args + ["--reason", value])) { error in
+                XCTAssertTrue(String(describing:error).contains("Missing value"))
+            }
+        }
+    }
+
     func testInvalidRequestsFailBeforeExecution() {
         let invalid = [
             ["unknown"], ["ctl"], ["recovery"], ["--version", "run", "--config", "a.yaml"], ["run"], ["run", "--config"], ["run", "--config", "a.yaml", "extra"],
