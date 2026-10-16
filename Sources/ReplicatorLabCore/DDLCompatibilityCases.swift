@@ -13,7 +13,8 @@ enum DDLCompatibilityCases {
         let checks: [Check]
         let sqlTransactional: String
         var transactions = 1
-        init(_ sql: String,_ checks: [Check] = [], sqlTransactional: String? = nil) { self.sql=sql; self.checks=checks; self.sqlTransactional=sqlTransactional ?? sql }
+        var restartBefore = false
+        init(_ sql: String,_ checks: [Check] = [], sqlTransactional: String? = nil,restartBefore:Bool = false) { self.restartBefore=restartBefore;self.sql=sql; self.checks=checks; self.sqlTransactional=sqlTransactional ?? sql }
     }
     struct Case {
         let test: QualificationCase
@@ -25,6 +26,9 @@ enum DDLCompatibilityCases {
         }
     }
     static let cases: [Case] = [
+        unicodeNames,
+        encodedQueryText,
+        tableNameCase,
         .init("constraints","Named PRIMARY/UNIQUE constraints in CREATE and ALTER preserve index names and following DML",[
             .init("CREATE TABLE ddlcompat.aux(id INT, val INT, CONSTRAINT pk PRIMARY KEY(id), CONSTRAINT initial_uni UNIQUE(val))",[
                 .init("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='aux' ORDER BY BINARY INDEX_NAME","PRIMARY\ninitial_uni")]),

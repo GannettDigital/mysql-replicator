@@ -116,10 +116,37 @@ final class DDLTests: XCTestCase {
             XCTAssertTrue(String(describing:error).contains("remove targetUUID"))
         }
     }
-    func ddlGroup(_ base: CompleteTransaction,sql: String) -> CompleteTransaction {
+    func ddlGroup(_ base: CompleteTransaction,sql: String,rawSQL:Data? = nil,status:Data = Data()) -> CompleteTransaction {
         let old=base.events.last!
-        let event=DecodedEvent(offset:old.offset,eventSize:old.eventSize,control:.query(QueryControl(database:"poc",sql:Data(sql.utf8),errorCode:0,statusVariables:Data())),rowFlags:nil,eventType:2,eventName:"Query",timestamp:old.timestamp,serverID:old.serverID,nextPosition:old.nextPosition,flags:0,sha256:old.sha256,tableID:nil,database:"poc",table:nil,number:nil,detailBase64:nil,detailText:sql,rows:[],rawBase64:old.rawBase64)
+        let event=DecodedEvent(offset:old.offset,eventSize:old.eventSize,control:.query(QueryControl(database:"poc",sql:rawSQL ?? Data(sql.utf8),errorCode:0,statusVariables:status)),rowFlags:nil,eventType:2,eventName:"Query",timestamp:old.timestamp,serverID:old.serverID,nextPosition:old.nextPosition,flags:0,sha256:old.sha256,tableID:nil,database:"poc",table:nil,number:nil,detailBase64:nil,detailText:sql,rows:[],rawBase64:old.rawBase64)
         return CompleteTransaction(start:base.start,end:base.end,gtid:base.gtid,anonymous:false,outcome:.statement,events:[base.events[0],event])
+    }
+    func testPendingDDLRetainsExactSourceAndTargetBytes() throws {
+        #if os(Linux)
+        let helpers=ApplyTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let helpers=ApplyTests()
+        #endif
+        let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:parent) }
+        let config=try helpers.config(parent.appendingPathComponent("state").path)
+        let raw=Data("CREATE TABLE `".utf8)+Data([0xe9])+Data("`(id INT PRIMARY KEY)".utf8)
+        let status=Data([1,0,0,0,0,0,0,0,0,4,8,0,8,0,45,0,18,45,0])
+        let group=ddlGroup(try helpers.groups()[0],sql:"encoded DDL",rawSQL:raw,status:status)
+        let table=helpers.tables()[0]
+        let translated=raw+Data(" ENGINE=MyISAM".utf8)
+        var plan=PreparedDDL(statement:.create(table),before:nil,after:table,sql:"encoded target DDL")
+        plan.rawSQL=translated
+        do {
+            let store=try StateStore(configuration:config)
+            try store.begin(group)
+            try store.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+        }
+        let db=URL(fileURLWithPath:config.stateDirectory).appendingPathComponent("state.sqlite")
+        let saved=try helpers.sqlite(db,"SELECT json_extract(context_json,'$.sourceSQLBase64'),json_extract(context_json,'$.targetSQLBase64') FROM ddl_details")
+        XCTAssertEqual(saved,[[raw.base64EncodedString(),translated.base64EncodedString()]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT status FROM ddl_intents"),[["PENDING"]])
     }
     func testConditionalNoOpAdvancesCheckpointWithoutRetiringSchema() throws {
         #if os(Linux)

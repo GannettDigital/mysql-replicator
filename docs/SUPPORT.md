@@ -52,6 +52,19 @@ References: [MySQL 5.7 GTID restrictions](https://dev.mysql.com/doc/mysql-replic
 [MySQL filter interactions](https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-rules-examples.html),
 and [MySQL 5.7 engine selection](https://github.com/mysql/mysql-server/blob/f7680e98b6bbe3500399fbad465d08a6b75d7a5c/sql/sql_table.cc#L4870).
 
+## Identifiers
+
+Table and column names can use Unicode characters in the native system charset.
+Table caches and prepared statement caches keep distinct UTF-8 byte sequences.
+Column and index references use the native case map. Table-name modes 0 and 1
+require matching source and target settings. Mode 1 has selected DDL/DML and
+restart tests on all four profiles. Mode 2 and cross-setting replication remain
+unqualified. See [table-name settings](../PLAN/TABLE_NAME_CASE.md).
+Query events retain their client charset and original SQL bytes. Selected latin1
+and Shift-JIS DDL cases cover names and text/binary defaults. See the
+[identifier notes](../PLAN/IDENTIFIER_SUPPORT.md) and
+[SQL encoding notes](../PLAN/QUERY_ENCODINGS.md) for limits and tests.
+
 ## Column types
 
 | Types | Support and remaining limits |

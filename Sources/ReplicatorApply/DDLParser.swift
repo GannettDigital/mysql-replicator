@@ -1,4 +1,5 @@
 import Foundation
+import ReplicatorCodec
 
 /// Complete parsing for table/database DDL. Stored object bodies are parsed by
 /// the target server, using a connection without CLIENT_MULTI_STATEMENTS.
@@ -7,6 +8,9 @@ struct DDLParser {
     var index = 0
     var numericDefault = false
     var byteDefault:Data? = nil
+    var literalDefaultBytes:Data? = nil
+    var lowerCaseTableNames = 0
+    func storedTableName(_ name:String) -> String { lowerCaseTableNames == 1 ? SQLIdentifier.lowercase(name) : name }
     var engine = "MyISAM"
     let realAsFloat: Bool
     let database: String?
@@ -17,6 +21,17 @@ struct DDLParser {
         realAsFloat = sqlMode & 1 != 0
         self.database = database; tokens = try DDLTokens.lex(data,sqlMode:sqlMode)
     }
+    init(query:QueryControl, tokens:[DDLToken]? = nil) throws {
+        let context=try query.statusVariables.isEmpty ? nil : QuerySessionContext(query:query)
+        if tokens == nil,query.sql.contains(where: { $0 >= 128 }),let context {
+            let charset=CharacterSetRegistry.collation(id:context.clientCharset)?.characterSet
+            try require(charset == "utf8mb3" || charset == "utf8mb4", "non-UTF-8 Query-event text needs charset-aware parsing: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
+        }
+        realAsFloat=(context?.sqlMode ?? 0) & 1 != 0
+        database=query.database
+        self.tokens=try tokens ?? DDLTokens.lex(query.sql,sqlMode:context?.sqlMode ?? 0)
+    }
+
     func isNext(_ word: String) -> Bool { index < tokens.count && tokens[index].keyword == word }
     mutating func take(_ word: String) -> Bool { if isNext(word) { index += 1; return true }; return false }
     mutating func expect(_ word: String) throws { try require(take(word),"unsupported DDL: expected "+word) }
@@ -26,11 +41,15 @@ struct DDLParser {
         try require(token.literal == nil && (token.identifier || token.text.utf8.allSatisfy(DDLTokens.word)),"invalid DDL identifier")
         _ = try quoted(token.text); return token.text
     }
-    mutating func name() throws -> TableName {
+    mutating func name(foldTable:Bool = true) throws -> TableName {
         let first = try identifier()
-        if take(".") { return TableName(database:first,table:try identifier()) }
-        guard let database, !database.isEmpty else { throw ApplyError("unqualified DDL object without default database") }
-        return TableName(database:database,table:first)
+        let db:String, table:String
+        if take(".") { db=first;table=try identifier() }
+        else {
+            guard let database, !database.isEmpty else { throw ApplyError("unqualified DDL object without default database") }
+            db=database;table=first
+        }
+        return TableName(database:storedTableName(db),table:foldTable ? storedTableName(table) : table)
     }
     mutating func number() throws -> Int {
         let value = try identifier()
@@ -47,7 +66,7 @@ struct DDLParser {
         throw ApplyError("unbalanced DDL parentheses")
     }
     mutating func defaultValue(bit: Bool = false) throws -> String? {
-        numericDefault = false;byteDefault=nil
+        numericDefault = false;byteDefault=nil;literalDefaultBytes=nil
         if index < tokens.count && !bit {
             let length=["X","B"].contains(tokens[index].keyword) ? 2 : 1
             if index+length <= tokens.count,let value=try SQLByteLiteral.parse(Array(tokens[index..<index+length])) {
@@ -73,7 +92,7 @@ struct DDLParser {
             if take("(") { let precision = try number(); try require(precision <= 6,"invalid timestamp precision"); try expect(")"); return precision == 0 ? "CURRENT_TIMESTAMP" : "CURRENT_TIMESTAMP(\(precision))" }
             return "CURRENT_TIMESTAMP"
         }
-        if index < tokens.count, let value = tokens[index].literal { index += 1; return value }
+        if index < tokens.count, let value = tokens[index].literal { literalDefaultBytes=tokens[index].literalBytes; index += 1; return value }
         let sign = take("-") ? "-" : (take("+") ? "+" : "")
         try require(index < tokens.count,"missing numeric default")
         var value=tokens[index].text; index += 1
@@ -98,12 +117,20 @@ struct DDLParser {
         if base == "integer" { base = "int" }
         if base == "numeric" || base == "dec" { base = "decimal" }
         var type = base
+        var inputChoiceBytes: [Data]?
         var integerDisplayWidth: Int?
         if ["enum","set"].contains(base) {
             let tokens=try parenthesized()
             var groups:[[DDLToken]]=[[]]
             for token in tokens {
                 if token.keyword == "," { groups.append([]) } else { groups[groups.count-1].append(token) }
+            }
+            if groups.contains(where: { $0.count == 1 && $0[0].literalBytes != nil }) {
+                inputChoiceBytes=try groups.map { group in
+                    if group.count == 1,let text=group[0].literal { return group[0].literalBytes ?? Data(text.utf8) }
+                    guard let bytes=try SQLByteLiteral.parse(group) else { throw ApplyError("invalid ENUM/SET label literal") }
+                    return bytes
+                }
             }
             let labels=try groups.map { group -> String in
                 if group.count == 1,let literal=group[0].literal { return ChoiceMetadata.literal(literal) }
@@ -145,6 +172,7 @@ struct DDLParser {
         do { parsed = try DMLColumnType(type) }
         catch { throw ApplyError("unsupported DDL column type: \(type)",code:.unsupportedColumnType) }
         var column = ApplyColumn(name:name,type:type,nullable:true,collation:nil)
+        column.inputChoiceBytes=inputChoiceBytes
         var charsetEnd: Int?
         var primary = false, seen: Set<String> = []
         while index < tokens.count {
@@ -154,13 +182,15 @@ struct DDLParser {
             else if take("PRIMARY") { try expect("KEY"); primary = true; attribute = "primary" }
             else if take("DEFAULT") {
                 column.defaultValue = try defaultValue(bit:parsed.bitWidth != nil)
+                column.inputDefaultBytes=literalDefaultBytes
                 column.numericDefaultLiteral = (parsed.isChoice || ["decimal","binary","varbinary"].contains(parsed.base)) && column.defaultValue != nil ? numericDefault : nil
                 if ["char","varchar"].contains(parsed.base) && numericDefault { column.numericDefaultLiteral=true }
                 try require(byteDefault == nil || parsed.isChoice || ["binary","varbinary","char","varchar"].contains(parsed.base),"binary defaults require separate support for this type")
                 if parsed.isChoice { column.choiceDefaultBytes=byteDefault }
                 else { column.binaryDefaultBytes=byteDefault }
                 if ["binary","varbinary"].contains(parsed.base) && !numericDefault {
-                    column.binaryDefaultBytes = byteDefault ?? column.defaultValue.map { Data($0.utf8) }
+                    column.binaryDefaultBytes = byteDefault ?? literalDefaultBytes ?? column.defaultValue.map { Data($0.utf8) }
+                    column.inputDefaultBytes=nil
                     column.defaultValue=nil
                     column.numericDefaultLiteral=nil
                 }
@@ -182,6 +212,7 @@ struct DDLParser {
         try require(!seen.contains("default") || column.hasDefaultValue || column.nullable,"DEFAULT NULL on nonnullable DDL column")
         try require(!column.isGenerated || !seen.contains("default"),"generated columns cannot have defaults")
         if column.numericDefaultLiteral == nil { column.defaultValue = try normalizedDefault(column.defaultValue,type:parsed) }
+        if !parsed.isText && !["binary","varbinary"].contains(parsed.base) { column.inputDefaultBytes=nil }
         if !parsed.isText && column.numericDefaultLiteral == nil && column.binaryDefaultBytes == nil { try column.validate() }
         return (column,primary)
     }
@@ -223,7 +254,7 @@ struct DDLParser {
     }
     mutating func databaseDefinition(conditional: Bool = false) throws -> CreateDatabase {
         var charsetEnd: Int?
-        let name = try identifier(); var charset: String?, collation: String?, seen: Set<String> = []
+        let name = storedTableName(try identifier()); var charset: String?, collation: String?, seen: Set<String> = []
         while index < tokens.count && !isNext(";") {
             _ = take("DEFAULT"); let option: String
             if take("CHARACTER") { try expect("SET"); _ = take("="); charset = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; option = "charset" }
@@ -273,7 +304,7 @@ struct DDLParser {
             try expect("TABLE"); var renames: [TableRename] = []
             repeat {
                 let from = try name(); try expect("TO"); let to = try name()
-                try require(from.database == to.database && from != to && (renames.first?.from.database ?? from.database) == from.database,"DDL rename requires distinct names in one database")
+                try require(SQLTextBytes.equal(from.database,to.database) && from != to && SQLTextBytes.equal(renames.first?.from.database ?? from.database,from.database),"DDL rename requires distinct names in one database")
                 renames.append(TableRename(from:from,to:to))
                 try require(renames.count <= 64,"DDL rename pair limit exceeded")
             } while take(",")
@@ -281,7 +312,7 @@ struct DDLParser {
         } else if take("DROP") {
             if take("DATABASE") || take("SCHEMA") {
                 let conditional = take("IF"); if conditional { try expect("EXISTS") }
-                result = .dropDatabase(try identifier(),ifExists:conditional)
+                result = .dropDatabase(storedTableName(try identifier()),ifExists:conditional)
             } else if take("INDEX") { let key = try identifier(); try expect("ON"); result = .indexes(try name(),.drop(key)) }
             else {
                 try expect("TABLE"); let conditional = take("IF"); if conditional { try expect("EXISTS") }
@@ -345,8 +376,8 @@ struct DDLParser {
         }
         collation = charsetDefault(charset,collation:collation,at:charsetEnd)
         guard let key else { throw ApplyError("DDL CREATE requires a primary key") }
-        for i in columns.indices where key.contains(columns[i].name) { columns[i].nullable = false }
-        var schema = ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:key,defaultCharacterSet:charset,defaultCollation:collation,secondaryIndexes:indexes.sorted{$0.name.lowercased() < $1.name.lowercased()})
+        for i in columns.indices where SQLIdentifier.contains(key,columns[i].name) { columns[i].nullable = false }
+        var schema = ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:key,defaultCharacterSet:charset,defaultCollation:collation,secondaryIndexes:indexes.sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)})
         for (key,index) in foreignKeys { schema = try schema.addingForeignKey(key,indexName:index) }
         if take("PARTITION") { schema.partitions = try partitionDefinition() }
         return conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
@@ -377,7 +408,7 @@ struct DDLParser {
         }
         if take("ALTER") {
             _ = take("COLUMN"); let column = try identifier()
-            if take("SET") { try expect("DEFAULT"); let value = try defaultValue(); return .defaultValue(column,value,numeric:numericDefault,bytes:byteDefault) }
+            if take("SET") { try expect("DEFAULT"); let value = try defaultValue(); return .defaultValue(column,value,numeric:numericDefault,bytes:byteDefault,literalBytes:literalDefaultBytes) }
             try expect("DROP"); try expect("DEFAULT"); return .defaultValue(column,nil)
         }
         if take("RENAME") { try require(take("INDEX") || take("KEY"),"unsupported ALTER RENAME operation"); let old = try identifier(); try expect("TO"); return .indexes(.rename(old,try identifier())) }

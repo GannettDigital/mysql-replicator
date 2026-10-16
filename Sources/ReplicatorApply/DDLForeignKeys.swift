@@ -50,7 +50,7 @@ extension TargetSession {
         guard contract.transactional else { return input }
         var plan = input
         let changes = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after)] : [])
-        var initial: [String:ApplyTable] = [:], definitions: [String:ApplyTable] = [:]
+        var initial: [SQLNameKey:ApplyTable] = [:], definitions: [SQLNameKey:ApplyTable] = [:]
         for change in changes {
             if let before = change.before { initial[before.identity] = before }
             if let after = change.after { definitions[after.identity] = after }
@@ -66,7 +66,7 @@ extension TargetSession {
                 }
             }
         }
-        var relationships: [String:ApplyForeignKey] = [:]
+        var relationships: [SQLNameKey:ApplyForeignKey] = [:]
         for table in initial.values { for key in table.foreignKeys { relationships[key.identity] = key } }
         let renames: [TableRename]
         switch plan.statement {
@@ -81,7 +81,7 @@ extension TargetSession {
             for table in definitions.values { for key in table.foreignKeys where key.child == table.identity { relationships[key.identity] = key } }
         } else {
             for rename in renames {
-                var next: [String:ApplyForeignKey] = [:]
+                var next: [SQLNameKey:ApplyForeignKey] = [:]
                 for key in relationships.values {
                     let renamed = key.renamed(rename)
                     try require(next.updateValue(renamed,forKey:renamed.identity) == nil,"foreign-key name collision during RENAME")
@@ -96,7 +96,7 @@ extension TargetSession {
         // Renaming a column used by another table needs a separate qualification
         // of MySQL's implicit constraint rewrite. All other ALTERs validate the
         // resulting relationship against the complete parent/child metadata.
-        try ForeignKeyGraph.validate(keys,tables:final,filter:TableFilter(config.replicateWildIgnoreTable ?? []))
+        try ForeignKeyGraph.validate(keys,tables:final,filter:TableFilter(config.replicateWildIgnoreTable ?? [],lowerCaseTableNames:config.source.tableNameCaseSetting))
         for id in final.keys { final[id]!.foreignKeys = ForeignKeyGraph.component(id,in:keys) }
         if let after = plan.after { plan.after = final[after.identity] }
         let primaryBefore = plan.before?.identity, primaryAfter = plan.after?.identity
@@ -125,7 +125,7 @@ extension ForeignKeyGraph {
         var alternatives: [ApplyTable] = []
         for (key,index) in added {
             let name = index ?? (key.name.isEmpty ? key.columns[0] : key.name)
-            guard !after.secondaryIndexes.contains(where: { $0.name.lowercased() == name.lowercased() }) else { continue }
+            guard !after.secondaryIndexes.contains(where: { SQLIdentifier.equal($0.name,name) }) else { continue }
             let parts = key.columns.map { ApplyIndexPart(column:$0,prefix:nil) }
             for old in before.secondaryIndexes where !old.unique && old.parts == parts {
                 guard let i = after.secondaryIndexes.firstIndex(of:old) else { continue }

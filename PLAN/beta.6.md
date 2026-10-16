@@ -35,6 +35,11 @@ beta.6. Do not assume a squash merge preserves the old stack ancestry.
 | `beta/6/13-binary-defaults` | `beta/6/12-native-decimal-defaults` |
 | `beta/6/14-native-text-defaults` | `beta/6/13-binary-defaults` |
 | `beta/6/15-zero-width-columns` | `beta/6/14-native-text-defaults` |
+| `beta/6/16-identifier-bytes` | `beta/6/15-zero-width-columns` |
+| `beta/6/17-native-name-comparison` | `beta/6/16-identifier-bytes` |
+| `beta/6/18-unicode-identifiers` | `beta/6/17-native-name-comparison` |
+| `beta/6/19-query-encodings` | `beta/6/18-unicode-identifiers` |
+| `beta/6/20-table-name-case` | `beta/6/19-query-encodings` |
 
 These are the existing local branches. They are not the complete beta.6
 branch set. Later branches will contain the remaining feature groups below.
@@ -470,3 +475,142 @@ Zero-width live, bootstrap and saved-schema restart runs passed:
 
 The runtime input digest was
 `46e60a879a8fb156ce9212fadc74c7c18c323bc83b4fbb1f4a50d3a5dcab76f6`.
+
+## Identifier cache increment
+
+Branch `beta/6/16-identifier-bytes` separates table cache keys by UTF-8 bytes.
+Native 5.7.42 and 8.4.8 accepted distinct names for `é` and `e` followed by
+U+0301. Swift string equality treats those names as equal. The new key type
+prevents cache collisions. Schema and wire-column comparisons also preserve bytes.
+Saved schema JSON keeps its existing format. Cache keys are reconstructed on read.
+
+All 359 selected apply and codec unit tests passed. This foundation does not yet
+remove the ASCII identifier limit. Parser acceptance, native case comparison,
+column lookups, filters and shared Unicode cases need a separate increment.
+See [the identifier notes](IDENTIFIER_SUPPORT.md) for the native checks.
+
+The selected composite-key, table-rename, bootstrap and index-resume checks passed
+on all four profiles. The two InnoDB runs also passed foreign-key DDL, cascade,
+rename and restart checks:
+
+- `mysql84-to-mysql57-myisam`: `20261014T183824Z-9c86575c` (18 steps).
+- `mysql57-to-mysql84-innodb`: `20261014T183827Z-506b7aed` (52 steps).
+- `mysql57-to-mysql57-myisam`: `20261014T183853Z-fb264b28` (18 steps).
+- `mysql57-to-mysql57-innodb`: `20261014T183856Z-4e2a47a1` (52 steps).
+
+The runtime input digest was
+`2df1ee8a7771da105543cc9e78777069e4d3e0a5dd9b32786b3bd2a9f3f3d66f`.
+
+## Native name comparison increment
+
+Branch `beta/6/17-native-name-comparison` uses the native system-charset lowercase
+map for column, index, partition and relationship references. The pinned 5.7 and
+8.4 maps have the same 696 non-identity entries. The generator checks both maps
+and verifies the compressed range representation. Table identities remain exact.
+
+This corrects ASCII references too. For example, `PRIMARY KEY(ID)` now resolves
+column `id`. Schema comparisons keep definition bytes but compare column
+references with native case rules. Wire column names still require exact bytes.
+The shared `identifiercase` case exercises key references, ALTER DEFAULT, AFTER,
+CHANGE, index rename/drop and following DML. The ASCII acceptance limit remains
+until the parser and lab comparison code are ready for Unicode identifiers.
+
+All 362 apply and codec unit tests passed. After the ASCII comparison fast path
+was added, 27 focused identifier, schema-change and foreign-key tests passed.
+
+Mixed-case live, bootstrap and saved-schema restart checks passed on all profiles:
+
+- `mysql84-to-mysql57-myisam`: `20261014T184843Z-62a1b9c6`.
+- `mysql57-to-mysql84-innodb`: `20261014T184844Z-eed4ca9a`.
+- `mysql57-to-mysql57-myisam`: `20261014T184838Z-a02f96ff`.
+- `mysql57-to-mysql57-innodb`: `20261014T184840Z-e3966cc1`.
+
+The runtime input digest was
+`9c29e0154e3276557d68fc71f195d7630cbcecbf3646e912410d5c6007e59317`.
+
+## Unicode identifier increment
+
+Branch `beta/6/18-unicode-identifiers` accepts native system-charset identifiers.
+It counts Unicode scalars for the 64-character limit. It keeps table and database
+names separate by their bytes. Column and index references use the native case
+map. Metadata index sorting uses binary names so distinct indexes cannot interleave.
+
+Both native versions accepted quoted and unquoted supplementary names through
+a utf8mb4 client. They stored `?` and emitted warning 1300. The parser now tracks
+that stored name and executes the original SQL without changing its bytes.
+This conversion is separate from collation substitution policy.
+
+The lab comparison now keeps distinct Unicode table and column names. It quotes
+embedded backticks and compares exact schema text. Shared cases include composed
+and decomposed names, Chinese names, a 64-character column, reserved words,
+index and table rename, LIKE, row changes and bootstrap discovery.
+A recovery unit test decodes a real-format table-map/row sequence, closes SQLite,
+and reconstructs the pending Unicode schema and rows from saved state.
+
+The broader unit run found a stale obligation count from the earlier latin1
+increment. Its four refusal obligations became three positive obligations on two
+profiles. The expected total is 728, not 730. The catalog test now states why.
+All production tests in the 396-test run passed. The focused rerun of 12 Unicode,
+lab-name and catalog tests passed after the assertion was corrected.
+
+The first shared Unicode runs failed on all four profiles:
+`20261014T190207Z-df92e1b6`, `20261014T190209Z-adc19c39`,
+`20261014T190211Z-aa8cc0e1`, and `20261014T190213Z-1061ac9c`.
+Their support bundles showed that the second Unicode table INSERT used the first
+table's prepared statement. The client cache used Swift string equality.
+It now hashes exact SQL bytes and compares the byte keys. Client row lookup also
+keeps distinct Unicode column and table names. The original failure artifacts
+remain available. All 383 selected unit tests passed after this fix.
+The vendor file hashes and complete patch were checked against the pinned source.
+
+Unicode DDL/DML, bootstrap discovery and saved-schema restart passed on all four
+profiles. Each run completed 25 steps with the same runtime input digest:
+
+- `mysql84-to-mysql57-myisam`: `20261014T191327Z-22ddf20f`.
+- `mysql57-to-mysql84-innodb`: `20261014T191326Z-cd61240b`.
+- `mysql57-to-mysql57-myisam`: `20261014T191325Z-c234e8c3`.
+- `mysql57-to-mysql57-innodb`: `20261014T191931Z-e22e8344`.
+
+The runtime input digest was
+`b68b1396b27850bafea8fc586d540e49fe7e4c6068633e30c9dfcbe60c6ada73`.
+An earlier same-version InnoDB attempt, `20261014T191329Z-bbd0339b`, stopped
+during Docker Compose setup with a missing-image error. No applier case ran and
+no failure bundle was expected. Its result and logs remain available. The retry
+used unchanged build inputs after the other fixture builds had finished.
+
+Non-UTF-8 Query text remains a gap. It now has an explicit charset diagnostic
+before filtering or execution. Nonzero lower_case_table_names settings, Unicode
+FK/generated-expression boundaries and complete offline qualification remain open.
+The catalog remains partial; these selected tests are not release qualification.
+
+## Increment 19: Query-event SQL encodings
+
+Branch: `beta/6/19-query-encodings`.
+
+The DDL lexer retains original byte offsets and handles multibyte characters
+whose trailing bytes look like SQL punctuation. Native charset conversion
+supplies identifier and literal metadata. COM_QUERY sends the original SQL
+bytes. Pending DDL records retain source and target SQL bytes in base64.
+
+All 321 selected unit tests passed. The new shared case checks latin1 and
+Shift-JIS table names, text/binary/ENUM defaults, ALTER and following DML.
+See [QUERY_ENCODINGS.md](QUERY_ENCODINGS.md) for results and scope.
+
+Table-name case settings and the remaining JSON transport investigation are
+next. FULLTEXT and other DDL groups follow these stage-2 items. Keyless recovery
+and XA remain separate designs because they change restart behavior.
+
+## Increment 20: table-name case contract
+
+Branch: `beta/6/20-table-name-case`.
+
+`source.lowerCaseTableNames` selects mode 0 or 1. Source and target must match.
+Mode 1 uses the native lowercase map for database/table references and filters.
+The original SQL remains unchanged. State format 10 pins this setting for
+resume and recovery. Archives must match the configured setting.
+
+All 472 selected unit tests passed. The new `lowercase-tables` variant tests all
+three MySQL servers with mode 1. Selected live and offline results are recorded
+in [TABLE_NAME_CASE.md](TABLE_NAME_CASE.md). Mode 2 and cross-setting replication
+remain unqualified. The encoded-SQL case now restarts before latin1 and Shift-JIS
+ALTER statements.

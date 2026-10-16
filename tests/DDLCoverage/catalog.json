@@ -9523,6 +9523,21 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-collation-cleanup-removed",
       "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-unicode-names",
+      "reason": "Native Unicode table-name identity, rename, LIKE and row checks. This regression does not qualify every identifier or case-setting requirement."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-query-encodings",
+      "reason": "Exact non-UTF-8 Query bytes, multibyte syntax boundaries, native defaults and following row changes. This selected regression is not complete charset qualification."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-name-case",
+      "reason": "Native mode-1 table names through DDL, row events and clean restart. This case does not qualify case-insensitive filesystems or cross-setting replication."
     }
   ]
 }

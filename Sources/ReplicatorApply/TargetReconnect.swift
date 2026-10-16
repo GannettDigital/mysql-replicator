@@ -47,6 +47,7 @@ struct TargetStatementTrace: Codable {
     enum Phase: String, Codable { case notIssued, possiblyExecuted, acknowledged }
     var phase: Phase = .notIssued
     var sql: String?
+    var sqlBase64: String? = nil
 }
 
 public struct TargetFailureDiagnostic: Codable {

@@ -13,12 +13,12 @@ public struct ApplyForeignKey: Codable, Equatable {
     public var referencedColumns: [String]
     public var onUpdate: String = "RESTRICT"
     public var onDelete: String = "RESTRICT"
-    var child: String { database + "\0" + table }
-    var parent: String { referencedDatabase + "\0" + referencedTable }
-    var identity: String { database + "\0" + table + "\0" + name.lowercased() }
+    var child: SQLNameKey { .table(database,table) }
+    var parent: SQLNameKey { .table(referencedDatabase,referencedTable) }
+    var identity: SQLNameKey { SQLNameKey(database + "\0" + table + "\0" + SQLIdentifier.lowercase(name)) }
     func validate() throws {
         for identifier in [name,database,table,referencedDatabase,referencedTable] + columns + referencedColumns { _ = try quoted(identifier) }
-        try require((1...16).contains(columns.count) && columns.count == referencedColumns.count && Set(columns).count == columns.count && Set(referencedColumns).count == columns.count,"invalid foreign-key columns")
+        try require((1...16).contains(columns.count) && columns.count == referencedColumns.count && Set(columns.map(SQLIdentifier.key)).count == columns.count && Set(referencedColumns.map(SQLIdentifier.key)).count == columns.count,"invalid foreign-key columns")
         try require(["RESTRICT","NO ACTION","CASCADE","SET NULL"].contains(onUpdate) && ["RESTRICT","NO ACTION","CASCADE","SET NULL"].contains(onDelete),"unsupported foreign-key action")
         try require(child != parent,"self-referencing foreign keys are unsupported")
     }
@@ -26,8 +26,8 @@ public struct ApplyForeignKey: Codable, Equatable {
 
 enum ForeignKeyGraph {
     static func sorted(_ keys: [ApplyForeignKey]) -> [ApplyForeignKey] { keys.sorted { $0.identity < $1.identity } }
-    static func component(_ identity: String, in keys: [ApplyForeignKey]) -> [ApplyForeignKey] {
-        var members: Set<String> = [identity], changed = true
+    static func component(_ identity: SQLNameKey, in keys: [ApplyForeignKey]) -> [ApplyForeignKey] {
+        var members: Set<SQLNameKey> = [identity], changed = true
         while changed {
             changed = false
             for key in keys where members.contains(key.child) || members.contains(key.parent) {
@@ -37,11 +37,11 @@ enum ForeignKeyGraph {
         }
         return sorted(keys.filter { members.contains($0.child) })
     }
-    static func validate(_ keys: [ApplyForeignKey], tables: [String:ApplyTable], filter: TableFilter) throws {
+    static func validate(_ keys: [ApplyForeignKey], tables: [SQLNameKey:ApplyTable], filter: TableFilter) throws {
         try require(keys.count <= 256 && Set(keys.map(\.identity)).count == keys.count,"duplicate or excessive foreign-key relationships")
         try require(Set(keys.flatMap { [$0.child,$0.parent] }).count <= 64,"foreign-key component exceeds 64 tables")
-        var visiting = Set<String>(), done = Set<String>()
-        func visit(_ name: String) throws {
+        var visiting = Set<SQLNameKey>(), done = Set<SQLNameKey>()
+        func visit(_ name: SQLNameKey) throws {
             if done.contains(name) { return }
             try require(visiting.insert(name).inserted,"cyclic foreign keys are unsupported")
             for key in keys where key.child == name { try visit(key.parent) }
@@ -52,11 +52,11 @@ enum ForeignKeyGraph {
             try require(!filter.ignores(database:key.database,table:key.table) && !filter.ignores(database:key.referencedDatabase,table:key.referencedTable),"foreign key \(key.name) crosses an excluded table")
             guard let child = tables[key.child], let parent = tables[key.parent] else { throw ApplyError("foreign key \(key.name) references an absent table") }
             try require(child.partitions.isEmpty && parent.partitions.isEmpty,"partitioned foreign-key tables are unsupported")
-            let unique = parent.primaryKeyColumns == key.referencedColumns || parent.secondaryIndexes.contains { $0.unique && $0.parts.map(\.column) == key.referencedColumns && $0.parts.allSatisfy { $0.prefix == nil } }
+            let unique = SQLIdentifier.equal(parent.primaryKeyColumns,key.referencedColumns) || parent.secondaryIndexes.contains { $0.unique && SQLIdentifier.equal($0.parts.map(\.column),key.referencedColumns) && $0.parts.allSatisfy { $0.prefix == nil } }
             try require(unique,"foreign key \(key.name) requires a complete unique parent key; nonunique and partial keys are unsupported")
             try require(child.hasForeignKeyIndex(key.columns),"foreign key \(key.name) lacks a supporting child index")
             for (childName,parentName) in zip(key.columns,key.referencedColumns) {
-                guard let c = child.columns.first(where: { $0.name == childName }), let p = parent.columns.first(where: { $0.name == parentName }) else { throw ApplyError("foreign-key column is absent") }
+                guard let c = child.columns.first(where: { SQLIdentifier.equal($0.name,childName) }), let p = parent.columns.first(where: { SQLIdentifier.equal($0.name,parentName) }) else { throw ApplyError("foreign-key column is absent") }
                 try require(!c.isGenerated && !p.isGenerated,"generated foreign-key columns are unsupported")
                 try require(c.type == p.type && c.characterSet == p.characterSet && c.collation == p.collation,"foreign-key column types/encodings differ")
                 if key.onDelete == "SET NULL" || key.onUpdate == "SET NULL" { try require(c.nullable,"SET NULL requires nullable child columns") }
@@ -68,8 +68,8 @@ enum ForeignKeyGraph {
 
 extension ApplyTable {
     func hasForeignKeyIndex(_ names: [String]) -> Bool {
-        Array(primaryKeyColumns.prefix(names.count)) == names || secondaryIndexes.contains {
-            Array($0.parts.prefix(names.count)).map(\.column) == names && $0.parts.prefix(names.count).allSatisfy { $0.prefix == nil }
+        SQLIdentifier.equal(Array(primaryKeyColumns.prefix(names.count)),names) || secondaryIndexes.contains {
+            SQLIdentifier.equal(Array($0.parts.prefix(names.count)).map(\.column),names) && $0.parts.prefix(names.count).allSatisfy { $0.prefix == nil }
         }
     }
     func addingForeignKey(_ definition: ApplyForeignKey, indexName: String?) throws -> ApplyTable {
@@ -84,17 +84,17 @@ extension ApplyTable {
         try require(!foreignKeys.contains { $0.identity == key.identity },"duplicate foreign-key name")
         if !hasForeignKeyIndex(key.columns) {
             try require(!foreignKeys.contains { existing in
-                existing.child == identity && Array(key.columns.prefix(existing.columns.count)) == existing.columns
+                existing.child == identity && SQLIdentifier.equal(Array(key.columns.prefix(existing.columns.count)),existing.columns)
             },"replacement foreign-key supporting indexes are unsupported")
             var name = indexName ?? (definition.name.isEmpty ? key.columns[0] : key.name)
             if indexName == nil && definition.name.isEmpty {
                 var suffix = 2
-                while secondaryIndexes.contains(where: { $0.name.lowercased() == name.lowercased() }) {
+                while secondaryIndexes.contains(where: { SQLIdentifier.equal($0.name,name) }) {
                     name = key.columns[0] + "_" + String(suffix); suffix += 1
                 }
             }
             result.secondaryIndexes.append(ApplyIndex(name:name,unique:false,parts:key.columns.map { ApplyIndexPart(column:$0,prefix:nil) }))
-            result.secondaryIndexes.sort { $0.name.lowercased() < $1.name.lowercased() }
+            result.secondaryIndexes.sort { SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name) }
         }
         result.foreignKeys = ForeignKeyGraph.sorted(foreignKeys + [key])
         return result
@@ -108,12 +108,12 @@ extension TargetSession {
         // only tables already encountered in the binlog.
         let grantee = "CONCAT(CHAR(39),REPLACE(CURRENT_USER(),'@',CONCAT(CHAR(39),'@',CHAR(39))),CHAR(39))"
         try require(try scalar("SELECT EXISTS(SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='REFERENCES') AS v") == "1","global REFERENCES privilege required for complete foreign-key discovery")
-        var pending = [name], seen = Set<String>(), keys: [String:ApplyForeignKey] = [:]
+        var pending = [name], seen = Set<SQLNameKey>(), keys: [SQLNameKey:ApplyForeignKey] = [:]
         while let next = pending.popLast() {
             if !seen.insert(next.identity).inserted { continue }
             try require(seen.count <= 64,"foreign-key component exceeds 64 tables")
             let binds: [MySQLData] = [.init(string:next.database),.init(string:next.table)]
-            let rows = try query("SELECT k.CONSTRAINT_NAME,k.TABLE_SCHEMA,k.TABLE_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,k.ORDINAL_POSITION,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.REFERENCED_TABLE_NAME IS NOT NULL AND ((k.TABLE_SCHEMA=? AND k.TABLE_NAME=?) OR (k.REFERENCED_TABLE_SCHEMA=? AND k.REFERENCED_TABLE_NAME=?)) ORDER BY k.TABLE_SCHEMA,k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION",binds+binds).0
+            let rows = try query("SELECT k.CONSTRAINT_NAME,k.TABLE_SCHEMA,k.TABLE_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,k.ORDINAL_POSITION,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON BINARY r.CONSTRAINT_SCHEMA=BINARY k.CONSTRAINT_SCHEMA AND BINARY r.CONSTRAINT_NAME=BINARY k.CONSTRAINT_NAME AND BINARY r.TABLE_NAME=BINARY k.TABLE_NAME WHERE k.REFERENCED_TABLE_NAME IS NOT NULL AND ((k.TABLE_SCHEMA=? AND k.TABLE_NAME=?) OR (k.REFERENCED_TABLE_SCHEMA=? AND k.REFERENCED_TABLE_NAME=?)) ORDER BY BINARY k.TABLE_SCHEMA,BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION",binds+binds).0
             var local: [ApplyForeignKey] = []
             for row in rows {
                 func value(_ field: String) throws -> String { guard let value = row.column(field)?.string else { throw ApplyError("incomplete foreign-key metadata: \(field)") }; return value }
@@ -144,6 +144,6 @@ extension TargetSession {
                 tables[name.identity] = try readSchema(database:name.database,name:name.table,validateRelationships:false)
             }
         }
-        try ForeignKeyGraph.validate(actual,tables:tables,filter:TableFilter(config.replicateWildIgnoreTable ?? []))
+        try ForeignKeyGraph.validate(actual,tables:tables,filter:TableFilter(config.replicateWildIgnoreTable ?? [],lowerCaseTableNames:config.source.tableNameCaseSetting))
     }
 }

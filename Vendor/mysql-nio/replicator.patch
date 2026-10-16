@@ -41,13 +41,14 @@
 +            throw MySQLError.unsupportedServer(message: "TLS is required; refusing authentication without TLS")
 --- a/Sources/MySQLNIO/MySQLQueryCommand.swift
 +++ b/Sources/MySQLNIO/MySQLQueryCommand.swift
-@@ -41 +41,58 @@
+@@ -41 +41,59 @@
 -private final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
 +// Connection-owned and accessed only by commands on its event loop. At capacity,
 +// new SQL uses the ordinary prepare/execute/close path; it cannot grow unbounded.
 +final class MySQLPreparedStatementCache: @unchecked Sendable {
 +    struct Entry { let id: UInt32; let parameters: Int }
-+    var entries: [String: Entry] = [:]
++    // Swift String hashing merges Unicode normalization forms. SQL does not.
++    var entries: [[UInt8]: Entry] = [:]
 +    let capacity = 128
 +}
 +
@@ -101,32 +102,35 @@
 +}
 +
 +final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
-@@ -42,0 +100,2 @@
+@@ -42,0 +101,3 @@
++    let cacheKey: [UInt8]
 +    let cache: MySQLPreparedStatementCache?
 +    var parameterCount = 0
-@@ -73 +132,2 @@
+@@ -73 +134,2 @@
 -        logger: Logger
 +        logger: Logger,
 +        cache: MySQLPreparedStatementCache? = nil
-@@ -74,0 +135 @@
+@@ -74,0 +137 @@
 +        self.cache = cache
-@@ -89,0 +151 @@
-+            self.cache?.entries.removeValue(forKey: self.sql)
-@@ -125,0 +188 @@
+@@ -76,0 +140 @@
++        self.cacheKey = cache == nil ? [] : Array(sql.utf8)
+@@ -89,0 +154 @@
++            self.cache?.entries.removeValue(forKey: self.cacheKey)
+@@ -125,0 +191 @@
 +            self.parameterCount = Int(res.numParams)
-@@ -208,0 +272,7 @@
+@@ -208,0 +275,7 @@
 +        if let cache, lastUserError == nil,
-+           cache.entries[sql] != nil || cache.entries.count < cache.capacity {
-+            cache.entries[sql] = .init(id: statementID!, parameters: parameterCount)
++           cache.entries[cacheKey] != nil || cache.entries.count < cache.capacity {
++            cache.entries[cacheKey] = .init(id: statementID!, parameters: parameterCount)
 +            statementID = nil // ownership transferred to the connection
 +            return .init(response: [], done: true, resetSequence: true)
 +        }
-+        cache?.entries.removeValue(forKey: sql)
-@@ -211 +281 @@
++        cache?.entries.removeValue(forKey: cacheKey)
+@@ -211 +284 @@
 -            statementID: self.ok!.statementID
 +            statementID: self.statementID!
-@@ -222,0 +293,8 @@
-+        if let entry = cache?.entries[sql] {
+@@ -222,0 +296,8 @@
++        if let entry = cache?.entries[cacheKey] {
 +            guard entry.parameters == binds.count else { throw MySQLError.protocolError }
 +            statementID = entry.id
 +            parameterCount = entry.parameters
@@ -134,7 +138,7 @@
 +            return try .response([.encode(MySQLProtocol.COM_STMT_EXECUTE(
 +                statementID: entry.id, flags: [], values: binds), capabilities: capabilities)])
 +        }
-@@ -227,7 +305 @@
+@@ -227,7 +308 @@
 -    deinit {
 -        assert(self.statementID == nil, "Statement not closed: \(self.sql)")
 -        if self.statementID != nil {
@@ -142,6 +146,59 @@
 -        }
 -    }
 -}
++}
+--- a/Sources/MySQLNIO/MySQLRow.swift
++++ b/Sources/MySQLNIO/MySQLRow.swift
+@@ -9 +9 @@
+-        var desc = [String: MySQLData]()
++        var desc: [String] = []
+@@ -11 +11 @@
+-            desc[column.name] = .init(
++            let data = MySQLData(
+@@ -16,0 +17 @@
++            desc.append(column.name.debugDescription+": "+data.description)
+@@ -18 +19 @@
+-        return desc.description
++        return "["+desc.joined(separator:", ")+"]"
+@@ -33 +34 @@
+-            if column.name == name && (table == nil || column.table == table) {
++            if column.name.utf8.elementsEqual(name.utf8) && (table.map { column.table.utf8.elementsEqual($0.utf8) } ?? true) {
+--- a/Sources/MySQLNIO/MySQLSimpleQueryCommand.swift
++++ b/Sources/MySQLNIO/MySQLSimpleQueryCommand.swift
+@@ -10,0 +11,7 @@
++    /// Execute SQL in its logged client encoding without a UTF-8 round trip.
++    public func simpleQueryBytes(_ sql: [UInt8]) -> EventLoopFuture<[MySQLRow]> {
++        nonisolated(unsafe) var rows = [MySQLRow]()
++        let query = MySQLSimpleQueryCommand(sqlBytes: sql, onRow: { rows.append($0) })
++        return self.send(query, logger: self.logger).map { rows }
++    }
++
+@@ -17,2 +24,2 @@
+-private final class MySQLSimpleQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
+-    let sql: String
++final class MySQLSimpleQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
++    let sqlBytes: [UInt8]
+@@ -31 +38,5 @@
+-    init(sql: String, onRow: @escaping (MySQLRow) -> ()) {
++    convenience init(sql: String, onRow: @escaping (MySQLRow) -> ()) {
++        self.init(sqlBytes: Array(sql.utf8), onRow: onRow)
++    }
++
++    init(sqlBytes: [UInt8], onRow: @escaping (MySQLRow) -> ()) {
+@@ -33 +44 @@
+-        self.sql = sql
++        self.sqlBytes = sqlBytes
+@@ -91 +102 @@
+-            .encode(MySQLProtocol.COM_QUERY(query: self.sql), capabilities: capabilities)
++            .encode(MySQLRawQuery(bytes: self.sqlBytes), capabilities: capabilities)
+@@ -94,0 +106,8 @@
++
++private struct MySQLRawQuery: MySQLPacketEncodable {
++    let bytes: [UInt8]
++    func encode(to packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws {
++        packet.payload.writeInteger(UInt8(0x03))
++        packet.payload.writeBytes(bytes)
++    }
 +}
 --- a/Sources/MySQLNIO/Packet/MySQLPacket.swift
 +++ b/Sources/MySQLNIO/Packet/MySQLPacket.swift

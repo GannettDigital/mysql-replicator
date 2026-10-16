@@ -7,7 +7,7 @@ struct TableRename: Equatable {
 
     /// MySQL applies pairs left-to-right. Resolve names against the evolving
     /// namespace, then journal its initial/final schemas (including swaps).
-    static func transitions(_ renames: [TableRename],schemas: [String:ApplyTable]) throws -> [SchemaTransition] {
+    static func transitions(_ renames: [TableRename],schemas: [SQLNameKey:ApplyTable]) throws -> [SchemaTransition] {
         var result = schemas
         for rename in renames {
             guard let table = result.removeValue(forKey:rename.from.identity) else { throw ApplyError("DDL RENAME source is absent: \(rename.from.database).\(rename.from.table)") }
@@ -27,7 +27,7 @@ extension ApplyTable {
 
 extension TargetSession {
     func prepareRenames(_ renames: [TableRename],source: QueryControl,context: QuerySessionContext) throws -> PreparedDDL {
-        var initial: [String:ApplyTable] = [:], names: [String:TableName] = [:]
+        var initial: [SQLNameKey:ApplyTable] = [:], names: [SQLNameKey:TableName] = [:]
         for rename in renames { names[rename.from.identity] = rename.from; names[rename.to.identity] = rename.to }
         for name in names.values {
             if try tableExists(name) {
@@ -39,12 +39,13 @@ extension TargetSession {
         let changes = try TableRename.transitions(renames,schemas:initial)
         let finalNames = changes.compactMap{$0.after?.identity}
         try require(Set(discovered.keys).subtracting(names.keys).union(finalNames).count <= maximumCachedTables,"discovered schema limit reached")
+        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes))
         try setDDLSession(context,source:source)
-        return try prepareForeignKeyTransitions(PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes))
+        return plan
     }
     func applyRenames(_ plan: PreparedDDL) throws {
         // One server-side statement, never split into separately visible renames.
-        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
+        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
         try resetDMLSession()
         for change in plan.additional {
             if let after = change.after {

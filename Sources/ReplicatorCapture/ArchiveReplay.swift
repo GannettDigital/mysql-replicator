@@ -19,7 +19,7 @@ public final class ArchiveReplay {
     private let directory: URL
     private let maximumEventBytes: UInt32
     public init(configuration: ArchiveConfiguration, source: CaptureConfiguration, contract: SourceContract,
-                filtered: Bool = false, progress: @escaping (Progress) -> Void = { _ in }) throws {
+                filtered _: Bool = false, progress: @escaping (Progress) -> Void = { _ in }) throws {
         self.progress=progress
         try configuration.validate()
         _ = try source.validate(connection:false)
@@ -53,7 +53,7 @@ public final class ArchiveReplay {
             // Raw files identify their format version, not server UUID/settings.
             // These settings describe the operator-selected qualified contract.
             manifest=ArchiveManifest(version:2,sourceUUID:source.sourceUUID,sourceVersion:version ?? "",
-                settings:["gtid_mode":"ON","enforce_gtid_consistency":"ON","binlog_format":"ROW","binlog_row_image":"FULL","binlog_checksum":"CRC32","lower_case_table_names":configuration.lowerCaseTableNames.map(String.init) ?? "unknown"],
+                settings:["gtid_mode":"ON","enforce_gtid_consistency":"ON","binlog_format":"ROW","binlog_row_image":"FULL","binlog_checksum":"CRC32","lower_case_table_names":String(configuration.lowerCaseTableNames ?? source.tableNameCaseSetting)],
                 files:entries,capturedAt:"unknown",provenance:"external raw files; identity and source contract supplied by operator")
         }
         guard (1...2).contains(manifest.version), manifest.sourceUUID.lowercased() == source.sourceUUID.lowercased(),
@@ -61,7 +61,7 @@ public final class ArchiveReplay {
               manifest.settings["gtid_mode"] == "ON", manifest.settings["binlog_format"] == "ROW",
               manifest.settings["binlog_row_image"] == "FULL", manifest.settings["binlog_checksum"] == "CRC32",
               manifest.settings["enforce_gtid_consistency"] == "ON",
-              !filtered || manifest.settings["lower_case_table_names"] == "0",
+              manifest.settings["lower_case_table_names"] == String(source.tableNameCaseSetting),
               !manifest.files.isEmpty, manifest.files.count <= 10000 else { throw CaptureError("archive identity/settings differ from replication profile") }
         var size:UInt64=0, names=Set<String>()
         for file in manifest.files {

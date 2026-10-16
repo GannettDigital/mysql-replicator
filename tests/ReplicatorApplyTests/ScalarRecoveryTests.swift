@@ -92,7 +92,10 @@ extension ResumeTests {
         try scalarRecovery(types:["int","json"],codes:[3,245],metadata:[4],payload:payload,
             expected:[.signed(1),.json(expected)])
     }
-    private func scalarRecovery(types:[String],codes:[UInt8],metadata:[UInt8],payload:Data,expected:[DecodedValue],collations:[String?]=[nil,nil],characterSets:[String?]=[nil,nil],choiceLabels:[[Data]?]=[nil,nil],binaryDefaults:[Data?]=[nil,nil]) throws {
+    func testUnicodeNamesSurviveRelayRecoveryAndSchemaReload() throws {
+        try scalarRecovery(types:["int","int"],codes:[3,3],metadata:[],payload:Data([1,0,0,0,2,0,0,0]),expected:[.signed(1),.signed(2)],database:"库",tableName:"e\u{0301}",columnNames:["é","e\u{0301}"])
+    }
+    private func scalarRecovery(types:[String],codes:[UInt8],metadata:[UInt8],payload:Data,expected:[DecodedValue],collations:[String?]=[nil,nil],characterSets:[String?]=[nil,nil],choiceLabels:[[Data]?]=[nil,nil],binaryDefaults:[Data?]=[nil,nil],database:String="poc",tableName:String="scalars",columnNames:[String]=["id","v"]) throws {
 
         let path=try directory(), configuration=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue)
         let input=try Data(contentsOf:helper.root.appendingPathComponent("tests/ReplicatorLabTests/Fixtures/source-positive.binlog"))
@@ -111,12 +114,12 @@ extension ResumeTests {
             result.append(le(crc ^ 0xffffffff)); return result
         }
         let original=try helper.groups()[0]
-        let table=ApplyTable(database:"poc",table:"scalars",columns:[ApplyColumn(name:"id",type:types[0],nullable:false,collation:collations[0],characterSet:characterSets[0],choiceLabels:choiceLabels[0],binaryDefaultBytes:binaryDefaults[0]),ApplyColumn(name:"v",type:types[1],nullable:true,collation:collations[1],characterSet:characterSets[1],choiceLabels:choiceLabels[1],binaryDefaultBytes:binaryDefaults[1])],primaryKey:"id")
+        let table=ApplyTable(database:database,table:tableName,columns:[ApplyColumn(name:columnNames[0],type:types[0],nullable:false,collation:collations[0],characterSet:characterSets[0],choiceLabels:choiceLabels[0],binaryDefaultBytes:binaryDefaults[0]),ApplyColumn(name:columnNames[1],type:types[1],nullable:true,collation:collations[1],characterSet:characterSets[1],choiceLabels:choiceLabels[1],binaryDefaultBytes:binaryDefaults[1])],primaryKey:columnNames[0])
         let begin=original.events.first { $0.eventType == 2 }!
         let gtid=original.events.first { $0.eventType == 33 }!
         let xid=original.events.last!
         func body(_ event:DecodedEvent) -> Data { Data(Data(base64Encoded:event.rawBase64!)!.dropFirst(19).dropLast(4)) }
-        var map=Data([123,0,0,0,0,0,0,0,3])+Data("poc".utf8)+Data([0,7])+Data("scalars".utf8)
+        var map=Data([123,0,0,0,0,0,0,0,UInt8(database.utf8.count)])+Data(database.utf8)+Data([0,UInt8(tableName.utf8.count)])+Data(tableName.utf8)
         map.append(contentsOf:[0,2]); map.append(contentsOf:codes); map.append(UInt8(metadata.count))
         map.append(contentsOf:metadata); map.append(2)
         if codes.contains(4) { map.append(contentsOf:[1,1,0]) } // Signedness for both floating-point columns.
@@ -129,7 +132,7 @@ extension ResumeTests {
             if type == 19 {
                 let probe=try BinlogDecoder(); _ = try probe.decode(Data(input[4..<4+fdeSize]),at:4)
                 let identity=try probe.decode(raw,at:UInt64(4+fdeSize))
-                history=TableSchema(offset:offset,eventSHA256:identity.sha256,database:"poc",table:"scalars",tableID:"123",columns:table.columns.map(\.interpretation))
+                history=TableSchema(offset:offset,eventSHA256:identity.sha256,database:database,table:tableName,tableID:"123",columns:table.columns.map(\.interpretation))
             }
             events.append(try decoder.decode(raw,at:offset,schema:history,includeRaw:true)); offset += UInt64(raw.count)
         }

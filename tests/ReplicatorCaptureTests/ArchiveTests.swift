@@ -18,6 +18,17 @@ final class ArchiveTests: XCTestCase {
         let archive=try JSONDecoder().decode(ArchiveConfiguration.self,from:JSONSerialization.data(withJSONObject:["directory":dir.path]))
         try body(dir,source,archive)
     }
+    func testArchiveCaseSettingMustMatchConfiguredSource() throws {
+        try fixture { dir,source,config in
+            var folded=source;folded.lowerCaseTableNames=1
+            let archive=try ArchiveReplay(configuration:config,source:folded,contract:.mysql84)
+            XCTAssertEqual(archive.manifest.settings["lower_case_table_names"],"1")
+            try ArchiveIO.write(archive.manifest,to:dir.appendingPathComponent("manifest.json"))
+            XCTAssertNoThrow(try ArchiveReplay(configuration:config,source:folded,contract:.mysql84))
+            XCTAssertThrowsError(try ArchiveReplay(configuration:config,source:source,contract:.mysql84))
+            XCTAssertEqual(folded.resuming(file:nil,position:nil,executedGTIDs:source.start.executedGTIDs).tableNameCaseSetting,1)
+        }
+    }
     func testExternalRawDirectoryReplaysOnlyMissingGTIDsWithoutSourceAccess() throws {
         try fixture { _,source,config in
             let archive=try ArchiveReplay(configuration:config,source:source,contract:.mysql84)

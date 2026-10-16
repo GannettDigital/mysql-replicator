@@ -52,7 +52,7 @@ public enum ApplyRun {
         if archive != nil { try require(configuration.source.mode == "gtid","offline replay requires GTID positioning") }
         let profile = configuration.replicationProfile
         let legacyMetadata = profile.sourceContract.requiresHistoricalSchema
-        let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [])
+        let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [],lowerCaseTableNames:configuration.source.tableNameCaseSetting)
         let timings = StageTimings()
         let producerTimings = StageTimings()
         let targetTimings = StageTimings()
@@ -115,9 +115,6 @@ public enum ApplyRun {
             let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
             defer { try? target.unlock() }
             try target.preflight()
-            if !filter.patterns.isEmpty {
-                try require(try target.query("SELECT @@lower_case_table_names AS n").0.first?.column("n")?.string == "0", "wildcard filtering requires lower_case_table_names=0")
-            }
             try state.bindTargetIdentity(target.targetUUID!)
             for table in state.currentSchemas where !filter.ignores(database: table.database, table: table.table) {
                 try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
@@ -208,7 +205,7 @@ public enum ApplyRun {
                     if case .gtid = decoded.control { consumerPending = true }
                     if decoded.eventType == 19 && !decoded.replicationFiltered {
                         guard let database = decoded.database, let name = decoded.table else { throw ApplyError("missing table-map identity") }
-                        let identity = database + "\0" + name
+                        let identity = SQLNameKey.table(database,name)
                         let table: ApplyTable
                         if planningCache.tables[identity] != nil {
                             table = try state.profile("target.discover") { try planningCache.validate(decoded) }
@@ -235,16 +232,17 @@ public enum ApplyRun {
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
                     guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
-                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile) {
+                    let ddlTokens = try target.ddlTokens(query)
+                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile,tokens:ddlTokens) {
                         try state.complete(group,rowCount:0,filtered:true,skippedDDL:skipped)
                         try progress(); return
                     }
-                    if try filter.ignores(query) {
+                    if try filter.ignores(query,tokens:ddlTokens) {
                         try state.complete(group,rowCount:0,filtered:true)
                         try progress(); return
                     }
-                    let statement=try DDLStatement.from(group,profile:profile)
-                    var plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp))
+                    let statement=try DDLStatement.from(group,profile:profile,tokens:ddlTokens,lowerCaseTableNames:configuration.source.tableNameCaseSetting)
+                    var plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp),tokens:ddlTokens)
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     hasDDLIntent = true
                     try require(!cancellation.isCancelled,"apply cancelled")
@@ -331,7 +329,7 @@ public enum ApplyRun {
                         case .schema(let request):
                             do {
                                 guard let db=request.event.database,let name=request.event.table else { throw ApplyError("missing schema identity") }
-                                let identity = db + "\0" + name
+                                let identity = SQLNameKey.table(db,name)
                                 if planningCache.tables[identity] == nil {
                                     try barrier("schema")
                                     let table = try target.discover(request.event)

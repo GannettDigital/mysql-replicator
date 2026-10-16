@@ -5,7 +5,9 @@ import MySQLNIO
 struct TableName: Equatable {
     let database: String
     let table: String
-    var identity: String {database + "\0" + table}
+    let identity: SQLNameKey
+    init(database:String,table:String) { self.database=database;self.table=table;identity = .table(database,table) }
+    static func == (a:Self,b:Self) -> Bool { a.identity == b.identity }
     var sql: String {get throws {try quoted(database)+"."+quoted(table)}}
 }
 enum ColumnPlacement: Equatable {case last, first, after(String)}
@@ -48,17 +50,18 @@ enum DDLStatement: Equatable {
         case .modify(let t,_,_),.indexes(let t,_),.add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
     }
-    static func parse(_ query: QueryControl, profile: ReplicationProfile = .mysql84To57MyISAM) throws -> DDLStatement {
+    static func parse(_ query: QueryControl, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0) throws -> DDLStatement {
         try require(query.errorCode == 0,"DDL source query reported an error")
         try DDLPolicy.rejectProhibited(query)
-        var parser=try DDLParser(query.sql,database:query.database,sqlMode:query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode)
+        var parser=try DDLParser(query:query,tokens:tokens)
         parser.engine = profile.targetContract.engine
+        parser.lowerCaseTableNames=lowerCaseTableNames
         return try parser.parse()
     }
-    static func from(_ group: CompleteTransaction, profile: ReplicationProfile = .mysql84To57MyISAM) throws -> DDLStatement {
+    static func from(_ group: CompleteTransaction, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0) throws -> DDLStatement {
         try require(group.outcome == .statement && group.gtid != nil && !group.anonymous && group.events.count == 2,"DDL requires a standalone named-GTID query group")
         guard case .gtid = group.events[0].control,case .query(let query)=group.events[1].control else {throw ApplyError("invalid DDL event group")}
-        return try parse(query,profile:profile)
+        return try parse(query,profile:profile,tokens:tokens,lowerCaseTableNames:lowerCaseTableNames)
     }
 }
 struct PreparedDDL {
@@ -66,6 +69,7 @@ struct PreparedDDL {
     let before: ApplyTable?
     var after: ApplyTable?
     var sql: String
+    var rawSQL: Data? = nil
     var database:PreparedDatabaseDDL? = nil
     var additional: [SchemaTransition] = []
     var afterAlternatives: [ApplyTable]? = nil
@@ -120,6 +124,7 @@ extension TargetSession {
     }
     func resolveColumn(_ column:ApplyColumn,parent:DDLEncoding,context:QuerySessionContext,database:String) throws -> ApplyColumn {
         var result=column
+        result.inputChoiceBytes=nil;result.inputDefaultBytes=nil
         if try DMLColumnType(column.type).isText {
             let encoding=try resolveEncoding(charset:column.characterSet,collation:column.collation,parent:parent,context:context)
             if try encoding.characterSet == "binary" && !DMLColumnType(column.type).isChoice {
@@ -127,13 +132,17 @@ extension TargetSession {
                 guard let base=["char":"binary","varchar":"varbinary","tinytext":"tinyblob","text":"blob","mediumtext":"mediumblob","longtext":"longblob"][type.base] else { throw ApplyError("unsupported binary charset column") }
                 let definition=base+(type.arguments.isEmpty ? "" : "("+type.arguments.map(String.init).joined(separator:",")+")")
                 var binary=ApplyColumn(name:column.name,type:definition,nullable:column.nullable,collation:nil,defaultValue:column.defaultValue,extra:column.extra,generationExpression:column.generationExpression)
-                binary.binaryDefaultBytes=column.binaryDefaultBytes
+                binary.binaryDefaultBytes=column.binaryDefaultBytes ?? column.inputDefaultBytes
                 binary.numericDefaultLiteral=column.numericDefaultLiteral
                 return try resolveBinaryDefault(binary,database:database,sqlMode:context.sqlMode)
             }
             result.characterSet=encoding.characterSet
             result.collation = encoding.collation
             if try DMLColumnType(result).isChoice {
+                if encoding.characterSet == "binary" {
+                    if let labels=column.inputChoiceBytes { result.type=(try DMLColumnType(result.type).base)+"("+labels.map(SQLByteLiteral.sql).joined(separator:",")+")" }
+                    if let bytes=column.inputDefaultBytes { result.choiceDefaultBytes=bytes;result.defaultValue=nil }
+                }
                 result = try resolveChoiceColumn(result,database:database,sqlMode:context.sqlMode)
             } else if try ["char","varchar"].contains(DMLColumnType(result).base) {
                 result = try resolveTextDefault(result,database:database,sqlMode:context.sqlMode)
@@ -143,15 +152,22 @@ extension TargetSession {
         if result.numericDefaultLiteral != nil { result = try resolveDecimalDefault(result,database:database,sqlMode:context.sqlMode) }
         try result.validate();return result
     }
-    func prepareDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64? = nil) throws -> PreparedDDL {
+    func prepareDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64? = nil, tokens:[DDLToken]? = nil) throws -> PreparedDDL {
         let policy = config.compatibilityPolicy
-        if policy.collations.isEmpty { return try prepareTargetDDL(statement,query:source,timestamp:timestamp) }
+        if policy.collations.isEmpty {
+            var plan=try prepareTargetDDL(statement,query:source,timestamp:timestamp)
+            plan.rawSQL=source.sql
+            return plan
+        }
         let context = try QuerySessionContext(query:source)
-        var parser = try DDLParser(source.sql,database:source.database,sqlMode:context.sqlMode)
+        var parser = try DDLParser(query:source,tokens:tokens)
+        parser.lowerCaseTableNames=config.source.tableNameCaseSetting
+        parser.engine=config.replicationProfile.targetContract.engine
         parser.compatibility = policy; parser.defaultUTF8MB4Collation = context.defaultUTF8MB4Collation
         let translated = try parser.parse()
         var plan = try prepareTargetDDL(translated,query:source,timestamp:timestamp)
-        plan.sql = parser.translatedSQL(source.sql)
+        plan.rawSQL = parser.translatedBytes(source.sql)
+        plan.sql = String(decoding:plan.rawSQL!,as:UTF8.self)
         return plan
     }
     private func prepareTargetDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64?) throws -> PreparedDDL {
@@ -234,12 +250,12 @@ extension TargetSession {
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
             let column=try resolveColumn(column,parent:encoding,context:context,database:name.database)
             var columns=before!.columns
-            try require(!columns.contains(where:{$0.name==column.name}),"DDL ADD column already exists")
+            try require(!columns.contains(where:{SQLIdentifier.equal($0.name,column.name)}),"DDL ADD column already exists")
             switch placement {
             case .last: columns.append(column)
             case .first: columns.insert(column,at:0)
             case .after(let key):
-                guard let index=columns.firstIndex(where:{$0.name==key}) else {throw ApplyError("DDL AFTER column absent")}
+                guard let index=columns.firstIndex(where:{SQLIdentifier.equal($0.name,key)}) else {throw ApplyError("DDL AFTER column absent")}
                 columns.insert(column,at:index+1)
             }
             after=before!.replacing(columns:columns)
@@ -261,8 +277,9 @@ extension TargetSession {
         try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= maximumCachedTables,"discovered schema limit reached")
         // The outer preparation layer applies only authorized encoding edits.
         let sql=String(decoding:source.sql,as:UTF8.self)
+        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional))
         try setDDLSession(context,source:source)
-        return try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional))
+        return plan
     }
     func prepareDatabaseDDL(_ statement:DDLStatement,definition:CreateDatabase,source:QueryControl,context:QuerySessionContext) throws -> PreparedDDL {
         let exists=try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:definition.name)]) != "0"
@@ -295,26 +312,26 @@ extension TargetSession {
         if let database=plan.database {
             guard let previous=try scalar("SELECT @@SESSION.collation_server AS v") else {throw ApplyError("missing target server collation")}
             if let collation=database.serverCollation {_ = try query("SET SESSION collation_server=?",[.init(string:collation)])}
-            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
+            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
             if database.serverCollation != nil {_ = try query("SET SESSION collation_server=?",[.init(string:previous)])}
             try resetDMLSession()
             if let after=database.after { try require(try databaseEncoding(database.name)==after,"DDL target database defaults mismatch") }
             else {
                 try require(try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:database.name)]) == "0","DROP DATABASE left target database present")
-                discovered=discovered.filter{$0.value.database != database.name}
+                discovered=discovered.filter{!SQLTextBytes.equal($0.value.database,database.name)}
             }
             try invalidateStatements()
             return
         }
         if case .object(let object)=plan.statement {
-            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
+            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
             try resetDMLSession()
             try require(try objectExists(object) == (object.operation != .drop),"DDL target object existence mismatch")
             return
         }
         if case .renameMany = plan.statement { try applyRenames(plan); return }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
-        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true)
+        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
         try resetDMLSession()
         if let after=plan.after {
             let actual = try readSchema(database:after.database,name:after.table)

@@ -42,7 +42,7 @@ extension DDLParser {
         while isNext(",") && index+1 < tokens.count && !["ADD","DROP","MODIFY","CHANGE","ALTER","ALGORITHM","LOCK"].contains(tokens[index+1].keyword) {
             index += 1; result.append(try identifier())
         }
-        try require(Set(result).count == result.count,"duplicate partition names"); return result
+        try require(Set(result.map(SQLIdentifier.key)).count == result.count,"duplicate partition names"); return result
     }
 }
 
@@ -76,7 +76,7 @@ extension PartitionChange {
             try require(!partitions.isEmpty,"table is not partitioned")
             if names.isEmpty { try require(allowAll,"partition list cannot be ALL"); return Array(partitions.indices) }
             return try names.map { name in
-                guard let index = partitions.firstIndex(where:{$0.name == name}) else { throw ApplyError("partition is absent: "+name) }; return index
+                guard let index = partitions.firstIndex(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("partition is absent: "+name) }; return index
             }
         }
         func resolve(_ new: [ApplyPartition]) throws -> [ApplyPartition] {

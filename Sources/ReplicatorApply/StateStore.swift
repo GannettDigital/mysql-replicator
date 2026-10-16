@@ -52,7 +52,7 @@ final class StateStore {
     private let skipPolicy: SkipErrorPolicy
     private var skipJournalReady = false
     private(set) var skippedTransactionsByCode: [String:Int] = [:]
-    private var schemas: [String:(Int64,ApplyTable)] = [:]
+    private var schemas: [SQLNameKey:(Int64,ApplyTable)] = [:]
     private var inTransaction = false
     private var maintenance = false
     private var ready = false
@@ -71,6 +71,7 @@ final class StateStore {
     let maximumBytes: UInt64
     let applierProfiling: Bool
     let timings: StageTimings
+    let lowerCaseTableNames: Int
     let policy: StoragePolicy
     let compatibility: CompatibilityPolicy
     let replicationProfile: ReplicationProfile
@@ -84,6 +85,7 @@ final class StateStore {
         applierProfiling = c.applierProfiling ?? false
         directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
+        lowerCaseTableNames=c.source.tableNameCaseSetting
         policy = c.policy; try policy.validate()
         compatibility = c.compatibilityPolicy; try compatibility.validate()
         replicationProfile = c.replicationProfile
@@ -126,8 +128,9 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=9")
+            try execute("PRAGMA user_version=10")
             try createProfileJournal()
+            try createNameCaseJournal()
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
             try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
@@ -164,7 +167,10 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5,6,7,8,9].contains(version),"unsupported saved state version")
+        try require([4,5,6,7,8,9,10].contains(version),"unsupported saved state version")
+        if version >= 10 {
+            try require(try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],"table-name case setting differs from saved state")
+        } else { try require(lowerCaseTableNames == 0,"legacy state requires source.lowerCaseTableNames=0") }
         if version >= 9 {
             try require(try query("SELECT profile FROM replication_profile WHERE id=1") == [[replicationProfile.rawValue]],"replication profile differs from saved state")
         } else {
@@ -278,7 +284,7 @@ final class StateStore {
             guard let id=Int64(row[0] ?? ""), let json=row[2] else { throw ApplyError("invalid saved schema") }
             let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
             let identity=String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self)
-            try require(row[1] == identity && schemas[table.identity] == nil && schemas.count < maximumCachedTables,"invalid saved schema identity/cache")
+            try require(SQLTextBytes.equal(row[1],identity) && schemas[table.identity] == nil && schemas.count < maximumCachedTables,"invalid saved schema identity/cache")
             schemas[table.identity]=(id,table)
         }
         // Resume from the applied boundary, never from received-but-unapplied bytes.
@@ -312,6 +318,7 @@ final class StateStore {
         // Version 7 adds skipped-DDL history, pruned with its completed groups.
         // Version 8 pins collation policy and adds original SQL/schema audit.
         // Version 9 pins the source/target replication profile.
+        // Version 10 pins lower_case_table_names; legacy state uses mode 0.
         // Older runtimes reject newer state rather than orphan audit records.
         if version < 9 {
             try atomic {
@@ -321,7 +328,15 @@ final class StateStore {
                 try execute("PRAGMA user_version=9")
             }
         }
+        if version < 10 {
+            try atomic { try createNameCaseJournal(); try execute("PRAGMA user_version=10") }
+        }
         ready=true
+    }
+    private func createNameCaseJournal() throws {
+        try execute("CREATE TABLE IF NOT EXISTS name_case(id INTEGER PRIMARY KEY CHECK(id=1),lower_case_table_names INTEGER NOT NULL CHECK(lower_case_table_names IN (0,1)))")
+        try execute("INSERT OR IGNORE INTO name_case VALUES(1,?)",[String(lowerCaseTableNames)])
+        try require(try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],"table-name case setting differs from saved state")
     }
     private func createProfileJournal() throws {
         try execute("CREATE TABLE replication_profile(id INTEGER PRIMARY KEY CHECK(id=1),profile TEXT NOT NULL)")
@@ -527,7 +542,9 @@ final class StateStore {
         let beforeID=plan.statement.name.flatMap{schemas[$0.identity]?.0}
         let databaseJSON=try plan.database.map{String(decoding:try JSONEncoder().encode($0),as:UTF8.self)}
         guard case .query(let source) = event.control else { throw ApplyError("DDL intent lacks source query") }
-        let contextJSON = try DDLQueryContextDiagnostic(query:source).map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
+        var diagnostic = DDLQueryContextDiagnostic(query:source)
+        diagnostic?.targetSQLBase64 = plan.rawSQL?.base64EncodedString()
+        let contextJSON = try diagnostic.map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
         let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,afterAlternatives:plan.afterAlternatives)] : [])
         let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)
         let transitionsJSON = String(decoding:try JSONEncoder().encode(transitions),as:UTF8.self)
@@ -730,7 +747,7 @@ final class StateStore {
         if let skippedDDL {
             try require(filtered && group.outcome == .statement && group.events.count == 2,"invalid skipped DDL completion")
             guard case .query(let query) = group.events[1].control else { throw ApplyError("missing skipped DDL query") }
-            let expected = try DDLPolicy().skippedQuery(query,profile:replicationProfile)
+            let expected = try DDLPolicy().skippedQuery(query,profile:replicationProfile,tokens:skippedDDL.tokens)
             try require(expected?.sql == skippedDDL.sql && expected?.name == skippedDDL.name && expected?.reason == skippedDDL.reason,"skipped DDL differs from source query")
         }
         if filtered {
@@ -744,7 +761,7 @@ final class StateStore {
             try require(group.outcome == .statement && (try number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'")) == 1,"DDL completion without a pending intent")
         }
         var newSchemaID: Int64?
-        var additionalIDs: [String:Int64] = [:]
+        var additionalIDs: [SQLNameKey:Int64] = [:]
         var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
         let time=timestamp()
         try atomic {

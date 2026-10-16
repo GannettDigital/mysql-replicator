@@ -46,7 +46,7 @@ final class StreamProcessor {
         let wire: [WireColumn]
         let columns: [ColumnInterpretation]
     }
-    private var resolvedSchemas: [String:ResolvedSchema] = [:]
+    private var resolvedSchemas: [Data:ResolvedSchema] = [:]
     let resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?
     let emitEvent: (LiveRecord) throws -> Void
     let emitTransaction: (CompleteTransaction) throws -> Void
@@ -205,7 +205,7 @@ final class StreamProcessor {
                     }
                 }
             } else {
-                guard let table = (config.tables ?? []).first(where:{$0.database==db && $0.table==name}) else {throw CaptureError("table map outside supplied historical schema")}
+                guard let table = (config.tables ?? []).first(where:{$0.database.utf8.elementsEqual(db.utf8) && $0.table.utf8.elementsEqual(name.utf8)}) else {throw CaptureError("table map outside supplied historical schema")}
                 columns = table.columns
             }
             schema = TableSchema(offset:decoderOffset,eventSHA256:identity.sha256,database:db,table:name,tableID:id,columns:columns)
@@ -251,7 +251,7 @@ final class StreamProcessor {
         guard let database=event.database,let table=event.table,let wire=event.wireColumns else {
             throw CaptureError("missing historical table-map metadata")
         }
-        let key=database+"\0"+table
+        let key=Data((database+"\0"+table).utf8)
         if let cached=resolvedSchemas[key],cached.wire == wire {
             timings.measure("capture.schema_cache.hit") {}
             return cached.columns
