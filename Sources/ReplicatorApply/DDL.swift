@@ -76,6 +76,7 @@ struct PreparedDDL {
     var compatibilityRules: [String] = []
     var database:PreparedDatabaseDDL? = nil
     var additional: [SchemaTransition] = []
+    var viewTransitions: [ViewTransition] = []
     var afterAlternatives: [ApplyTable]? = nil
     var preservesSchema: Bool {
         if statement.ignoredChecksOnly { return true }
@@ -166,9 +167,12 @@ extension TargetSession {
         let nativeRules=NativeReplicationRules(profile:config.replicationProfile)
         let checkTokens=try tokens ?? ddlTokens(source)
         let hasIgnoredChecks=nativeRules.checkConstraints == .discard && checkTokens.contains { $0.keyword == "CHECK" }
-        if policy.collations.isEmpty && !hasEncodingDefault && !hasIgnoredChecks {
+        let translateRoutine:Bool
+        if case .object(let object)=statement { translateRoutine=object.ifNotExists && nativeRules.translateRoutineIfNotExists }
+        else {translateRoutine=false}
+        if policy.collations.isEmpty && !hasEncodingDefault && !hasIgnoredChecks && !translateRoutine {
             var plan=try prepareTargetDDL(statement,query:source,timestamp:timestamp)
-            plan.rawSQL=source.sql
+            plan.rawSQL=plan.rawSQL ?? source.sql
             return plan
         }
         let context = try QuerySessionContext(query:source)
@@ -186,8 +190,8 @@ extension TargetSession {
             let (final,conversion)=try alterEncoding(before,actions:actions,context:context)
             try parser.translateTableEncodingDefaults(final:final,conversion:conversion)
         }
-        plan.compatibilityRules=parser.ignoredCheckCount > 0 ? [NativeReplicationRules.ignoredChecksRule] : []
-        plan.rawSQL = translated.ignoredChecksOnly ? Data() : parser.translatedBytes(source.sql)
+        plan.compatibilityRules += parser.ignoredCheckCount > 0 ? [NativeReplicationRules.ignoredChecksRule] : []
+        plan.rawSQL = plan.rawSQL ?? (translated.ignoredChecksOnly ? Data() : parser.translatedBytes(source.sql))
         plan.sql = String(decoding:plan.rawSQL!,as:UTF8.self)
         return plan
     }
@@ -207,6 +211,8 @@ extension TargetSession {
             return try prepareDatabaseDDL(statement,definition:definition,source:source,context:context)
         case .dropDatabase(let name,let conditional):
             return try prepareDropDatabase(statement,name:name,conditional:conditional,source:source,context:context)
+        case .rename(let from,let to):
+            return try prepareRenames([TableRename(from:from,to:to)],source:source,context:context)
         case .renameMany(let renames):
             return try prepareRenames(renames,source:source,context:context)
         case .dropMany(let names,let conditional):
@@ -241,7 +247,7 @@ extension TargetSession {
         var after:ApplyTable?
         var additional: [SchemaTransition] = []
         switch statement {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany,.dropMany: throw ApplyError("non-table DDL reached table prediction")
+        case .createDatabase,.alterDatabase,.dropDatabase,.object,.rename,.renameMany,.dropMany: throw ApplyError("non-table DDL reached table prediction")
         case .alter(_,let actions):
             after=try altering(before!,actions:actions,context:context)
             for action in actions {
@@ -290,9 +296,6 @@ extension TargetSession {
             after=try change.applying(to:before!)
         case .dropColumn(_,let column):
             after=try altering(before!,actions:[.drop(column)],context:context)
-        case .rename(_,let destination):
-            try require(!(try tableExists(destination)),"DDL RENAME destination exists")
-            after=before!.renamed(to:destination)
         case .drop,.dropIfPresent: after=nil
         case .truncate: after=before
         }
@@ -349,9 +352,13 @@ extension TargetSession {
             return
         }
         if case .object(let object)=plan.statement {
-            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
+            if !plan.sql.isEmpty {
+                _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
+            }
             try resetDMLSession()
-            try require(try objectExists(object) == (object.operation != .drop),"DDL target object existence mismatch")
+            for name in object.names {
+                try require(try objectExists(object,name:name) == (object.operation != .drop),"DDL target object existence mismatch")
+            }
             return
         }
         switch plan.statement {

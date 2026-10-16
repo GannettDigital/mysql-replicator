@@ -978,3 +978,74 @@ The final affected unit run passed 494 tests. Syntax coverage was 922/928
 lines (99.35%). The support-catalog tests and Periphery passed. Read-only
 SQLite checks confirmed exact bounds in all four saved schemas. The branch
 stays local. Full release qualification remains separate.
+
+## Increment 41: CREATE TABLE SELECT contract
+
+Branch: `beta/6/41-create-select-contract`, based on branch 40.
+
+Check permanent CTAS against the native servers before adding apply logic.
+MySQL 5.7 rejects it under GTID consistency. MySQL 8.4 records atomic CREATE
+and row events in one group. Its START TRANSACTION clause cannot execute on
+5.7 or native MyISAM. Classify this as a target limit for the forward profile.
+Keep the capture rejection and verify that no target write or checkpoint
+advance occurs. A blocked restart also retains the original state.
+
+Add shared temporary CTAS cases for permanent row effects, clean restart and
+offline stop/resume. Both selected cases passed on all four profiles. All 101
+lab unit tests passed. The automatic support bundle retained the expected
+capture failure and unchanged checkpoint. No replication code changed.
+See [native contract, run IDs and limits](CREATE_TABLE_SELECT.md).
+
+This branch stays local. Next, audit views, routines, definers and the remaining
+conditional and temporary-object forms. Full release qualification remains open.
+
+## Increment 42: stored-object DDL
+
+Branch: `beta/6/42-stored-object-ddl`, based on branch 41.
+
+Add ALTER PROCEDURE and ALTER FUNCTION characteristics. Accept parenthesized
+view queries and multi-view DROP. Keep all object names for existence and
+filter checks. Preserve original SQL and session context in the existing DDL
+journal. Reject source error codes before a filter can skip partial DDL.
+
+The new shared workflow passed on all four profiles with one build-input
+digest. It checks definers, routine attributes, view check options, row effects,
+restart and offline replay. The apply/lab unit checks passed after correcting
+the shared CLI path for the support-bundle test. Periphery found no unused code.
+See [stored-object evidence and remaining gaps](STORED_OBJECT_SUPPORT.md).
+
+This branch stays local. Next are routine CREATE IF NOT EXISTS translation and
+view renaming. The broad stored-object catalog group remains incomplete.
+
+## Increment 43: conditional routine creation
+
+Branch: `beta/6/43-conditional-routines`, based on branch 42.
+
+Translate routine CREATE IF NOT EXISTS for 5.7 targets. Remove only the parsed
+header clause when the routine is absent. Record a completed no-op when it
+already exists. Keep the source SQL and compatibility rule in the DDL journal.
+Keep existing bodies and definers. Targets that support the syntax receive it.
+
+All 24 focused unit tests passed. The conditional and stored-object workflows
+passed on the forward profile, including restart and offline replay:
+`20261015T220915Z-34d9798a`. The conditional case requires an 8.4 source.
+This branch stays local. View renaming is next.
+
+## Increment 44: view rename workflows
+
+Branch: `beta/6/44-view-renames`, based on branch 43.
+
+Use one ordered namespace for table and view renames. Support single view
+renames, view swaps, and mixed table/view lists. Preserve definitions, definers
+and creation settings in the existing DDL journal. Keep views outside the
+row-schema cache. Check native cross-database view rejection without a binlog
+change. The target account needs SHOW VIEW for definition reads.
+
+All 463 apply/lab unit tests passed. Periphery passed. The shared view workflow
+checks live apply, restart and offline stop/resume on all four profiles. The
+InnoDB regression also checks foreign-key rename relationships and following
+DML. See [run IDs and scope](STORED_OBJECT_SUPPORT.md#view-rename-verification).
+
+This branch stays local. Full release qualification remains open. The remaining
+stored-object variants, unique-key/keyless identity, FK controls and event
+variants remain in the complete-support plan.

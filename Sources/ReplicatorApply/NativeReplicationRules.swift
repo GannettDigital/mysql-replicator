@@ -9,6 +9,10 @@ struct NativeReplicationRules {
     static let checkConstraintsIntroduced: UInt32 = 80016
     static let undefinedServerVersion: UInt32 = 999999
     static let ignoredChecksRule = "source-before-8.0.16-ignores-checks"
+    static let conditionalRoutineRule = "mysql57-routine-create-if-not-exists"
+    /// Current target profiles are 5.7 and 8.4. Do not infer support for an
+    /// unqualified 8.0 patch version from this rule.
+    var translateRoutineIfNotExists: Bool { targetVersion / 100 == 507 }
     let sourceVersion: UInt32
     let targetVersion: UInt32
 

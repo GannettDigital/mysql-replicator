@@ -40,6 +40,10 @@ enum DDLCompatibilityCases {
         }
     }
     static let cases: [Case] = [
+        storedObjects,
+        viewRenames,
+        conditionalRoutines,
+        temporaryCreateSelect,
         partitionExpressions,
         partitionColumnBounds,
         partitionExchangeUnchecked,

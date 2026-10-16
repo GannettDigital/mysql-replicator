@@ -77,6 +77,56 @@ final class DDLCompatibilityTests: XCTestCase {
         XCTAssertNoThrow(try parse("CREATE OR REPLACE ALGORITHM=MERGE DEFINER='root'@'localhost' SQL SECURITY INVOKER VIEW poc.v AS SELECT id FROM poc.t"))
         XCTAssertThrowsError(try parse("CREATE VIEW poc.v AS SELECT id FROM poc.t; DROP TABLE poc.t"))
     }
+    func testRoutineAlterAndParenthesizedViews() throws {
+        for sql in ["ALTER PROCEDURE poc.p LANGUAGE SQL MODIFIES SQL DATA SQL SECURITY INVOKER COMMENT 'a;b'",
+                    "ALTER FUNCTION poc.f READS SQL DATA SQL SECURITY DEFINER COMMENT 'changed'", "ALTER PROCEDURE poc.p"] {
+            guard case .object(let object)=try parse(sql) else {return XCTFail("not object")}
+            XCTAssertEqual(object.operation,.alter)
+            XCTAssertEqual(object.names.count,1)
+        }
+        for sql in ["CREATE VIEW poc.v AS (SELECT id FROM poc.t)",
+                    "ALTER DEFINER=CURRENT_USER() SQL SECURITY DEFINER VIEW poc.v(id) AS ((SELECT id FROM poc.t)) WITH CASCADED CHECK OPTION"] {
+            guard case .object(let object)=try parse(sql) else {return XCTFail("not view")}
+            XCTAssertEqual(object.kind,.view)
+        }
+        for sql in ["ALTER PROCEDURE poc.p COMMENT 'x'; DROP TABLE poc.t",
+                    "ALTER FUNCTION poc.f NO SQL; SELECT 1", "CREATE VIEW poc.v AS (SELECT 1); DROP TABLE poc.t"] {
+            XCTAssertThrowsError(try parse(sql))
+        }
+    }
+    func testConditionalRoutineTranslationChangesOnlyHeader() throws {
+        for kind in ["PROCEDURE","FUNCTION"] {
+            let tail=kind == "FUNCTION" ? "() RETURNS VARCHAR(30) DETERMINISTIC RETURN 'IF NOT EXISTS'" : "() COMMENT 'IF NOT EXISTS' SELECT 'IF NOT EXISTS'"
+            let sql="CREATE DEFINER='root'@'localhost' \(kind) IF /* header */ NOT EXISTS poc.p"+tail
+            var parser=try DDLParser(Data(sql.utf8),database:"poc")
+            guard case .object(let object)=try parser.parse() else {return XCTFail("not routine")}
+            XCTAssertTrue(object.ifNotExists)
+            XCTAssertEqual(object.name,TableName(database:"poc",table:"p"))
+            XCTAssertEqual(String(decoding:parser.translatedBytes(Data(sql.utf8)),as:UTF8.self),"CREATE DEFINER='root'@'localhost' \(kind)  poc.p"+tail)
+            var native=try DDLParser(Data(sql.utf8),database:"poc")
+            native.nativeRules=NativeReplicationRules(sourceVersion:80400,targetVersion:80400)
+            _ = try native.parse()
+            XCTAssertEqual(native.translatedBytes(Data(sql.utf8)),Data(sql.utf8))
+            XCTAssertTrue(try TableFilter(["poc.%"]).ignores(.init(database:"poc",sql:Data(sql.utf8),errorCode:0,statusVariables:Data())))
+        }
+        XCTAssertTrue(NativeReplicationRules(sourceVersion:80400,targetVersion:50742).translateRoutineIfNotExists)
+        XCTAssertFalse(NativeReplicationRules(sourceVersion:50742,targetVersion:80408).translateRoutineIfNotExists)
+    }
+    func testMultiViewDropIncludesEveryFilterTarget() throws {
+        let sql="DROP VIEW IF EXISTS poc.v, other.v2, poc.`a,b` CASCADE"
+        guard case .object(let object)=try parse(sql) else {return XCTFail("not view DROP")}
+        XCTAssertEqual(object.operation,.drop)
+        XCTAssertTrue(object.ifExists)
+        XCTAssertEqual(object.names,[.init(database:"poc",table:"v"),.init(database:"other",table:"v2"),.init(database:"poc",table:"a,b")])
+        let query=QueryControl(database:"poc",sql:Data(sql.utf8),errorCode:0,statusVariables:Data())
+        XCTAssertFalse(try TableFilter([]).ignores(query))
+        XCTAssertTrue(try TableFilter(["poc.%","other.%"]).ignores(query))
+        XCTAssertThrowsError(try TableFilter(["poc.%"]).ignores(query))
+        XCTAssertThrowsError(try parse("DROP PROCEDURE poc.p,poc.p2"))
+        let partial=QueryControl(database:"poc",sql:Data(sql.utf8),errorCode:1051,statusVariables:Data())
+        XCTAssertThrowsError(try DDLStatement.parse(partial))
+        XCTAssertThrowsError(try TableFilter(["poc.%","other.%"]).ignores(partial))
+    }
     func testDefaultCanonicalizationPreservesExactIntegerDecimalAndBinaryValues() throws {
         XCTAssertEqual(try normalizedDefault("0007",type:DMLColumnType("int")),"7")
         XCTAssertEqual(try normalizedDefault("001.20",type:DMLColumnType("decimal(10,2)")),"1.20")

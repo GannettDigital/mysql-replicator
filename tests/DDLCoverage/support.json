@@ -951,7 +951,7 @@
       "family": "ddl",
       "classification": "native_restriction",
       "eligibility": "excluded",
-      "implementation": "missing",
+      "implementation": "not_applicable",
       "profiles": [
         "mysql57-to-mysql84-innodb",
         "mysql57-to-mysql57-myisam",
@@ -975,9 +975,11 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "create-select-contract"
+      ],
       "code_references": [
-        "Sources/ReplicatorApply/DDLParser.swift"
+        "Sources/ReplicatorLabCore/CreateSelectCases.swift"
       ],
       "native_references": [
         {
@@ -991,9 +993,9 @@
       "id": "ddl.ctas84",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "classification": "target_limit",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
       "profiles": [
         "mysql84-to-mysql57-myisam"
       ],
@@ -1004,10 +1006,10 @@
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "8.4 permits InnoDB atomic CREATE TABLE SELECT under GTID consistency.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "CREATE TABLE SELECT is rejected.",
-      "acceptance": "Inspect atomic-DDL binlog sequence and native MyISAM outcome before implementing eligible forms.",
+      "source_behavior": "8.4 logs BEGIN, a generated CREATE with START TRANSACTION, row events and XID in one GTID for atomic InnoDB CTAS. The SELECT is not replayed. An omitted ENGINE remains omitted in the generated SQL.",
+      "native_behavior": "With default MyISAM, the 8.4 native SQL thread rejects START TRANSACTION with error 3979. The 5.7 parser rejects this clause with error 1064. A 5.7 target cannot preserve atomic DDL.",
+      "current_behavior": "Capture rejects a query inside the row transaction before emitting a complete group. No target writes or checkpoint advance occur. BLOCKED state requires explicit resolution.",
+      "acceptance": "Keep source, native-engine and target-syntax checks. Test no partial apply and no checkpoint advance. Temporary CTAS permanent-row effects are separate positive cases.",
       "assertions": [
         "source_outcome",
         "native_outcome",
@@ -1015,20 +1017,33 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "create-select-contract"
+      ],
       "code_references": [
-        "Sources/ReplicatorApply/DDLParser.swift"
+        "Sources/ReplicatorCodec/TransactionAssembler.swift",
+        "Sources/ReplicatorLabCore/CreateSelectCases.swift"
       ],
       "native_references": [
         {
-          "repository": "mysql57",
-          "path": "sql/binlog.cc",
-          "symbol": "THD::is_ddl_gtid_compatible"
+          "repository": "mysql84",
+          "path": "sql/sql_insert.cc",
+          "symbol": "Query_result_create::binlog_show_create_table"
         },
         {
           "repository": "mysql84",
-          "path": "sql/binlog.cc",
-          "symbol": "THD::is_ddl_gtid_compatible"
+          "path": "sql/sql_show.cc",
+          "symbol": "store_create_info"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_table.cc",
+          "symbol": "ER_NOT_ALLOWED_WITH_START_TRANSACTION"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "create2"
         }
       ]
     },
@@ -1052,9 +1067,9 @@
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Views and routines use a restricted grammar; definer handling has limits.",
+      "source_behavior": "View and routine DDL uses Query events under ROW logging. Calls and view writes produce row events. 8.4 also logs routine CREATE IF NOT EXISTS, including an existing-object no-op.",
+      "native_behavior": "5.7 and 8.4 support routine ALTER characteristics, parenthesized view queries and multi-view DROP. Native CREATE records resolved definers. Target privileges and query syntax still apply.",
+      "current_behavior": "CREATE/DROP routines, ALTER characteristics, view CREATE/REPLACE/ALTER/DROP and multi-view DROP use journaled original SQL. Shared tests check explicit definers, metadata, following rows, restart and replay. Routine IF NOT EXISTS is translated for 5.7, with existing objects recorded as no-ops. Ordered view and mixed table/view renames retain metadata in the DDL journal. Cross-database view moves follow the native rejection. Partial source failures remain a gap.",
       "acceptance": "Check native object metadata, logged session settings, conditional DDL and subsequent row effects.",
       "assertions": [
         "source_outcome",
@@ -1063,11 +1078,40 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
-      "code_references": [
-        "Sources/ReplicatorApply/DDLObjects.swift"
+      "candidate_cases": [
+        "ddl-compat-stored-objects",
+        "ddl-compat-conditional-routines",
+        "ddl-compat-view-renames",
+        "ddl-compat-views",
+        "ddl-compat-routines"
       ],
-      "native_references": []
+      "code_references": [
+        "Sources/ReplicatorApply/DDLObjects.swift",
+        "Sources/ReplicatorApply/TableFilter.swift",
+        "Sources/ReplicatorLabCore/StoredObjectCases.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sp.cc",
+          "symbol": "sp_update_routine"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_view.cc",
+          "symbol": "mysql_create_view"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_view.cc",
+          "symbol": "mysql_drop_view"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sp.cc",
+          "symbol": "sp_binlog_create_routine_stmt"
+        }
+      ]
     },
     {
       "id": "ddl.temporary-events",
@@ -1100,7 +1144,9 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-temporary-create-select"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift"
       ],

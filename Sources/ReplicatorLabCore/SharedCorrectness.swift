@@ -102,6 +102,7 @@ public enum SharedCorrectness {
                     try skipErrors(offline:true)
                     try skipErrors(offline:false)
                     try runtimeControl()
+                    try createSelectContract()
                 }
             } catch {
                 report["result"]="failed"
@@ -399,6 +400,40 @@ public enum SharedCorrectness {
                     }
                     if test.test.id == "ddl-compat-partition-column-bounds" {
                         try replayDDLWorkflow("partition-column-bounds",stopAfter:3,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-temporary-create-select" {
+                        try replayDDLWorkflow("temporary-create-select",stopAfter:3,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-stored-objects" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql=target_sql AND (source_sql LIKE 'ALTER PROCEDURE ddlcompat.p%' OR source_sql LIKE 'ALTER FUNCTION ddlcompat.f%' OR source_sql LIKE 'DROP VIEW IF EXISTS ddlcompat.v,%')") == "3","stored object journal lost the original SQL")
+                        try replayDDLWorkflow("stored-objects",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-view-renames" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_array_length(context_json,'$.viewTransitions')>0") == "4","view rename journal lost metadata")
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('final_view','renamed')") == "0","view entered the row-schema cache")
+                        let rejectedSQL="RENAME TABLE ddlcompat.final_view TO mysql.moved_view"
+                        var rejections:[String:String]=[:]
+                        for role:LabProfile.Role in [.source,.native,.target] {
+                            let before=try f.boundary(role)
+                            let result=try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(role),"mysql","--no-defaults","-uroot","-e",rejectedSQL],checked:false)
+                            let message=String(decoding:result.stderr,as:UTF8.self)
+                            try require(result.status != 0 && message.contains("ERROR 1450"),"cross-database view rename did not return native error 1450")
+                            let after=try f.boundary(role)
+                            try require(before.file == after.file && before.position == after.position && before.gtids == after.gtids,"rejected view rename changed the binlog position")
+                            rejections[f.profile.service(role)]=message
+                        }
+                        try writeJSON(rejections,to:f.output.appendingPathComponent("view-rename-rejections.json"))
+                        try replayDDLWorkflow("view-renames",stopAfter:7,from:begin,to:end)
+                        let metadata="SELECT TABLE_NAME,DEFINER,SECURITY_TYPE,CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA='ddlcompat' ORDER BY TABLE_NAME"
+                        try require(f.sql(.target,metadata) == f.sql(.native,metadata),"replay view metadata differs")
+                        try require(f.sql(.target,"SELECT * FROM ddlcompat.final_view ORDER BY id") == "1\t10\n3\t30","replay renamed view rows differ")
+                    }
+                    if test.test.id == "ddl-compat-conditional-routines" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-routine-create-if-not-exists'") == "5","conditional routine rule was not journaled")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql LIKE '%IF NOT EXISTS%' AND target_sql=''") == "2","conditional routine no-op count differs")
+                        try replayDDLWorkflow("conditional-routines",stopAfter:4,from:begin,to:end)
+                        try require(f.sql(.target,"SELECT ddlcompat.f(7)") == "8","replay replaced the existing function")
+                        try require(f.sql(.target,"SELECT ROUTINE_NAME,DEFINER,SECURITY_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='ddlcompat' ORDER BY ROUTINE_NAME") == f.sql(.native,"SELECT ROUTINE_NAME,DEFINER,SECURITY_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='ddlcompat' ORDER BY ROUTINE_NAME"),"replay routine metadata differs")
                     }
                     if test.test.id == "ddl-compat-partition-expressions" {
                         try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_extract(schema_json,'$.partitions[0].description')='739982'") != "0","saved schema lost the evaluated partition bound")
