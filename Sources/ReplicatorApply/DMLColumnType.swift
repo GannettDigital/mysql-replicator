@@ -8,6 +8,11 @@ struct DMLColumnType {
     let unsigned: Bool
     let integerBits: Int?
     let labels: [Data]
+    static let spatialTypes = ["geometry","point","linestring","polygon","multipoint","multilinestring","multipolygon","geometrycollection"]
+    var geometryType: UInt32? { Self.spatialTypes.firstIndex(of:base).map(UInt32.init) }
+    var isSpatial: Bool { geometryType != nil }
+    var floatingWidth: Int? { base == "float" ? 32 : base == "double" ? 64 : nil }
+    var bitWidth: Int? { base == "bit" ? (arguments.first ?? 1) : nil }
     var isChoice: Bool { base == "enum" || base == "set" }
     var isText: Bool { base == "char" || base == "varchar" || base.hasSuffix("text") || isChoice }
     init(_ definition: String) throws {
@@ -32,11 +37,14 @@ struct DMLColumnType {
         } else { try require(parts.count == 1,"invalid column type"); arguments=[] }
         integerBits = ["tinyint":8,"smallint":16,"mediumint":24,"int":32,"bigint":64][base]
         if integerBits != nil { try require(arguments.isEmpty,"integer display width must be normalized"); return }
-        try require(!unsigned || base == "decimal","unsupported unsigned column type")
+        try require(!unsigned || base == "decimal" || floatingWidth != nil,"unsupported unsigned column type")
+        if isSpatial { try require(arguments.isEmpty,"spatial types have no type arguments"); return }
         switch base {
+        case "float","double": try require(arguments.isEmpty,"fixed-scale floating-point columns are unsupported")
+        case "bit": try require(arguments.isEmpty || (arguments.count == 1 && (1...64).contains(arguments[0])),"invalid BIT width")
         case "char","binary": try require(arguments.count == 1 && (0...255).contains(arguments[0]),"unsupported fixed column width")
         case "varchar","varbinary": try require(arguments.count == 1 && (1...16383).contains(arguments[0]),"unsupported declared column type")
-        case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year":
+        case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year","json":
             try require(arguments.isEmpty,"unsupported column type arguments")
         case "decimal": try require(arguments.count == 2 && (1...65).contains(arguments[0]) && (0...min(30,arguments[0])).contains(arguments[1]),"unsupported DECIMAL precision/scale")
         case "time","datetime","timestamp": try require(arguments.isEmpty || (arguments.count == 1 && (0...6).contains(arguments[0])),"unsupported temporal precision")
@@ -70,7 +78,10 @@ struct DMLColumnType {
         throw ApplyError("unterminated ENUM/SET definition")
     }
     var interpretation: ColumnInterpretation {
-        if isChoice { return .unsigned }
+        if isSpatial { return .binary }
+        if base == "json" { return .json }
+        if let width=floatingWidth { return width == 32 ? .float32 : .float64 }
+        if isChoice || bitWidth != nil { return .unsigned }
         if integerBits != nil { return unsigned ? .unsigned : .signed }
         if base == "decimal" { return .decimal }
         if base == "char" || base == "varchar" || base.hasSuffix("text") { return .utf8 }
@@ -78,6 +89,7 @@ struct DMLColumnType {
         return .temporal
     }
     var maximumBytes: Int? {
+        if isSpatial { return 4294967295 }
         switch base {
         case "char","varchar": return arguments[0]*4
         case "binary","varbinary": return arguments[0]
@@ -92,10 +104,17 @@ struct DMLColumnType {
     func matches(_ wire: WireColumn, legacyMetadata: Bool = false) -> Bool {
         let code = wire.type, meta = Array(wire.metadata)
         let matchingInterpretation = wire.interpretation == interpretation || (legacyMetadata && wire.interpretation == nil)
+        if let geometryType {
+            return code == 255 && meta == [4] && matchingInterpretation && (wire.geometryType == nil || wire.geometryType == geometryType)
+        }
         if integerBits != nil {
             return code == ["tinyint":1,"smallint":2,"mediumint":9,"int":3,"bigint":8][base] && matchingInterpretation
         }
         switch base {
+        case "json": return code == 245 && matchingInterpretation && meta == [4]
+        case "float","double":
+            return code == (base == "float" ? 4 : 5) && matchingInterpretation && meta == [UInt8(floatingWidth!/8)] && (wire.isUnsigned == unsigned || (legacyMetadata && wire.isUnsigned == nil))
+        case "bit": return code == 16 && wire.interpretation == .unsigned && meta == [UInt8(bitWidth! % 8),UInt8(bitWidth! / 8)]
         case "enum","set":
             return code == (base == "enum" ? 247 : 248) && wire.interpretation == .unsigned && meta.count == 2 && Int(meta[1]) == (base == "enum" ? (labels.count < 256 ? 1 : 2) : (labels.count+7)/8)
         case "char","binary": return code == 254 && matchingInterpretation && wire.maximumBytes == UInt32(maximumBytes!)
@@ -111,12 +130,18 @@ struct DMLColumnType {
         }
     }
     func validate(_ value: DecodedValue) throws {
+        if let width = bitWidth {
+            guard case .unsigned(let n) = value else { throw ApplyError("BIT requires an unsigned value") }
+            try require(width == 64 || n < (UInt64(1) << width),"BIT value exceeds declared width")
+            return
+        }
         if isChoice {
             guard case .unsigned(let n) = value else { throw ApplyError("ENUM/SET requires an ordinal or bitmask") }
             try require(base == "enum" ? (n > 0 && n <= UInt64(labels.count)) : (labels.count == 64 || n < (UInt64(1) << labels.count)),"ENUM/SET value out of range")
             return
         }
         switch (interpretation,value) {
+        case (.json,.json): break
         case (.signed,.signed(let n)):
             let bits=integerBits!
             if bits < 64 { let half=Int64(1) << (bits-1); try require((-half..<half).contains(n),"signed value out of range") }
@@ -132,6 +157,12 @@ struct DMLColumnType {
             let parts=digits.split(separator:".",omittingEmptySubsequences:false)
             let integral=parts[0].drop(while:{$0 == "0"}).count
             try require(integral <= arguments[0]-arguments[1] && (parts.count == 2 ? parts[1].count : 0) == arguments[1] && (!unsigned || !s.hasPrefix("-")),"decimal value exceeds declared precision/scale")
+        case (.float32,.float32(let bits)):
+            let n=Float(bitPattern:bits)
+            try require(n.isFinite && (!unsigned || n >= 0),"non-finite or negative unsigned FLOAT")
+        case (.float64,.float64(let bits)):
+            let n=Double(bitPattern:bits)
+            try require(n.isFinite && (!unsigned || n >= 0),"non-finite or negative unsigned DOUBLE")
         case (.temporal,.temporal(let s)): _ = try canonicalTemporal(s)
         default: throw ApplyError("missing or incompatible full row value")
         }

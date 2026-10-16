@@ -1,5 +1,9 @@
 # Testing replication by profile
 
+Use `swift run replicator-lab --help` to list commands. Each command and demo
+action has its own `--help`. Help does not start containers. See
+[command help](COMMAND_LINE.md#test-lab-commands).
+
 Shared fixtures enable automatic support bundles when the applier enters
 `BLOCKED`. They use `format: directory` so you can read the files without extraction.
 After a test, look in its `support-bundles/` artifact directory. Start with
@@ -54,10 +58,49 @@ positioning, FULL row images, FULL optional metadata on 8.4, and the metadata av
 also available, as described below; unsupported combinations are not inferred.
 
 The shared runner creates schemas through source-side DDL, executes the same
-DML/index/DDL fixtures, compares exact row bytes and expected metadata, checks
+DML/index/DDL fixtures, compares row values and expected metadata, checks
 catch-up and intent completion, and reopens saved schemas before applying another
 transaction. Engine differences are checked against the profile before schema
 comparison; arbitrary data/DDL differences are not normalized away.
+
+Ordinary columns use exact row bytes. JSON comparisons read every path, type,
+and scalar value from each server. Only DOUBLE display text is normalized to
+its binary value because 5.7 can print `1` where 8.4 prints `1.0`. Integer,
+DECIMAL, string, temporal and binary values remain exact. These checks keep
+JSON null separate from SQL NULL and detect changes in JSON scalar types.
+The large-value case checks blocked-state retention on all profiles. InnoDB
+uses audited retry. MyISAM checks restart refusal, verifies that the target row
+is absent, then uses a separate state at the saved source boundary. This is a
+controlled test of manual reconciliation, not automatic MyISAM recovery.
+
+The full `dml` family includes `large-values` on all four profiles. This case
+checks large TEXT/BLOB values, packet limits, restart, offline replay, and
+recovery inspection. It requires GTID mode. See [large-value limits and tests](LARGE_VALUES.md).
+
+`matrix-bits` and `bootstrap-matrix-bits` use the same BIT workload for replicated
+CREATE and existing-table discovery. They check widths through 64 bits, defaults,
+primary-key changes, ADD/MODIFY, and DML. These new cases await integration
+qualification. See the [BIT increment](../PLAN/BIT_SUPPORT.md).
+
+`matrix-floating` and `bootstrap-matrix-floating` add FLOAT/DOUBLE DML and DDL
+cases for all four profiles. The fixed-scale refusal cases are now
+`reject-float-fixed-scale` and `matrix-reject-float-fixed-scale`. These cases await
+integration qualification. See the [floating-point increment](../PLAN/FLOATING_POINT_SUPPORT.md).
+
+`matrix-json` and `bootstrap-matrix-json` check ordinary JSON values.
+`matrix-typedjson` and `bootstrap-matrix-typedjson` check DECIMAL, temporal and
+binary JSON types. All four profiles select these cases. `matrix-jsonpartial`
+and `bootstrap-matrix-jsonpartial` check partial updates on an 8.4 source.
+They inspect mysqlbinlog output to confirm that the source emitted a change
+record. These cases passed on the applicable profiles. The old `matrix-reject-json-opaque` case
+is removed. See [JSON paths and remaining limits](../PLAN/JSON_SUPPORT.md).
+
+`matrix-spatial` and `bootstrap-matrix-spatial` check all eight spatial types,
+SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key
+changes, added columns, and SPATIAL index changes. They compare stored bytes
+and SRIDs with the native replica. They do not compare WKT output across server
+versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
+The former `reject-geometry` case is now `reject-fulltext`.
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
@@ -264,14 +307,19 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-Ordinary PR CI runs unit tests, Periphery and two explicit correctness selections. The
+Runtime PR CI runs unit tests, Periphery and two explicit correctness selections. The
 profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Both use the default variant and run in parallel after one shared image build.
 Unit tests and Periphery do not wait for this build. Coverage and timing reports
-remain enabled. Ordinary PRs do not build release packages or run the full catalog.
+remain enabled. This scope does not build release packages or run the full catalog.
 Each integration job runs 11 named cases in the `ddl-dml-policy-replay` area.
 See [PR test selection](PR_TEST_SELECTION.md) for case IDs, assertions, timing
 estimates, limits, and commands to reproduce the selection.
+Documentation, listed report tools, and test selectors use Python checks without
+an application build. `Makefile` and `ci.yml` use the two-profile PR checks.
+Dependency/package builds, fixtures, other workflows, and unknown paths select
+full CI. The same changed-file
+rules are available locally through `make test-selection` and `make test-selected`.
 
 Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
 See [release testing](RELEASE_TESTING.md) for the stack workflow and evidence.

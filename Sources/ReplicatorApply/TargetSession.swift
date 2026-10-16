@@ -8,8 +8,12 @@ final class TargetSession {
     let group: MultiThreadedEventLoopGroup
     let connection: MySQLConnection
     let timings: StageTimings
+    let jsonScratchID=String(UUID().uuidString.replacingOccurrences(of:"-",with:"").prefix(12))
+    var jsonScratchTables=Set<String>()
+    var jsonScratchOrdinal:UInt64=0
     var statementTrace = TargetStatementTrace()
     var lockEpoch = TableLockEpoch()
+    var packetByteLimit = MySQLPacket.maximumMessageBytes
     var contract: TargetContract { config.replicationProfile.targetContract }
     let config: ApplyConfiguration
     init(configuration: ApplyConfiguration,password: String, timings: StageTimings = .init()) throws {
@@ -42,6 +46,11 @@ final class TargetSession {
     /// intent uncertain. Recovery is a later, separately qualified increment.
     func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false) throws -> ([MySQLRow],UInt64?) {
         try checkConnection()
+        let requestBytes = max(sql.utf8.count+1, textProtocol ? 0 : MySQLProtocol.COM_STMT_EXECUTE.payloadSize(values:binds))
+        if requestBytes > packetByteLimit {
+            if mutation { statementTrace = TargetStatementTrace(phase:.notIssued,sql:sql) }
+            throw ApplyError("target request is \(requestBytes) bytes; max_allowed_packet permits \(packetByteLimit) bytes; increase the target setting and reconnect")
+        }
         let timer = connection.eventLoop.scheduleTask(in:.seconds(Int64(timeoutSeconds))) { _ = self.connection.close() }
         defer { timer.cancel() }
         var affected: UInt64?
@@ -87,6 +96,7 @@ final class TargetSession {
         let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
         try require(encrypted == config.target.requireTLS,"target session TLS differs from configured transport")
         guard let packet = Int(try scalar("SELECT @@max_allowed_packet AS v") ?? ""), packet >= 4096 else { throw ApplyError("invalid target packet limit") }
+        packetByteLimit = min(packet,MySQLPacket.maximumMessageBytes)
         insertByteLimit = min(config.batchPolicy.maximumInsertBytes,packet/2)
         try nativeExclusion()
         let ownership=try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v")
@@ -168,7 +178,8 @@ final class TargetSession {
         }
     }
     private func normalizeType(_ type: String) -> String {
-        type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
+        if type == "geomcollection" { return "geometrycollection" }
+        return type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
     func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
         let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
@@ -177,7 +188,12 @@ final class TargetSession {
             guard let name=row.column("INDEX_NAME")?.string, let column=row.column("COLUMN_NAME")?.string,
                   let unique=row.column("NON_UNIQUE")?.int, [0,1].contains(unique), let ordinal=row.column("SEQ_IN_INDEX")?.int,
                   let type=row.column("INDEX_TYPE")?.string,let direction=row.column("COLLATION")?.string else {throw ApplyError("incomplete index metadata")}
-            let prefix=row.column("SUB_PART")?.int
+            var prefix=row.column("SUB_PART")?.int
+            if type == "SPATIAL" {
+                // MySQL reports the implicit 32-byte bounding box as SUB_PART.
+                try require(prefix == 32,"unexpected spatial index metadata")
+                prefix=nil
+            }
             if name == "PRIMARY" {
                 primary += 1
                 try require(primary <= primaryKey.count && column == primaryKey[primary-1] && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
@@ -236,6 +252,7 @@ final class TargetSession {
         try require(try scalar("SELECT IS_USED_LOCK('mysql-replicator-writer')=CONNECTION_ID() AS v") == "1","writer ownership lost")
     }
     func prepareDML(_ group: PreparedDMLGroup) throws {
+        try prepareJSONScratch(group)
         // DDL clears plans for every table. An InnoDB group can revisit several
         // already-discovered tables; restore their plans before BEGIN, without
         // LOCK TABLES (which would implicitly commit the transaction).
@@ -277,6 +294,10 @@ final class TargetSession {
     }
     func bind(_ value: DecodedValue) throws -> MySQLData {
         switch value {
+        case .float32, .float64: return try FloatingPointSQL.bind(value)
+        case .json(let document):
+            try require(document.typedValues.isEmpty,"typed JSON requires a SQL expression")
+            return .init(string:document.text)
         case .null: return .null
         case .text(let s), .decimal(let s), .temporal(let s): return .init(string:s)
         case .binary(let data): return .init(type:.blob,buffer:ByteBuffer(bytes:data))
@@ -289,10 +310,10 @@ final class TargetSession {
         case .absent: throw ApplyError("absent full row value")
         }
     }
-    func read(_ t: ApplyTable, key: [DecodedValue]) throws -> [DecodedValue]? {
-        try timings.measure("target.read") { try readRow(t,key:key) }
+    func read(_ t: ApplyTable, key: [DecodedValue], expected: [DecodedValue]) throws -> [DecodedValue]? {
+        try timings.measure("target.read") { try readRow(t,key:key,expected:expected) }
     }
-    private func readRow(_ t: ApplyTable, key: [DecodedValue]) throws -> [DecodedValue]? {
+    private func readRow(_ t: ApplyTable, key: [DecodedValue], expected: [DecodedValue]) throws -> [DecodedValue]? {
         let plan = try sqlPlan(t)
         let rows = try query(plan.select,try key.map(bind)).0
         try require(rows.count <= 1,"primary key did not uniquely identify target row")
@@ -303,6 +324,13 @@ final class TargetSession {
                 guard let value = row.column(c.name) else { throw ApplyError("missing target column") }
                 if value.buffer == nil { return .null }
                 switch type.interpretation {
+                case .json:
+                    guard let text = value.string else { throw ApplyError("invalid target JSON text") }
+                    guard case .json(let document)=expected[index] else { throw ApplyError("target JSON differs from expected SQL NULL") }
+                    try require(try document.matchesTargetText(text),"target JSON before-image differs")
+                    try verifyJSONTypes(document,column:c.name,table:t,key:key)
+                    return .json(document)
+                case .float32,.float64: return try FloatingPointSQL.read(value,type:type)
                 case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
                 case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
                 case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)
@@ -319,29 +347,34 @@ final class TargetSession {
         try timings.measure("target.row") { try applyRow(m) }
     }
     private func applyRow(_ m: Mutation) throws {
+        if !contract.transactional { try resetJSONScratch() }
         let t = m.table, row = m.row, plan = try sqlPlan(t)
         let oldImage = row.before ?? row.after!
         let oldKey = plan.keyIndexes.map { oldImage[$0] }
         // Plain INSERT enforces primary and secondary unique keys atomically.
         // No IGNORE/REPLACE/upsert: duplicate keys still block the pending group.
         if row.operation != "insert" {
-            try require(exactImage(try read(t,key:oldKey),row.before),"target before-image mismatch or missing row")
+            try require(exactImage(try read(t,key:oldKey,expected:row.before!),row.before),"target before-image mismatch or missing row")
         }
         if let before = row.before, let after = row.after {
             let newKey = plan.keyIndexes.map { after[$0] }
-            if !exactImage(oldKey,newKey), let existing = try read(t,key:newKey) {
+            if !exactImage(oldKey,newKey), let existing = try read(t,key:newKey,expected:before) {
                 // A case/padding-equivalent text key may resolve to the same row.
                 try require(exactImage(existing,before),"updated primary key already exists")
             }
         }
-        let sql: String, values: [DecodedValue]
+        var sql: String
+        let values: [DecodedValue]
         switch row.operation {
         case "insert": sql = plan.insert; values = plan.generatedIndexes.isEmpty ? row.after! : plan.writeIndexes.map { row.after![$0] }
         case "update": sql = plan.update; values = (plan.generatedIndexes.isEmpty ? row.after! : plan.writeIndexes.map { row.after![$0] }) + oldKey
         case "delete": sql = plan.delete; values = oldKey
         default: throw ApplyError("unsupported mutation")
         }
-        let binds = try profile("target.bind") { try values.map(bind) }
+        let expressions=try profile("target.bind") { try values.map { try prepareJSONValue($0,database:t.database) } }
+        if row.operation == "insert" && expressions.contains(where: { $0.sql != "?" }) { sql=plan.insertSQL(expressions:[expressions.map(\.sql)]) }
+        if row.operation == "update" && expressions.contains(where: { $0.sql != "?" }) { sql=plan.updateSQL(expressions:Array(expressions.prefix(plan.writeIndexes.count)).map(\.sql)) }
+        let binds=expressions.flatMap(\.binds)
         let result = try query(sql,binds,mutation:true)
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
@@ -357,9 +390,12 @@ final class TargetSession {
                 $0.table == first.table && $0.row.operation == "insert" && $0.row.before == nil && $0.row.after?.count == first.table.columns.count
             }, "incompatible INSERT chunk")
             try require(mutations.reduce(0) { $0+DMLExecution.insertBytes($1) } <= insertByteLimit,"INSERT chunk exceeds packet budget")
+            if !contract.transactional { try resetJSONScratch() }
             let plan = try sqlPlan(first.table)
-            let binds = try profile("target.bind") { try mutations.flatMap { mutation in try plan.writeIndexes.map { try bind(mutation.row.after![$0]) } } }
-            let result = try query(plan.insertSQL(rows:mutations.count),binds,mutation:true)
+            let expressions=try profile("target.bind") { try mutations.map { mutation in try plan.writeIndexes.map { try prepareJSONValue(mutation.row.after![$0],database:first.table.database) } } }
+            let binds=expressions.flatMap { $0.flatMap(\.binds) }
+            let sql=expressions.allSatisfy { $0.allSatisfy { $0.sql == "?" } } ? plan.insertSQL(rows:mutations.count) : plan.insertSQL(expressions:expressions.map { $0.map(\.sql) })
+            let result = try query(sql,binds,mutation:true)
             try require(result.1 == UInt64(mutations.count),"unexpected multi-row INSERT affected-row count")
             if !plan.generatedIndexes.isEmpty {
                 for mutation in mutations { try verifyGeneratedValues(first.table,after:mutation.row.after!,plan:plan) }
@@ -374,7 +410,7 @@ final class TargetSession {
         let generated=plan.generatedIndexes
         guard !generated.isEmpty else { return }
         try profile("target.generated_check") {
-            guard let actual=try read(table,key:plan.keyIndexes.map{after[$0]}) else {throw ApplyError("generated-column result row is missing")}
+            guard let actual=try read(table,key:plan.keyIndexes.map{after[$0]},expected:after) else {throw ApplyError("generated-column result row is missing")}
             try require(exactImage(generated.map{actual[$0]},generated.map{after[$0]}),"target generated-column values differ from source image")
         }
     }

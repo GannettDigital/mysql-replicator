@@ -30,7 +30,7 @@ enum DDLCoverageCases {
     static let positive = QualificationCase("positive", "Replicate INSERT, UPDATE and DELETE; compare rows, binlogs and SQLite checkpoints")
     static let group = QualificationCase("ddl", "Apply ordered DDL and DML; verify schema history, unchanged SQL and binlog order")
     static let missingTemplate = QualificationCase("ddl-like-missing-template", "Stop on a missing replica LIKE template before applying DDL or following events")
-    static let unsupported = QualificationCase("ddl-unsupported", "Reject unsupported JSON column before target mutation or checkpoint advance")
+    static let unsupported = QualificationCase("ddl-unsupported", "Reject unsupported DOUBLE(10,2) column before target mutation or checkpoint advance")
     static let denied = QualificationCase("ddl-denied", "Keep a pending DDL intent and stop when target CREATE permission is denied")
 
     static let changes: [DDLChange] = [

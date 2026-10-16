@@ -1,9 +1,15 @@
 # Offline binlogs and support bundles
 
+Use `mysql-replicator replay --help` for command options. See the
+[command-line reference](COMMAND_LINE.md) for all commands.
+
 `fetch` downloads a finite archive from a source. `replay` applies local raw
 binlogs through the same decoder, DDL policies, target execution, and SQLite
 journal as `run`. Replay never connects to the source. `support-bundle` collects
 local evidence into one uncompressed tar file without contacting either database.
+
+The `source.maximumEventBytes` and `source.maximumTransactionBytes` settings
+also apply to replay. See [large-value limits](LARGE_VALUES.md).
 
 Database cloning, restoration, and upgrades happen outside these commands. Supply
 the complete source GTID set corresponding to the target's existing data in
@@ -46,7 +52,7 @@ Its destination directory must not exist. It downloads whole files, including th
 first file's format context, even when replay will start later within that file.
 Files and their captured sizes are fixed at the beginning; new rotations and
 later writes are not followed. A successful archive contains `manifest.json`
-with source observations, file order, sizes, and SHA-256 hashes. Failure leaves
+with source observations, file order, and sizes. Failure leaves
 an incomplete directory for diagnosis; fetch does not overwrite or resume it.
 Use a new destination to retry. Structural validation preserves unsupported row
 formats for diagnosis; semantic compatibility is checked during replay.
@@ -73,7 +79,10 @@ archive:
 Raw files provide format versions and GTID history, but not all source identity
 and settings. For external archives, source identity and the qualified source
 contract come from the operator's configuration; these are not claimed as live
-source observations. Files are hashed when opened and checked before replay.
+source observations. Fetch and replay use event CRCs to check for corruption.
+They do not calculate or verify whole-file hashes. New manifests use version 2.
+Replay also reads version 1 manifests and ignores their saved SHA-256 fields.
+Older binaries cannot read version 2 manifests.
 No metadata is written into the external directory.
 
 Replay currently requires `source.mode: gtid` on all profiles. Source endpoint
@@ -117,6 +126,23 @@ boundaries, and whether the baseline covers history before the first available
 file. Missing required history, corruption, and a partial last transaction fail.
 The supplied files define the ending boundary; reaching their end does not mean
 the live source is caught up. Keep archive files immutable while replay runs.
+
+Replay first reads the first file's format and `Previous_gtids` events. It checks
+that the applied GTID set covers this history. A resumed run uses the saved
+SQLite checkpoint. A new run uses `source.start.executedGTIDs`. If history is
+missing, the error includes the file name, required GTIDs, and applied GTIDs.
+This check does not read the transaction payloads.
+
+After this check, replay validates the full archive before target writes. It
+reads each file once for event checks. It reuses
+this result during the same run if file identity, size, and modification times
+have not changed. It also checks file metadata before and after each replayed
+file. These checks do not permit concurrent changes to the archive.
+
+JSON `archive_progress` records on stderr show the phase, current file, completed
+file count, bytes read, total bytes, and elapsed seconds. Long scans report at
+approximately one-second intervals and at file boundaries. `validation_reused`
+means that no payload scan was needed. stdout remains the result stream.
 
 ## Stop, resume, and failures
 
@@ -286,6 +312,10 @@ password environment variables.
 Stop the applier before `support-bundle`; collection refuses an active state
 writer. It also works with blocked or abandoned state, and does not perform
 recovery. The output path must be new and outside the state directory.
+The command creates missing output directories. Without `supportBundle.output`,
+it creates a unique file under `supportBundle.directory`. If that setting is
+also absent, it uses `support-bundles` beside the state directory. A manual
+collection does not require a `supportBundle` section.
 
 To collect a bundle when `run` or `replay` enters `BLOCKED`, add:
 
@@ -317,8 +347,12 @@ manual collection.
 
 The bundle includes a standalone SQLite backup, relay evidence, configuration
 with credential fields excluded, and build/state diagnostics. If `archive` is
-configured, it includes raw binlogs within the byte budget, prioritizing pending
-and last-applied files. Optional log files are included when they fit.
+configured, it first saves `archive/inventory.json`. This file lists file sizes
+and selected file preambles, including the first file's `Previous_gtids`.
+Preamble reads have a 64 KiB event limit. The inventory has a size limit and does
+not validate the full archive. It records header errors and the total file count.
+The bundle then includes raw binlogs within the byte budget. It gives priority
+to pending and last-applied files. Optional log files are included when they fit.
 `bundle.json` lists file hashes and omitted evidence. Relay bytes beyond the
 journal's durable boundary are labeled as an unjournaled tail, not applied work.
 

@@ -29,6 +29,17 @@ public struct SupportBundleConfiguration: Decodable {
     public let stateDirectory: String
     public let supportBundle: Options
     public let archive: ArchiveConfiguration?
+    enum CodingKeys: String, CodingKey { case stateDirectory,supportBundle,archive }
+    public init(from decoder:Decoder) throws {
+        let values=try decoder.container(keyedBy:CodingKeys.self)
+        stateDirectory=try values.decode(String.self,forKey:.stateDirectory)
+        supportBundle=try values.decodeIfPresent(Options.self,forKey:.supportBundle)
+            ?? Options(output:nil,onBlocked:nil,directory:nil,format:nil,maximumBytes:nil,logs:nil)
+        archive=try values.decodeIfPresent(ArchiveConfiguration.self,forKey:.archive)
+    }
+    init(stateDirectory:String,supportBundle:Options,archive:ArchiveConfiguration?) {
+        self.stateDirectory=stateDirectory;self.supportBundle=supportBundle;self.archive=archive
+    }
 }
 
 public enum SupportBundle {
@@ -82,8 +93,16 @@ public enum SupportBundle {
                            failureDiagnostic:Data? = nil) throws -> Summary {
         let fm=FileManager.default, state=URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
         try c.supportBundle.validate(stateDirectory:c.stateDirectory)
-        guard let destination=c.supportBundle.output,!destination.isEmpty else { throw ApplyError("support bundle requires output") }
-        let output=URL(fileURLWithPath:destination).standardizedFileURL
+        let output:URL
+        if let destination=c.supportBundle.output {
+            try require(!destination.isEmpty,"support bundle output must not be empty")
+            output=URL(fileURLWithPath:destination).standardizedFileURL
+        } else {
+            let directory=c.supportBundle.directory.map { URL(fileURLWithPath:$0) }
+                ?? state.deletingLastPathComponent().appendingPathComponent("support-bundles")
+            let suffix=c.supportBundle.format == .directory ? "" : ".tar"
+            output=directory.appendingPathComponent("support-"+UUID().uuidString+suffix).standardizedFileURL
+        }
         let limit=c.supportBundle.maximumBytes ?? 2*1024*1024*1024
         try require(!c.stateDirectory.isEmpty, "support bundle requires stateDirectory")
         try require(limit >= 1024*1024,"support bundle maximumBytes must be at least 1 MiB")
@@ -93,6 +112,7 @@ public enum SupportBundle {
         try require(fd >= 0,"existing state writer lock is required")
         let lock=FileHandle(fileDescriptor:fd,closeOnDealloc:true);defer { try? lock.close() }
         try require(flock(fd,LOCK_EX|LOCK_NB) == 0,"stop the applier before collecting a support bundle; state has an active writer")
+        try fm.createDirectory(at:output.deletingLastPathComponent(),withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         let working=output.deletingLastPathComponent().appendingPathComponent(".support-"+UUID().uuidString)
         try fm.createDirectory(at:working,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
         defer { try? fm.removeItem(at:working) }
@@ -152,11 +172,8 @@ public enum SupportBundle {
             try fm.setAttributes([.posixPermissions:0o600],ofItemAtPath:failure.path)
             try include(failure,as:"failure.json",required:true)
         }
-        let relay=state.appendingPathComponent("relay.frames")
-        if let bytes=try? ArchiveIO.regularFile(relay),let durable,bytes > durable {
-            omitted.append("relay.frames includes unjournaled tail at byte \(durable); tail is evidence, not committed progress")
-        }
-        try include(relay,as:"relay.frames")
+        // Save small archive diagnostics before optional payload files use the budget.
+        var archiveInputs:[(String,URL)]=[]
         if let archive=c.archive {
             let root=URL(fileURLWithPath:archive.directory)
             let manifest=root.appendingPathComponent("manifest.json")
@@ -172,10 +189,48 @@ public enum SupportBundle {
             let preferred=(pending+(q[0][2].map{[$0]} ?? [])).filter { selected.contains($0) }+names.reversed()
             var seen=Set<String>()
             for name in preferred where name != "manifest.json" && seen.insert(name).inserted {
-                do { try ArchiveIO.filename(name);try include(root.appendingPathComponent(name),as:"archive/"+name) }
+                do { try ArchiveIO.filename(name);archiveInputs.append((name,root.appendingPathComponent(name))) }
                 catch { omitted.append("archive input rejected: \(name)") }
             }
+            struct FileDiagnostic:Encodable {
+                let name:String
+                var bytes:UInt64?
+                var preamble:ArchivePreamble?
+                var error:String?
+            }
+            struct Inventory:Encodable {
+                let files:[FileDiagnostic]
+                let filesTotal:Int
+                let scope:String
+            }
+            // Only selected headers are needed for checkpoint and history errors.
+            // Bound each header read and the JSON output independently of file size.
+            let inspect=Set((Array(names.prefix(1))+pending+(q[0][2].map{[$0]} ?? [])+Array(names.suffix(1))).prefix(16))
+            var records:[FileDiagnostic]=[],diagnosticBytes=0
+            let budget=Int(min(limit/4,1024*1024)),encoder=JSONEncoder()
+            for name in names.prefix(10000) where name != "manifest.json" {
+                var record=FileDiagnostic(name:name)
+                do {
+                    try ArchiveIO.filename(name)
+                    let file=root.appendingPathComponent(name)
+                    record.bytes=try ArchiveIO.regularFile(file)
+                    if inspect.contains(name) { record.preamble=try ArchivePreamble.read(file:file,maximumEventBytes:64*1024) }
+                } catch { record.error=String(describing:error) }
+                let bytes=try encoder.encode(record).count+2
+                if diagnosticBytes+bytes > budget { break }
+                diagnosticBytes += bytes;records.append(record)
+            }
+            let inventory=working.appendingPathComponent("archive-inventory.json")
+            try ArchiveIO.write(Inventory(files:records,filesTotal:names.count,
+                scope:"file sizes plus selected preambles; not full validation; header limit 64 KiB; inventory limit 1 MiB or one quarter of bundle limit"),to:inventory)
+            try include(inventory,as:"archive/inventory.json")
         }
+        let relay=state.appendingPathComponent("relay.frames")
+        if let bytes=try? ArchiveIO.regularFile(relay),let durable,bytes > durable {
+            omitted.append("relay.frames includes unjournaled tail at byte \(durable); tail is evidence, not committed progress")
+        }
+        try include(relay,as:"relay.frames")
+        for (name,path) in archiveInputs { try include(path,as:"archive/"+name) }
         for (i,path) in (c.supportBundle.logs ?? []).enumerated() { try include(URL(fileURLWithPath:path),as:"logs/\(i).log") }
         let index=working.appendingPathComponent("bundle.json")
         struct Index:Encodable { let version:Int;let containsCustomerData:Bool;let files:[Entry];let omissions:[String] }

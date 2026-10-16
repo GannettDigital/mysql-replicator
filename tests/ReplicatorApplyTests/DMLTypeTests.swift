@@ -20,7 +20,7 @@ final class DMLTypeTests: XCTestCase {
         XCTAssertThrowsError(try DMLColumnType("decimal(4,4)").validate(.decimal("1.0000")))
         try DMLColumnType("decimal(4,4)").validate(.decimal("-0.9999"))
         XCTAssertThrowsError(try DMLColumnType("decimal(5,2) unsigned").validate(.decimal("-0.01")))
-        for type in ["decimal(66,2)","decimal(5,6)","decimal(40,31)","float","json","vector(10)"] {
+        for type in ["decimal(66,2)","decimal(5,6)","decimal(40,31)","float(10,2)","vector(10)"] {
             XCTAssertThrowsError(try DMLColumnType(type))
         }
     }

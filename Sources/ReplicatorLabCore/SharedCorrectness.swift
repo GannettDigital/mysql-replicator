@@ -93,6 +93,7 @@ public enum SharedCorrectness {
                     try indexResume()
                     try forwardFailures()
                     try myisamRecovery()
+                    try largeValues()
                     try offline()
                     try skipErrors(offline:true)
                     try skipErrors(offline:false)
@@ -185,7 +186,7 @@ public enum SharedCorrectness {
                 var snapshot = try f.h.sqlBatch(f.profile.service(role), [
                     .init(name: "database", sql: "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"),
                     .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME"),
-                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
+                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
                     .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
                     .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX"),
                     .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
@@ -210,14 +211,32 @@ public enum SharedCorrectness {
                 let columnRows=columns.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 let indexRows=snapshot["indexes"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 var rowQueries: [String]=[]
+                var jsonRows:[String:String]=[:]
                 for table in tables {
                     let names=columnRows.filter { $0.count >= 2 && $0[0] == table }.map { $0[1] }
                     let expressions=names.map { "IFNULL(HEX(CAST(`\($0)` AS BINARY)),'<NULL>')" }.joined(separator:",")
                     let keys=indexRows.filter { $0.count >= 5 && $0[0] == table && $0[1] == "PRIMARY" }.map { "`\($0[4])`" }.joined(separator:",")
                     try require(!keys.isEmpty,"fixture table missing primary key")
+                    let jsonColumns=Set(columnRows.filter { $0.count >= 4 && $0[0] == table && $0[3] == "json" }.map { $0[1] })
+                    if !jsonColumns.isEmpty {
+                        jsonRows[table]=try f.comparisonRows(role,table:"`\(database)`.`\(table)`",columns:names,jsonColumns:jsonColumns,orderBy:keys)
+                    }
                     rowQueries.append("SELECT '\(table)',\(expressions) FROM `\(database)`.`\(table)` ORDER BY \(keys)")
                 }
                 snapshot["rows"]=rowQueries.isEmpty ? "" : try sql("SET time_zone='+00:00'; "+rowQueries.joined(separator:"; "),preserveWhitespace:true)
+                // Keep ordinary row bytes. Replace only JSON-bearing table rows
+                // with the independent value/type comparison from the servers.
+                if !jsonRows.isEmpty {
+                    var next:[String:Int]=[:]
+                    let replacements=jsonRows.mapValues { $0.isEmpty ? [] : $0.components(separatedBy:"\n") }
+                    snapshot["rows"]=try snapshot["rows"]!.components(separatedBy:"\n").map { line in
+                        let table=String(line.prefix(while:{$0 != "\t"}))
+                        guard let rows=replacements[table] else { return line }
+                        let index=next[table,default:0]; next[table]=index+1
+                        try require(index < rows.count,"JSON comparison row count changed")
+                        return table+"\t"+rows[index]
+                    }.joined(separator:"\n")
+                }
                 values[service]=snapshot
             }
             try writeJSON(values,to:f.output.appendingPathComponent("latest-comparison.json"))
@@ -327,12 +346,16 @@ public enum SharedCorrectness {
         func dml() throws {
             try resetNativeEngine()
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"poc")
-            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) {
+            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) && (test.source84OnlyReason == nil || f.profile.sourceVersion == .mysql84) {
                 try reporter.run(QualificationCase("matrix-"+test.id,"Shared DML matrix: "+test.id)) {
                     if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
                     try step("CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",database:"poc")
                     if !test.setup.isEmpty { try step(test.setup,database:"poc") }
-                    for phase in test.phases { try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")]) }
+                    for (ordinal,phase) in test.phases.enumerated() {
+                        let before=phase.expectsJSONDiff ? try f.boundary() : nil
+                        try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")])
+                        if let before { try verifyJSONDiff(before,label:"matrix-"+test.id+"-\(ordinal+1)") }
+                    }
                 }
             }
         }

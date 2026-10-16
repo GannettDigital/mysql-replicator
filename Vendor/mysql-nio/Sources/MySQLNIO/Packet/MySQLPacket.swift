@@ -1,6 +1,8 @@
 import NIOCore
 
 public struct MySQLPacket {
+    public static let fragmentBytes = 0x00ff_ffff
+    public static let maximumMessageBytes = 1024 * 1024 * 1024
     public var payload: ByteBuffer
     
     public init(payload: ByteBuffer) {
@@ -30,7 +32,7 @@ public struct MySQLPacket {
 
 extension MySQLPacket: CustomStringConvertible {
     public var description: String {
-        let bytes = [UInt8](self.payload.readableBytesView)
+        let bytes = self.payload.readableBytesView.prefix(16)
         return "\(bytes.prefix(16))... (err: \(self.isError), ok: \(self.isOK), eof: \(self.isEOF))"
     }
 }

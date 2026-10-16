@@ -49,6 +49,13 @@ public enum LabBenchmark {
         }
     }
 
+    /// Check all mode-specific options before the command starts any work.
+    public static func validate(arguments: [String]) throws {
+        let options = try Options(arguments)
+        if options.mode == "streaming" { _ = try PerformanceOptions(arguments: options.forwardedArguments) }
+        if options.mode == "capture" { _ = try CaptureBenchmark.options(options.forwardedArguments) }
+    }
+
     public static func run(root: URL, arguments: [String]) throws {
         let options=try Options(arguments), profile=options.profile
         if options.mode == "streaming" { try PerformanceBenchmark.run(root:root,arguments:options.forwardedArguments); return }

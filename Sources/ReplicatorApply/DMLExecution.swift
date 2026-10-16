@@ -145,6 +145,7 @@ struct DMLExecution {
         return (mutation.row.after ?? []).reduce(prefix) { sum,value in
             switch value {
             case .text(let s), .decimal(let s), .temporal(let s): return sum+s.utf8.count+16
+            case .json(let d): return sum+d.retainedByteCost*2+64
             case .binary(let d): return sum+d.count+16
             default: return sum+24
             }

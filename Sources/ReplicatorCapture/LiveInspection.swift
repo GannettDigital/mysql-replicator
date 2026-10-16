@@ -181,7 +181,7 @@ public enum LiveInspection {
             _ = try query(sourceContract.dumpSessionSQL)
             if cancellation.isCancelled { throw CaptureCancelled() }
 
-            let maximum = Int(config.maximumEventBytes ?? 4*1024*1024)
+            let maximum = Int(config.eventByteLimit)
             let queue = PacketQueue(byteLimit: maximum + 256*1024)
             // Replace only dump framing; retain the upstream TLS, authentication,
             // packet encoder, command lifecycle and socket implementation.

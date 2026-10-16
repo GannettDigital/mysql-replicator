@@ -101,3 +101,10 @@ lab-demo:
 	swift run replicator-lab demo $(ACTION) --profile $(PROFILE) $(ARGS)
 lab-benchmark:
 	swift run replicator-lab benchmark --profile $(PROFILE) $(ARGS)
+
+# The selector is shared with PR CI. JSON stays on stdout.
+.PHONY: test-selection test-selected
+test-selection:
+	@python3 tools/test_selection.py $(ARGS)
+test-selected:
+	@python3 tools/test_selection.py --run $(ARGS)

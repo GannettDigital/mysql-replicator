@@ -5,7 +5,7 @@ Do not add a separate release test runner.
 
 | Use | Trigger | Scope | Release evidence |
 | --- | --- | --- | --- |
-| Ordinary PR | Open, push or reopen | Unit tests, Periphery and two parallel [explicit engine selections](PR_TEST_SELECTION.md) | No |
+| Ordinary PR | Open, push or reopen | [Changed-file selection](PR_TEST_SELECTION.md): report checks, two-profile checks, or full checks | No |
 | Final PR in a release stack | Add `ci-full`; later pushes keep this scope | Full catalog, packages, coverage and Periphery | Candidate evidence |
 | Test-suite investigation | Add `ci-expanded-coverage` | Full suite plus instrumented correctness and reconnect copies | Candidate evidence from release-binary checks |
 | Main | Push after merge | Same full suite | Required for the release |
@@ -49,7 +49,7 @@ gh pr edit <top-pr-number> --add-label ci-full
 ```
 
 Use a maintainer account. Adding the label starts full CI. Each later push to that
-PR starts full CI again. Remove both CI labels to restore smoke checks. Changes to `ci-full` or
+PR starts full CI again. Remove both CI labels to restore changed-file selection. Changes to `ci-full` or
 `ci-expanded-coverage` start CI. Other label changes do not start test jobs or
 cancel the active test run.
 If a new PR becomes the top of the stack, put the label on that PR. Labels do not

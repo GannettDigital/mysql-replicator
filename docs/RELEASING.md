@@ -1,54 +1,49 @@
 # Release procedure
 
-The next release is `v0.1.0-beta.4` (Debian `0.1.0~beta.4-1`). Application versions
+The next release is `v0.1.0-beta.5` (Debian `0.1.0~beta.5-1`). Application versions
 follow [SemVer](https://semver.org/); Debian's `~` keeps a beta older than its final
 release. Config, state schema and codec ABI versions remain independent.
 Only Linux x86_64 binaries and Linux/amd64 containers are distributed.
 
-## Review and merge beta.4
+## Review and merge beta.5
 
-This stack starts at upstream `main` commit `5d877f0`. It includes the 13 local
-feature commits, CI measurement tools, and release preparation. Each PR targets
-the preceding branch. CI improvements follow the release preparation PR. Existing feature commits
-remain unchanged.
+This stack starts at upstream `main` commit `f881d70`. Each PR targets the
+preceding branch. The feature commits remain unchanged.
 
 | Order | Branch | Scope |
 | --- | --- | --- |
-| 1 | `beta/4/01-mysql57-myisam` | MySQL 5.7 InnoDB to MySQL 5.7 MyISAM profile |
-| 2 | `beta/4/02-apply-performance` | Autocommit, durable preparation queues, schema cache and timing |
-| 3 | `beta/4/03-innodb-foreign-keys` | InnoDB foreign keys, validation and recovery evidence |
-| 4 | `beta/4/04-connections-support` | Profile documentation, plaintext connections and automatic support bundles |
-| 5 | `beta/4/05-mysql57-innodb` | MySQL 5.7 InnoDB to MySQL 5.7 InnoDB profile |
-| 6 | `beta/4/06-ci-measurements` | Timing and profile coverage measurements |
-| 7 | `beta/4/07-release` | Version 0.1.0-beta.4, release notes and installation guide |
-| 8 | `beta/4/08-pr-smoke` | Parallel PR smoke checks and Periphery |
-| 9 | `beta/4/09-ghcr-layers` | GHCR dependency layers and smaller coverage runtime |
-| 10 | `beta/4/10-release-testing` | Full tests on the top PR and release evidence |
-| 11 | `beta/4/11-static-build-reuse` | Reuse static build components |
-| 12 | `beta/4/12-coverage-value` | Expanded coverage and suite value reports |
-| 13 | `beta/4/13-test-suite-cost` | Shared suite groups and native binlog checks |
-| 14 | `beta/4/14-balanced-shards` | Balance full-suite shards by measured time |
-| 15 | `beta/4/15-pr-test-selection` | Explicit PR test selection, README and release controls |
+| 1 | `beta/5/01-replay-operations` | Replay validation and support bundle diagnostics |
+| 2 | `beta/5/02-test-selection` | Changed-file test selection for local use and CI |
+| 3 | `beta/5/03-command-help` | Command-specific help with Swift Argument Parser |
+| 4 | `beta/5/04-column-type-audit` | Type audit, configurable event limits and large SQL packets |
+| 5 | `beta/5/05-bit-support` | BIT decoding, application and recovery |
+| 6 | `beta/5/06-floating-point-support` | FLOAT/DOUBLE binary transport and defaults |
+| 7 | `beta/5/07-json-support` | Typed JSON and partial row updates |
+| 8 | `beta/5/08-release` | Version, release notes and installation guide |
 
-The complete [GitHub stack #35](https://github.com/GannettDigital/mysql-replicator/pull/35)
-contains PRs #28–#34 and #36–#43. PR #43 is the final candidate.
-The [release plan](releases/0.1.0-beta.4.plan.json) lists every required PR.
+The [release plan](releases/0.1.0-beta.5.plan.json) will list the required PRs.
+Its PR list is empty until GitHub assigns the numbers. Release commands reject
+an empty list. Do not merge the release PR with an empty plan.
 
-The first PR targets `main`. The local `artifacts/release-stack-beta4/` directory
-contains the exact SHA manifest, PR descriptions, validation notes and helpers:
+The first PR targets `main`. The local `artifacts/release-stack-beta5/` directory
+in the primary checkout contains the SHA manifest, PR descriptions and helpers:
 
 ```sh
-bash artifacts/release-stack-beta4/push-branches.sh
-bash artifacts/release-stack-beta4/open-prs.sh
+bash artifacts/release-stack-beta5/push-branches.sh
+bash artifacts/release-stack-beta5/open-prs.sh
+bash artifacts/release-stack-beta5/push-branches.sh
 ```
 
-The maintainer runs these commands. The push helper checks the recorded upstream
-and local branch tips, then pushes the recorded branches atomically without force.
-It never pushes `main` or tags. The PR helper checks the remote tips, creates or
-reuses draft PRs, and registers their ordered numbers using the
-[native GitHub stack API](https://docs.github.com/en/rest/pulls/stacks#create-a-pull-request-stack).
-Base branches alone do not register a native stack. No publication occurs merely
-by preparing local branches.
+The maintainer runs these commands. The first command checks the recorded branch
+tips and pushes the stack without force. The second command creates draft PRs,
+registers the native GitHub stack, and adds `ci-full` to the final PR. It also
+records the assigned PR numbers in the release plan and commits that file on the
+local release branch. The last command pushes that plan commit. None of these
+commands pushes `main`, creates a tag, or publishes a release.
+
+The helpers check branch tips and stop if the prepared stack has changed.
+Base branches alone do not register a native GitHub stack. No GitHub write occurs
+when the stack is prepared locally.
 
 Review and merge from the bottom using GitHub's stack controls, waiting for green
 checks. Merging an upper layer can also merge its unmerged predecessors. GitHub
@@ -59,14 +54,16 @@ local `main` to bypass review. After all merges, update local `main` from upstre
 preserving unrelated edits. Every PR needs its own CI; local final-tree tests do
 not replace checks on intermediate branches.
 
-## Measure the release candidate
+## Check the release candidate
 
-Use the final PR for the [CI measurement study](CI_MEASUREMENTS.md).
-For the beta.4 measurement study, collect the expanded four-profile report.
-These are research results, not release gates.
-Keep the normal release-binary checks. Do not infer test redundancy from line
-coverage alone. Record run links with the stack's validation notes.
-These measurements guide later CI work. They do not add another release build.
+Run the full suite on the final PR with `ci-full`. This includes the new large
+value, BIT, FLOAT/DOUBLE and JSON cases on each applicable profile. Keep the
+release-binary tests as the acceptance checks. Expanded coverage remains optional.
+
+Start with the PR results. If a case fails, inspect its support bundle and saved
+logs before deciding whether to reproduce it locally. See [JSON support and
+remaining limits](../PLAN/JSON_SUPPORT.md). Do not describe the new type cases as
+qualified until their integration checks pass.
 
 ## Qualify the release
 
@@ -76,10 +73,10 @@ These measurements guide later CI work. They do not add another release build.
    installer/package tests, production-image checks, full correctness and
    source/target reconnect for all four profiles and applicable capture variants,
    offline replay/control, native-reference DDL, recovery, demos, coverage and
-   Periphery. Ordinary PRs use smoke checks. The labeled final PR and main use the same
-   full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
+   Periphery. Other PRs use [changed-file selection](PR_TEST_SELECTION.md).
+   The labeled final PR and main use the same full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
    checks integration uses those same bytes.
-2. Review `docs/releases/0.1.0-beta.4.md`, the install guide and dependency notices.
+2. Review `docs/releases/0.1.0-beta.5.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.
 3. For a new deployment environment, qualify service/container start, acknowledged
    drain and clean resume on a representative host with persistent state and the
@@ -100,10 +97,10 @@ make release-image
 
 Assets in `artifacts/release/` include:
 
-- `mysql-replicator-0.1.0-beta.4-linux-x86_64.tar.gz`: standalone binary and notices.
-- `mysql-replicator_0.1.0~beta.4-1_amd64.deb`: Debian package and systemd service.
-- `mysql-replicator-0.1.0-beta.4-linux-x86_64-image.tar.gz`: tested `docker save`
-  image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.4`.
+- `mysql-replicator-0.1.0-beta.5-linux-x86_64.tar.gz`: standalone binary and notices.
+- `mysql-replicator_0.1.0~beta.5-1_amd64.deb`: Debian package and systemd service.
+- `mysql-replicator-0.1.0-beta.5-linux-x86_64-image.tar.gz`: tested `docker save`
+  image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.5`.
 - `install.sh`, `apply.example.yaml`, `run.minimal.yaml`, `replay.minimal.yaml`,
   `LICENSE`, `NOTICE`, build evidence and
   `SHA256SUMS`, covering the build artifacts.
@@ -174,7 +171,7 @@ publish using that token.
 
 The publication job downloads the saved image from the release, verifies its
 checksum, architecture, version and exact source revision, then loads and pushes
-it to `ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.4`. It does not build
+it to `ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.5`. It does not build
 anything or publish `latest`. Existing image tags are not deliberately overwritten.
 A failed GHCR step does not undo the published binary downloads; fix permissions
 and rerun the failed job. If an image tag already exists, inspect it before retrying.

@@ -13,7 +13,7 @@ final class SupportBundleTests:XCTestCase {
         #endif
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true);defer { try? FileManager.default.removeItem(at:root) }
-        let state=root.appendingPathComponent("state"),output=root.appendingPathComponent("support.tar")
+        let state=root.appendingPathComponent("state"),output=root.appendingPathComponent("missing/parents/support.tar")
         let log=root.appendingPathComponent("large.log")
         try Data(repeating:65,count:1024*1024).write(to:log)
         let yaml=root.appendingPathComponent("apply.yaml")
@@ -60,4 +60,44 @@ final class SupportBundleTests:XCTestCase {
         try process.run();process.waitUntilExit();XCTAssertEqual(process.terminationStatus,0)
         XCTAssertEqual(try helper.sqlite(root.appendingPathComponent("state.sqlite"),"SELECT lifecycle,diagnostic FROM state"),[["BLOCKED","customer row value to preserve"]])
     }
+    func testDefaultDestinationAndArchivePreambleSurvivePayloadLimit() throws {
+        #if os(Linux)
+        let helper=ApplyTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let helper=ApplyTests()
+        #endif
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer { try? FileManager.default.removeItem(at:root) }
+        let state=root.appendingPathComponent("state"),archive=root.appendingPathComponent("archive")
+        try FileManager.default.createDirectory(at:archive,withIntermediateDirectories:false)
+        let fixture=URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("ReplicatorLabTests/Fixtures/source-positive.binlog")
+        let file=archive.appendingPathComponent("binlog.000003")
+        try FileManager.default.copyItem(at:fixture,to:file)
+        // The bundle reads only the header. A large payload must not remove it.
+        let handle=try FileHandle(forWritingTo:file)
+        try handle.truncate(atOffset:2*1024*1024);try handle.close()
+        do { let store=try StateStore(configuration:helper.config(state.path));try store.block("archive test") }
+        let config=try ConfigurationFile.decode(SupportBundleConfiguration.self,from:Data("""
+        stateDirectory: \(state.path)
+        archive:
+          directory: \(archive.path)
+        supportBundle:
+          format: directory
+          maximumBytes: 1048576
+        """.utf8))
+        let result=try SupportBundle.run(configuration:config,redactedConfiguration:Data("{}".utf8),version:"test")
+        XCTAssertTrue(result.output.hasPrefix(root.appendingPathComponent("support-bundles").path+"/"))
+        XCTAssertTrue(result.omitted.contains { $0.contains("archive/binlog.000003: size limit") })
+        let inventory=URL(fileURLWithPath:result.output).appendingPathComponent("archive/inventory.json")
+        let text=String(decoding:try Data(contentsOf:inventory),as:UTF8.self)
+        XCTAssertTrue(text.contains("previousGTIDs"));XCTAssertTrue(text.contains(":1-5"))
+        XCTAssertTrue(text.contains("2097152"))
+        // A manual collection also accepts a configuration without supportBundle.
+        let minimal=try ConfigurationFile.decode(SupportBundleConfiguration.self,from:Data("stateDirectory: \(state.path)".utf8))
+        let defaultResult=try SupportBundle.run(configuration:minimal,redactedConfiguration:Data("{}".utf8),version:"test")
+        XCTAssertTrue(defaultResult.output.hasSuffix(".tar"))
+    }
+
 }

@@ -2,15 +2,29 @@ import Foundation
 import ReplicatorCodec
 
 public final class ArchiveReplay {
+    /// File inventory and source contract for fetched or external archives.
     public let manifest: ArchiveManifest
+    public struct Progress: Encodable {
+        public let kind = "archive_progress"
+        public let phase: String
+        public let file: String
+        public let filesCompleted: Int
+        public let filesTotal: Int
+        public let bytesRead: UInt64
+        public let bytesTotal: UInt64
+        public let elapsedSeconds: Double
+    }
+    private let progress: (Progress) -> Void
+    private var validation: (identities:[ArchiveFileIdentity], previous:GTIDSet, available:GTIDSet)?
     private let directory: URL
     private let maximumEventBytes: UInt32
     public init(configuration: ArchiveConfiguration, source: CaptureConfiguration, contract: SourceContract,
-                filtered: Bool = false) throws {
+                filtered: Bool = false, progress: @escaping (Progress) -> Void = { _ in }) throws {
+        self.progress=progress
         try configuration.validate()
         _ = try source.validate(connection:false)
         directory=URL(fileURLWithPath:configuration.directory).standardizedFileURL
-        maximumEventBytes=source.maximumEventBytes ?? 4*1024*1024
+        maximumEventBytes=source.eventByteLimit
         let metadata=directory.appendingPathComponent("manifest.json")
         guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent("incomplete.json").path) else { throw CaptureError("fetch archive is incomplete") }
         if FileManager.default.fileExists(atPath:metadata.path) {
@@ -34,15 +48,15 @@ public final class ArchiveReplay {
                     guard (23...maximumEventBytes).contains(n),let body=try h.read(upToCount:Int(n)-19),body.count == Int(n)-19 else { throw CaptureError("invalid external format event") }
                     version=try BinlogDecoder(maximumEventBytes:maximumEventBytes).decode(header+body,at:4).detailText
                 }
-                entries.append(.init(name:name,bytes:bytes,sha256:try ArchiveIO.hash(file)))
+                entries.append(.init(name:name,bytes:bytes))
             }
             // Raw files identify their format version, not server UUID/settings.
             // These settings describe the operator-selected qualified contract.
-            manifest=ArchiveManifest(version:1,sourceUUID:source.sourceUUID,sourceVersion:version ?? "",
+            manifest=ArchiveManifest(version:2,sourceUUID:source.sourceUUID,sourceVersion:version ?? "",
                 settings:["gtid_mode":"ON","enforce_gtid_consistency":"ON","binlog_format":"ROW","binlog_row_image":"FULL","binlog_checksum":"CRC32","lower_case_table_names":configuration.lowerCaseTableNames.map(String.init) ?? "unknown"],
                 files:entries,capturedAt:"unknown",provenance:"external raw files; identity and source contract supplied by operator")
         }
-        guard manifest.version == 1, manifest.sourceUUID.lowercased() == source.sourceUUID.lowercased(),
+        guard (1...2).contains(manifest.version), manifest.sourceUUID.lowercased() == source.sourceUUID.lowercased(),
               manifest.sourceVersion.hasPrefix(contract.rawValue),
               manifest.settings["gtid_mode"] == "ON", manifest.settings["binlog_format"] == "ROW",
               manifest.settings["binlog_row_image"] == "FULL", manifest.settings["binlog_checksum"] == "CRC32",
@@ -55,31 +69,87 @@ public final class ArchiveReplay {
             guard names.insert(file.name).inserted, file.bytes <= configuration.byteLimit-size else { throw CaptureError("duplicate archive file or archive byte limit exceeded") }
             size += file.bytes
             let path=directory.appendingPathComponent(file.name)
-            guard try ArchiveIO.regularFile(path) == file.bytes, try ArchiveIO.hash(path) == file.sha256 else { throw CaptureError("archive file changed: \(file.name)") }
+            guard try ArchiveIO.regularFile(path) == file.bytes else { throw CaptureError("archive file changed: \(file.name)") }
         }
     }
 
     /// Validate the complete archive before issuing target writes. Control-only
     /// decoding deliberately does not interpret historical row values.
-    public func validate(baseline: String, stopAfterGTIDs: String? = nil) throws {
+    public func validate(baseline: String, stopAfterGTIDs: String? = nil,
+                         isCancelled: () -> Bool = { false }) throws {
         let excluded=try GTIDSet(baseline)
-        var available=excluded
-        for file in manifest.files {
-            let path=directory.appendingPathComponent(file.name)
-            guard try ArchiveIO.regularFile(path) == file.bytes,try ArchiveIO.hash(path) == file.sha256 else { throw CaptureError("archive changed before replay: \(file.name)") }
+        let started=DispatchTime.now().uptimeNanoseconds
+        let total=manifest.files.reduce(UInt64(0)) { $0+$1.bytes }
+        func report(_ phase:String,_ file:String,_ completed:Int,_ bytes:UInt64) {
+            progress(Progress(phase:phase,file:file,filesCompleted:completed,filesTotal:manifest.files.count,
+                bytesRead:bytes,bytesTotal:total,elapsedSeconds:Double(DispatchTime.now().uptimeNanoseconds-started)/1e9))
         }
-        try walk { _,_,_,gtid,complete in
+        func checkBaseline(_ previous:GTIDSet) throws {
+            guard excluded.covers(previous) else {
+                throw CaptureError("archive starts after required history; baseline does not cover first Previous_gtids; file=\(manifest.files[0].name); requiredGTIDs=\(previous.canonical); appliedGTIDs=\(excluded.canonical)")
+            }
+        }
+        func checkStop(_ available:GTIDSet) throws {
+            let combined=try available.union(excluded)
+            if let stopAfterGTIDs,try !combined.covers(GTIDSet(stopAfterGTIDs)) {
+                throw CaptureError("archive does not contain requested stopAfterGTIDs after baseline")
+            }
+        }
+        if isCancelled() { throw CaptureCancelled() }
+        if let validation {
+            try checkIdentities(validation.identities)
+            try checkBaseline(validation.previous)
+            try checkStop(validation.available)
+            report("validation_reused",manifest.files[0].name,manifest.files.count,0)
+            return
+        }
+        let identities=try manifest.files.map { try ArchiveFileIdentity(directory.appendingPathComponent($0.name)) }
+        report("preamble",manifest.files[0].name,0,0)
+        let first=try ArchivePreamble.read(file:directory.appendingPathComponent(manifest.files[0].name),maximumEventBytes:maximumEventBytes)
+        let previous=try GTIDSet(first.previousGTIDs)
+        try checkBaseline(previous)
+        try checkIdentities(identities)
+        var available=previous,read:UInt64=0,completed=0,lastReport=started,nextReportByte:UInt64=0
+        report("validation",manifest.files[0].name,0,0)
+        try walk(identities:identities) { frame,offset,file,gtid,complete in
+            if isCancelled() { throw CaptureCancelled() }
+            if offset == 4 { read += 4 }
+            read += UInt64(frame.count)
             if complete,let gtid { try available.include(sid:gtid.sid,sequence:gtid.sequence) }
-        } previous: { previous,first in
-            if first && !excluded.covers(previous) { throw CaptureError("archive starts after required history; baseline does not cover first Previous_gtids") }
+            if read >= nextReportByte {
+                nextReportByte=read+1024*1024
+                let now=DispatchTime.now().uptimeNanoseconds
+                if now-lastReport >= 1_000_000_000 {
+                    report("validation",file,completed,read);lastReport=now
+                }
+            }
+        } previous: { prior,first in
+            if first { try checkBaseline(prior) }
+        } finished: { file in
+            completed += 1;report("validation",file,completed,read)
         }
-        if let stopAfterGTIDs,try !available.covers(GTIDSet(stopAfterGTIDs)) { throw CaptureError("archive does not contain requested stopAfterGTIDs after baseline") }
+        try checkIdentities(identities)
+        try checkStop(available)
+        validation=(identities,previous,available)
+        report("validated",manifest.files.last!.name,completed,read)
     }
 
-    private func walk(_ emit:(Data,UInt64,String,SourceGTID?,Bool) throws -> Void,
-                      previous: (GTIDSet,Bool) throws -> Void = {_,_ in}) throws {
+    private func checkIdentities(_ identities:[ArchiveFileIdentity]) throws {
+        for (entry,identity) in zip(manifest.files,identities) { try checkIdentity(entry,identity) }
+    }
+    private func checkIdentity(_ entry:ArchiveManifest.File,_ identity:ArchiveFileIdentity) throws {
+        guard identity.size == entry.bytes,try ArchiveFileIdentity(directory.appendingPathComponent(entry.name)) == identity else {
+            throw CaptureError("archive changed before or during replay: \(entry.name)")
+        }
+    }
+
+    private func walk(identities:[ArchiveFileIdentity]? = nil,
+                      _ emit:(Data,UInt64,String,SourceGTID?,Bool) throws -> Void,
+                      previous: (GTIDSet,Bool) throws -> Void = {_,_ in},
+                      finished: (String) -> Void = {_ in}) throws {
         var covered:GTIDSet?, rotated:BinlogCoordinate?, previousName:String?
-        for entry in manifest.files {
+        for (index,entry) in manifest.files.enumerated() {
+            if let identities { try checkIdentity(entry,identities[index]) }
             let decoder=try BinlogDecoder(maximumEventBytes:maximumEventBytes)
             var decoderOffset:UInt64=4, pending:SourceGTID?, begun=false, hasPrevious=false, ended=false
             if let rotated { guard rotated.file == entry.name && rotated.position == 4 else { throw CaptureError("archive rotation destination differs from manifest") } }
@@ -139,7 +209,9 @@ public final class ArchiveReplay {
                 if complete { pending=nil }
             }
             guard hasPrevious,pending == nil else { throw CaptureError("incomplete archive preamble or transaction at EOF: \(entry.name)") }
+            if let identities { try checkIdentity(entry,identities[index]) }
             previousName=entry.name
+            finished(entry.name)
         }
     }
 
@@ -149,13 +221,13 @@ public final class ArchiveReplay {
                     resolveSchema: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])?,
                     timings: StageTimings, ignoreTable: ((String,String) -> Bool)?) throws {
         let excluded=try GTIDSet(configuration.start.executedGTIDs)
-        try validate(baseline:excluded.canonical,stopAfterGTIDs:configuration.stopAfterGTIDs)
+        try validate(baseline:excluded.canonical,stopAfterGTIDs:configuration.stopAfterGTIDs,isCancelled:{ cancellation.isCancelled })
         let processor=try StreamProcessor(config:configuration,includeRaw:!retainRawBytes,retainRawBytes:retainRawBytes,emitEvent:emitEvent,
             emitTransaction:emitTransaction,resolveSchema:resolveSchema,timings:timings,allowDDL:true,ignoreTable:ignoreTable)
         struct Limit: Error {}
         if processor.stopReason != nil { return }
         do {
-            try walk { frame,offset,file,gtid,complete in
+            try walk(identities:validation!.identities) { frame,offset,file,gtid,complete in
                 if cancellation.isCancelled { throw CaptureCancelled() }
                 if processor.stopReason != nil { throw Limit() }
                 if offset == 4 { try processor.consume(ArchiveIO.announce(file)) }

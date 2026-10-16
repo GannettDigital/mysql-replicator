@@ -100,8 +100,9 @@ compatibility and historical schema are checked when the apply loop reaches that
 map. DDL flushes preceding groups and changes target/schema state before following
 maps are validated. Decoder lookahead never advances the applied checkpoint.
 
-The FIFO allows at most 4,096 items, 64 complete groups and 64 MiB of retained-data
-accounting. These are independent limits, not an RSS promise: the socket queue,
+The FIFO normally allows at most 4,096 items, 64 complete groups and 64 MiB of
+retained-data accounting. An empty FIFO can accept one larger item within the
+configured event/transaction limits. These limits do not bound process memory: the socket queue,
 current bounded assembler group and current apply batch also retain data. Full
 queues pause the producer rather than dropping events. Normal finite completion
 drains the queue and flushes the final batch. Failure discards queued work and
@@ -150,16 +151,28 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   [collation mapping policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
   CHAR/BINARY lengths are 0–255; VARCHAR/VARBINARY lengths remain 1–16383.
   ENUM/SET require FULL source metadata with exactly matching ordered labels.
-  ENUM error ordinal zero is rejected; a declared empty label is supported. The decoder's 1 MiB individual-value
-  and event/group resource limits apply even to MEDIUM/LONG types.
+  ENUM error ordinal zero is rejected; a declared empty label is supported.
+  Configurable event/transaction limits and the target packet limit apply to
+  TEXT/BLOB values. See [large-value limits](../docs/LARGE_VALUES.md).
   NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
   Scope/type/shape validation covers the whole source group before writing.
 
 MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
 `.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
-This is not complete 5.7 support: FLOAT/DOUBLE, BIT, JSON,
-spatial types and multi-statement transactions
-remain outside this increment. The source DDL grammar now accepts these DML types,
+BIT(1) through BIT(64) use unsigned values with exact width checks. This includes
+primary keys. The [BIT increment](BIT_SUPPORT.md) has unit tests; its shared
+integration cases have not yet run.
+
+Finite FLOAT/DOUBLE values retain their exact IEEE bits through decoding, binary
+SQL parameters, target reads, and recovery. The [floating-point increment](FLOATING_POINT_SUPPORT.md)
+has unit tests; integration qualification is pending. Fixed-scale FLOAT/DOUBLE
+forms, NaN, and infinity remain unsupported.
+
+The [JSON increment](JSON_SUPPORT.md) adds full documents, typed values and
+partial updates. Unit tests pass. Database qualification and some legacy opaque
+SQL constructors remain pending. Typed JSON can require `CREATE TEMPORARY TABLES`
+permission on the target. Spatial types remain unsupported. MyISAM profiles
+still exclude multi-statement source transactions. The source DDL grammar now accepts these DML types,
 including ENUM/SET, together with bounded defaults and schema operations described
 in [DDL compatibility](DDL_COMPATIBILITY.md).
 

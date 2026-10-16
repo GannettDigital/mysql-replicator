@@ -1,6 +1,9 @@
 import Foundation
 
 public enum LabTests {
+    /// Validate the selection without creating artifacts or starting containers.
+    public static func validate(arguments: [String]) throws { _ = try LabTestOptions(arguments) }
+
     public static func run(root: URL, arguments: [String]) throws {
         let options=try LabTestOptions(arguments)
         let suites=options.suite == "all" ? ["correctness","lifecycle","recovery","demo","native"] : [options.suite]

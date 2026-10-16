@@ -53,7 +53,7 @@ def policy_hash(root, selection='full', coverage_mode='unknown'):
     # Baseline deltas require identical test/toolchain/reporting inputs. Runtime
     # changes are intentionally excluded; tests and their selection are not.
     paths = [root / ".github/workflows/ci.yml", root / "Package.swift", root / "Package.resolved"]
-    for directory in ["tests", "tools", "docker/coverage", "Sources/ReplicatorLab", "Sources/ReplicatorLabCore"]:
+    for directory in ["tests", "tools", "docker/coverage", "Sources/ReplicatorLab", "Sources/ReplicatorLabCore", "Sources/ReplicatorLabCommandLine"]:
         paths.extend(p for p in (root / directory).rglob("*")
                      if p.is_file() and "__pycache__" not in p.parts)
     digest = hashlib.sha256()

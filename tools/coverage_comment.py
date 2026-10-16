@@ -104,7 +104,9 @@ def comment(metrics, run, repo, baseline=None):
     lines = [MARKER, f'<!-- coverage-run:{run["id"]}:{run["run_attempt"]} -->',
              "**Swift line coverage**", ""]
     if metrics is None:
-        lines += ["Coverage report unavailable for this run."]
+        lines += ["No coverage report is available. Check the test selection and job results in this CI run.",
+                  "", f"[CI run: test selection and job results]({run_url})"]
+        return "\n".join(lines)
     else:
         lines += ["Complete selected coverage collections." if metrics["complete"] else "**PARTIAL — selected coverage suites did not all complete.**",
                   "", description(metrics), "", "| Scope | Covered / mapped lines | Coverage | Change vs base |", "|---|---:|---:|---:|"]

@@ -36,6 +36,14 @@ barrier that closes each server statement before DDL/session changes. Connection
 closure releases all remaining server statements, including uncertain commands.
 The default `query` API still uses prepare/execute/close.
 
+The SQL transport splits and joins logical messages at the MySQL 0xffffff-byte
+packet boundary. An exact multiple requires an empty final packet. Continuation
+packets must have consecutive sequence IDs. Messages are limited to 1 GiB.
+The applier also checks the target session's `max_allowed_packet` before sending
+a request. `COM_STMT_EXECUTE.payloadSize` counts the encoded request without
+allocating another copy. Root `LargePacketTests` checks framing, size limits,
+truncation, sequence wrap, and prepared-request sizes.
+
 Root protocol tests cover reuse, bindings, affected-row metadata, error eviction,
 capacity and isolation. DML/DDL integration tests exercise exact binary/unsigned
 values, schema changes and fail-stop behavior with the cached path enabled.

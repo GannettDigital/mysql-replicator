@@ -10,8 +10,19 @@ struct DMLSQLPlan {
     let insert: String
     private let insertPrefix: String
     private let insertTuple: String
+    private let writeNames: [String]
+    private let updatePrefix: String
+    private let updateWhere: String
     func insertSQL(rows: Int) -> String {
         insertPrefix + Array(repeating:insertTuple,count:rows).joined(separator:",")
+    }
+    func insertSQL(expressions:[[String]]) -> String {
+        insertPrefix+expressions.map { "("+$0.joined(separator:",")+")" }.joined(separator:",")
+    }
+    func updateSQL(expressions:[String]) -> String {
+        precondition(expressions.count == writeIndexes.count)
+        let pairs=zip(writeNames,expressions).map { $0.0+"="+$0.1 }
+        return updatePrefix+pairs.joined(separator:",")+updateWhere
     }
     let writeIndexes: [Int]
     let generatedIndexes: [Int]
@@ -26,17 +37,20 @@ struct DMLSQLPlan {
         writeIndexes = table.columns.indices.filter { !table.columns[$0].isGenerated }
         generatedIndexes = table.columns.indices.filter { table.columns[$0].isGenerated }
         let writes = writeIndexes.map { names[$0] }
+        writeNames = writes
         let columns = writes.joined(separator:",")
         let sqlName = try table.sqlName
         let predicate = try table.primaryKeyColumns.map { try quoted($0) + "=?" }.joined(separator:" AND ")
         let reads = zip(columnTypes,names).map { type,name in
-            if type.isChoice { return "CAST(\(name) AS UNSIGNED) AS \(name)" }
-            return [.decimal,.temporal].contains(type.interpretation) ? "CAST(\(name) AS CHAR) AS \(name)" : name
+            if type.isChoice || type.bitWidth != nil { return "CAST(\(name) AS UNSIGNED) AS \(name)" }
+            return [.decimal,.temporal,.json].contains(type.interpretation) ? "CAST(\(name) AS CHAR) AS \(name)" : name
         }.joined(separator:",")
         select = "SELECT \(reads) FROM \(sqlName) WHERE \(predicate)"
         insertPrefix = "INSERT INTO \(sqlName) (\(columns)) VALUES "
         insertTuple = "(\(Array(repeating:"?",count:writes.count).joined(separator:",")))"
         insert = insertPrefix + insertTuple
+        updatePrefix = "UPDATE \(sqlName) SET "
+        updateWhere = " WHERE \(predicate)"
         update = "UPDATE \(sqlName) SET \(writes.map { $0 + "=?" }.joined(separator:",")) WHERE \(predicate)"
         delete = "DELETE FROM \(sqlName) WHERE \(predicate)"
     }

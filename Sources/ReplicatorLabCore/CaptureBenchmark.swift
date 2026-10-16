@@ -20,11 +20,16 @@ public enum CaptureBenchmark {
         return timings
     }
 
-    public static func run(root: URL, arguments: [String]) throws {
+    static func options(_ arguments: [String]) throws -> PerformanceOptions {
         let allowed:Set<String>=["--skip-build","--events","--threads","--rate","--workload","--rows-per-event","--payload-bytes","--timeout","--decoder-profile"]
         try require(arguments.filter { $0.hasPrefix("--") }.allSatisfy { allowed.contains($0) },"unsupported capture benchmark option")
         var options=try PerformanceOptions(arguments:arguments)
         options.applierProfiling=false // This benchmark never starts the applier.
+        return options
+    }
+
+    public static func run(root: URL, arguments: [String]) throws {
+        let options=try options(arguments)
         let session=ForwardBenchmarkFixture(root:root,category:"capture-performance/"+runID())
         let runner=ProcessRunner(root:root), tag="mysql-replicator-benchmark:sysbench"
         var failure:Error?, output:URL?, loadName:String?

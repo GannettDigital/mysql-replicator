@@ -56,7 +56,7 @@ public enum ApplyRun {
         let timings = StageTimings()
         let producerTimings = StageTimings()
         let targetTimings = StageTimings()
-        var pipeline = ApplyPipeline()
+        var pipeline = ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
         var retry = SourceRetryState(policy:configuration.reconnectPolicy)
         var reconnectReason: String?
         var targetRetry = SourceRetryState(policy:configuration.targetReconnectPolicy)
@@ -102,7 +102,14 @@ public enum ApplyRun {
         do {
           control?.publish(summary("STARTING"))
           try control?.start(directory:state.directory)
-          if let archive { try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs) }
+          if let archive {
+              do {
+                  try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs,
+                      isCancelled:{ cancellation.isCancelled || drain.isCancelled })
+              } catch is CaptureCancelled {
+                  try state.archiveValidationStopped();return stoppedResult()
+              }
+          }
           while true {
            do {
             let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
@@ -165,6 +172,8 @@ public enum ApplyRun {
             var preparationPolicy=configuration.batchPolicy
             preparationPolicy.maximumTransactions *= max(1,executor.capacity/2)
             let batch = DMLBatch(policy:preparationPolicy,onFlush:{ reason in timings.measure("apply.batch.flush." + reason) {} }) { groups in
+                let large = groups.contains { $0.wireBytes > configuration.batchPolicy.maximumWireBytes }
+                if large { try finishExecution() }
                 let batches=stride(from:0,to:groups.count,by:transactionsPerBatch).map {
                     Array(groups[$0..<min($0+transactionsPerBatch,groups.count)])
                 }
@@ -182,7 +191,7 @@ public enum ApplyRun {
                         }
                     }
                 }
-                if !configuration.batchPolicy.overlapPreparation { try finishExecution() }
+                if large || !configuration.batchPolicy.overlapPreparation { try finishExecution() }
             }
             func barrier(_ reason: String = "barrier") throws { try batch.flush(reason:reason); try finishExecution() }
             func maintainExecution() throws {
@@ -379,7 +388,7 @@ public enum ApplyRun {
                         limits=candidate
                         control.publish(summary("RUNNING"));control.acknowledge(.success(candidate))
                     } catch { control.publish(summary("RUNNING"));control.acknowledge(.failure(error)) }
-                    pipeline=ApplyPipeline()
+                    pipeline=ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
                     continue
                 }
                 if sourceInterrupted {
@@ -397,7 +406,7 @@ public enum ApplyRun {
                     try report(summary("RECONNECTING"))
                     timings.measure("source.reconnect_wait") { SourceRetryState.wait(seconds:delay,cancellation:cancellation,drain:drain) }
                     if cancellation.isCancelled || drain.isCancelled { break }
-                    pipeline=ApplyPipeline()
+                    pipeline=ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
                     reconnectReason=nil
                     continue
                 }
@@ -429,7 +438,7 @@ public enum ApplyRun {
                 try require(state.targetUUID != nil,"target unavailable before identity was established")
                 try state.stopped(); return stoppedResult()
             }
-            pipeline=ApplyPipeline()
+            pipeline=ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
            }
           }
         } catch {

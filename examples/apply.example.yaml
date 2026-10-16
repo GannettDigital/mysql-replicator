@@ -52,8 +52,9 @@ source:
   # The first satisfied limit wins. Only these two limits support ctl reload;
   # other configuration changes require stop/edit/restart, subject to saved-state checks.
   # idleTimeoutSeconds: 15         # Live source read/heartbeat timeout; 1..300 seconds.
-  # maximumEventBytes: 4194304     # 4 MiB per event; 23 bytes..16 MiB. Also applies to replay.
-  # downloadCacheBytes: 268435456   # Live download backlog; 20 MiB..1 GiB. Unused by replay.
+  # maximumEventBytes: 67108864    # 64 MiB per complete event; 23 bytes..1 GiB. Also applies to replay.
+  # maximumTransactionBytes: 268435456 # 256 MiB of binlog data per transaction; event limit..1 GiB. Retained-data budget is four times this value.
+  # downloadCacheBytes: 268435456   # Normal live backlog; 20 MiB..1 GiB. One larger event can enter an empty cache. Unused by replay.
   # decoderProfiling: false        # Detailed decoder timings; coarse timings stay on.
 
 target:                            # Dedicated replica connection and session settings.
@@ -131,7 +132,7 @@ storage:                           # SQLite capacity, history retention, and dis
 # DML batching for run/replay. Preserves source order; MyISAM writes are not atomic.
 batch:                             # Prepare and apply bounded groups of source transactions.
   maximumInsertRows: 32             # Compatible rows per INSERT; 1..128.
-  maximumInsertBytes: 1048576       # 1 MiB; 1 KiB..4 MiB, also capped by target max_allowed_packet.
+  maximumInsertBytes: 1048576       # INSERT grouping budget: 1 KiB..4 MiB. One larger row is allowed; target max_allowed_packet still applies.
   overlapPreparation: true          # Prepare and journal ahead while the single target worker runs.
   flushOnTableChange: false         # true ends a batch whenever its table changes.
   maximumTransactions: 8            # Complete source groups per batch; 1..256.
@@ -170,7 +171,9 @@ batch:                             # Prepare and apply bounded groups of source 
 #   directory: ./support-bundles    # Required when onBlocked is true. Must be outside stateDirectory.
 #                                  # Each error gets a unique name. Old bundles are not removed.
 #   format: tar                    # tar packs the files. directory leaves them unpacked for inspection.
-#   output: ./support.tar          # Required only for manual collection. Use a new path outside stateDirectory.
+#   output: ./support.tar          # Optional manual path. Must be new and outside stateDirectory.
+#                                  # Default: a unique name in directory. If directory is absent,
+#                                  # use support-bundles beside stateDirectory.
 #                                  # For format: directory, this is a new directory path.
 #   maximumBytes: 2147483648        # Default 2 GiB including tar overhead; minimum 1 MiB.
 #                                  # This limit applies to each bundle, including directory output.

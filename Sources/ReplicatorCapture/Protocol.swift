@@ -75,6 +75,20 @@ public struct GTIDSet: Equatable {
             }
         }
     }
+    func union(_ other: GTIDSet) throws -> GTIDSet {
+        let ids=Set((sids+other.sids).map(\.uuid)).sorted { $0.uuidString < $1.uuidString }
+        let entries=ids.map { uuid -> String in
+            let ranges=(sids+other.sids).filter { $0.uuid == uuid }.flatMap(\.intervals).sorted { $0.lowerBound < $1.lowerBound }
+            var merged:[ClosedRange<UInt64>]=[]
+            for range in ranges {
+                if let last=merged.last,range.lowerBound <= last.upperBound+1 {
+                    merged[merged.count-1]=last.lowerBound...max(last.upperBound,range.upperBound)
+                } else { merged.append(range) }
+            }
+            return uuid.uuidString+":"+merged.map { "\($0.lowerBound)-\($0.upperBound)" }.joined(separator:":")
+        }
+        return try GTIDSet(entries.joined(separator:","))
+    }
     public mutating func include(sid: String, sequence: String) throws {
         guard let uuid = UUID(uuidString: sid), !sequence.isEmpty,
               sequence.utf8.allSatisfy({ (48...57).contains($0) }),

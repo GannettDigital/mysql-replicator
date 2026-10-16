@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 6. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 10. Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -20,7 +20,7 @@ typedef struct { const uint8_t *data; uint64_t length; } rc_bytes;
 typedef struct {
     uint64_t offset, number, table_id;
     uint32_t event_type, timestamp, server_id, next_position, flags, row_count, column_count;
-    /* payload_flags: GTID flags for types 33/34, row flags for 23-25/30-32.
+    /* payload_flags: GTID flags for types 33/34, row flags for 23-25/30-32/39.
      * query_error_code/query_status: source QUERY_EVENT error and status bytes.
      * Header flags and row/GTID flags are distinct namespaces. */
     uint32_t event_size, payload_flags, query_error_code;
@@ -28,8 +28,11 @@ typedef struct {
     rc_bytes name, database, table, detail, raw, error, fingerprint;
 } rc_event;
 /* Value kinds: 0 absent, 1 SQL NULL, 2 signed integer, 3 unsigned integer,
- * 4 UTF-8 text, 5 binary, 6 exact decimal text, 7 canonical temporal text. Text/binary are pointer+length, including embedded NUL.
- * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7, in column order.
+ * 4 UTF-8 text, 5 binary, 6 exact decimal text, 7 canonical temporal text,
+ * 8 FLOAT IEEE-754 binary32 bits, 9 DOUBLE IEEE-754 binary64 bits, 10 typed JSON document envelope, 11 JSON diff vector envelope.
+ * Kinds 8/9 use unsigned_value, with zero high bits for kind 8. Non-finite values fail.
+ * Text/binary are pointer+length, including embedded NUL.
+ * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7/8/9/10, in column order.
  * History is mandatory for rows, even if optional wire metadata happens to exist.
  */
 typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; rc_bytes bytes; } rc_value;
@@ -38,9 +41,10 @@ typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; r
  * maximum_bytes is populated for VARCHAR/VARBINARY (wire type 15).
  * metadata contains the raw per-column TABLE_MAP metadata bytes.
  * unsigned_flag: 0 unavailable/not applicable, 1 signed, 2 unsigned.
+ * geometry_type: 0 absent, otherwise native geometry subtype + 1 (1..8).
  * labels: ordered ENUM/SET strings, each UInt32 LE byte length followed by bytes;
  * empty buffer means absent metadata. Owned by result, like name/metadata. */
-typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name, metadata; uint32_t unsigned_flag; rc_bytes labels; } rc_column;
+typedef struct { uint32_t kind, column_type, maximum_bytes, nullable, collation, primary_key; rc_bytes name, metadata; uint32_t unsigned_flag; rc_bytes labels; uint32_t geometry_type; } rc_column;
 int32_t rc_result_column(const rc_result *result, uint32_t column, rc_column *out);
 /* Query-context API. present uses MySQL Q_* status tag bits.
  * No pointers in output. Unknown, truncated or duplicate status fields fail. */

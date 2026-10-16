@@ -53,7 +53,7 @@ public enum ArchiveFetch {
             let connection=try connect(); defer { try? connection.close().wait() }
             guard try query(connection,"SELECT @@server_uuid AS uuid").first?.column("uuid")?.string?.lowercased() == source.sourceUUID.lowercased() else { throw CaptureError("source identity changed during fetch") }
             _ = try query(connection,contract.dumpSessionSQL)
-            let maximum=Int(source.maximumEventBytes ?? 4*1024*1024)
+            let maximum=Int(source.eventByteLimit)
             let queue=PacketQueue(byteLimit:maximum+256*1024), channel=connection.channel
             try channel.setOption(ChannelOptions.autoRead,value:false).wait()
             try channel.setOption(ChannelOptions.maxMessagesPerRead,value:1).wait()
@@ -89,9 +89,9 @@ public enum ArchiveFetch {
             // CRC and framing validation does not limit which column types may
             // be downloaded, and detects truncation before publishing a manifest.
             try ArchiveFileReader(file:path,maximumEventBytes:UInt32(maximum)).scan { _,_ in }
-            entries.append(.init(name:name,bytes:size,sha256:try ArchiveIO.hash(path)))
+            entries.append(.init(name:name,bytes:size))
         }
-        let manifest=ArchiveManifest(version:1,sourceUUID:source.sourceUUID,sourceVersion:version,settings:settings,files:entries,capturedAt:ISO8601DateFormatter().string(from:Date()))
+        let manifest=ArchiveManifest(version:2,sourceUUID:source.sourceUUID,sourceVersion:version,settings:settings,files:entries,capturedAt:ISO8601DateFormatter().string(from:Date()))
         try ArchiveIO.write(manifest,to:directory.appendingPathComponent("manifest.json"))
         let handle=try FileHandle(forWritingTo:directory.appendingPathComponent("manifest.json"));try handle.synchronize();try handle.close()
         try ArchiveIO.syncDirectory(directory)

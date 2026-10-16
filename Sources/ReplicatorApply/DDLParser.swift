@@ -6,11 +6,13 @@ struct DDLParser {
     var tokens: [DDLToken]
     var index = 0
     var engine = "MyISAM"
+    let realAsFloat: Bool
     let database: String?
     var compatibility = CompatibilityPolicy()
     var defaultUTF8MB4Collation: UInt32 = 255
     var edits: [DDLSQLEdit] = []
     init(_ data: Data, database: String?, sqlMode: UInt64 = 0) throws {
+        realAsFloat = sqlMode & 1 != 0
         self.database = database; tokens = try DDLTokens.lex(data,sqlMode:sqlMode)
     }
     func isNext(_ word: String) -> Bool { index < tokens.count && tokens[index].keyword == word }
@@ -42,24 +44,47 @@ struct DDLParser {
         }
         throw ApplyError("unbalanced DDL parentheses")
     }
-    mutating func defaultValue() throws -> String? {
+    mutating func defaultValue(bit: Bool = false) throws -> String? {
         if take("NULL") { return nil }
+        if bit, take("B") {
+            guard index < tokens.count, let digits=tokens[index].literal,
+                  !digits.isEmpty, digits.allSatisfy({ $0 == "0" || $0 == "1" }),
+                  let value=UInt64(digits,radix:2) else { throw ApplyError("invalid BIT default literal") }
+            index += 1
+            return String(value)
+        }
+        if bit, index < tokens.count, tokens[index].text.hasPrefix("0b") {
+            let digits=tokens[index].text.dropFirst(2)
+            guard !digits.isEmpty, digits.allSatisfy({ $0 == "0" || $0 == "1" }),
+                  let value=UInt64(digits,radix:2) else { throw ApplyError("invalid BIT default literal") }
+            index += 1
+            return String(value)
+        }
         if take("CURRENT_TIMESTAMP") {
             if take("(") { let precision = try number(); try require(precision <= 6,"invalid timestamp precision"); try expect(")"); return precision == 0 ? "CURRENT_TIMESTAMP" : "CURRENT_TIMESTAMP(\(precision))" }
             return "CURRENT_TIMESTAMP"
         }
         if index < tokens.count, let value = tokens[index].literal { index += 1; return value }
         let sign = take("-") ? "-" : (take("+") ? "+" : "")
-        try require(index < tokens.count && !tokens[index].text.isEmpty && tokens[index].text.utf8.allSatisfy({(48...57).contains($0)}),"invalid numeric default")
-        var value = tokens[index].text; index += 1
+        try require(index < tokens.count,"missing numeric default")
+        var value=tokens[index].text; index += 1
         if take(".") {
-            try require(index < tokens.count && tokens[index].text.utf8.allSatisfy({(48...57).contains($0)}),"invalid decimal default")
+            try require(index < tokens.count,"missing fractional default")
             value += "."+tokens[index].text; index += 1
         }
+        if value.hasSuffix("e") || value.hasSuffix("E") {
+            value += take("-") ? "-" : (take("+") ? "+" : "")
+            try require(index < tokens.count,"missing default exponent")
+            value += tokens[index].text; index += 1
+        }
+        try require(value.range(of:#"^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$"#,options:.regularExpression) != nil,"invalid numeric default")
         return sign+value
     }
     mutating func column() throws -> (ApplyColumn,Bool) {
         let name = try identifier(); var base = try identifier().lowercased()
+        if base == "geomcollection" { base = "geometrycollection" }
+        if base == "real" { base = realAsFloat ? "float" : "double" }
+        if base == "double" { _ = take("PRECISION") }
         if base == "integer" { base = "int" }
         if base == "numeric" || base == "dec" { base = "decimal" }
         var type = base
@@ -76,14 +101,17 @@ struct DDLParser {
         } else if take("(") {
             var values = [try number()]
             if take(",") { values.append(try number()) }; try expect(")")
-            if ["tinyint","smallint","mediumint","int","bigint","year"].contains(base) {
+            if base == "float", values.count == 1 {
+                try require((0...53).contains(values[0]),"invalid FLOAT binary precision")
+                base = values[0] <= 24 ? "float" : "double"; type = base
+            } else if ["tinyint","smallint","mediumint","int","bigint","year"].contains(base) {
                 try require(values.count == 1 && (base != "year" || values[0] == 4),"unsupported display width")
             } else {
                 if base == "decimal" && values.count == 1 { values.append(0) }
                 if !(["time","datetime","timestamp"].contains(base) && values == [0]) { type += "("+values.map(String.init).joined(separator:",")+")" }
             }
         } else if base == "decimal" { type += "(10,0)" }
-        else if base == "char" || base == "binary" { type += "(1)" }
+        else if base == "char" || base == "binary" || base == "bit" { type += "(1)" }
         if take("UNSIGNED") { type += " unsigned" }
         let parsed: DMLColumnType
         do { parsed = try DMLColumnType(type) }
@@ -96,7 +124,7 @@ struct DDLParser {
             if take("NOT") { try expect("NULL"); column.nullable = false; attribute = "nullability" }
             else if take("NULL") { column.nullable = true; attribute = "nullability" }
             else if take("PRIMARY") { try expect("KEY"); primary = true; attribute = "primary" }
-            else if take("DEFAULT") { column.defaultValue = try defaultValue(); attribute = "default" }
+            else if take("DEFAULT") { column.defaultValue = try defaultValue(bit:parsed.bitWidth != nil); attribute = "default" }
             else if take("AUTO_INCREMENT") { column.extra = "auto_increment"; column.nullable = false; attribute = "extra" }
             else if take("ON") { try expect("UPDATE"); guard let value = try defaultValue(), value.hasPrefix("CURRENT_TIMESTAMP") else { throw ApplyError("unsupported ON UPDATE expression") }; column.extra = "on update "+value; attribute = "extra" }
             else if take("CHARACTER") { try expect("SET"); column.characterSet = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; attribute = "charset" }
@@ -142,15 +170,16 @@ struct DDLParser {
         return name
     }
     mutating func indexDefinition(constraintName: String? = nil) throws -> ApplyIndex {
-        let unique = take("UNIQUE")
+        let spatial = take("SPATIAL")
+        let unique = !spatial && take("UNIQUE")
         if unique { _ = take("KEY") || take("INDEX") } else { try require(take("INDEX") || take("KEY"),"expected INDEX or KEY") }
         let explicitName = isNext("(") || isNext("USING") ? nil : try identifier()
-        let using = take("USING"); if using { try expect("BTREE") }
+        let using = take("USING"); if using { try require(!spatial,"SPATIAL index does not accept USING BTREE"); try expect("BTREE") }
         let parts = try keyParts()
-        if take("USING") { try require(!using,"duplicate index type"); try expect("BTREE") }
+        if take("USING") { try require(!using && !spatial,"unsupported or duplicate index type"); try expect("BTREE") }
         // Both MySQL versions prefer an explicit index name over the constraint
         // symbol, then default to the first indexed column.
-        return ApplyIndex(name:explicitName ?? constraintName ?? parts[0].column,unique:unique,parts:parts)
+        return ApplyIndex(name:explicitName ?? constraintName ?? parts[0].column,unique:unique,parts:parts,type:spatial ? "SPATIAL" : "BTREE")
     }
     mutating func databaseDefinition(conditional: Bool = false) throws -> CreateDatabase {
         var charsetEnd: Int?
@@ -170,12 +199,12 @@ struct DDLParser {
         if let object = try objectStatement() { return object }
         let result: DDLStatement
         if take("CREATE") {
-            if isNext("INDEX") || isNext("UNIQUE") {
-                let unique = take("UNIQUE"); try expect("INDEX"); let key = try identifier()
-                let using = take("USING"); if using { try expect("BTREE") }; try expect("ON")
+            if isNext("INDEX") || isNext("UNIQUE") || isNext("SPATIAL") {
+                let spatial = take("SPATIAL"), unique = take("UNIQUE"); try require(!spatial || !unique,"SPATIAL index cannot be UNIQUE"); try expect("INDEX"); let key = try identifier()
+                let using = take("USING"); if using { try require(!spatial,"SPATIAL index does not accept USING BTREE"); try expect("BTREE") }; try expect("ON")
                 let table = try name(), parts = try keyParts()
-                if take("USING") { try require(!using,"duplicate index type"); try expect("BTREE") }
-                result = .indexes(table,.add(ApplyIndex(name:key,unique:unique,parts:parts)))
+                if take("USING") { try require(!using && !spatial,"unsupported or duplicate index type"); try expect("BTREE") }
+                result = .indexes(table,.add(ApplyIndex(name:key,unique:unique,parts:parts,type:spatial ? "SPATIAL" : "BTREE")))
             } else if take("DATABASE") || take("SCHEMA") {
                 let conditional = take("IF"); if conditional { try expect("NOT"); try expect("EXISTS") }
                 result = .createDatabase(try databaseDefinition(conditional:conditional))
@@ -246,7 +275,7 @@ struct DDLParser {
             if isNext("FOREIGN") { foreignKeys.append(try foreignKey(table:name,constraint:constraint)) }
             else if take("PRIMARY") {
                 try expect("KEY"); let parts = try keyParts(); try require(key == nil && parts.allSatisfy{$0.prefix == nil},"invalid DDL primary key"); key = parts.map(\.column)
-            } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { indexes.append(try indexDefinition(constraintName:constraint)) }
+            } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") || isNext("SPATIAL") { indexes.append(try indexDefinition(constraintName:constraint)) }
             else {
                 let (column,primary) = try column(); columns.append(column)
                 try require(columns.count <= 256,"DDL column limit exceeded")
@@ -287,7 +316,7 @@ struct DDLParser {
             let constraint = try constraintName()
             if isNext("FOREIGN") { let (key,index) = try foreignKey(table:table,constraint:constraint); return .addForeignKey(key,index) }
             if take("PRIMARY") { try expect("KEY"); let parts = try keyParts(); try require(parts.allSatisfy{$0.prefix == nil},"primary prefix unsupported"); return .primaryKey(parts.map(\.column)) }
-            if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
+            if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") || isNext("SPATIAL") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
             if take("PARTITION") { return .partition(.add(try partitionItems(method:"",expression:""))) }
             _ = take("COLUMN"); let (c,primary) = try column(); try require(!primary,"ADD inline primary key is unsupported; use ADD PRIMARY KEY")
             try require(c.nullable || c.defaultValue != nil || c.isGenerated,"ADD NOT NULL requires an explicit default or generated expression")
@@ -324,6 +353,18 @@ struct DDLParser {
 
 func normalizedDefault(_ value: String?,type: DMLColumnType) throws -> String? {
     guard var value else { return nil }
+    if type.base == "json" || type.isSpatial { throw ApplyError("JSON/spatial non-NULL defaults are unsupported") }
+    if type.floatingWidth != nil { return try FloatingPointSQL.defaultValue(value,type:type) }
+    if type.bitWidth != nil {
+        let number: UInt64?
+        if value.hasPrefix("b'"), value.hasSuffix("'") {
+            let digits=value.dropFirst(2).dropLast()
+            number = !digits.isEmpty && digits.allSatisfy({ $0 == "0" || $0 == "1" }) ? UInt64(digits,radix:2) : nil
+        } else { number = UInt64(value) }
+        guard let number else { throw ApplyError("invalid BIT default") }
+        try type.validate(.unsigned(number))
+        return "b'"+String(number,radix:2)+"'"
+    }
     if type.base.hasSuffix("text") || type.base.hasSuffix("blob") { throw ApplyError("MySQL 5.7 TEXT/BLOB columns cannot have non-NULL defaults") }
     if type.base == "year" {
         guard let year=Int(value),year == 0 || (1901...2155).contains(year) else {throw ApplyError("YEAR default must be zero or a four-digit year")}

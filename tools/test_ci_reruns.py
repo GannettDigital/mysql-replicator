@@ -155,6 +155,41 @@ class ResultReuseTests(unittest.TestCase):
         self.records.pop()
         self.assertFalse(self.summary()['complete'])
 
+    def test_missing_build_cannot_certify_saved_successful_shards(self):
+        self.builds = {}
+        report = self.summary()
+        self.assertFalse(report['complete'])
+        self.assertEqual(report['missing_builds'], ['release'])
+        self.assertEqual(report['stale_shards'], ['one', 'two'])
+
+    def test_failed_build_saves_partial_reports_before_cli_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            matrix = root / 'matrix.json'
+            matrix.write_text(json.dumps(dict(self.manifest, scope='full')))
+            self.dependencies['packaging-and-smoke']['result'] = 'failure'
+            env = dict(os.environ, GITHUB_ACTIONS='true', GITHUB_SHA='a', GITHUB_RUN_ID='9',
+                       GITHUB_RUN_ATTEMPT='3', CI_JOB_RESULTS=json.dumps(self.dependencies))
+            env.pop('GITHUB_STEP_SUMMARY', None)
+            output = root / 'output'
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name('ci_measurements.py')),
+                '--matrix', str(matrix), '--records', str(root / 'records'),
+                '--builds', str(root / 'builds'), '--output', str(output)],
+                env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('CI measurement is partial', result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+            report = json.loads((output / 'report.json').read_text())
+            self.assertFalse(report['complete'])
+            self.assertEqual(report['missing_builds'], ['release'])
+            self.assertEqual(report['missing_shards'], ['one', 'two'])
+            self.assertEqual(report['failed_jobs'], ['packaging-and-smoke'])
+            summary = (output / 'summary.md').read_text()
+            self.assertIn('Missing build records:\n\n- release', summary)
+            self.assertIn('Failed required jobs:\n\n- packaging-and-smoke', summary)
+            for name in ('test-value.json', 'test-value.csv', 'test-value.md'):
+                self.assertTrue((output / name).is_file(), name)
+
     def test_ci_report_cli_uses_current_attempt_and_retains_shard_attempts(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

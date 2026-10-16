@@ -1,54 +1,11 @@
 import Foundation
 import ReplicatorLabCore
+import ReplicatorLabCommandLine
 
 func main() throws -> Int32 {
-    var args = Array(CommandLine.arguments.dropFirst())
-    let command = args.isEmpty ? "--help" : args.removeFirst()
-    if command == "--help" {
-        print("""
-        replicator-lab: repository automation (run from the repository root)
-          test --profile all|\(LabProfile.allCases.map(\.rawValue).joined(separator:"|"))
-               [--suite correctness|lifecycle|recovery|demo|native|all]
-               [--tier smoke|full] [--family FAMILY]
-               [--case ID ...] [--variant default|position-minimal|gtid-full|all]
-               [--list] [--skip-build] [--coverage]
-          demo up|start|stop|status|compare|sql|fail|skip|inspect|resolve|down|legacy-down --profile PROFILE
-               up [--skip-build] [--coverage]; sql FILE; skip GTID; compare [--expect-blocked]
-          benchmark --profile PROFILE [--mode backlog|streaming|capture] [--workload insert|multi-table-transaction] [--events N] [--skip-build]
-        Backlog options (--mode backlog):
-                    [--batch-transactions N] [--prepared-batches N]
-                    [--decoder-profile on|off] [--applier-profile on|off] [--server-profile on|off]
-        Forward streaming options (--mode streaming):
-                    [--tables N] [--table-distribution uniform|hot80] [--table-run N] [--skip-build] [--events N] [--threads N] [--rate N]
-                    [--target-transport tcp-tls|unix-tls|unix]
-                    [--insert-rows N] [--overlap-preparation on|off] [--flush-on-table-change on|off]
-                    [--explicit-table-locks on|off]
-                    [--batch-transactions N] [--decoder-profile on|off] [--applier-profile on|off]
-                    [--workload insert|mixed] [--rows-per-event N] [--payload-bytes N]
-                    [--sample-seconds N] [--timeout N]
-        Specialized and compatibility entry points:
-          build-inputs # source/fixture digest for prebuilt CI images
-          native-suite [--positioning auto|file-position|both]
-          native-smoke [--positioning auto|file-position] [--workload transaction|autocommit]
-                       [--native-engine MyISAM|InnoDB] [--native-init-automatic]
-          ubuntu-smoke [--skip-build]
-          live-suite [--skip-build]
-          native-ddl-suite
-          ddl-catalog check
-          ddl-catalog report [--format markdown|json] [--evidence PATH ...]
-          ddl-catalog upstream-check [--mysql-source PATH]
-          ddl-catalog scan [--mysql-source PATH]
-          upstream-tests
-          package-deb [--output DIR] [--skip-build] [--skip-verification]
-          reverse-correctness [--skip-build] [--slice all|database|ddl|dml|indexes|policy|rejections]
-          reverse-suite [--skip-build] [--events N] # 5.7 InnoDB → 8.4 InnoDB
-          verify-evidence <case-evidence-directory>
-        native-suite verifies positive and expected rejection cases; smoke retains
-        nonzero exit for observed rejection. MYSQLBINLOG selects a MySQL 8.4 client.
-        Legacy forward qualification fixes source ON/ON and targets OFF_PERMISSIVE/WARN.
-        """)
-        return 0
-    }
+    let request = try ReplicatorLabCommandLine.parse(Array(CommandLine.arguments.dropFirst()))
+    if case .help(let text) = request { print(text); return 0 }
+    guard case .run(let command, var args) = request else { return 0 }
     let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     try require(FileManager.default.fileExists(atPath: root.appendingPathComponent("compose.yaml").path), "run from the repository root")
     if command == "build-inputs" {

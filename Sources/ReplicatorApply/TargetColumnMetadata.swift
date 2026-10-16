@@ -5,6 +5,8 @@ import Foundation
 /// reports the same supported temporal defaults without that marker.
 enum TargetColumnMetadata {
     static func defaultValue(_ value: String?, type: String, mysql84: Bool) throws -> String? {
+        if ["float","double","float unsigned","double unsigned"].contains(type) { return try normalizedDefault(value,type:DMLColumnType(type)) }
+        if type == "bit" || type.hasPrefix("bit(") { return try normalizedDefault(value,type:DMLColumnType(type)) }
         guard mysql84, let value, value.hasPrefix("0x"),
               type.hasPrefix("binary(") || type.hasPrefix("varbinary(") else { return temporalDefault(value,type:type) }
         // 8.4 I_S renders binary defaults as hex literals without BINARY padding.

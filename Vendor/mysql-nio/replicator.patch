@@ -143,3 +143,95 @@
 -    }
 -}
 +}
+--- a/Sources/MySQLNIO/Packet/MySQLPacket.swift
++++ b/Sources/MySQLNIO/Packet/MySQLPacket.swift
+@@ -3,0 +4,2 @@
++    public static let fragmentBytes = 0x00ff_ffff
++    public static let maximumMessageBytes = 1024 * 1024 * 1024
+@@ -33 +35 @@
+-        let bytes = [UInt8](self.payload.readableBytesView)
++        let bytes = self.payload.readableBytesView.prefix(16)
+--- a/Sources/MySQLNIO/Packet/MySQLPacketDecoder.swift
++++ b/Sources/MySQLNIO/Packet/MySQLPacketDecoder.swift
+@@ -8,0 +9,3 @@
++    private let maximumMessageBytes: Int
++    private var pending: ByteBuffer?
++    private var continuationSequence: UInt8?
+@@ -10 +13 @@
+-    public init(sequence: MySQLPacketSequence, logger: Logger) {
++    public init(sequence: MySQLPacketSequence, logger: Logger, maximumMessageBytes: Int = MySQLPacket.maximumMessageBytes) {
+@@ -12,0 +16 @@
++        self.maximumMessageBytes = maximumMessageBytes
+@@ -22,2 +26,4 @@
+-        let length = header & 0x00_FF_FF_FF
+-        let sequenceID = header >> 24
++        let length = Int(header & 0x00_FF_FF_FF)
++        let sequenceID = UInt8(header >> 24)
++        guard length <= maximumMessageBytes - (pending?.readableBytes ?? 0),
++              continuationSequence == nil || continuationSequence == sequenceID else { throw MySQLError.protocolError }
+@@ -25 +31 @@
+-        guard let payload = copy.readSlice(length: numericCast(length)) else {
++        guard var payload = copy.readSlice(length: length) else {
+@@ -29 +35,9 @@
+-        let packet = MySQLPacket(payload: payload)
++        if pending != nil { pending!.writeBuffer(&payload) }
++        else if length == MySQLPacket.fragmentBytes { pending = payload }
++        self.sequence.current = sequenceID
++        if length == MySQLPacket.fragmentBytes {
++            continuationSequence = sequenceID &+ 1
++            return .continue
++        }
++        let packet = MySQLPacket(payload: pending ?? payload)
++        pending = nil; continuationSequence = nil
+@@ -31 +44,0 @@
+-        self.sequence.current = UInt8(sequenceID & 0xFF)
+@@ -37 +50,5 @@
+-        .needMoreData
++        let result = try decode(context:context,buffer:&buffer)
++        if case .needMoreData = result, seenEOF, pending != nil || buffer.readableBytes != 0 {
++            throw MySQLError.protocolError
++        }
++        return result
+--- a/Sources/MySQLNIO/Packet/MySQLPacketEncoder.swift
++++ b/Sources/MySQLNIO/Packet/MySQLPacketEncoder.swift
+@@ -18,6 +18,13 @@
+-        let length = packet.payload.readableBytes
+-        out.writeInteger(UInt8(length & 0xFF))
+-        out.writeInteger(UInt8(length >> 8 & 0xFF))
+-        out.writeInteger(UInt8(length >> 16 & 0xFF))
+-        out.writeInteger(UInt8(self.sequence.next()))
+-        out.writeBuffer(&packet.payload)
++        guard packet.payload.readableBytes <= MySQLPacket.maximumMessageBytes else { throw MySQLError.protocolError }
++        // A full-size fragment requires a continuation, including an empty
++        // final fragment when the message is an exact multiple of 0xffffff.
++        while true {
++            let length = min(packet.payload.readableBytes, MySQLPacket.fragmentBytes)
++            out.writeInteger(UInt8(length & 0xFF))
++            out.writeInteger(UInt8(length >> 8 & 0xFF))
++            out.writeInteger(UInt8(length >> 16 & 0xFF))
++            out.writeInteger(self.sequence.next())
++            var fragment = packet.payload.readSlice(length:length)!
++            out.writeBuffer(&fragment)
++            if length < MySQLPacket.fragmentBytes { break }
++        }
+--- a/Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_EXECUTE.swift
++++ b/Sources/MySQLNIO/Protocol/MySQLProtocol+COM_STMT_EXECUTE.swift
+@@ -31,0 +32,14 @@
++        /// Logical payload size, before protocol packet fragmentation.
++        public static func payloadSize(values: [MySQLData]) -> Int {
++            guard !values.isEmpty else { return 10 }
++            var size = 11 + (values.count + 7)/8 + values.count*2
++            for value in values {
++                guard let buffer = value.buffer else { continue }
++                let count = buffer.readableBytes
++                size += count
++                if value.type.encodingLength == nil {
++                    size += count < 251 ? 1 : count < 65536 ? 3 : count < 16777216 ? 4 : 9
++                }
++            }
++            return size
++        }
+@@ -39,0 +54,3 @@
++        public init(statementID: UInt32, flags: ExecuteFlags, values: [MySQLData]) {
++            self.statementID = statementID; self.flags = flags; self.values = values
++        }

@@ -1,5 +1,5 @@
 //! Strict bounded offline adapter around the pinned mysql_common codec.
-//! No transport, transaction/application policy, or JSON serialization lives here.
+//! No transport, transaction/application policy, or diagnostic serialization lives here.
 mod query_context;
 use mysql_common::{
     binlog::{
@@ -31,14 +31,15 @@ const SCHEMA: i32 = 7;
 const INTERNAL: i32 = 8;
 mod profiling;
 mod scalars;
+mod json_document;
 use profiling::{Profile, ProfileOutput};
 
 const MAX_COLUMNS: usize = 256;
 const MAX_ROWS: usize = 4096;
 const MAX_TABLES: usize = 1024;
 const MAX_TABLE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_VALUE: usize = 1024 * 1024;
-const MAX_OUTPUT: usize = 16 * 1024 * 1024;
+const MAX_EVENT: usize = 1024 * 1024 * 1024;
+const MIN_OUTPUT_BUDGET: usize = 16 * 1024 * 1024;
 type Failure = (i32, &'static str);
 type Checked<T> = Result<T, Failure>;
 fn ensure(ok: bool, code: i32, message: &'static str) -> Checked<()> {
@@ -97,6 +98,7 @@ pub struct ColumnView {
     metadata: Bytes,
     unsigned_flag: u32,
     labels: Bytes,
+    geometry_type: u32, // 0 absent, native type + 1 otherwise
 }
 struct MapColumn {
     kind: u32,
@@ -109,6 +111,7 @@ struct MapColumn {
     metadata: Vec<u8>,
     unsigned_flag: u32,
     labels: Vec<u8>,
+    geometry_type: u32,
 }
 #[repr(C)]
 pub struct ValueView {
@@ -127,6 +130,10 @@ enum Cell {
     Binary(Vec<u8>),
     Decimal(Vec<u8>),
     Temporal(Vec<u8>),
+    Json(Vec<u8>),
+    JsonDelta(Vec<u8>),
+    Float32(u32),
+    Float64(u64),
 }
 impl Cell {
     fn view(&self) -> ValueView {
@@ -137,6 +144,10 @@ impl Cell {
             bytes: Bytes::new(&[]),
         };
         match self {
+            Self::JsonDelta(x) => { v.kind = 11; v.bytes = Bytes::new(x); }
+            Self::Json(x) => { v.kind = 10; v.bytes = Bytes::new(x); }
+            Self::Float32(bits) => { v.kind = 8; v.unsigned_value = u64::from(*bits); }
+            Self::Float64(bits) => { v.kind = 9; v.unsigned_value = *bits; }
             Self::Absent => (),
             Self::Null => v.kind = 1,
             Self::Signed(x) => {
@@ -297,7 +308,11 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING | MYSQL_TYPE_BLOB => {
             kind == 4 || kind == 5
         }
-        MYSQL_TYPE_ENUM | MYSQL_TYPE_SET => kind == 3,
+        MYSQL_TYPE_ENUM | MYSQL_TYPE_SET | MYSQL_TYPE_BIT => kind == 3,
+        MYSQL_TYPE_GEOMETRY => kind == 5,
+        MYSQL_TYPE_JSON => kind == 10,
+        MYSQL_TYPE_FLOAT => kind == 8,
+        MYSQL_TYPE_DOUBLE => kind == 9,
         MYSQL_TYPE_NEWDECIMAL => kind == 6,
         MYSQL_TYPE_DATE
         | MYSQL_TYPE_NEWDATE
@@ -319,6 +334,18 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
     )?;
     let meta = table.get_column_metadata(index).unwrap_or(&[]);
     match ty {
+        MYSQL_TYPE_GEOMETRY => ensure(meta == [4], MALFORMED, "invalid GEOMETRY length metadata")?,
+        MYSQL_TYPE_JSON => ensure(meta == [4], MALFORMED, "invalid JSON length metadata")?,
+        MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => ensure(
+            meta == [if ty == MYSQL_TYPE_FLOAT { 4 } else { 8 }],
+            MALFORMED, "invalid floating-point width metadata",
+        )?,
+        MYSQL_TYPE_BIT => ensure(
+            meta.len() == 2 && meta[0] <= 7
+                && (1..=64).contains(&(u16::from(meta[1]) * 8 + u16::from(meta[0]))),
+            MALFORMED,
+            "invalid BIT width metadata",
+        )?,
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING => {
             ensure(meta.len() == 2, MALFORMED, "invalid string metadata")?
         }
@@ -359,6 +386,8 @@ fn image<'a>(
     table: &'a Table,
     present: &[bool],
     budget: &mut usize,
+    maximum_output: usize,
+    partial: &[bool],
 ) -> Checked<Vec<Cell>> {
     let count = present.iter().filter(|x| **x).count();
     ensure(count > 0, MALFORMED, "empty row image bitmap")?;
@@ -367,7 +396,7 @@ fn image<'a>(
         .checked_add(present.len() * std::mem::size_of::<Cell>())
         .ok_or((LIMIT, "output overflow"))?;
     ensure(
-        *budget <= MAX_OUTPUT,
+        *budget <= maximum_output,
         LIMIT,
         "decoded output limit exceeded",
     )?;
@@ -375,12 +404,14 @@ fn image<'a>(
     let mut image_index = 0;
     for (index, included) in present.iter().enumerate() {
         if !included {
+            ensure(!partial.get(index).copied().unwrap_or(false), MALFORMED, "partial JSON column is absent")?;
             values.push(Cell::Absent);
             continue;
         }
         let is_null = nulls[image_index / 8] & (1 << (image_index % 8)) != 0;
         image_index += 1;
         if is_null {
+            ensure(!partial.get(index).copied().unwrap_or(false), MALFORMED, "partial JSON value is SQL NULL")?;
             ensure(
                 table.event.null_bitmask().get(index).is_some_and(|b| *b),
                 MALFORMED,
@@ -401,6 +432,37 @@ fn image<'a>(
             values.push(Cell::Unsigned(value));
             continue;
         }
+        if ty == ColumnType::MYSQL_TYPE_JSON {
+            let length = u32::from_le_bytes(take(&mut buf.0, 4)?.try_into().unwrap()) as usize;
+            let raw = take(&mut buf.0, length)?;
+            let is_partial = partial.get(index).copied().unwrap_or(false);
+            let json = if is_partial { json_document::delta(raw, maximum_output.saturating_sub(*budget))? } else { json_document::decode(raw, maximum_output.saturating_sub(*budget))? };
+            *budget += json.len();
+            values.push(if is_partial { Cell::JsonDelta(json) } else { Cell::Json(json) });
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_FLOAT {
+            let bits = u32::from_le_bytes(take(&mut buf.0, 4)?.try_into().unwrap());
+            ensure(f32::from_bits(bits).is_finite(), UNSUPPORTED, "non-finite FLOAT value")?;
+            values.push(Cell::Float32(bits));
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_DOUBLE {
+            let bits = u64::from_le_bytes(take(&mut buf.0, 8)?.try_into().unwrap());
+            ensure(f64::from_bits(bits).is_finite(), UNSUPPORTED, "non-finite DOUBLE value")?;
+            values.push(Cell::Float64(bits));
+            continue;
+        }
+        if ty == ColumnType::MYSQL_TYPE_BIT {
+            // Field_bit::pack writes the partial high byte first, then the
+            // big-endian whole bytes. Unlike integer/SET events, this is not LE.
+            let width = usize::from(meta[1]) * 8 + usize::from(meta[0]);
+            let raw = take(&mut buf.0, width.div_ceil(8))?;
+            let value = raw.iter().fold(0u64, |n, b| (n << 8) | u64::from(*b));
+            ensure(width == 64 || value < (1u64 << width), MALFORMED, "nonzero BIT padding")?;
+            values.push(Cell::Unsigned(value));
+            continue;
+        }
         if kind == 6 || kind == 7 {
             let cell = scalars::decode(ty, meta, kind, buf)?;
             let size = match &cell {
@@ -409,7 +471,7 @@ fn image<'a>(
             };
             *budget += size;
             ensure(
-                *budget <= MAX_OUTPUT,
+                *budget <= maximum_output,
                 LIMIT,
                 "decoded output limit exceeded",
             )?;
@@ -430,14 +492,9 @@ fn image<'a>(
             // mysql_common emits INT24 UNSIGNED as nonnegative Value::Int.
             BinlogValue::Value(Value::Int(v)) if kind == 3 && v >= 0 => Cell::Unsigned(v as u64),
             BinlogValue::Value(Value::Bytes(v)) if kind == 4 || kind == 5 => {
-                ensure(
-                    v.len() <= MAX_VALUE,
-                    LIMIT,
-                    "individual value limit exceeded",
-                )?;
                 *budget += v.len();
                 ensure(
-                    *budget <= MAX_OUTPUT,
+                    *budget <= maximum_output,
                     LIMIT,
                     "decoded output limit exceeded",
                 )?;
@@ -470,7 +527,7 @@ fn image<'a>(
                         )?;
                         *budget += width - v.len();
                         ensure(
-                            *budget <= MAX_OUTPUT,
+                            *budget <= maximum_output,
                             LIMIT,
                             "decoded output limit exceeded",
                         )?;
@@ -540,7 +597,7 @@ impl Decoder {
         ensure(
             matches!(
                 code,
-                2 | 3 | 4 | 15 | 16 | 19 | 23 | 24 | 25 | 30 | 31 | 32 | 33 | 34 | 35
+                2 | 3 | 4 | 15 | 16 | 19 | 23 | 24 | 25 | 30 | 31 | 32 | 33 | 34 | 35 | 39
             ),
             UNSUPPORTED,
             "unsupported binlog event type",
@@ -655,6 +712,7 @@ impl Decoder {
                     (30, 10),
                     (31, 10),
                     (32, 10),
+                    (39, 10),
                 ] {
                     if let Some(actual) = fde.event_type_header_lengths().get(ty as usize - 1) {
                         ensure(
@@ -727,6 +785,7 @@ impl Decoder {
                     let mut enum_charset = false;
                     let mut enum_labels: Vec<Vec<u8>> = Vec::new();
                     let mut set_labels: Vec<Vec<u8>> = Vec::new();
+                    let mut geometry_types: Option<Vec<u32>> = None;
                     for field in table.iter_optional_meta() {
                         let field = parsed(field)?;
                         ensure(
@@ -783,6 +842,14 @@ impl Decoder {
                                     set_labels.push(packed);
                                 }
                             }
+                            OptionalMetadataField::GeometryType(ref values) => {
+                                let types=values.iter_geometry_types().take(n+1)
+                                    .map(|value| parsed(value).map(|t| t as u32+1))
+                                    .collect::<Checked<Vec<_>>>()?;
+                                let count=(0..n).filter(|&i| table.get_column_type(i).ok().flatten() == Some(ColumnType::MYSQL_TYPE_GEOMETRY)).count();
+                                ensure(types.len() == count, MALFORMED, "geometry type count differs")?;
+                                geometry_types=Some(types);
+                            }
                             OptionalMetadataField::SimplePrimaryKey(_)
                             | OptionalMetadataField::PrimaryKeyWithPrefix(_) => {
                                 ensure(!primary, MALFORMED, "conflicting primary key metadata")?;
@@ -793,6 +860,7 @@ impl Decoder {
                     }
                     let optional = parsed(OptionalMetaExtractor::new(table.iter_optional_meta()))?;
                     let mut signedness = optional.iter_signedness();
+                    let mut geometries=geometry_types.unwrap_or_default().into_iter();
                     let mut charsets = optional.iter_charset();
                     let mut enum_charsets = optional.iter_enum_and_set_charset();
                     let has_enum_labels = !enum_labels.is_empty();
@@ -826,7 +894,10 @@ impl Decoder {
                             .ok_or((MALFORMED, "missing column type"))?;
                         let numeric = ty.is_numeric_type();
                         let scalar_kind = match ty as u8 {
-                            247 | 248 => 3,
+                            16 | 247 | 248 => 3,
+                            4 => 8,
+                            5 => 9,
+                            245 => 10,
                             246 => 6,
                             10 | 14 | 13 | 17 | 18 | 19 => 7,
                             _ => {
@@ -846,7 +917,13 @@ impl Decoder {
                         let is_enum = ty as u8 == 247;
                         let is_set = ty as u8 == 248;
                         let mut labels = Vec::new();
-                        if is_enum || is_set {
+                        let mut geometry_type=0;
+                        if ty == ColumnType::MYSQL_TYPE_GEOMETRY {
+                            kind=5;
+                            geometry_type=geometries.next().unwrap_or(0);
+                        } else if ty == ColumnType::MYSQL_TYPE_BIT {
+                            kind = 3;
+                        } else if is_enum || is_set {
                             kind = 3;
                             if let Some(charset) = enum_charsets.next() {
                                 collation = parsed(charset)? as u32;
@@ -873,7 +950,7 @@ impl Decoder {
                                     )?;
                                 }
                             }
-                        } else if scalar_kind != 7 {
+                        } else if scalar_kind != 7 && scalar_kind != 10 {
                             if let Some(charset) = charsets.next() {
                                 collation = parsed(charset)? as u32;
                                 kind = match collation {
@@ -902,6 +979,7 @@ impl Decoder {
                             metadata: meta.to_vec(),
                             unsigned_flag,
                             labels,
+                            geometry_type,
                         });
                     }
                     ensure(
@@ -1000,11 +1078,41 @@ impl Decoder {
                         )?;
                         let old = buf.len();
                         let b = match &before {
-                            Some(bits) => image(&mut buf, table, bits, &mut budget)?,
+                            Some(bits) => image(
+                                &mut buf,
+                                table,
+                                bits,
+                                &mut budget,
+                                self.max_event.saturating_mul(3).max(MIN_OUTPUT_BUDGET),
+                                &[],
+                            )?,
                             None => vec![],
                         };
+                        let mut partial = vec![false; table.kinds.len()];
+                        if code == 39 {
+                            let options = json_document::length(&mut buf.0)?;
+                            ensure(options <= 1,MALFORMED,"unknown partial row value options")?;
+                            if options == 1 {
+                                let json_count = table.kinds.iter().filter(|kind| **kind == 10).count();
+                                let bits = take(&mut buf.0,json_count.div_ceil(8))?;
+                                let mut ordinal = 0;
+                                for (index,kind) in table.kinds.iter().enumerate() {
+                                    if *kind == 10 {
+                                        partial[index] = bits[ordinal/8] & (1 << (ordinal%8)) != 0;
+                                        ordinal += 1;
+                                    }
+                                }
+                            }
+                        }
                         let a = match &after {
-                            Some(bits) => image(&mut buf, table, bits, &mut budget)?,
+                            Some(bits) => image(
+                                &mut buf,
+                                table,
+                                bits,
+                                &mut budget,
+                                self.max_event.saturating_mul(3).max(MIN_OUTPUT_BUDGET),
+                                &partial,
+                            )?,
                             None => vec![],
                         };
                         ensure(buf.len() < old, MALFORMED, "row decoder made no progress")?;
@@ -1029,7 +1137,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    6
+    10
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
@@ -1043,7 +1151,7 @@ pub unsafe extern "C" fn rc_decoder_create(max_event: u32, out: *mut *mut Decode
     unsafe {
         *out = ptr::null_mut();
     }
-    if !(23..=16 * 1024 * 1024).contains(&max_event) {
+    if !(23..=MAX_EVENT as u32).contains(&max_event) {
         return ARG;
     }
     match catch_unwind(|| Box::new(Decoder::new(max_event as usize))) {
@@ -1322,6 +1430,7 @@ pub unsafe extern "C" fn rc_result_column(
             metadata: Bytes::new(&c.metadata),
             unsigned_flag: c.unsigned_flag,
             labels: Bytes::new(&c.labels),
+            geometry_type: c.geometry_type,
         };
     }
     0

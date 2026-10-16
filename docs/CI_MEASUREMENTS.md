@@ -37,7 +37,7 @@ Normal integration evidence can still contain sensitive data.
 The report separates these measurements:
 
 - Catalog coverage: passed obligations divided by applicable obligations for
-  each selected profile and scope. Ordinary PR scope is `pr-smoke`. PRs with
+  each selected profile and scope. Runtime PR scope is `pr-smoke`. PRs with
   `ci-full` and main use `full`. Manual runs default to `full`. This is coverage of our selected catalog, not all MySQL features.
 - Code coverage: the union of mapped Swift runtime lines reached by instrumented
   runs. It excludes Rust, dependencies and the lab. The existing combined Swift
@@ -96,7 +96,9 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full -f expanded_coverage=
 
 Expanded mode retains every release-binary shard. It adds instrumented copies
 of shared correctness and lifecycle shards for every applicable variant.
-Ordinary PR CI has two smoke shards and two integration coverage collections.
+Runtime PR CI has two smoke shards and two integration coverage collections.
+Documentation and report-only selections do not collect Swift coverage or produce
+this measurement report. See [changed-file selection](PR_TEST_SELECTION.md).
 Each shard now selects 11 named cases from the full catalog. The two cross-version
 full-CI coverage supplements use the same cases. The `ddl-dml-policy-replay` job
 area and step summary identify the selection. Its artifact IDs retain the
@@ -152,6 +154,11 @@ Use expanded coverage for a test-suite investigation. Keep normal full CI as the
 release default. Coverage binaries are diagnostic builds, not release packages.
 
 ## Review the evidence
+
+If a build fails before it saves `build.json`, the measurement report lists the
+missing build record and test shards. The report remains partial, and the job
+fails after it saves the report. Results without a matching build record cannot
+qualify a release. Check `summary.md` and `report.json` for these failures.
 
 Collect one complete expanded report on the release candidate. Compare
 runner-minutes as well as elapsed time. Check build time, cache transfer, image download/load, fixture time and the longest

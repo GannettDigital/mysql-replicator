@@ -3,6 +3,15 @@ import XCTest
 import ReplicatorCodec
 
 final class DownloadCacheTests: XCTestCase {
+    func testOneOversizedEventEntersEmptyCache() throws {
+        let cache=try DownloadCache(maximumBytes:32,maximumEventBytes:128)
+        let large=Data(repeating:7,count:100), stop=CaptureCancellation(), timings=StageTimings()
+        try cache.append([large],cancellation:stop,timings:timings)
+        XCTAssertEqual(cache.snapshot.maximumQueuedBytes,104)
+        XCTAssertEqual(try cache.next(cancellation:stop,timings:timings),[large])
+        XCTAssertThrowsError(try cache.append([large,large],cancellation:stop,timings:timings))
+        XCTAssertThrowsError(try cache.append([Data(repeating:0,count:129)],cancellation:stop,timings:timings))
+    }
     let frame=Data(repeating:42,count:32)
 
     func testPublishedBatchesDrainInOrderWithoutDurableCheckpoint() throws {

@@ -13,7 +13,7 @@ struct LabScenario {
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
         if let reason=variant.reason(profile) { return reason }
-        if ["offline-replay","offline-skip-errors","runtime-control"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
+        if ["offline-replay","offline-skip-errors","runtime-control","large-values"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
         if id == "live-skip-errors" && variant == .positionMinimal { return "Skip/resume fixture uses exact GTID stop boundaries; use default or gtid-full variants." }
         if profile.sourceVersion != .mysql84, let reason=source84OnlyReason { return reason }
         if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
@@ -46,7 +46,8 @@ struct LabScenario {
         }
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
-        cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",smoke:$0.id == "composite") }
+        cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,smoke:$0.id == "composite") }
+        cases.append(.init(test:.init("large-values","Large TEXT/BLOB writes, packet fragmentation, restart, replay and recovery"),family:"dml"))
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
         cases.append(.init(test:.init("foreign-key-safety","Foreign-key exclusions, rollback and recovery evidence"),family:"foreign-keys",requiresTransactionalTarget:true,intent:"reject unsafe relationships; retain rollback and cascade evidence"))
         cases.append(.init(test:.init("foreign-keys","InnoDB foreign-key DDL, cascades, composite keys and restart"),family:"foreign-keys",requiresTransactionalTarget:true))
@@ -55,8 +56,8 @@ struct LabScenario {
         cases.append(.init(test:.init("live-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"policy",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
         cases.append(.init(test:.init("runtime-control","Exact GTID limits, reload, status, and graceful stop"),family:"offline"))
         cases.append(.init(test:DDLCompatibilityCases.skipTrigger,family:"policy",intent:"skip definitions; apply row effects",smoke:true))
-        cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float","json"].map {
-            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "json")
+        cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float-fixed-scale","fulltext"].map {
+            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "fulltext")
         }
         cases += [
             .init(test:DDLCoverageCases.wildcardFilter,family:"filters",intent:"skip excluded events; apply included rows",smoke:true),
@@ -68,7 +69,7 @@ struct LabScenario {
             .init(test:$0,family:"collation",source84OnlyReason:"Requires 8.4 source 0900/NO PAD collations and 5.7 mapping; these collations do not exist on a 5.7 source.")
         }
         cases.append(.init(test:DDLCoverageCases.positive,family:"dml",smoke:true))
-        cases += DMLCompatibilityCases.cases.map { .init(test:.init("bootstrap-matrix-"+$0.id,"Discover bootstrapped DML schema: "+$0.id),family:"bootstrap") }
+        cases += DMLCompatibilityCases.cases.map { .init(test:.init("bootstrap-matrix-"+$0.id,"Discover bootstrapped DML schema: "+$0.id),family:"bootstrap",source84OnlyReason:$0.source84OnlyReason) }
         cases += DMLCompatibilityCases.rejections.map { .init(test:.init("matrix-reject-"+$0.id,"Refuse incompatible bootstrapped metadata: "+$0.id),family:"dml-refusals",source84OnlyReason:"Requires 8.4 optional TABLE_MAP metadata; 5.7 omits signedness and labels, and uses the target baseline schema.",intent:"reject with unchanged durable progress") }
         cases.append(.init(test:ModifyIndexCases.resume,family:"discovery"))
         cases.append(.init(test:.init("forward-failures","Forward DDL/policy failures retain pending evidence and blocked following writes"),family:"failures",source84OnlyReason:"Historical 8.4 to 5.7 MyISAM grants, index limits and native error codes.",intent:"per-case apply or fail-stop"))

@@ -1,5 +1,6 @@
 import Foundation
 import Crypto
+import ReplicatorCodec
 #if canImport(Musl)
 import Musl
 #elseif canImport(Glibc)
@@ -29,7 +30,6 @@ public struct ArchiveManifest: Codable {
     public struct File: Codable {
         public let name: String
         public let bytes: UInt64
-        public let sha256: String
     }
     public let version: Int
     public let sourceUUID: String
@@ -150,7 +150,8 @@ struct ArchiveFileReader {
             }
             return data
         }
-        guard try read(4) == Data([0xfe,0x62,0x69,0x6e]) else { throw CaptureError("invalid binlog magic") }
+        let magic=try read(4)
+        guard magic == Data([0xfe,0x62,0x69,0x6e]) else { throw CaptureError("invalid binlog magic") }
         var offset:UInt64=4
         while true {
             let header=try read(19,eof:true); if header.isEmpty { break }
@@ -164,5 +165,66 @@ struct ArchiveFileReader {
             try emit(frame,offset); offset += UInt64(length)
         }
         guard offset > 4 else { throw CaptureError("empty binlog archive file") }
+    }
+}
+
+/// A bounded read of the first two events. This is not full archive validation.
+public struct ArchivePreamble: Encodable {
+    public let sourceVersion: String
+    public let previousGTIDs: String
+    public let bytesRead: UInt64
+
+    public static func read(file: URL, maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes) throws -> ArchivePreamble {
+        struct Complete: Error {}
+        let decoder=try BinlogDecoder(maximumEventBytes:maximumEventBytes)
+        var version: String?, result: ArchivePreamble?
+        do {
+            try ArchiveFileReader(file:file,maximumEventBytes:maximumEventBytes).scan { frame,offset in
+                if offset == 4 {
+                    version=try decoder.decode(frame,at:offset).detailText
+                } else {
+                    guard frame[4] == 35, let version else { throw CaptureError("archive requires Previous_gtids after the format event: \(file.lastPathComponent)") }
+                    result=ArchivePreamble(sourceVersion:version,previousGTIDs:try ArchiveIO.previousGTIDs(frame).canonical,
+                        bytesRead:offset+UInt64(frame.count))
+                    throw Complete()
+                }
+            }
+        } catch is Complete { }
+        guard let result else { throw CaptureError("incomplete archive preamble: \(file.lastPathComponent)") }
+        return result
+    }
+}
+
+/// Detect replacement and ordinary edits between validation and replay.
+/// The operator must keep the input files immutable for the whole session.
+struct ArchiveFileIdentity: Equatable {
+    let size: UInt64
+    let device: UInt64
+    let inode: UInt64
+    let modifiedSeconds: Int64
+    let modifiedNanoseconds: Int64
+    let changedSeconds: Int64
+    let changedNanoseconds: Int64
+
+    // Explicit reads keep the file identity contract visible to static analysis.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.size == rhs.size && lhs.device == rhs.device && lhs.inode == rhs.inode &&
+        lhs.modifiedSeconds == rhs.modifiedSeconds && lhs.modifiedNanoseconds == rhs.modifiedNanoseconds &&
+        lhs.changedSeconds == rhs.changedSeconds && lhs.changedNanoseconds == rhs.changedNanoseconds
+    }
+
+    init(_ file: URL) throws {
+        var value=stat()
+        guard lstat(file.path,&value) == 0, value.st_mode & S_IFMT == S_IFREG, value.st_size >= 0 else {
+            throw CaptureError("cannot identify archive file: \(file.lastPathComponent)")
+        }
+        size=UInt64(value.st_size);device=UInt64(value.st_dev);inode=UInt64(value.st_ino)
+        #if canImport(Darwin)
+        modifiedSeconds=Int64(value.st_mtimespec.tv_sec);modifiedNanoseconds=Int64(value.st_mtimespec.tv_nsec)
+        changedSeconds=Int64(value.st_ctimespec.tv_sec);changedNanoseconds=Int64(value.st_ctimespec.tv_nsec)
+        #else
+        modifiedSeconds=Int64(value.st_mtim.tv_sec);modifiedNanoseconds=Int64(value.st_mtim.tv_nsec)
+        changedSeconds=Int64(value.st_ctim.tv_sec);changedNanoseconds=Int64(value.st_ctim.tv_nsec)
+        #endif
     }
 }

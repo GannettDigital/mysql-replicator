@@ -30,7 +30,7 @@ final class DownloadCache: @unchecked Sendable {
     private var nextID: UInt64 = 0 // Receiver-only; not shared snapshot storage.
 
     init(maximumBytes: Int, maximumEventBytes: Int, maximumBatches: Int = 1024) throws {
-        guard maximumBytes >= maximumEventBytes+4, maximumEventBytes >= 19, maximumBatches > 0 else {
+        guard maximumBytes >= 23, maximumEventBytes >= 19, maximumBatches > 0 else {
             throw CaptureError("invalid download cache limits")
         }
         self.maximumBytes=maximumBytes; self.maximumEventBytes=maximumEventBytes; self.maximumBatches=maximumBatches
@@ -59,7 +59,8 @@ final class DownloadCache: @unchecked Sendable {
         let data = try timings.measure("download.pack") { () throws -> Data in
             var size=0
             for frame in frames {
-                guard (19...maximumEventBytes).contains(frame.count), size <= maximumBytes-frame.count-4 else {
+                guard (19...maximumEventBytes).contains(frame.count),
+                      frames.count == 1 || size <= maximumBytes-frame.count-4 else {
                     throw CaptureError("download batch exceeds cache limit")
                 }
                 size += frame.count+4
@@ -77,7 +78,9 @@ final class DownloadCache: @unchecked Sendable {
             while true {
                 if let completion { try completion.get(); throw CaptureError("download cache already finished") }
                 if cancellation.isCancelled { throw CaptureCancelled() }
-                if counters.queuedBytes <= maximumBytes-data.count && segments.count < maximumBatches { break }
+                // Like native replication, drain normal work before admitting
+                // one complete event larger than the normal queue budget.
+                if segments.isEmpty || (counters.queuedBytes <= maximumBytes-data.count && segments.count < maximumBatches) { break }
                 _ = condition.wait(until:Date().addingTimeInterval(0.05))
             }
         }

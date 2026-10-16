@@ -68,7 +68,7 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,82+DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
+        XCTAssertEqual(cases.count,65+2*DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         for (id,family) in [("offline-skip-errors","offline"),("live-skip-errors","policy")] {
             let skipping=try XCTUnwrap(cases.first { $0.id == id })
@@ -233,4 +233,22 @@ final class LabProfileTests: XCTestCase {
         }
     }
 
+}
+
+extension LabProfileTests {
+    func testJSONCasesShareProfilesAndGateOnlyPartialEvents() throws {
+        for prefix in ["matrix-","bootstrap-matrix-"] {
+            for profile in LabProfile.allCases {
+                for name in ["json","typedjson"] {
+                    let test=try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix+name })
+                    XCTAssertNil(test.reason(profile))
+                }
+                let partial=try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix+"jsonpartial" })
+                XCTAssertEqual(partial.reason(profile) == nil,profile.sourceVersion == .mysql84)
+            }
+        }
+        XCTAssertFalse(DMLCompatibilityCases.rejections.contains { $0.id == "json-opaque" })
+        let partial=try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "jsonpartial" })
+        XCTAssertEqual(partial.phases.filter(\.expectsJSONDiff).count,2)
+    }
 }
