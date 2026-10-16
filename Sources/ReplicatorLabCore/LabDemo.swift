@@ -141,7 +141,7 @@ public enum LabDemo {
             let bytes=try Data(contentsOf:file)
             try require(bytes.count <= 1024*1024,"demo SQL exceeds 1 MiB")
             guard let sql=String(data:bytes,encoding:.utf8) else { throw LabError("SQL must be UTF-8") }
-            print(try fixture!.sql(.source,"SET NAMES utf8mb4; "+sql))
+            print(try fixture!.sqlScript(.source,"SET NAMES utf8mb4;\n"+sql))
         }
         func start() throws {
             try require(try applier.pids().isEmpty,"applier already running")
