@@ -5,6 +5,15 @@ import Foundation
 /// Current profiles identify a release series. Both supported series are wholly
 /// on one side of each boundary here. Do not infer an 8.0 patch version this way.
 struct NativeReplicationRules {
+    enum ForeignKeyParentKeys: Equatable { case completeUnique, innodb }
+    /// InnoDB permits full leading columns of nonunique or composite indexes.
+    /// MySQL 8.4 replica SQL and worker threads turn off the new client default.
+    var foreignKeyParentKeys: ForeignKeyParentKeys {
+        [507,804].contains(targetVersion / 100) ? .innodb : .completeUnique
+    }
+    var foreignKeySessionSQL: String? {
+        targetVersion / 100 == 804 ? "SET SESSION restrict_fk_on_non_standard_key=OFF" : nil
+    }
     enum CheckConstraints: Equatable { case discard, preserve, targetUnsupported }
     static let checkConstraintsIntroduced: UInt32 = 80016
     static let undefinedServerVersion: UInt32 = 999999
@@ -13,6 +22,10 @@ struct NativeReplicationRules {
     /// Current target profiles are 5.7 and 8.4. Do not infer support for an
     /// unqualified 8.0 patch version from this rule.
     var translateRoutineIfNotExists: Bool { targetVersion / 100 == 507 }
+    static let ignoredForeignKeyMatchRule = "mysql57-match-ignores-foreign-key-actions"
+    var foreignKeyMatchIgnoresActions: Bool { sourceVersion / 100 == 507 }
+    /// InnoDB enforces both actions immediately. The metadata spelling differs.
+    var foreignKeyDefaultAction: String { targetVersion / 100 == 507 ? "RESTRICT" : "NO ACTION" }
     let sourceVersion: UInt32
     let targetVersion: UInt32
 

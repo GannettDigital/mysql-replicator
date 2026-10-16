@@ -177,7 +177,7 @@ extension SharedCorrectness.Run {
                 let collisionStart = try h.boundary("source")
                 _ = try h.sql("source","UPDATE poc.composite_collision SET report_date='2026-01-02' WHERE report_date='2026-01-01' AND id=7")
                 let collision = try start(SharedWorkflowCases.recovery("composite-collision"),configuration("composite-collision",at:collisionStart,count:1))
-                _ = try finish(collision,"composite-collision",success:false,reason:"updated primary key already exists")
+                _ = try finish(collision,"composite-collision",success:false,reason:"updated row identity already exists")
                 try require(h.sql("target57","SELECT report_date,v FROM poc.composite_collision ORDER BY report_date") == "2026-01-01\t1\n2026-01-02\t2","composite collision changed target rows")
                 try require(state("composite-collision","SELECT transactions_applied FROM state") == "0","composite collision advanced checkpoint")
                 try reporter.pass("composite-collision")
@@ -226,7 +226,7 @@ extension SharedCorrectness.Run {
                     }
                     let rejected=try start(test,configuration(label,at:try h.boundary("source"),count:1)); try waitForReader(rejected)
                     _ = try h.sql("source","INSERT INTO poc.\(table) VALUES(1)")
-                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "requires a primary key" : (f.profile.hasOptionalMetadata ? "signedness" : "type"))
+                    _ = try finish(rejected,label,success:false,reason:label == "absent-schema" ? "target table is absent" : (f.profile.hasOptionalMetadata ? "signedness" : "type"))
                     try require(state(label,"SELECT transactions_applied FROM state") == "0","invalid schema advanced checkpoint")
                     try reporter.pass(label)
                 }

@@ -110,7 +110,10 @@ public struct ApplyPartition: Codable, Equatable {
 struct SchemaTransition: Codable {
     let before: ApplyTable?
     let after: ApplyTable?
+    // Retain old journal records. New plans use compact index replacements.
     var afterAlternatives: [ApplyTable]? = nil
+    var supportingIndexReplacements: [ForeignKeyIndexReplacement]? = nil
+    var removableSupportingIndexes: [ApplyIndex]? = nil
 }
 
 enum PartitionChange: Equatable {

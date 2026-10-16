@@ -52,7 +52,7 @@ final class CompatibilityTests: XCTestCase {
         let data=try JSONEncoder().encode(single)
         XCTAssertTrue(String(decoding:data,as:UTF8.self).contains("\"primaryKey\":\"id\""))
         XCTAssertEqual(try JSONDecoder().decode(ApplyTable.self,from:data),single)
-        for names in [[],["id","id"],["missing"],["v"]] {
+        for names in [["id","id"],["missing"],["v"]] {
             XCTAssertThrowsError(try ApplyTable(database:"poc",table:"reports",columns:table.columns,primaryKeyColumns:names).validate())
         }
     }

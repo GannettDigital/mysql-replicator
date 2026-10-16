@@ -77,7 +77,8 @@ struct PreparedDDL {
     var database:PreparedDatabaseDDL? = nil
     var additional: [SchemaTransition] = []
     var viewTransitions: [ViewTransition] = []
-    var afterAlternatives: [ApplyTable]? = nil
+    var supportingIndexReplacements: [ForeignKeyIndexReplacement]? = nil
+    var removableSupportingIndexes: [ApplyIndex]? = nil
     var preservesSchema: Bool {
         if statement.ignoredChecksOnly { return true }
         switch statement {
@@ -167,10 +168,11 @@ extension TargetSession {
         let nativeRules=NativeReplicationRules(profile:config.replicationProfile)
         let checkTokens=try tokens ?? ddlTokens(source)
         let hasIgnoredChecks=nativeRules.checkConstraints == .discard && checkTokens.contains { $0.keyword == "CHECK" }
+        let hasIgnoredFKMatch=nativeRules.foreignKeyMatchIgnoresActions && checkTokens.contains { $0.keyword == "MATCH" }
         let translateRoutine:Bool
         if case .object(let object)=statement { translateRoutine=object.ifNotExists && nativeRules.translateRoutineIfNotExists }
         else {translateRoutine=false}
-        if policy.collations.isEmpty && !hasEncodingDefault && !hasIgnoredChecks && !translateRoutine {
+        if policy.collations.isEmpty && !hasEncodingDefault && !hasIgnoredChecks && !hasIgnoredFKMatch && !translateRoutine {
             var plan=try prepareTargetDDL(statement,query:source,timestamp:timestamp)
             plan.rawSQL=plan.rawSQL ?? source.sql
             return plan
@@ -191,6 +193,7 @@ extension TargetSession {
             try parser.translateTableEncodingDefaults(final:final,conversion:conversion)
         }
         plan.compatibilityRules += parser.ignoredCheckCount > 0 ? [NativeReplicationRules.ignoredChecksRule] : []
+        plan.compatibilityRules += parser.ignoredForeignKeyMatchCount > 0 ? [NativeReplicationRules.ignoredForeignKeyMatchRule] : []
         plan.rawSQL = plan.rawSQL ?? (translated.ignoredChecksOnly ? Data() : parser.translatedBytes(source.sql))
         plan.sql = String(decoding:plan.rawSQL!,as:UTF8.self)
         return plan
@@ -200,7 +203,7 @@ extension TargetSession {
         try invalidateStatements()
         try writerExclusion()
         let context=try QuerySessionContext(query:source)
-        try require(!contract.transactional || context.foreignKeyChecks,"source DDL with foreign_key_checks=0 is unsupported")
+        try setForeignKeyChecks(context.foreignKeyChecks)
         try contract.configureDDL(self,context:context)
         // Restore expression/literal semantics from the source query context.
         // DDL stays a drained, journaled barrier even for stored objects.
@@ -301,11 +304,12 @@ extension TargetSession {
         }
         if let current=after { after=try resolvePartitionBounds(current,context:context,source:source) }
         try after?.validate()
+        if var resolved=after { resolved.savedRowIdentity=resolved.rowIdentity;after=resolved }
         if let after { try contract.validateSchemaFeatures(after) }
         try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= maximumCachedTables,"discovered schema limit reached")
         // The outer preparation layer applies only authorized encoding edits.
         let sql=String(decoding:source.sql,as:UTF8.self)
-        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional))
+        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional),foreignKeyChecks:context.foreignKeyChecks)
         try setDDLSession(context,source:source)
         return plan
     }
@@ -346,7 +350,13 @@ extension TargetSession {
             if let after=database.after { try require(try databaseEncoding(database.name)==after,"DDL target database defaults mismatch") }
             else {
                 try require(try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:database.name)]) == "0","DROP DATABASE left target database present")
+                for change in plan.additional {
+                    if let after=change.after {
+                        try require(try readSchema(database:after.database,name:after.table) == after,"DROP DATABASE surviving FK schema mismatch")
+                    }
+                }
                 discovered=discovered.filter{!SQLTextBytes.equal($0.value.database,database.name)}
+                for change in plan.additional { if let after=change.after { discovered[after.identity]=after } }
             }
             try invalidateStatements()
             return
@@ -375,7 +385,7 @@ extension TargetSession {
         try resetDMLSession()
         if let after=plan.after {
             let actual = try readSchema(database:after.database,name:after.table)
-            try require(actual == after || plan.afterAlternatives?.contains(actual) == true,"DDL target after-schema mismatch")
+            try require(ForeignKeyGraph.matchesIndexes(actual,expected:after,removable:plan.removableSupportingIndexes ?? [],replacements:plan.supportingIndexReplacements ?? []),"DDL target after-schema mismatch")
             plan.after = actual
         }
         if case .createLike=plan.statement,plan.before==nil {try require(try scalar("SELECT COUNT(*) AS v FROM \(name.sql)")=="0","CREATE LIKE unexpectedly copied rows")}

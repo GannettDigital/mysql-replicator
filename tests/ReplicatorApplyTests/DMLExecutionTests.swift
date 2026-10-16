@@ -7,6 +7,20 @@ extension ApplyTests {
     private func inserts(_ input: [PreparedDMLGroup]) -> [PreparedDMLGroup] {
         input.map { PreparedDMLGroup(group:$0.group,mutations:input[0].mutations,relayEnd:$0.relayEnd) }
     }
+    func testForeignKeyCheckChangesSplitChunksAndPreventAutocommit() throws {
+        try withBatchFixture { _, input in
+            let batch = inserts(input)
+            var disabled = batch[0].mutations[0]
+            disabled.foreignKeyChecks = false
+            let mixed = PreparedDMLGroup(group:batch[0].group,mutations:[disabled,batch[0].mutations[0]],relayEnd:batch[0].relayEnd)
+            XCTAssertFalse(DMLExecution.canAutocommit(mixed,maximumInsertRows:32,maximumInsertBytes:1024*1024))
+            var checks: [Bool] = []
+            let result = DMLExecution.run([mixed],cancellation:.init(),maximumInsertRows:32,maximumInsertBytes:1024*1024,
+                lock:{ _ in },write:{ checks.append($0.foreignKeyChecks) },insert:{ _ in XCTFail("mixed FK flags merged") },completedGroup:{})
+            XCTAssertNil(result.failure)
+            XCTAssertEqual(checks,[false,true])
+        }
+    }
     func testCombinedInsertPreparesAllIntentsAndKeepsSourceIdentities() throws {
         try withBatchFixture { state,input in
             let batch = inserts(input), path = state.directory.appendingPathComponent("state.sqlite")

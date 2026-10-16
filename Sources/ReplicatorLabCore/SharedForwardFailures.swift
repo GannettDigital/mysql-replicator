@@ -217,7 +217,7 @@ extension SharedCorrectness.Run {
                 let missing=try start(DDLCoverageCases.missingTemplate,configuration("ddl-like-missing-template",at:missingStart,count:2));try waitForReader(missing)
                 _ = try h.sql("native","START REPLICA")
                 _ = try h.sql("source","CREATE TABLE poc.failed_like LIKE poc.only_source; CREATE TABLE poc.after_failed_like(id INT PRIMARY KEY)")
-                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"requires a primary key with 1 to 16 columns")
+                _ = try finish(missing,"ddl-like-missing-template",success:false,reason:"target table is absent")
                 let failureDeadline=Date().addingTimeInterval(20)
                 var nativeFailure=try h.status()
                 while nativeFailure["Last_SQL_Errno"] == "0" && Date()<failureDeadline {

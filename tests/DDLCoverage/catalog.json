@@ -9656,6 +9656,11 @@
     },
     {
       "suite": "ddl-suite",
+      "case_id": "ddl-compat-unique-row-identity",
+      "reason": "Nonnullable unique keys, ordered key changes, exact row effects, saved key identity, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
       "case_id": "ddl-compat-view-renames",
       "reason": "Ordered view/table rename chains, view metadata journal, row effects, restart and replay."
     },
@@ -9663,6 +9668,51 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-conditional-routines",
       "reason": "5.7 routine conditional CREATE translation, preserved bodies and definers, journaled no-ops, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-keyless-rows",
+      "reason": "Full-row matching with duplicates, NULLs, byte-distinct text and JSON types; restart, offline replay, partial failure and recovery."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-controls",
+      "reason": "InnoDB self-references, cycles, foreign_key_checks changes, restart, replay and rollback recovery."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-syntax-columns",
+      "reason": "Native FK names, MATCH actions, compatible column types, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-cross-database",
+      "reason": "Child and parent database DROP, surviving FK schemas, missing parent, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-generated",
+      "reason": "Stored generated FK parents and children, native virtual/action limits, cascades, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-compound-indexes",
+      "reason": "Compound FK/index/column changes, compact replacement journal, actual schema persistence, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-parent-keys",
+      "reason": "Native InnoDB nonunique, composite-prefix and extended parent keys, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-missing-parent",
+      "reason": "Missing-parent metadata, disabled-check DDL, parent recreation, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-ddl",
+      "reason": "Supporting-index replacement, FK-column renames, internal database DROP, durable schema transitions and offline replay."
     }
   ]
 }

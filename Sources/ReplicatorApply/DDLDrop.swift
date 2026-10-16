@@ -17,7 +17,7 @@ extension TargetSession {
         // MySQL 5.7 can remove some tables before it reports an error. Save all
         // initial schemas, then issue the original list once. Failure leaves
         // the intent pending; no table or GTID is marked complete locally.
-        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:.dropMany(names,ifExists:conditional),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes))
+        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:.dropMany(names,ifExists:conditional),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes),foreignKeyChecks:context.foreignKeyChecks)
         try setDDLSession(context,source:source)
         return plan
     }

@@ -52,7 +52,7 @@ extension TargetSession {
         }
         let finalNames = changes.compactMap{$0.after?.identity}
         try require(Set(discovered.keys).subtracting(names.keys).union(finalNames).count <= maximumCachedTables,"discovered schema limit reached")
-        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes,viewTransitions:views))
+        let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),additional:changes,viewTransitions:views),foreignKeyChecks:context.foreignKeyChecks)
         try setDDLSession(context,source:source)
         return plan
     }

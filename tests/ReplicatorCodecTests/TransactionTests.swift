@@ -171,10 +171,16 @@ final class TransactionTests: XCTestCase, BinlogFixtures {
         transactionFailure(.unsupported) { _ = try assembler.consume(replacing(rollback, offset: 1854, next: 1854 + rollback.eventSize), file: sourceFile) }
     }
     func testCommitBeforeStatementEndAndUnknownRowFlagsFail() throws {
-        for flag: UInt32 in [0, 3, 0x8000] {
+        for flag: UInt32 in [0, 5, 0x8000] {
             let events = try records().filter { UInt64($0.offset)! < 1885 }.map { $0.offset == "1796" ? replacing($0, rowFlags: flag) : $0 }
             transactionFailure(flag == 0 ? .sequence : .unsupported) { _ = try assemble(events) }
         }
+    }
+    func testForeignKeyFlagDoesNotEndAStatementOrChangeTransactionIdentity() throws {
+        let events = try records().filter { UInt64($0.offset)! < 1885 }.map { $0.offset == "1796" ? replacing($0, rowFlags: 3) : $0 }
+        XCTAssertEqual(try assemble(events).count,try assemble(records().filter { UInt64($0.offset)! < 1885 }).count)
+        let incomplete = events.map { $0.offset == "1796" ? replacing($0,rowFlags:2) : $0 }
+        transactionFailure(.sequence) { _ = try assemble(incomplete) }
     }
     func testRotationRequiresMatchingNextFileFDEAndNoOpenGroup() throws {
         let assembler = try TransactionAssembler(file: sourceFile), events = try records()

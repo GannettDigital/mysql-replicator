@@ -198,6 +198,18 @@ public enum SharedCorrectness {
                     .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY TABLE_NAME,BINARY INDEX_NAME,SEQ_IN_INDEX"),
                     .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
                 ])
+                // InnoDB treats NO ACTION and RESTRICT as immediate checks.
+                // 5.7 reports an omitted action as RESTRICT; 8.4 uses NO ACTION.
+                // Normalize only the two action fields, never object names.
+                if f.profile.transactionalTarget {
+                    snapshot["foreignKeys"] = snapshot["foreignKeys"]!.components(separatedBy:"\n").map { line in
+                        var fields = line.components(separatedBy:"\t")
+                        if fields.count == 8 {
+                            for index in 6...7 where fields[index] == "NO ACTION" { fields[index] = "RESTRICT" }
+                        }
+                        return fields.joined(separator:"\t")
+                    }.joined(separator:"\n")
+                }
                 let actualTables=snapshot["tables"]!
                 rawTables[service]=actualTables
                 try actualTables.write(to:f.output.appendingPathComponent("tables-"+service+".tsv"),atomically:true,encoding:.utf8)
@@ -266,8 +278,10 @@ public enum SharedCorrectness {
                 for table in tables {
                     let names=columnRows.filter { $0.count >= 2 && LabSQLName.equal($0[0],table) }.map { $0[1] }
                     let expressions=names.map { "IFNULL(HEX(CAST("+LabSQLName.quote($0)+" AS BINARY)),'<NULL>')" }.joined(separator:",")
-                    let keys=indexRows.filter { $0.count >= 5 && LabSQLName.equal($0[0],table) && $0[1] == "PRIMARY" }.map { LabSQLName.quote($0[4]) }.joined(separator:",")
-                    try require(!keys.isEmpty,"fixture table missing primary key")
+                    let primaryOrder=indexRows.filter { $0.count >= 5 && LabSQLName.equal($0[0],table) && $0[1] == "PRIMARY" }.map { LabSQLName.quote($0[4]) }.joined(separator:",")
+                    // The oracle does not use the applier's key selection. Sort
+                    // keyless snapshots by all exact projected values instead.
+                    let keys=primaryOrder.isEmpty ? expressions : primaryOrder
                     let jsonColumns=columnRows.filter { $0.count >= 4 && LabSQLName.equal($0[0],table) && $0[3] == "json" }.map { $0[1] }
                     if !jsonColumns.isEmpty {
                         jsonRows[Data(table.utf8)]=try f.comparisonRows(role,table:LabSQLName.quote(database)+"."+LabSQLName.quote(table),columns:names,jsonColumns:jsonColumns,orderBy:keys)
@@ -288,6 +302,9 @@ public enum SharedCorrectness {
                         return table+"\t"+rows[index]
                     }.joined(separator:"\n")
                 }
+                // Compare normalized row multisets. Server versions can order
+                // NULL sentinels and JSON text differently. Keep duplicate lines.
+                snapshot["rows"]=snapshot["rows"]!.components(separatedBy:"\n").sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }.joined(separator:"\n")
                 values[service]=snapshot
             }
             try writeJSON(values,to:f.output.appendingPathComponent("latest-comparison.json"))
@@ -372,6 +389,14 @@ public enum SharedCorrectness {
                     for item in test.steps {
                         if item.restartBefore { try applier.drain(); try applier.start(initialize:false); try wait() }
                         let sql=f.profile.transactionalTarget ? item.sqlTransactional : item.sql
+                        if test.test.id == "ddl-compat-foreign-key-ddl" && sql == "DROP DATABASE ddlcompat" {
+                            // These baseline tables have no captured DDL or row
+                            // events. DROP must discover and journal all three.
+                            let other = f.variant.lowerCaseTableNames == 0 ? "U_child" : "u_other"
+                            for role in LabProfile.Role.allCases {
+                                _ = try f.sql(role,"SET sql_log_bin=0; CREATE TABLE ddlcompat.u_parent(id INT PRIMARY KEY) ENGINE=InnoDB; CREATE TABLE ddlcompat.u_child(id INT PRIMARY KEY,pid INT,CONSTRAINT unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB; CREATE TABLE ddlcompat." + other + "(id INT PRIMARY KEY,pid INT,CONSTRAINT other_unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB")
+                            }
+                        }
                         if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
                             // Neither table is rediscovered by DML after resume.
                             // DROP must still retire both durable schema records.
@@ -380,7 +405,16 @@ public enum SharedCorrectness {
                             try require(state(checkpoint,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "2","database resume fixture lacks both saved schemas")
                             try applier.start(initialize:false); try wait()
                         }
+                        if test.test.id == "ddl-compat-foreign-key-syntax-columns" && sql == "DELETE FROM ddlcompat.c WHERE id=1" {
+                            for role in LabProfile.Role.allCases {
+                                let result=try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(role),"mysql","--no-defaults","-uroot","-e","DELETE FROM ddlcompat.p WHERE id=1"],checked:false)
+                                try require(result.status != 0 && String(decoding:result.stderr,as:UTF8.self).contains("ERROR 1451"),"MATCH incorrectly enabled a cascade instead of rejecting the parent DELETE")
+                            }
+                        }
                         try step(sql,database:"ddlcompat",checks:item.checks)
+                        if test.test.id == "ddl-compat-foreign-key-cross-database" {
+                            try writeJSON(compare("ddlfk"),to:f.output.appendingPathComponent(String(format:"fk-external-%04d.json",observation)))
+                        }
                     }
                     try applier.drain()
                     let end=try f.boundary(), result=try applier.latestProgress() ?? [:]
@@ -407,6 +441,58 @@ public enum SharedCorrectness {
                     if test.test.id == "ddl-compat-stored-objects" {
                         try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql=target_sql AND (source_sql LIKE 'ALTER PROCEDURE ddlcompat.p%' OR source_sql LIKE 'ALTER FUNCTION ddlcompat.f%' OR source_sql LIKE 'DROP VIEW IF EXISTS ddlcompat.v,%')") == "3","stored object journal lost the original SQL")
                         try replayDDLWorkflow("stored-objects",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-ddl" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left FK schema snapshots current")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details WHERE transitions_json LIKE '%removableSupportingIndexes%'") != "0","FK index-removal choices were not journaled")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_extract(value,'$.before.table') IN ('u_parent','u_child','U_child','u_other') AND json_extract(value,'$.after') IS NULL") == "3","DROP DATABASE did not journal every unseen FK table")
+                        try replayDDLWorkflow("foreign-key-ddl",stopAfter:8,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-syntax-columns" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql!=target_sql AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-match-ignores-foreign-key-actions'") == "2","MATCH translation lost its durable source SQL or rule")
+                        try replayDDLWorkflow("foreign-key-syntax-columns",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-cross-database" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE source_sql='DROP DATABASE ddlfk' AND json_extract(value,'$.after.database')='ddlcompat' AND json_extract(value,'$.after.table')='p' AND json_array_length(value,'$.before.foreignKeys')=1 AND json_array_length(value,'$.after.foreignKeys') IS NULL") == "2","child database DROP did not journal the surviving parent")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE source_sql='DROP DATABASE ddlcompat' AND json_extract(value,'$.after.database')='ddlfk' AND json_extract(value,'$.after.table')='c' AND json_array_length(value,'$.after.foreignKeys')=1") == "1","parent database DROP lost the surviving child's FK")
+                        try replayDDLWorkflow("foreign-key-cross-database",stopAfter:6,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-generated" {
+                        for (sql,codes) in DDLCompatibilityCases.foreignKeyGeneratedRejections {
+                            for role in LabProfile.Role.allCases {
+                                let before=try f.boundary(role)
+                                let result=try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(role),"mysql","--no-defaults","-uroot","-e",sql],checked:false)
+                                let error=String(decoding:result.stderr,as:UTF8.self)
+                                try require(result.status != 0 && codes.contains(where:{error.contains("ERROR "+$0)}),"generated FK native rejection differs: "+error)
+                                let after=try f.boundary(role)
+                                try require(before.gtids == after.gtids && before.file == after.file && before.position == after.position,"rejected generated FK changed the binlog")
+                            }
+                        }
+                        try replayDDLWorkflow("foreign-key-generated",stopAfter:6,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-compound-indexes" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_array_length(value,'$.supportingIndexReplacements')>0") != "0","compound FK index choices were not journaled")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN schemas ON schemas.id=ddl_intents.after_schema_id WHERE ddl_intents.target_sql LIKE 'ALTER TABLE ddlcompat.n ADD CONSTRAINT fn1%' AND json_extract(schema_json,'$.secondaryIndexes[0].name')='fn2' AND status='DONE'") == "1","compound DDL did not save the actual target index")
+                        try replayDDLWorkflow("foreign-key-compound-indexes",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-parent-keys" {
+                        try replayDDLWorkflow("foreign-key-parent-keys",stopAfter:6,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-missing-parent" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL") == "1","missing-parent relationship was not journaled")
+                        try replayDDLWorkflow("foreign-key-missing-parent",stopAfter:2,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-foreign-key-controls" {
+                        try replayDDLWorkflow("foreign-key-controls",stopAfter:13,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-keyless-rows" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.rowIdentity.kind')='fullRow'") == "4","full-row identities were not saved")
+                        try replayDDLWorkflow("keyless-rows",stopAfter:7,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-unique-row-identity" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_array_length(schema_json,'$.primaryKeyColumns')=0 AND json_extract(schema_json,'$.rowIdentity.kind')='unique'") == "2","unique row identities were not saved")
+                        try require(state(saved,"SELECT json_extract(schema_json,'$.rowIdentity.index') FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t'") == "by_code","selected key did not follow ordered DDL")
+                        try replayDDLWorkflow("unique-row-identity",stopAfter:7,from:begin,to:end)
                     }
                     if test.test.id == "ddl-compat-view-renames" {
                         try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_array_length(context_json,'$.viewTransitions')>0") == "4","view rename journal lost metadata")

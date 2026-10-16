@@ -23,6 +23,7 @@ struct DDLParser {
     var partitionLiteralCharset="utf8mb4"
     var nativeRules=NativeReplicationRules(profile:.mysql84To57MyISAM)
     var ignoredCheckCount=0
+    var ignoredForeignKeyMatchCount=0
     var tableEncodingRanges: [(Range<Int>, DDLTableEncoding)] = []
     init(_ data: Data, database: String?, sqlMode: UInt64 = 0) throws {
         expressionSQLMode=sqlMode
@@ -431,9 +432,9 @@ struct DDLParser {
             if take(",") { try require(index < tokens.count && !isNext(";"),"missing CREATE TABLE option") }
         }
         collation = charsetDefault(charset,collation:collation,at:charsetEnd)
-        guard let key else { throw ApplyError("DDL CREATE requires a primary key") }
-        for i in columns.indices where SQLIdentifier.contains(key,columns[i].name) { columns[i].nullable = false }
-        var schema = ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:key,defaultCharacterSet:charset,defaultCollation:collation,secondaryIndexes:indexes.sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)})
+        let primaryColumns = key ?? []
+        for i in columns.indices where SQLIdentifier.contains(primaryColumns,columns[i].name) { columns[i].nullable = false }
+        var schema = ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:primaryColumns,defaultCharacterSet:charset,defaultCollation:collation,secondaryIndexes:indexes.sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)})
         for (key,index) in foreignKeys { schema = try schema.addingForeignKey(key,indexName:index) }
         if take("PARTITION") { schema.partitions = try partitionDefinition() }
         return conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)

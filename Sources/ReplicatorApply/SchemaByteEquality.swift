@@ -34,6 +34,6 @@ extension ApplyTable {
     public static func == (a:Self,b:Self) -> Bool {
         a.identity == b.identity && a.columns == b.columns && SQLIdentifier.equal(a.primaryKeyColumns,b.primaryKeyColumns)
             && a.defaultCharacterSet == b.defaultCharacterSet && a.defaultCollation == b.defaultCollation
-            && a.secondaryIndexes == b.secondaryIndexes && a.partitions == b.partitions && a.foreignKeys == b.foreignKeys
+            && a.rowIdentity == b.rowIdentity && a.secondaryIndexes == b.secondaryIndexes && a.partitions == b.partitions && a.foreignKeys == b.foreignKeys
     }
 }

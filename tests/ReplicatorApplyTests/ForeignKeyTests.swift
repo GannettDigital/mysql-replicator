@@ -20,6 +20,16 @@ final class ForeignKeyTests: XCTestCase {
         let parent = try schema("parent(a INT,b INT,PRIMARY KEY(a,b))")
         XCTAssertNoThrow(try ForeignKeyGraph.validate(child.foreignKeys,tables:[child.identity:child,parent.identity:parent],filter:TableFilter()))
     }
+    func testDefaultActionUsesTargetMetadataAndPreservesExplicitActions() throws {
+        for profile in [ReplicationProfile.mysql57To84InnoDB,.mysql57To57InnoDB] {
+            let expected = profile == .mysql57To84InnoDB ? "NO ACTION" : "RESTRICT"
+            for suffix in [""," ON UPDATE RESTRICT ON DELETE NO ACTION"] {
+                guard case .create(let table,_) = try parse("CREATE TABLE t(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES t(id)"+suffix+")",profile:profile) else { return XCTFail("missing table") }
+                XCTAssertEqual(table.foreignKeys.first?.onUpdate,suffix.isEmpty ? expected : "RESTRICT")
+                XCTAssertEqual(table.foreignKeys.first?.onDelete,suffix.isEmpty ? expected : "NO ACTION")
+            }
+        }
+    }
     func testUnnamedConstraintUsesGeneratedNameAndExistingIndex() throws {
         let table = try schema("child(id INT PRIMARY KEY,pid INT,KEY existing(pid),FOREIGN KEY(pid) REFERENCES parent(id))")
         XCTAssertEqual(table.foreignKeys.first?.name,"child_ibfk_1")
@@ -45,13 +55,16 @@ final class ForeignKeyTests: XCTestCase {
             }
         }
     }
-    func testCyclesAndFilterSplitsAreRejected() throws {
+    func testCyclesAreSupportedAndFilterSplitsAreRejected() throws {
         let child = try schema("child(id INT PRIMARY KEY,pid INT,CONSTRAINT fk FOREIGN KEY(pid) REFERENCES parent(id))")
         let parent = try schema("parent(id INT PRIMARY KEY,pid INT,CONSTRAINT fk FOREIGN KEY(pid) REFERENCES child(id))")
         let tables = [child.identity:child,parent.identity:parent]
-        XCTAssertThrowsError(try ForeignKeyGraph.validate(child.foreignKeys+parent.foreignKeys,tables:tables,filter:TableFilter())) {
-            XCTAssertTrue(String(describing:$0).contains("cyclic"))
-        }
+        let keys = child.foreignKeys+parent.foreignKeys
+        XCTAssertNoThrow(try ForeignKeyGraph.validate(keys,tables:tables,filter:TableFilter()))
+        XCTAssertEqual(ForeignKeyGraph.component(child.identity,in:keys).count,2)
+        let tree = try schema("tree(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES tree(id) ON DELETE CASCADE)")
+        XCTAssertNoThrow(try ForeignKeyGraph.validate(tree.foreignKeys,tables:[tree.identity:tree],filter:TableFilter()))
+        XCTAssertEqual(ForeignKeyGraph.component(tree.identity,in:tree.foreignKeys),tree.foreignKeys)
         for pattern in ["poc.parent","poc.child"] {
             XCTAssertThrowsError(try ForeignKeyGraph.validate(child.foreignKeys,tables:tables,filter:TableFilter([pattern])))
         }
@@ -60,8 +73,8 @@ final class ForeignKeyTests: XCTestCase {
         XCTAssertThrowsError(try TableFilter(["poc.parent"]).ignores(query))
         XCTAssertTrue(try TableFilter(["poc.%"]).ignores(query))
     }
-    func testParserRejectsUnqualifiedRelationshipsAndMyISAM() throws {
-        for sql in ["CREATE TABLE t(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES t(id))", "CREATE TABLE t(id INT PRIMARY KEY,pid INT,FOREIGN KEY ix(pid) REFERENCES p(id))", "CREATE TABLE t(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES p(id) MATCH FULL)"] {
+    func testParserRejectsInvalidRelationshipsAndMyISAM() throws {
+        for sql in ["CREATE TABLE t(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES p(id) MATCH INVALID)", "CREATE TABLE t(id INT PRIMARY KEY,pid INT,FOREIGN KEY(pid) REFERENCES p(id) ON DELETE SET DEFAULT)"] {
             XCTAssertThrowsError(try parse(sql))
         }
         for profile in [ReplicationProfile.mysql84To57MyISAM,.mysql57To57MyISAM] {
@@ -76,30 +89,30 @@ final class ForeignKeyTests: XCTestCase {
             let status = Data([0,0,0,0,disabled ? 4 : 0, 1,0,0,0,0,0,0,0,0, 4,45,0,45,0,45,0])
             let query = QueryControl(database:"poc",sql:Data("CREATE TABLE t(id INT PRIMARY KEY)".utf8),errorCode:0,statusVariables:status)
             XCTAssertEqual(try QuerySessionContext(query:query).foreignKeyChecks,!disabled)
+            XCTAssertEqual(DDLQueryContextDiagnostic(query:query)?.foreignKeyChecks,!disabled)
         }
     }
-    func testImplicitIndexNameCollisionAndReplacementRefusal() throws {
+    func testImplicitIndexNameCollisionAndReplacementPlanning() throws {
         let child = try schema("child(id INT PRIMARY KEY,pid INT,n INT,KEY pid(n),FOREIGN KEY(pid) REFERENCES parent(id))")
         XCTAssertEqual(child.secondaryIndexes.map(\.name),["pid","pid_2"])
-        XCTAssertThrowsError(try IndexChange.add(ApplyIndex(name:"wider",unique:false,parts:[.init(column:"pid",prefix:nil),.init(column:"id",prefix:nil)])).applying(to:child))
+        XCTAssertNoThrow(try IndexChange.add(ApplyIndex(name:"wider",unique:false,parts:[.init(column:"pid",prefix:nil),.init(column:"id",prefix:nil)])).applying(to:child))
     }
-    func testGeneratedIndexAlternativesAreNarrowAndJournaled() throws {
+    func testGeneratedIndexReplacementsAreNarrowAndJournaled() throws {
         let before = try schema("child(id INT PRIMARY KEY,pid INT,KEY pid(pid))")
         let key = ApplyForeignKey(name:"restored_fk",database:"poc",table:"child",columns:["pid"],referencedDatabase:"poc",referencedTable:"parent",referencedColumns:["id"],onDelete:"CASCADE")
         let after = try before.addingForeignKey(key,indexName:nil)
-        let alternatives = try ForeignKeyGraph.indexAlternatives(before:before,after:after,actions:[.addForeignKey(key,nil)])
-        XCTAssertEqual(after.secondaryIndexes.map(\.name),["pid"])
-        XCTAssertEqual(alternatives.count,1)
-        XCTAssertEqual(alternatives[0].secondaryIndexes.map(\.name),["restored_fk"])
-        XCTAssertEqual(alternatives[0].foreignKeys,after.foreignKeys)
-        XCTAssertEqual(alternatives[0].columns,after.columns)
-        let transition = SchemaTransition(before:before,after:after,afterAlternatives:alternatives)
+        let replacements = ForeignKeyGraph.indexReplacements(after:after,actions:[.addForeignKey(key,nil)])
+        XCTAssertEqual(replacements.count,1)
+        XCTAssertEqual(replacements[0].planned.name,"pid")
+        XCTAssertEqual(replacements[0].alternative.name,"restored_fk")
+        let transition = SchemaTransition(before:before,after:after,supportingIndexReplacements:replacements)
         let saved = try JSONDecoder().decode(SchemaTransition.self,from:JSONEncoder().encode(transition))
-        XCTAssertEqual(saved.afterAlternatives,alternatives)
-        XCTAssertThrowsError(try ForeignKeyGraph.indexAlternatives(before:before,after:after,actions:[.addForeignKey(key,nil),.dropForeignKey("old")]))
+        XCTAssertEqual(saved.supportingIndexReplacements,replacements)
+        let legacy = SchemaTransition(before:before,after:after,afterAlternatives:[after])
+        XCTAssertEqual(try JSONDecoder().decode(SchemaTransition.self,from:JSONEncoder().encode(legacy)).afterAlternatives,[after])
         var unique = before
         unique.secondaryIndexes = [ApplyIndex(name:"unique_pid",unique:true,parts:[.init(column:"pid",prefix:nil)])]
-        XCTAssertTrue(try ForeignKeyGraph.indexAlternatives(before:unique,after:unique.addingForeignKey(key,indexName:nil),actions:[.addForeignKey(key,nil)]).isEmpty)
+        XCTAssertTrue(try ForeignKeyGraph.indexReplacements(after:unique.addingForeignKey(key,indexName:nil),actions:[.addForeignKey(key,nil)]).isEmpty)
     }
     func testComponentAndGeneratedNameLimitsFailBeforeExecution() throws {
         let keys = (0..<64).map { ApplyForeignKey(name:"fk",database:"poc",table:"c"+String($0),columns:["id"],referencedDatabase:"poc",referencedTable:"p",referencedColumns:["id"]) }

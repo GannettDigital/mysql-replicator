@@ -129,6 +129,7 @@ struct DMLExecution {
         while count < maximumInsertRows, let mutation = next(count) {
             let cost = insertBytes(mutation)
             guard mutation.row.operation == "insert", mutation.table == first.table,
+                  mutation.foreignKeyChecks == first.foreignKeyChecks,
                   bytes <= maximumInsertBytes-cost else { break }
             bytes += cost; count += 1
         }

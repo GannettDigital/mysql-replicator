@@ -6,7 +6,7 @@ extension SharedCorrectness.Run {
     func rejections() throws {
         let cases: [(String,String,String)] = [
             ("engine","CREATE TABLE rejected.bad(id INT PRIMARY KEY) ENGINE="+(f.profile.transactionalTarget ? "MyISAM" : "InnoDB"),"outside the "+f.profile.targetEngine+" DDL contract"),
-            ("foreign-key","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n INT,FOREIGN KEY(n) REFERENCES rejected."+(f.profile.transactionalTarget ? "bad" : "parent")+"(id)) ENGINE=InnoDB","unsupported"),
+            ("foreign-key","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n INT,FOREIGN KEY(n) REFERENCES rejected.parent("+(f.profile.transactionalTarget ? "n" : "id")+")) ENGINE=InnoDB",f.profile.transactionalTarget ? "supporting parent index" : "unsupported"),
             ("event","CREATE EVENT rejected.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO rejected.parent VALUES(99,99)","DDL policy rejects events"),
             ("trigger","CREATE TRIGGER rejected.tr BEFORE INSERT ON rejected.parent FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers")
         ]
@@ -18,7 +18,10 @@ extension SharedCorrectness.Run {
                 // Equivalent bootstrap, deliberately outside the tested stream.
                 for role in LabProfile.Role.allCases {
                     let engine=role == .native && id == "foreign-key" ? "InnoDB" : f.profile.engine(role)
-                    _ = try f.sql(role,"SET sql_log_bin=0; DROP DATABASE IF EXISTS rejected; CREATE DATABASE rejected CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE rejected.parent(id INT PRIMARY KEY,n INT) ENGINE="+engine)
+                    _ = try f.sql(role,"SET sql_log_bin=0; DROP DATABASE IF EXISTS rejected; CREATE DATABASE rejected CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE rejected.parent(id INT PRIMARY KEY,n INT,KEY by_n(n)) ENGINE="+engine)
+                }
+                if id == "foreign-key" && f.profile.transactionalTarget {
+                    _ = try f.sql(.target,"SET sql_log_bin=0; ALTER TABLE rejected.parent DROP INDEX by_n")
                 }
                 let before=try f.boundary()
                 f.config=original; f.config["stateDirectory"]="/evidence/"+label

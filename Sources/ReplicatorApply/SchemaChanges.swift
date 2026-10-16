@@ -5,24 +5,19 @@ enum IndexChange: Equatable {
     case add(ApplyIndex), drop(String), rename(String,String), replace(String,ApplyIndex)
     func applying(to table: ApplyTable) throws -> ApplyTable {
         var indexes=table.secondaryIndexes
-        func validateAddition(_ index: ApplyIndex) throws {
-            try require(!table.foreignKeys.contains { key in
-                key.child == table.identity && SQLIdentifier.equal(Array(index.parts.prefix(key.columns.count)).map { $0.column ?? "" },key.columns)
-            },"adding a replacement foreign-key supporting index is unsupported; its implicit index removal requires qualification")
-        }
         func remove(_ name:String) throws -> ApplyIndex {
             guard !SQLIdentifier.equal(name,"PRIMARY"),let i=indexes.firstIndex(where:{SQLIdentifier.equal($0.name,name)}) else {throw ApplyError("secondary index is absent or PRIMARY is unsupported")}
             return indexes.remove(at:i)
         }
         switch self {
-        case .add(let definition): let index=definition.resolvingName(among:indexes);try validateAddition(index); indexes.append(index)
+        case .add(let definition): let index=definition.resolvingName(among:indexes);indexes.append(index)
         case .drop(let name): _ = try remove(name)
         case .rename(let old,let new):
             let index=try remove(old)
             indexes.append(ApplyIndex(name:new,unique:index.unique,parts:index.parts,type:index.type,parser:index.parser))
-        case .replace(let old,let definition): _ = try remove(old);let index=definition.resolvingName(among:indexes);try validateAddition(index);indexes.append(index)
+        case .replace(let old,let definition): _ = try remove(old);let index=definition.resolvingName(among:indexes);indexes.append(index)
         }
-        let result=table.replacing(indexes:indexes);try result.validate();return result
+        let result=table.replacing(indexes:indexes);try result.validate(requireRowIdentity:false);return result
     }
 }
 extension ApplyTable {
@@ -43,7 +38,7 @@ extension ApplyTable {
             position=index+1
         }
         next.insert(replacement,at:position)
-        let result=replacing(columns:next);try result.validate();return result
+        let result=replacing(columns:next);try result.validate(requireRowIdentity:false);return result
     }
 }
 
@@ -75,7 +70,11 @@ extension TargetSession {
             }
             return try resolveColumn(column,parent:encoding,context:context,database:table.database)
         }
-        for action in actions {
+        // MySQL resolves added FKs against the complete column/index layout,
+        // including a DROP INDEX or ADD COLUMN written after the FK clause.
+        let ordinary=actions.filter { if case .addForeignKey = $0 {return false};return true }
+        let foreignKeys=actions.filter { if case .addForeignKey = $0 {return true};return false }
+        for action in ordinary+foreignKeys {
             switch action {
             case .encoding, .ignoredCheck: break
             case .maintenance: break // Native rebuild/index state does not change the stored column schema.
@@ -119,6 +118,7 @@ extension TargetSession {
                 columns.insert(column,at:position)
                 let indexes = result.secondaryIndexes.map { key in ApplyIndex(name:key.name,unique:key.unique,parts:key.parts.map { ApplyIndexPart(column:SQLIdentifier.equal($0.column ?? "",old) ? column.name : $0.column,prefix:$0.prefix,direction:$0.direction,expression:$0.expression) },type:key.type,parser:key.parser) }
                 result = result.replacing(columns:columns,indexes:indexes,primaryKey:result.primaryKeyColumns.map{SQLIdentifier.equal($0,old) ? column.name : $0})
+                result.foreignKeys = result.foreignKeys.map { $0.renamingColumn(in:table.identity,from:old,to:column.name) }
             case .drop(let name):
                 try require(try !result.secondaryIndexes.flatMap(\.parts).contains { try $0.expression.map { try DDLExpression.references(name,in:$0) } == true },"target cannot drop a column used by a functional index; drop that index first")
                 try require(result.columns.contains{SQLIdentifier.equal($0.name,name)},"DROP column is absent")

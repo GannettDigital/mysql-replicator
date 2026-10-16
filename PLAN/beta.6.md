@@ -1049,3 +1049,125 @@ DML. See [run IDs and scope](STORED_OBJECT_SUPPORT.md#view-rename-verification).
 This branch stays local. Full release qualification remains open. The remaining
 stored-object variants, unique-key/keyless identity, FK controls and event
 variants remain in the complete-support plan.
+
+## Increment 45: unique-key row identity
+
+Branch: `beta/6/45-unique-row-identity`, based on branch 44.
+
+Support tables without a primary key when a full, nonnullable scalar UNIQUE
+index can identify each row. Preserve the declared primary key separately.
+Save the selected index and ordered columns with each schema version. Use it
+for SQL predicates and recovery output. Accept native promoted-key metadata.
+
+The shared workflow covers key changes, index replacement, primary-key
+addition/removal, text keys, AUTO_INCREMENT, clean restart and offline replay.
+It passed on all four profiles. The final apply/lab unit run passed 468 tests,
+including a regression for partially supplied optional metadata. Periphery
+passed. See [exact run scope and build digests](ROW_IDENTITY.md#verification).
+
+This branch stays local. Nullable, prefix, expression and keyless matching
+remain outside this increment. Next, define full-row matching and duplicate
+counts in recovery records before adding keyless application.
+
+
+## Increment 46: full-row matching
+
+Branch: `beta/6/46-keyless-row-matching`, based on branch 45.
+
+Use the full base-row image when no supported primary or unique key exists.
+UPDATE and DELETE change one matching copy. Preserve NULL, exact text and binary
+values, DECIMAL precision, signed zero and JSON structure and scalar types.
+Save the lookup mode with each schema. Recovery retains duplicate operations
+and does not treat a full-row image as a unique key or proof of COMMIT.
+
+The shared workflow covers live apply, clean restart, offline stop/resume,
+missing-row errors, partial MyISAM writes, InnoDB rollback and DBA retry.
+All four selected runs passed 32 shared steps with the same runtime binary.
+The apply/lab unit run passed 472 tests, and Periphery passed.
+See [the design and exact verification results](KEYLESS_ROWS.md).
+
+This branch stays local. Full release qualification remains open. The next
+relationship work covers self-references, cycles and source foreign_key_checks.
+
+## Increment 47: foreign-key controls
+
+Branch: `beta/6/47-foreign-key-controls`, based on branch 46.
+
+Permit native-valid self-references and cyclic relationships on InnoDB. Restore
+source `foreign_key_checks` for each row event and DDL statement. Keep different
+settings in separate INSERT chunks. Retain the settings in offline recovery
+reports and DDL diagnostics. Model the target version's default FK action.
+
+The selected workflows compare source, native and target rows and schemas. They
+include restart, offline replay, rollback after checks are restored, and saved
+relationship checks. The selected checks passed on all four profiles with the
+same binary. The unit run passed 549 tests, and Periphery passed.
+See [scope and validation](FOREIGN_KEY_CONTROLS.md).
+
+Keep this branch local. Remaining FK DDL and event-format gaps stay open in
+[the complete support plan](COMPLETE_MYSQL_SUPPORT.md).
+
+## Increment 48: foreign-key DDL
+
+Branch: `beta/6/48-foreign-key-ddl`, based on branch 47.
+
+Record permitted supporting-index removals before DDL. Save the exact target
+schema after execution. Propagate FK-column renames through the relationship
+component. Permit DROP DATABASE when all relationships stay inside that database,
+and retire its saved FK schemas with the source GTID.
+
+The shared workflow includes cascades after DDL, restart and offline replay.
+See [scope and verification](FOREIGN_KEY_DDL.md). Keep this branch local.
+
+## Increment 49: missing-parent foreign keys
+
+Branch: `beta/6/49-missing-parent-foreign-keys`, based on branch 48.
+
+Keep missing-parent relationships in saved schemas. Support child creation and
+parent drops with source checks disabled. Discover incoming relationships when
+the parent is created. Test child DML, cascades, restart and offline replay.
+See [scope and verification](MISSING_PARENT_FOREIGN_KEYS.md). Keep this branch local.
+
+## Increment 50: native parent-key rules
+
+Branch: `beta/6/50-native-parent-key-rules`, based on branch 49.
+
+Use native InnoDB parent-index rules. MySQL 8.4 sessions disable
+`restrict_fk_on_non_standard_key`, as native replica threads do. Test nonunique,
+composite-prefix and extended parent keys, cascades, restart and replay.
+Keep missing-index rejection tests and support-bundle checks.
+See [scope and verification](FOREIGN_KEY_PARENT_KEYS.md). Keep this branch local.
+
+## Increment 51: FK syntax and column rules
+
+Branch: `beta/6/51-foreign-key-syntax-columns`, based on branch 50.
+
+Preserve MySQL 5.7 MATCH behavior on both InnoDB targets. Accept named supporting
+indexes and unnamed constraints. Use native InnoDB storage rules for FK columns.
+See [scope and verification](FOREIGN_KEY_SYNTAX_COLUMNS.md). Keep this branch local.
+
+## Increment 52: cross-database foreign keys
+
+Branch: `beta/6/52-cross-database-foreign-keys`, based on branch 51.
+
+Support child database DROP and parent database DROP with source checks disabled.
+Journal the surviving FK participants and validate them after DDL. Keep a test
+for an unexpected target-only incoming FK. Test restart and offline replay.
+See [scope and verification](CROSS_DATABASE_FOREIGN_KEYS.md). Keep this branch local.
+
+## Increment 53: stored generated FK columns
+
+Branch: `beta/6/53-generated-column-foreign-keys`, based on branch 52.
+
+Accept stored generated FK parents and children. Keep native virtual-column and
+action limits. Test native cascades, restart and offline replay.
+See [scope and verification](GENERATED_COLUMN_FOREIGN_KEYS.md). Keep this branch local.
+
+## Increment 54: compound FK indexes
+
+Branch: `beta/6/54-compound-foreign-key-indexes`, based on branch 53.
+
+Record exact index replacements for compound FK/index/column changes. Validate
+the actual target schema without enumerating full-schema combinations. Test native
+outcomes, cascades, restart and offline replay.
+See [scope and verification](COMPOUND_FOREIGN_KEY_INDEXES.md). Keep this branch local.

@@ -47,7 +47,7 @@ count or unit line coverage as a completeness measure.
 | Values and names | Charset registry and byte transport, numeric defaults and attributes, ENUM zero and labels, native identifier comparison, non-UTF-8 query decoding, table-name case settings, JSON YEAR translation. | Complete the boundary, replay and failure matrix. Keep binary values inside JSON as a documented transport gap. |
 | Table DDL | FULLTEXT subset, JSON generated indexes, table options, selected conversions, multi-table DROP and RENAME, subpartition metadata/lifecycle operations, KEY algorithms, partition maintenance, evaluated bounds and unchecked exchange. CTAS source and target restrictions are classified. | The selected charset, expression and geometry-prefix cases pass. Complete remaining index and partition operations, ALTER forms, CHECK qualification and stored-object behavior. FULLTEXT replacement after deletes still needs its native document-ID investigation. |
 | Parser | Independent lexer and typed expression target, isolated unit coverage and Docker build stage. | Move additional grammar into typed syntax nodes. Expand expressions with native metadata comparison tests. Do not import the unfinished string-producing parser as a second grammar. |
-| Row identity and relationships | Primary-key DML, selected InnoDB FKs and recovery records. | Unique-key fallback, duplicate/keyless matching, FK cycles and source foreign_key_checks behavior. Define durable recovery records before changing row identity. |
+| Row identity and relationships | Primary-key DML, full nonnullable scalar unique-key fallback, full-row matching for keyless tables and duplicates, saved lookup mode, selected InnoDB FKs and recovery records. | Complete unusual promoted-key metadata and the row-value boundary matrix. Complete remaining ALTER combinations and generated-expression boundaries. Native column compatibility, MATCH and cross-database drops are implemented. |
 | Binlog events | Existing FULL row-image and ordinary GTID paths. | MINIMAL/NOBLOB images, compression, tagged GTIDs, XA and checksum modes. Each requires live, replay and restart checks. |
 | Qualification | Shared four-profile harness, native comparisons and support bundles. | Bind catalog assertions to exact builds. Run full release checks and representative performance checks after the remaining implementation work. |
 
@@ -58,6 +58,9 @@ Current execution order:
    Run `20261015T073916Z-20bde8e4` passed 21 applicable cases.
 2. Move the remaining DDL statement grammar into typed syntax nodes. Complete
    the remaining ALTER, index and partition forms, including subpartitions.
+   The inline `ALTER TABLE ADD column ... PRIMARY KEY`
+   form and `ADD NOT NULL AUTO_INCREMENT` without a default still need parser
+   support. Adding a primary key to an existing column works.
    FORCE and ENABLE/DISABLE KEYS now pass on all four profiles. See
    [maintenance checks](TABLE_MAINTENANCE.md). Branch 37 adds subpartition
    metadata and selected lifecycle operations, with passing tests on all four
@@ -77,15 +80,24 @@ Current execution order:
    See [stored-object scope](STORED_OBJECT_SUPPORT.md) for the native rules,
    verification. Branch 43 adds conditional routine CREATE translation.
    Branch 44 adds view renaming and mixed table/view rename lists.
-4. Add unique-key and keyless row identity. Define durable recovery records
-   before changing the DML selection path. Then extend FK relationships and
-   source foreign_key_checks behavior.
+4. Branch 45 adds nonnullable full unique-key fallback and saves the selected
+   identity with each schema. See [row identity](ROW_IDENTITY.md). Branch 46 adds
+   [full-row matching and duplicate operations in recovery](KEYLESS_ROWS.md).
+   Branch 47 adds [FK self-references, cycles and source check settings](FOREIGN_KEY_CONTROLS.md).
+   Branch 48 adds [supporting indexes, column renames and internal database DROP](FOREIGN_KEY_DDL.md).
+   Branch 49 adds [missing-parent relationships](MISSING_PARENT_FOREIGN_KEYS.md).
+   Branch 50 adds [native parent-key rules](FOREIGN_KEY_PARENT_KEYS.md).
+   Branch 51 adds [FK syntax and native column compatibility](FOREIGN_KEY_SYNTAX_COLUMNS.md).
+   Branch 52 adds [cross-database FK drops](CROSS_DATABASE_FOREIGN_KEYS.md).
+   Branch 53 adds [stored generated FK columns](GENERATED_COLUMN_FOREIGN_KEYS.md).
+   Branch 54 adds [compound FK index changes](COMPOUND_FOREIGN_KEY_INDEXES.md).
+   Next, finish the remaining ALTER forms and generated-expression boundaries.
 5. Add row-image and event variants. XA and tagged GTIDs need durable-state and
    archive designs, not decoder changes alone.
 6. Run qualification and publish native limits separately from tool gaps.
 
-The catalog still marks eight tool-gap groups as missing:
-unique-key identity, keyless identity, disabled FK checks, MINIMAL/NOBLOB images,
+The catalog still marks five tool-gap groups as missing:
+MINIMAL/NOBLOB images,
 transaction compression, tagged GTIDs, XA and checksum modes other than CRC32.
 The remaining `subset` entries also need work. Those include expression and
 partition forms, FK relationships, replay/failure coverage and value boundaries.
@@ -222,11 +234,12 @@ run; uncertain DDL is recorded for DBA review rather than retried blindly.
 
 ## 4. Complete row identity, transactions, and relationships
 
-- Add tables without a primary key. First use a suitable unique key; then design
-  the full-row matching path for keyless tables and duplicate rows. Prove correct
-  row multiplicity, NULL matching, comparison semantics, and DELETE/UPDATE limits.
-  Recovery must identify candidate rows without claiming that a duplicate row
-  proves which source change completed.
+- Branch 45 adds tables with an eligible nonnullable full unique key and no
+  primary key. Branch 46 adds full-row matching for duplicate and keyless rows,
+  including NULL, exact text, DECIMAL, signed zero and typed JSON. Save the lookup
+  mode and retain each pending operation. Do not fold duplicate images into
+  unique-key expectations. Complete unusual promoted-key metadata, base-column
+  limits and the remaining value boundary matrix. See [keyless scope](KEYLESS_ROWS.md).
 - Audit MyISAM transaction limits against native behavior before extending them.
   The existing native multistatement fixture expects error 1837. Keep that case
   as a negative test, not required positive support. Investigate other statement
@@ -234,14 +247,16 @@ run; uncertain DDL is recorded for DBA review rather than retried blindly.
   Any deliberate extension beyond native GTID restrictions needs a separate
   design decision. Preserve operation order and record possible partial writes;
   MyISAM cannot provide rollback or atomic visibility.
-- Extend InnoDB FK handling to native-valid self-references, cycles, supporting
-  index changes, and remaining DDL relationships. Treat nonunique/partial parent
-  keys as version-specific: confirm that the selected target permits them.
-- Design handling for source foreign_key_checks changes. Account for the target's
-  own cascade actions and the row events the source records. Avoid applying a
-  cascade twice. Test explicit child changes, cascades, and rollback. Keep the
-  rejection of foreign keys across filter boundaries as an explicit safety
-  policy. Do not expand support by silently accepting broken relationships.
+- Self-references, cycles and per-event check settings are implemented in
+  branch 47. Branch 48 adds supporting-index changes, column renames and internal
+  database DROP. Extend the remaining DDL relationships.
+  Branch 50 adds native nonunique, composite-prefix and extended parent keys.
+  Branch 51 adds FK names, MATCH and native column compatibility. Branch 52
+  adds cross-database DROP with surviving relationship records.
+- Branch 49 adds disabled-check missing-parent DDL and parent recreation.
+  Extend the remaining dependency-change forms.
+  Keep native cascade behavior. Test explicit child changes and rollback.
+  Keep the rejection of foreign keys across filter boundaries as a safety policy. Do not expand support by silently accepting broken relationships.
 - Keep source trigger row effects in scope. Installing active target triggers is
   a separate problem because external SQL can fire them again. Do not change the
   current skip/reject policy until a tested design prevents duplicate effects.
@@ -306,6 +321,7 @@ JSON changes. Continue with stage 3's table/index and ALTER work. Then implement
 stage 4 and stage 5. Apply stage 6's acceptance checks to each increment and run
 the full release checks at the end. Use one PR per testable feature family.
 
-The JSON transport, keyless recovery, MyISAM transaction, and XA items need design
-probes before schedule estimates. Do not promise a completion date before those
+The remaining JSON transport, MyISAM transaction, and XA items need design
+probes before schedule estimates. Keyless recovery now retains ordered operations;
+its remaining boundary cases are listed in [the row-matching scope](KEYLESS_ROWS.md). Do not promise a completion date before those
 probes establish what the ordinary MySQL client connection can preserve.

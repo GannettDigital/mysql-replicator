@@ -12,6 +12,12 @@ final class TargetSession {
     var jsonScratchTables=Set<String>()
     var jsonScratchOrdinal:UInt64=0
     var statementTrace = TargetStatementTrace()
+    private var foreignKeyChecks: Bool?
+    func setForeignKeyChecks(_ enabled: Bool) throws {
+        guard foreignKeyChecks != enabled else { return }
+        _ = try query("SET SESSION foreign_key_checks=\(enabled ? 1 : 0)")
+        foreignKeyChecks = enabled
+    }
     var lockEpoch = TableLockEpoch()
     var packetByteLimit = MySQLPacket.maximumMessageBytes
     var contract: TargetContract { config.replicationProfile.targetContract }
@@ -156,7 +162,8 @@ final class TargetSession {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
             let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
             let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
-            try require((1...16).contains(keys.count),"discovered target requires a primary key with 1 to 16 columns")
+            try require(!columns.isEmpty,"discovered target table is absent")
+            try require(keys.count <= 16,"discovered target primary key exceeds 16 columns")
             var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
                 try readColumn(row,table:TableName(database:database,table:name))
             },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
@@ -166,6 +173,7 @@ final class TargetSession {
             table.partitions=try readPartitions(database:database,name:name,columns:table.columns)
             if contract.transactional && validateRelationships { table.foreignKeys = try readForeignKeys(TableName(database:database,table:name)) }
             try table.validate()
+            table.savedRowIdentity=table.rowIdentity
             try contract.validateSchemaFeatures(table)
             if validateRelationships { try verifySchema(table) }
             else {
@@ -361,8 +369,9 @@ final class TargetSession {
     }
     private func readRow(_ t: ApplyTable, key: [DecodedValue], expected: [DecodedValue]) throws -> [DecodedValue]? {
         let plan = try sqlPlan(t)
-        let rows = try query(plan.select,try key.map(bind)).0
-        try require(rows.count <= 1,"primary key did not uniquely identify target row")
+        let lookup = try t.usesFullRowIdentity ? FullRowPredicate.make(table:t,types:plan.columnTypes,values:key,compatibility:config.compatibilityPolicy,bind:bind) : nil
+        let rows = try query(lookup.map { plan.selectSQL(predicate:$0.sql) } ?? plan.select,try lookup?.binds ?? key.map(bind)).0
+        try require(rows.count <= 1,"row identity did not uniquely identify target row")
         guard let row = rows.first else { return nil }
         return try profile("target.decode_result") {
             try t.columns.enumerated().map { index,c in
@@ -375,7 +384,7 @@ final class TargetSession {
                     guard case .json(let document)=expected[index] else { throw ApplyError("target JSON differs from expected SQL NULL") }
                     let targetDocument=try config.compatibilityPolicy.targetJSON(document)
                     try require(try targetDocument.matchesTargetText(text),"target JSON before-image differs")
-                    try verifyJSONTypes(targetDocument,column:c.name,table:t,key:key)
+                    if !t.usesFullRowIdentity || c.isGenerated { try verifyJSONTypes(targetDocument,column:c.name,table:t,key:key) }
                     return .json(document)
                 case .float32,.float64: return try FloatingPointSQL.read(value,type:type)
                 case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
@@ -396,6 +405,7 @@ final class TargetSession {
         try timings.measure("target.row") { try applyRow(m) }
     }
     private func applyRow(_ m: Mutation) throws {
+        try setForeignKeyChecks(m.foreignKeyChecks)
         if !contract.transactional { try resetJSONScratch() }
         let t = m.table, row = m.row, plan = try sqlPlan(t)
         let oldImage = row.before ?? row.after!
@@ -405,11 +415,11 @@ final class TargetSession {
         if row.operation != "insert" {
             try require(exactImage(try read(t,key:oldKey,expected:row.before!),row.before),"target before-image mismatch or missing row")
         }
-        if let before = row.before, let after = row.after {
+        if !t.usesFullRowIdentity, let before = row.before, let after = row.after {
             let newKey = plan.keyIndexes.map { after[$0] }
             if !exactImage(oldKey,newKey), let existing = try read(t,key:newKey,expected:before) {
                 // A case/padding-equivalent text key may resolve to the same row.
-                try require(exactImage(existing,before),"updated primary key already exists")
+                try require(exactImage(existing,before),"updated row identity already exists")
             }
         }
         var sql: String
@@ -420,10 +430,13 @@ final class TargetSession {
         case "delete": sql = plan.delete; values = oldKey
         default: throw ApplyError("unsupported mutation")
         }
-        let expressions=try profile("target.bind") { try values.map { try prepareJSONValue($0,database:t.database) } }
+        let lookup = try t.usesFullRowIdentity && row.operation != "insert" ? FullRowPredicate.make(table:t,types:plan.columnTypes,values:oldKey,compatibility:config.compatibilityPolicy,bind:bind) : nil
+        let writeValues = lookup == nil ? values : row.operation == "delete" ? [] : Array(values.prefix(plan.writeIndexes.count))
+        let expressions=try profile("target.bind") { try writeValues.map { try prepareJSONValue($0,database:t.database) } }
         if row.operation == "insert" && expressions.contains(where: { $0.sql != "?" }) { sql=plan.insertSQL(expressions:[expressions.map(\.sql)]) }
-        if row.operation == "update" && expressions.contains(where: { $0.sql != "?" }) { sql=plan.updateSQL(expressions:Array(expressions.prefix(plan.writeIndexes.count)).map(\.sql)) }
-        let binds=expressions.flatMap(\.binds)
+        if row.operation == "update" && (lookup != nil || expressions.contains(where: { $0.sql != "?" })) { sql=plan.updateSQL(expressions:Array(expressions.prefix(plan.writeIndexes.count)).map(\.sql),predicate:lookup?.sql) }
+        if row.operation == "delete", let lookup { sql=plan.deleteSQL(predicate:lookup.sql) }
+        let binds=expressions.flatMap(\.binds)+(lookup?.binds ?? [])
         let result = try writeQuery(sql,binds,plan:plan,after:row.after.map { [$0] } ?? [])
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
@@ -436,9 +449,10 @@ final class TargetSession {
         try timings.measure("target.insert_chunk") {
             guard let first = mutations.first else { throw ApplyError("empty INSERT chunk") }
             try require(mutations.count <= config.batchPolicy.maximumInsertRows && mutations.allSatisfy {
-                $0.table == first.table && $0.row.operation == "insert" && $0.row.before == nil && $0.row.after?.count == first.table.columns.count
+                $0.foreignKeyChecks == first.foreignKeyChecks && $0.table == first.table && $0.row.operation == "insert" && $0.row.before == nil && $0.row.after?.count == first.table.columns.count
             }, "incompatible INSERT chunk")
             try require(mutations.reduce(0) { $0+DMLExecution.insertBytes($1) } <= insertByteLimit,"INSERT chunk exceeds packet budget")
+            try setForeignKeyChecks(first.foreignKeyChecks)
             if !contract.transactional { try resetJSONScratch() }
             let plan = try sqlPlan(first.table)
             let expressions=try profile("target.bind") { try mutations.map { mutation in try plan.writeIndexes.map { try prepareJSONValue(mutation.row.after![$0],database:first.table.database) } } }

@@ -26,6 +26,16 @@ struct DMLTablePlan {
     /// schema. Present wire facts must still agree; never override a conflict.
     func validate(wire: [WireColumn], legacyMetadata: Bool = false) throws {
         try require(wire.count == columnTypes.count,"source/target column count differs")
+        if wire.contains(where:{$0.name != nil}) {
+            let unique=table.eligibleUniqueIdentities.map(\.columns)
+            let candidates=table.primaryKeyColumns.isEmpty ? (unique.isEmpty ? [[]] : unique) : [table.primaryKeyColumns]
+            // MySQL can promote a NOT NULL UNIQUE index to its internal primary
+            // key and emit that index in FULL table-map metadata. It need not be
+            // the deterministic target lookup key selected by this tool.
+            try require(candidates.contains { names in
+                wire.indices.allSatisfy { wire[$0].name == nil || wire[$0].primaryKey == SQLIdentifier.contains(names,table.columns[$0].name) }
+            },"source/target primary or unique key metadata differs")
+        }
         for index in wire.indices {
             let w = wire[index], c = table.columns[index], type = columnTypes[index]
             try require(type.matches(w,legacyMetadata:legacyMetadata) && w.nullable == c.nullable,"source/target type, signedness, encoding, precision or nullability differs")
@@ -36,7 +46,7 @@ struct DMLTablePlan {
             if type.isText && !(legacyMetadata && w.collation == 0) {
                 try require(compatibility.targetID(w.collation) == (type.isChoice && c.collation == "binary" ? 63 : CharacterSetRegistry.columnCollation(named:c.collation ?? "")?.id),"source collation ID \(w.collation) does not match target \(c.collation ?? "missing") under configured compatibility.collations")
             }
-            if let sourceName = w.name { try require(SQLTextBytes.equal(sourceName,c.name) && w.primaryKey == SQLIdentifier.contains(table.primaryKeyColumns,c.name),"source/target column name or primary key differs") }
+            if let sourceName = w.name { try require(SQLTextBytes.equal(sourceName,c.name),"source/target column name differs") }
         }
     }
 }
