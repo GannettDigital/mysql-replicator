@@ -1829,22 +1829,22 @@
       "id": "events.tagged-gtids",
       "stage": 5,
       "family": "events",
-      "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam"
       ],
       "variants": [
-        "default"
+        "without-source-gtids"
       ],
       "conditions": [
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Tagged GTIDs are rejected.",
+      "source_behavior": "MySQL 8.4 assigns a separate sequence for each UUID/tag pair.",
+      "native_behavior": "The 8.4 native reference retains tagged identities; 5.7 cannot represent them.",
+      "current_behavior": "Full source identities are retained in SQLite. Tagged DDL/DML, rotation, restart and replay passed in the forward profile with source GTID preservation disabled. With preservation enabled, 5.7 blocks tagged GTIDs before application writes. Dedicated skip and recovery integration cases remain.",
       "acceptance": "Preserve identity through capture, replay, stops, skips and saved-state restart.",
       "assertions": [
         "source_outcome",
@@ -1853,11 +1853,26 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
-      "code_references": [
-        "Sources/ReplicatorCapture/LiveInspection.swift"
+      "candidate_cases": [
+        "ddl-compat-tagged-gtids"
       ],
-      "native_references": []
+      "code_references": [
+        "Sources/ReplicatorCapture/GTIDSet.swift",
+        "Sources/ReplicatorCodec/Control.swift",
+        "Sources/ReplicatorApply/StateStore.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql84",
+          "path": "sql/rpl_gtid_state.cc",
+          "symbol": "generate_automatic_gtid"
+        },
+        {
+          "repository": "mysql84",
+          "path": "libs/mysql/binlog/event/trx_boundary_parser.cpp",
+          "symbol": "get_event_boundary_type"
+        }
+      ]
     },
     {
       "id": "events.xa",

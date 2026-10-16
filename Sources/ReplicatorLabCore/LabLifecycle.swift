@@ -21,6 +21,7 @@ enum LabLifecycle {
             var row=test.fields
             row["profile"]=profile.rawValue; row["suite"]="lifecycle"; row["status"]="not_run"
             row["variant"]=variant.rawValue
+            if variant == .withoutSourceGTIDs {row["status"]="not_applicable";row["reason"]="This variant selects the tagged-GTID correctness case only."}
             if let reason=variant.reason(profile) { row["status"]="not_applicable"; row["reason"]=reason }
             row["family"]=test.id.hasPrefix("source-") ? "source" : "target"
             row["expected"]=test.id.contains("uncertain") || test.id.hasSuffix("settings") ? "block without replay" : "resume or stop cleanly"

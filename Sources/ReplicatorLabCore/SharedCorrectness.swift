@@ -426,6 +426,19 @@ public enum SharedCorrectness {
                     try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
                     let saved=try snapshot(test.test.id)
                     try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0","unfinished compatibility DDL")
+                    if test.test.id == "ddl-compat-source-gtid-preservation" {
+                        let applied=try f.sql(.source,"SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')")
+                        try require(f.sql(.target,"SELECT GTID_SUBSET('\(applied)',@@GLOBAL.gtid_executed)") == "1","target did not retain source GTIDs")
+                        try replayDDLWorkflow(test.test.id,stopAfter:2,from:begin,to:end)
+                        try require(f.sql(.target,"SELECT GTID_SUBSET('\(applied)',@@GLOBAL.gtid_executed)") == "1","replay did not retain source GTIDs")
+                    }
+                    if test.test.id == "ddl-compat-tagged-gtids" {
+                        let uuid=try f.sql(.source,"SELECT @@server_uuid")
+                        try require(state(saved,"SELECT COUNT(*) FROM groups WHERE status='APPLIED' AND (gtid LIKE '%:blue:%' OR gtid LIKE '%:green:%')") == "6","tagged groups lost their identity")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status='DONE' AND gtid IN ('\(uuid):blue:1','\(uuid):green:2')") == "2","tagged DDL identity was not journaled")
+                        try require(end.gtids.contains(":blue:1-3:green:1-3"),"native tagged counters differ")
+                        try replayDDLWorkflow(test.test.id,stopAfter:2,from:begin,to:end,stopGTIDs:uuid+":green:1")
+                    }
                     if test.test.id.hasPrefix("ddl-compat-executable-comments") {
                         if test.test.id != "ddl-compat-executable-comments-source-gate" {
                             try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/*!%ALTER%' AND source_sql=target_sql AND context_json LIKE '%target-version-executable-comments%' AND status='DONE'") != "0","executable comments were not preserved in the completed DDL journal")
@@ -664,7 +677,7 @@ public enum SharedCorrectness {
                         let history=try state(saved,"SELECT schema_json FROM schemas WHERE id=(SELECT after_schema_id FROM ddl_intents ORDER BY rowid DESC LIMIT 1)")
                         let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
                         try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
-                        try require(state(saved,"PRAGMA user_version") == "10","state version gate differs")
+                        try require(state(saved,"PRAGMA user_version") == "12","state version gate differs")
                         return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
                     }
                     try assertion("normalized-binlog",caseID:test.test.id) { try binlogAssertion(test,starts:starts) }

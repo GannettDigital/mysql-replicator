@@ -40,6 +40,8 @@ enum DDLCompatibilityCases {
         }
     }
     static let cases: [Case] = [
+        taggedGTIDs,
+        preservedGTIDs,
         executableComments,
         executableCommentsTargetGate,
         executableCommentsSourceGate,

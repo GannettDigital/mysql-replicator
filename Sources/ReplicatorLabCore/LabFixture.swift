@@ -90,7 +90,7 @@ final class LabFixture {
         versions["target_version"] = try sql(.target,"SELECT VERSION()")
         config = ["applierProfiling":true,"version":2,"profile":profile.rawValue,"stateDirectory":"/evidence/state",
             "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","lowerCaseTableNames":variant.lowerCaseTableNames,"serverID":9101,"sourceUUID":uuid,"mode":variant.mode,"start":variant.start(baseline),"stopAfterTransactions":2],
-            "target":["host":profile.service(.target),"port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":profile.service(.target),"caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
+            "target":["preserveSourceGTIDs":variant != .withoutSourceGTIDs,"host":profile.service(.target),"port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":profile.service(.target),"caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
             "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024],
             "supportBundle":["onBlocked":true,"directory":"/evidence/support-bundles","format":"directory","maximumBytes":64*1024*1024]]
     }

@@ -105,28 +105,8 @@ public enum ArchiveIO {
         return pseudo(type:4,position:0,body:body)
     }
     static func previousGTIDs(_ frame: Data) throws -> GTIDSet {
-        var at=19
-        func number() throws -> UInt64 {
-            guard at+8 <= frame.count-4 else { throw CaptureError("truncated previous-GTID set") }
-            defer { at += 8 }; return read(frame,at:at,as:UInt64.self)
-        }
-        let count=try number(); guard count <= 64 else { throw CaptureError("previous-GTID SID limit exceeded") }
-        var entries:[String]=[]
-        for _ in 0..<count {
-            guard at+16 <= frame.count-4 else { throw CaptureError("truncated previous-GTID SID") }
-            let bytes=Array(frame[at..<at+16]); at += 16
-            let uuid=UUID(uuid:(bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]))
-            let ranges=try number(); guard (1...4096).contains(ranges) else { throw CaptureError("previous-GTID interval limit exceeded") }
-            var entry=uuid.uuidString.lowercased()
-            for _ in 0..<ranges {
-                let low=try number(), high=try number()
-                guard low > 0, high > low else { throw CaptureError("invalid previous-GTID interval") }
-                entry += ":\(low)-\(high-1)"
-            }
-            entries.append(entry)
-        }
-        guard at == frame.count-4 else { throw CaptureError("trailing previous-GTID bytes") }
-        return try GTIDSet(entries.joined(separator:","))
+        guard frame.count >= 31 else {throw CaptureError("truncated previous-GTID event")}
+        return try GTIDSet(encoded:Data(frame[19..<frame.count-4]))
     }
 }
 

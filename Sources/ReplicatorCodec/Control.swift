@@ -15,10 +15,34 @@ public struct BinlogCoordinate: Equatable, Encodable {
     }
 }
 
+/// Source identity. The sequence is independent for each UUID/tag pair.
 public struct SourceGTID: Equatable, Encodable {
     public let sid: String
     public let sequence: String
     public let flags: UInt32
+    public let tag: String?
+    public init(sid:String, sequence:String, flags:UInt32, tag:String? = nil) {
+        self.sid=sid.lowercased(); self.sequence=sequence; self.flags=flags; self.tag=tag?.lowercased()
+    }
+    public var canonical: String { sid + (tag.map { ":"+$0 } ?? "") + ":" + sequence }
+    public static func normalizedTag(_ text:String) throws -> String {
+        let b=Array(text.utf8)
+        func letter(_ c:UInt8) -> Bool { (65...90).contains(c) || (97...122).contains(c) || c == 95 }
+        guard (1...32).contains(b.count),letter(b[0]),b.allSatisfy({letter($0) || (48...57).contains($0)}) else {
+            throw DecoderError(code:2,offset:0,reason:"invalid GTID tag")
+        }
+        return text.lowercased()
+    }
+    public init(parsing text:String) throws {
+        let parts=text.split(separator:":",omittingEmptySubsequences:false)
+        guard (2...3).contains(parts.count),let uuid=UUID(uuidString:String(parts[0])),
+              let last=parts.last,!last.isEmpty,last.utf8.allSatisfy({(48...57).contains($0)}),
+              let number=UInt64(last),number > 0,number < UInt64(Int64.max) else {
+            throw DecoderError(code:2,offset:0,reason:"invalid singleton GTID")
+        }
+        self.init(sid:uuid.uuidString,sequence:String(number),flags:0,
+                  tag:try parts.count == 3 ? Self.normalizedTag(String(parts[1])) : nil)
+    }
 }
 
 public struct QueryControl: Equatable, Encodable {

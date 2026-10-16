@@ -52,7 +52,7 @@ enum RecoveryRelay {
             }
             guard let group else { return }
             if case .gtid(let id) = event.control {
-                try require(!identities.contains(group) && groups[group].gtid == id.sid+":"+id.sequence,"relay GTID differs from journal")
+                try require(!identities.contains(group) && groups[group].gtid == id.canonical,"relay GTID differs from journal")
                 identities.insert(group)
             }
             if case .xid = event.control, record.relayEnd == groups[group].relayEnd {

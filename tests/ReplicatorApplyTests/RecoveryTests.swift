@@ -5,8 +5,8 @@ import Foundation
 @testable import ReplicatorCapture
 
 extension ResumeTests {
-    private func recoveryFixture(completed: Int = 0, block: Bool = true, foreignKeys: Bool = false, uniqueKey: Bool = false) throws -> (URL,ApplyConfiguration,[PreparedDMLGroup]) {
-        let path=try directory(), c=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue)
+    private func recoveryFixture(completed: Int = 0, block: Bool = true, foreignKeys: Bool = false, uniqueKey: Bool = false, preserveSourceGTIDs: Bool = false) throws -> (URL,ApplyConfiguration,[PreparedDMLGroup]) {
+        let path=try directory(), c=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue,preserveSourceGTIDs:preserveSourceGTIDs)
         var table = try helper.tables()[0]
         if uniqueKey {
             table=table.replacing(indexes:[ApplyIndex(name:"by_id",unique:true,parts:[.init(column:"id",prefix:nil)])],primaryKey:[])
@@ -35,6 +35,29 @@ extension ResumeTests {
             if block { try store.block("simulated uncertain COMMIT") }
         }
         return (path,c,groups)
+    }
+    func testRecoveryQueuesSourceGTIDsOnlyWhenPreservationIsEnabled() throws {
+        for preserve in [false,true] {
+            let (_,config,groups)=try recoveryFixture(completed:1,preserveSourceGTIDs:preserve)
+            _ = try Recovery.resolve(configuration:config,action:.markApplied,gtids:groups[1].id,reason:"DBA confirmed the target commit")
+            _ = try Recovery.resolve(configuration:config,action:.skip,gtids:groups[2].id,reason:"DBA reconciled the skipped rows")
+            _ = try Recovery.resolve(configuration:config,action:.markApplied,gtids:groups[3].id,reason:"DBA confirmed the final commit")
+            do {
+                let store=try StateStore(configuration:config,initialize:false)
+                XCTAssertEqual(try store.pendingGTIDMarkers().map(\.canonical),preserve ? groups.dropFirst().map(\.id) : [])
+                XCTAssertEqual(store.gtids,helper.sid+":1-14")
+                if preserve {try store.completeGTIDMarker(groups[1].group.gtid!)}
+            }
+            let reopened=try StateStore(configuration:config,initialize:false)
+            XCTAssertEqual(try reopened.pendingGTIDMarkers().map(\.canonical),preserve ? groups.dropFirst(2).map(\.id) : [])
+        }
+    }
+    func testRecoveryRetryDoesNotQueueGTIDMarkers() throws {
+        let (_,config,_)=try recoveryFixture(preserveSourceGTIDs:true)
+        _ = try Recovery.resolve(configuration:config,action:.retry,gtids:helper.sid+":11-14",reason:"DBA restored the target baseline")
+        let store=try StateStore(configuration:config,initialize:false)
+        XCTAssertEqual(try store.pendingGTIDMarkers(),[])
+        XCTAssertEqual(store.gtids,helper.sid+":1-10")
     }
     func testUniqueKeyRecoveryUsesSavedSchemaAndIdentity() throws {
         let (path,config,_) = try recoveryFixture(uniqueKey:true)
@@ -101,11 +124,12 @@ extension ResumeTests {
         XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"SELECT json_array_length(evidence_json,'$.pending') FROM recovery_audit"),[["3"]])
     }
     func testRecoveryResolutionRollsBackAuditAndProgressTogether() throws {
-        let (path,c,groups)=try recoveryFixture()
+        let (path,c,groups)=try recoveryFixture(preserveSourceGTIDs:true)
         try write(path,"CREATE TRIGGER reject_resolution BEFORE UPDATE ON state BEGIN SELECT RAISE(ABORT,'test failure'); END")
         XCTAssertThrowsError(try Recovery.resolve(configuration:c,action:.markApplied,gtids:groups[0].id,reason:"fault injection"))
         XCTAssertEqual(try Recovery.inspect(configuration:c).pending.count,4)
         XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"SELECT COUNT(*) FROM sqlite_master WHERE name='recovery_audit'"),[["0"]])
+        XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"SELECT COUNT(*) FROM pending_gtid_markers"),[["0"]])
         try write(path,"DROP TRIGGER reject_resolution")
         XCTAssertNoThrow(try Recovery.resolve(configuration:c,action:.markApplied,gtids:groups[0].id,reason:"retry after SQLite failure"))
     }

@@ -9793,6 +9793,16 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-executable-comments-source-gate",
       "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-tagged-gtids",
+      "reason": "Tagged DDL and DML identities, native independent counters, saved-state restart, rotation and offline replay to a tagged stop limit."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-source-gtid-preservation",
+      "reason": "Preserve source GTIDs across multi-row and keyless writes, restart and offline replay."
     }
   ]
 }

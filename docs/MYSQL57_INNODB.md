@@ -19,8 +19,10 @@ Preserve column definitions, defaults, keys and foreign-key constraints.
 
 The applier uses the matching target baseline or saved schemas to supply metadata
 that 5.7 binlogs omit. An incorrect baseline can escape checks for omitted fields.
-Source transactions can change more than one table. The target uses local GTIDs;
-SQLite stores source GTID progress. A target commit and the SQLite checkpoint are
+Source transactions can change more than one table. The default
+`target.preserveSourceGTIDs: true` retains source GTIDs on the target; this needs
+`SUPER` on MySQL 5.7. Set it to `false` to use target-assigned GTIDs. See
+[GTID settings and privileges](GTID_PRESERVATION.md). SQLite stores source progress. A target commit and the SQLite checkpoint are
 not atomic. After an uncertain result, inspect the evidence and repair the target
 before you resolve recovery. Do not assume that automatic retry is safe.
 

@@ -116,6 +116,13 @@ public enum ApplyRun {
             defer { try? target.unlock() }
             try target.preflight()
             try state.bindTargetIdentity(target.targetUUID!)
+            for identity in try state.pendingGTIDMarkers() {
+                try SourceGTIDExecution.validate(identity,targetVersion:target.serverVersionID ?? 0)
+                if try target.scalar("SELECT GTID_SUBSET(?,@@GLOBAL.gtid_executed) AS v",[.init(string:identity.canonical)]) == "0" {
+                    try target.emptySourceGTID(identity)
+                }
+                try state.completeGTIDMarker(identity)
+            }
             for table in state.currentSchemas where !filter.ignores(database: table.database, table: table.table) {
                 try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
                 // DDL barriers must see every validated saved table, including
@@ -230,27 +237,35 @@ public enum ApplyRun {
                     var hasDDLIntent = false
                     do {
                     try target.unlock()
+                    try target.checkSourceGTID(group.gtid!)
                     try require(group.events.count == 2, "invalid standalone DDL group")
                     guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
                     guard let version=target.serverVersionID else {throw ApplyError("target version is unavailable")}
                     let view = try LoggedDDL.parsingView(query,targetVersion:version)
                     let ddlTokens = try target.ddlTokens(view)
                     if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile,tokens:ddlTokens,targetVersion:version) {
+                        try target.emptySourceGTID(group.gtid!)
                         try state.complete(group,rowCount:0,filtered:true,skippedDDL:skipped)
                         try progress(); return
                     }
                     if try filter.ignores(view,tokens:ddlTokens) {
+                        try target.emptySourceGTID(group.gtid!)
                         try state.complete(group,rowCount:0,filtered:true)
                         try progress(); return
                     }
                     let statement=try DDLStatement.from(group,profile:profile,tokens:ddlTokens,lowerCaseTableNames:configuration.source.tableNameCaseSetting,targetVersion:version)
                     var plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp),tokens:ddlTokens)
+                    if configuration.target.preserveSourceGTIDs && !profile.transactional {
+                        let databases=[plan.database?.name,plan.statement.name?.database,plan.before?.database,plan.after?.database].compactMap {$0}
+                            + plan.additional.flatMap {[$0.before?.database,$0.after?.database].compactMap {$0}}
+                        try require(!databases.contains {$0.lowercased() == "_mysql_replicator_gtid"},"source DDL conflicts with the reserved GTID scratch database")
+                    }
                     if view.sql != query.sql {plan.compatibilityRules.append(LoggedDDL.commentRule)}
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     hasDDLIntent = true
                     try require(!cancellation.isCancelled,"apply cancelled")
                     try checkSourceFailure()
-                    try target.applyDDL(&plan)
+                    try target.sourceStatement(group.gtid!) {try target.applyDDL(&plan)}
                     planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
                     try state.complete(group,rowCount:0,ddl:plan)
                     try progress()
@@ -258,6 +273,7 @@ public enum ApplyRun {
                     } catch {
                         if !hasDDLIntent && target.statementTrace.phase == .notIssued && !cancellation.isCancelled,
                            let skip=configuration.skipErrorPolicy.match(error,at:.beforeWrites) {
+                            try target.emptySourceGTID(group.gtid!)
                             try state.skipUnwritten(group,error:skip)
                             try progress();return
                         }
@@ -280,7 +296,8 @@ public enum ApplyRun {
                     try barrier()
                     try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
                     if !cancellation.isCancelled,let skip=configuration.skipErrorPolicy.match(error,at:.beforeWrites) {
-                        try state.skipUnwritten(group,error:skip)
+                        try target.emptySourceGTID(group.gtid!)
+                            try state.skipUnwritten(group,error:skip)
                         try progress();return
                     }
                     throw error
@@ -289,7 +306,9 @@ public enum ApplyRun {
                     try barrier()
                     try target.unlock()
                     try state.begin(group)
-                    try state.complete(group,rowCount:0,filtered:true)
+                    try target.checkSourceGTID(group.gtid!)
+                    try target.emptySourceGTID(group.gtid!)
+                        try state.complete(group,rowCount:0,filtered:true)
                     try progress(); return
                 }
                 try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))

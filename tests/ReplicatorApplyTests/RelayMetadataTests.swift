@@ -129,7 +129,7 @@ extension ResumeTests {
         let before=try helper.sqlite(db,"SELECT * FROM state")
         do {
             let store=try StateStore(configuration:c,initialize:false)
-            XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["10"]])
+            XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["12"]])
             XCTAssertEqual(try helper.sqlite(db,"SELECT * FROM state"),before)
             XCTAssertEqual(try Data(contentsOf:relay),legacy)
             try store.running();try apply(groups[1],to:store);try store.stopped()

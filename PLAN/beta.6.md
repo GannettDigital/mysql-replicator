@@ -1312,3 +1312,40 @@ version gate, restart and replay. See [the contract and results](EXECUTABLE_COMM
 The catalog moves this requirement from a specific tool gap to implemented work
 with incomplete qualification. The remaining inventory has nine specific tool-gap
 groups; it is not a complete MySQL feature denominator.
+
+## Increment 70: tagged GTIDs
+
+Branch: `beta/6/70-tagged-gtids`, based on branch 69.
+
+Preserve UUID, tag and sequence across decoding, source resume, checkpoints,
+duplicate checks and replay. Tagged identities first required state format 11.
+The follow-up GTID preservation work uses format 12 and assigns source GTIDs on
+the target by default; see [settings and privileges](../docs/GTID_PRESERVATION.md).
+The forward-profile tagged case passed with preservation disabled. It checked
+tagged DDL/DML, rotation, restart and archive replay. See [scope and remaining tests](TAGGED_GTIDS.md).
+Keep this branch local.
+
+## Source GTID preservation: working-tree validation
+
+`target.preserveSourceGTIDs` is a boolean and defaults to true. False retains
+source identities only in SQLite. State format 12 records the setting. Older
+state requires explicit false. See [privileges, Cloud SQL limits and MyISAM
+execution](../docs/GTID_PRESERVATION.md).
+
+On 2026-10-16, the source-GTID case passed on all four profiles, including
+multi-row writes, keyless duplicates, restart and replay. Evidence:
+`artifacts/lab/20261016T211104Z-ae86561f/result.json`. The broad unit selection
+passed 630 tests. The later recovery/configuration/lab selection passed 162 tests;
+the final lab selection passed 23 tests. These selections overlap. Periphery
+reported no unused code. No Cloud SQL instance or performance run was tested.
+
+The `gtids` test family has four default-profile preservation cases and one
+forward tagged case with preservation disabled. The disabled variant does not
+repeat unrelated correctness or lifecycle cases.
+
+Release preparation still needs a separate CI change. The normal CI plan has
+176 jobs and is valid. Expanded coverage would have 339 jobs, above GitHub's
+256-job matrix limit. Removing the new GTID cases still gives 329 expanded jobs;
+this limit is not caused by GTID preservation. Split the expanded plan across
+multiple matrix jobs, or collect coverage in separate runs. Do not remove release
+assertions to fit this limit. No expanded coverage run was started locally.

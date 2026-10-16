@@ -97,7 +97,7 @@ public enum LiveQualification {
             var identities: [String] = []
             for group in groups {
                 guard let identity = group["gtid"] as? [String:Any], let sid = identity["sid"] as? String, let sequence = identity["sequence"] as? String else { throw LabError("missing GTID") }
-                identities.append(sid + ":" + sequence)
+                identities.append(sid + ((identity["tag"] as? String).map {":"+$0} ?? "") + ":" + sequence)
                 for event in group["events"] as? [[String:Any]] ?? [] {
                     for row in event["rows"] as? [[String:Any]] ?? [] {
                         func values(_ key: String) throws -> [String]? {

@@ -13,6 +13,9 @@ struct LabScenario {
     var smoke = false
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
+        if id == "ddl-compat-source-gtid-preservation" && variant != .standard {return "Use the default variant to test target GTID preservation."}
+        if variant == .withoutSourceGTIDs && id != "ddl-compat-tagged-gtids" {return "This variant tests tagged source GTIDs without target preservation."}
+        if id == "ddl-compat-tagged-gtids" && variant != .withoutSourceGTIDs {return "5.7 cannot preserve tags; use --variant without-source-gtids to test SQLite tag tracking."}
         if id == "ddl-compat-table-name-case" && variant != .lowercaseTables { return "Requires --variant lowercase-tables (lower_case_table_names=1)." }
         if id == "ddl-compat-unicode-names" && variant == .lowercaseTables { return "This case checks distinct case-sensitive table names; use mode 0." }
         if let reason=variant.reason(profile) { return reason }
@@ -54,7 +57,7 @@ struct LabScenario {
             return item
         }
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
-        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:["ddl-compat-foreign-key-column-swaps","ddl-compat-foreign-key-controls","ddl-compat-foreign-key-ddl","ddl-compat-foreign-key-missing-parent","ddl-compat-foreign-key-parent-keys","ddl-compat-foreign-key-syntax-columns","ddl-compat-foreign-key-cross-database","ddl-compat-foreign-key-generated","ddl-compat-foreign-key-compound-indexes"].contains($0.test.id) ? "foreign-keys" : "ddl",profileExclusions:$0.profileExclusions,smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
+        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:["ddl-compat-tagged-gtids","ddl-compat-source-gtid-preservation"].contains($0.test.id) ? "gtids" : ["ddl-compat-foreign-key-column-swaps","ddl-compat-foreign-key-controls","ddl-compat-foreign-key-ddl","ddl-compat-foreign-key-missing-parent","ddl-compat-foreign-key-parent-keys","ddl-compat-foreign-key-syntax-columns","ddl-compat-foreign-key-cross-database","ddl-compat-foreign-key-generated","ddl-compat-foreign-key-compound-indexes"].contains($0.test.id) ? "foreign-keys" : "ddl",profileExclusions:$0.profileExclusions,smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases.append(.init(test:.init("create-select-contract","Native permanent CTAS restrictions and unchanged target progress"),family:"rejections",intent:"source or target restriction; no partial apply"))
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,profileExclusions:$0.profileExclusions,smoke:$0.id == "composite") }
         cases.append(.init(test:.init("check-target57-limits","Reject enforced 8.4 CHECK constraints before target DDL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source with enforced CHECK constraints.",intent:"reject before target SQL"))

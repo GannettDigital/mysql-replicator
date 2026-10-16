@@ -115,7 +115,7 @@ public final class ArchiveReplay {
             if isCancelled() { throw CaptureCancelled() }
             if offset == 4 { read += 4 }
             read += UInt64(frame.count)
-            if complete,let gtid { try available.include(sid:gtid.sid,sequence:gtid.sequence) }
+            if complete,let gtid { try available.include(gtid) }
             if read >= nextReportByte {
                 nextReportByte=read+1024*1024
                 let now=DispatchTime.now().uptimeNanoseconds
@@ -164,7 +164,7 @@ public final class ArchiveReplay {
             try ArchiveFileReader(file:directory.appendingPathComponent(entry.name),maximumEventBytes:maximumEventBytes).scan { frame,offset in
                 guard !ended else { throw CaptureError("archive event after rotation or STOP") }
                 var control:BinlogControl?
-                if [2,3,4,15,16,33,34,35].contains(frame[4]) {
+                if [2,3,4,15,16,33,34,35,42].contains(frame[4]) {
                     let event=try decoder.decode(frame,at:decoderOffset)
                     decoderOffset += UInt64(frame.count); control=event.control
                     if frame[4] == 15 {
@@ -180,7 +180,7 @@ public final class ArchiveReplay {
                     if let covered { guard covered == prior else { throw CaptureError("archive GTID history gap between files") } }
                     try previous(prior,covered == nil); covered=prior; hasPrevious=true
                 case .gtid(let gtid):
-                    guard hasPrevious, pending == nil, let covered, !covered.contains(sid:gtid.sid,sequence:gtid.sequence) else { throw CaptureError("missing preamble, duplicate GTID, or incomplete archive transaction") }
+                    guard hasPrevious, pending == nil, let covered, !covered.contains(gtid) else { throw CaptureError("missing preamble, duplicate GTID, or incomplete archive transaction") }
                     pending=gtid; begun=false
                 case .anonymousGTID: throw CaptureError("anonymous transaction in GTID archive")
                 case .query(let query):
@@ -203,7 +203,7 @@ public final class ArchiveReplay {
                 identity=pending
                 try emit(frame,offset,entry.name,identity,complete)
                 if complete, let pending {
-                    try covered!.include(sid:pending.sid,sequence:pending.sequence)
+                    try covered!.include(pending)
                     begun=false
                 }
                 if complete { pending=nil }
@@ -231,7 +231,7 @@ public final class ArchiveReplay {
                 if cancellation.isCancelled { throw CaptureCancelled() }
                 if processor.stopReason != nil { throw Limit() }
                 if offset == 4 { try processor.consume(ArchiveIO.announce(file)) }
-                if let gtid, excluded.contains(sid:gtid.sid,sequence:gtid.sequence) {
+                if let gtid, excluded.contains(gtid) {
                     if complete { try processor.skipArchivedGroup(to:BinlogCoordinate(file:file,position:offset+UInt64(frame.count))) }
                 } else {
                     try timings.measure("archive.decode") { try processor.consume(frame) }

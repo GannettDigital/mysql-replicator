@@ -128,7 +128,8 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=10")
+            try execute("PRAGMA user_version=12")
+            try createGTIDModeJournal(c.target.preserveSourceGTIDs)
             try createProfileJournal()
             try createNameCaseJournal()
             try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
@@ -167,7 +168,12 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5,6,7,8,9,10].contains(version),"unsupported saved state version")
+        try require([4,5,6,7,8,9,10,11,12].contains(version),"unsupported saved state version")
+        if version >= 12 {
+            try require(try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(c.target.preserveSourceGTIDs)]],"target.preserveSourceGTIDs differs from saved state; restore the recorded mode")
+        } else {
+            try require(!c.target.preserveSourceGTIDs,"legacy state did not preserve source GTIDs; set target.preserveSourceGTIDs: false to resume; enabling source GTID preservation requires a new verified baseline")
+        }
         if version >= 10 {
             try require(try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],"table-name case setting differs from saved state")
         } else { try require(lowerCaseTableNames == 0,"legacy state requires source.lowerCaseTableNames=0") }
@@ -252,8 +258,8 @@ final class StateStore {
                 expected += 1
                 try require(Int64(delta[0] ?? "") == expected,"saved applied GTID history has a gap")
                 let identity=try singleton(delta[1] ?? "")
-                try require(!completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"duplicate applied GTID delta")
-                try completedGTIDs.include(sid:identity.sid,sequence:identity.sequence)
+                try require(!completedGTIDs.contains(identity),"duplicate applied GTID delta")
+                try completedGTIDs.include(identity)
                 boundary=try coordinate(delta[2],delta[3])
             }
             try require(expected == seq && boundary == applied,"saved applied history does not reach checkpoint")
@@ -266,7 +272,7 @@ final class StateStore {
         try require(completedGTIDs.covers(base) && (seq != 0 || ((completedGTIDs == base) == (applied == nil))),"saved GTID coverage differs from baseline")
         if let id=pendingGTID {
             let identity=try singleton(id)
-            try require(!completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"pending GTID is already covered")
+            try require(!completedGTIDs.contains(identity),"pending GTID is already covered")
         }
         for row in try query("SELECT gtid FROM groups WHERE status='APPLIED'") {
             guard let id = row[0] else { throw ApplyError("missing saved group GTID") }
@@ -331,7 +337,21 @@ final class StateStore {
         if version < 10 {
             try atomic { try createNameCaseJournal(); try execute("PRAGMA user_version=10") }
         }
+        // Format 11 permits tagged GTID text. Older readers must reject it.
+        if version < 11 {try atomic {try execute("PRAGMA user_version=11")}}
+        if version < 12 {try atomic {try createGTIDModeJournal(c.target.preserveSourceGTIDs);try execute("PRAGMA user_version=12")}}
         ready=true
+    }
+    private func createGTIDModeJournal(_ preserveSourceGTIDs:Bool) throws {
+        try execute("CREATE TABLE IF NOT EXISTS target_gtid_mode(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL)")
+        try execute("INSERT OR REPLACE INTO target_gtid_mode VALUES(1,?)",[String(preserveSourceGTIDs)])
+        try execute("CREATE TABLE IF NOT EXISTS pending_gtid_markers(gtid TEXT PRIMARY KEY)")
+    }
+    func pendingGTIDMarkers() throws -> [SourceGTID] {
+        try query("SELECT gtid FROM pending_gtid_markers ORDER BY gtid").map {try SourceGTID(parsing:$0[0]!)}
+    }
+    func completeGTIDMarker(_ id:SourceGTID) throws {
+        try atomic {try execute("DELETE FROM pending_gtid_markers WHERE gtid=?",[id.canonical])}
     }
     private func createNameCaseJournal() throws {
         try execute("CREATE TABLE IF NOT EXISTS name_case(id INTEGER PRIMARY KEY CHECK(id=1),lower_case_table_names INTEGER NOT NULL CHECK(lower_case_table_names IN (0,1)))")
@@ -350,24 +370,22 @@ final class StateStore {
     private func createDDLSkips() throws {
         try execute("CREATE TABLE ddl_skips(gtid TEXT PRIMARY KEY,database_name TEXT NOT NULL,object_name TEXT NOT NULL,source_sql TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL)")
     }
-    private func singleton(_ text: String) throws -> (sid:String,sequence:String) {
-        let parts=text.split(separator:":",omittingEmptySubsequences:false)
-        guard parts.count == 2, UUID(uuidString:String(parts[0])) != nil,
-              let n=UInt64(parts[1]), n > 0 else { throw ApplyError("invalid saved singleton GTID") }
-        return (String(parts[0]),String(n))
-    }
+    private func singleton(_ text:String) throws -> SourceGTID {try SourceGTID(parsing:text)}
     /// Explicitly exclude a captured group before any target write was attempted.
     /// All validation happens during reopen, under the same exclusive writer lock.
     func skip() throws -> SkipSummary {
         guard let id=pendingGTID, let boundary=skipBoundary else { throw ApplyError("state was not opened for skip") }
         let identity=try singleton(id)
         var next=completedGTIDs
-        try next.include(sid:identity.sid,sequence:identity.sequence)
+        try next.include(identity)
         let time=timestamp()
         // Do not prune history as a side effect of an operator resolution. Reopen
         // has checked disk/page budgets; FULL WAL and SQLite caps still apply.
         maintenance=true; defer {maintenance=false}
         try atomic {
+            if try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [["true"]] {
+                try execute("INSERT OR IGNORE INTO pending_gtid_markers VALUES(?)",[id])
+            }
             try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'",[id])
             try execute("INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",[String(sequence),next.canonical,boundary.file,String(boundary.position),time])
             try execute("UPDATE state SET applied_file=?,applied_position=?,lifecycle='STOPPED',active_gtid=NULL,diagnostic=NULL,updated_at=? WHERE id=1",[boundary.file,String(boundary.position),time])
@@ -596,12 +614,12 @@ final class StateStore {
                         && batches.allSatisfy { !$0.isEmpty && $0.count <= 256 },"invalid pending DML batch")
             let batch=batches.flatMap { $0 }
             var seen=completedGTIDs, relayStart=pendingBatch.last?.relayEnd ?? groupStart
-            for item in pendingBatch { try seen.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
+            for item in pendingBatch { try seen.include(item.group.gtid!) }
             for item in batch {
                 guard let id=item.group.gtid else { throw ApplyError("batch lacks source GTID") }
                 try require(!item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,"invalid DML batch relay boundary")
-                try require(!seen.contains(sid:id.sid,sequence:id.sequence),"duplicate or excluded batch GTID")
-                try profile("journal.gtid") { try seen.include(sid:id.sid,sequence:id.sequence) }
+                try require(!seen.contains(id),"duplicate or excluded batch GTID")
+                try profile("journal.gtid") { try seen.include(id) }
                 relayStart=item.relayEnd
                 for row in item.mutations { try require(schemas[row.table.identity]?.1 == row.table,"batch schema is not current") }
             }
@@ -641,7 +659,7 @@ final class StateStore {
                 try require((0...item.mutations.count).contains(count) && (!incomplete || (count == 0 && skipped[index] == nil)),"batch acknowledgments are not a contiguous prefix")
                 if count == item.mutations.count || skipped[index] != nil {
                     completed+=1; rowCount+=count
-                    try profile("journal.gtid") { try next.include(sid:item.group.gtid!.sid,sequence:item.group.gtid!.sequence) }
+                    try profile("journal.gtid") { try next.include(item.group.gtid!) }
                 } else { incomplete=true }
             }
             let active=completed < pendingBatch.count ? pendingBatch[completed].id : nil
@@ -681,8 +699,8 @@ final class StateStore {
     }
     func begin(_ group: CompleteTransaction) throws {
         guard let identity = group.gtid else {throw ApplyError("group lacks GTID")}
-        try require(pendingGTID == nil && !completedGTIDs.contains(sid:identity.sid,sequence:identity.sequence),"duplicate or excluded applied GTID")
-        let id=identity.sid+":"+identity.sequence
+        try require(pendingGTID == nil && !completedGTIDs.contains(identity),"duplicate or excluded applied GTID")
+        let id=identity.canonical
         try timings.measure("relay.sync") { try relay!.synchronize() }
         try atomic {
             try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+1),id,group.start.file,String(group.start.position),String(group.end.position),String(groupStart),String(relayLength),timestamp()])
@@ -694,14 +712,14 @@ final class StateStore {
     /// deletion of temporary group history share one FULL SQLite transaction.
     func skipUnwritten(_ group: CompleteTransaction, error: SkippedApplyError) throws {
         guard let identity=group.gtid else { throw ApplyError("skip lacks source GTID") }
-        let id=identity.sid+":"+identity.sequence
+        let id=identity.canonical
         try require(pendingBatch.isEmpty && pendingGTID == id && error.outcome == "notIssued"
             && skipPolicy.codes.contains(error.code) && error.code != .duplicateKey && error.code != .targetSQL,"skip without matching unwritten group/policy")
         try require(try query("SELECT sequence,source_file,start_position,end_position,status FROM groups WHERE gtid=?",[id]) == [[String(pendingSequence),group.start.file,String(group.start.position),String(group.end.position),"PENDING"]],"skip differs from journaled group")
         try require(try number("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[id]) == 0
             && number("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[id]) == 0,"cannot automatically skip target write intents")
         try ensureSkipJournal()
-        var next=completedGTIDs;try next.include(sid:identity.sid,sequence:identity.sequence)
+        var next=completedGTIDs;try next.include(identity)
         let time=timestamp()
         try atomic {
             try recordSkip(group,error:error,time:time)
@@ -730,7 +748,7 @@ final class StateStore {
             let objects=Set(group.events.compactMap { event -> String? in
                 guard let database=event.database,let table=event.table else { return nil };return database+"."+table
             }).sorted()
-            try execute("INSERT INTO error_skips VALUES(?,?,?,?,?,?,?,?)",[group.gtid!.sid+":"+group.gtid!.sequence,group.start.file,String(group.start.position),String(group.end.position),diagnostic,sql.isEmpty ? nil : sql,String(decoding:try JSONEncoder().encode(objects),as:UTF8.self),time])
+            try execute("INSERT INTO error_skips VALUES(?,?,?,?,?,?,?,?)",[group.gtid!.canonical,group.start.file,String(group.start.position),String(group.end.position),diagnostic,sql.isEmpty ? nil : sql,String(decoding:try JSONEncoder().encode(objects),as:UTF8.self),time])
         }
     }
     private func coverSkippedPrefix(_ next: GTIDSet, sequence: Int64, end: BinlogCoordinate, time: String) throws {
@@ -745,7 +763,7 @@ final class StateStore {
     func rowDone(_ ordinal: Int) throws {try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",[timestamp(),pendingGTID,String(ordinal)])}
     func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false, finalRow: Int? = nil, skippedDDL: SkippedDDL? = nil) throws {
         try require(pendingBatch.isEmpty,"batched DML requires batch completion")
-        guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.sid+":"+identity.sequence,(rowCount>0 && ddl==nil && !filtered) || (rowCount==0 && ddl != nil && !filtered) || (filtered && rowCount==0 && ddl==nil) else {throw ApplyError("completion without matching pending group")}
+        guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.canonical,(rowCount>0 && ddl==nil && !filtered) || (rowCount==0 && ddl != nil && !filtered) || (filtered && rowCount==0 && ddl==nil) else {throw ApplyError("completion without matching pending group")}
         if let skippedDDL {
             try require(filtered && group.outcome == .statement && group.events.count == 2,"invalid skipped DDL completion")
             guard case .query(let query) = group.events[1].control else { throw ApplyError("missing skipped DDL query") }
@@ -764,7 +782,7 @@ final class StateStore {
         }
         var newSchemaID: Int64?
         var additionalIDs: [SQLNameKey:Int64] = [:]
-        var next=completedGTIDs; try next.include(sid:identity.sid,sequence:identity.sequence)
+        var next=completedGTIDs; try next.include(identity)
         let time=timestamp()
         try atomic {
             if let skippedDDL {
@@ -875,7 +893,7 @@ final class StateStore {
         let latest = try query("SELECT covered_sequence,gtids FROM snapshots ORDER BY id DESC LIMIT 1")[0]
         var set = try GTIDSet(latest[1]!)
         for row in try query("SELECT gtid FROM groups WHERE status='APPLIED' AND sequence>? ORDER BY sequence",[latest[0]]) {
-            let parts=row[0]!.split(separator:":"); try set.include(sid:String(parts[0]),sequence:String(parts[1]))
+            try set.include(SourceGTID(parsing:row[0]!))
         }
         return set.canonical
     }

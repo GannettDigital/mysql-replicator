@@ -20,6 +20,7 @@ source:
     executedGTIDs: REPLACE_SNAPSHOT_GTID_SET # Full set at snapshot time; not just its last GTID.
 
 target:
+  # preserveSourceGTIDs: true # Default. See docs/GTID_PRESERVATION.md for required privileges.
   host: REPLACE_TARGET_HOST
   port: 3306
   username: applier

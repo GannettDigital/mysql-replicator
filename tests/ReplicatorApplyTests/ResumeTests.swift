@@ -19,7 +19,7 @@ final class ResumeTests: XCTestCase {
         let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":h.sid,"mode":mode,"lowerCaseTableNames":lowerCaseTableNames,
             "start":["file":"binlog.000003","position":1589,"executedGTIDs":gtids ?? h.sid+":1-10"]]
         let object: [String:Any] = ["version":2,"stateDirectory":path,"source":source,
-            "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true]]
+            "target":["preserveSourceGTIDs":false,"host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true]]
         return try JSONDecoder().decode(ApplyConfiguration.self,from:JSONSerialization.data(withJSONObject:object))
     }
     func directory() throws -> URL {

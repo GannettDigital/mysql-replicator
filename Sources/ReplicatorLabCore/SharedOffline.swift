@@ -59,6 +59,7 @@ extension SharedCorrectness.Run {
             _ = try compare("offline_poc")
             // Same baseline/workload, raw external input, fresh state and target.
             _ = try f.sql(.target,seed)
+            if f.variant != .withoutSourceGTIDs {_ = try f.sql(.target,f.profile.targetVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(begin.gtids)'")}
             f.config["archive"]=["directory":"/evidence/external-raw"]
             f.config["stateDirectory"]="/evidence/external-state"
             let raw=try invoke("offline-external","replay",initialize:true)

@@ -1,9 +1,8 @@
 # Future binlog support
 
-The user deferred row-image variants, tagged GTIDs and XA while beta.6 DDL work
-continues. These remain implementation gaps. The current FULL-row, ordinary-GTID
-contract does not change. Do not advertise complete MySQL support while these
-requirements remain open.
+Row-image variants and XA remain implementation gaps. FULL row images are
+required. Tagged GTIDs are now implemented; see the test scope below. Do not
+advertise complete MySQL support while the remaining requirements are open.
 
 ## MINIMAL and NOBLOB row images
 
@@ -15,11 +14,11 @@ offline replay, rotation and saved-state restart on applicable profiles.
 
 ## Tagged GTIDs
 
-Use one identity model across decoding, previous-GTID sets, resume/stop limits,
-SQLite checkpoints, archive inventory, skip records and control commands.
-Provide a durable-state migration design before changing stored identities.
-Test mixed tagged/untagged history, duplicate suppression, restart and replay.
-Do not reduce a tagged GTID to an ordinary SID/sequence pair.
+[Tagged GTID support](TAGGED_GTIDS.md) keeps UUID, tag and sequence together in
+capture, checkpoints, duplicate checks and replay. The default forward-profile
+case passed with restart, rotation and a tagged replay stop limit. Dedicated
+tagged skip, recovery and source-reconnect integration cases remain to be added.
+XA remains a separate task.
 
 ## XA
 

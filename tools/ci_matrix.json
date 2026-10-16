@@ -17,6 +17,7 @@
   },
   "areas": [
     {"name": "database", "families": ["database"]},
+    {"name": "gtids", "families": ["gtids"]},
     {"name": "ddl", "families": ["ddl"], "split_after": ["ddl-compat-generated"]},
     {"name": "dml", "families": ["dml"]},
     {"name": "foreign-keys", "families": ["foreign-keys"]},

@@ -44,6 +44,24 @@ SET bytes on the two 5.7-to-5.7 profiles. MySQL 8.4.8 rejects that SET definitio
 with native error 3507. Binary choice schema comparisons read raw SHOW CREATE
 output through a separate test parser.
 
+The `ddl-compat-tagged-gtids` case uses the 8.4 source profile with
+`--variant without-source-gtids` (`target.preserveSourceGTIDs: false`). It compares tagged
+DDL/DML results with the native reference, then checks rotation, process restart,
+archive replay and a tagged stop limit. It checks source GTIDs in SQLite
+separately from the target server's GTIDs.
+
+The `gtids` family contains these two cases. The `without-source-gtids` variant
+selects only the tagged case; it does not repeat the full correctness suite.
+
+The `ddl-compat-source-gtid-preservation` case uses the default setting
+`target.preserveSourceGTIDs: true`. It checks the target GTID set after DDL,
+multi-row INSERT/UPDATE/DELETE, keyless duplicate rows, restart, and archive replay.
+Run it for all four profiles:
+
+```sh
+make lab-test ARGS="--profile all --suite correctness --case ddl-compat-source-gtid-preservation"
+```
+
 ## List and run
 
 Build prerequisites are in [CONTRIBUTING](../CONTRIBUTING.md). From the checkout:
@@ -363,7 +381,7 @@ the original gaps, measured migration checkpoints and final removal evidence.
 
 ### Capture variants and catalog evidence
 
-Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|lowercase-tables|all`.
+Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|lowercase-tables|without-source-gtids|all`.
 The default keeps each topology's usual GTID start with a file/offset. The two
 historical forward variants use file-position with MINIMAL optional row metadata,
 or GTID-only start with FULL metadata. `--variant all` lists/runs each separately;

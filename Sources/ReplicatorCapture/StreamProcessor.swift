@@ -222,7 +222,7 @@ final class StreamProcessor {
             if !transactionControl { resolvedSchemas.removeAll(keepingCapacity:true) }
         }
         if case .gtid(let gtid) = event.control {
-            try check(!completeGTIDs.contains(sid: gtid.sid, sequence: gtid.sequence), "source returned an excluded or duplicate GTID")
+            try check(!completeGTIDs.contains(gtid), "source returned an excluded or duplicate GTID")
             if firstGroup {
                 try check(atOrAfterBootstrap(current), "first live group precedes schema/bootstrap boundary")
                 firstGroup = false
@@ -235,7 +235,7 @@ final class StreamProcessor {
         if let complete {
             var nextSet = completeGTIDs
             guard let identity = complete.gtid else { throw CaptureError("completed live group has no GTID") }
-            try nextSet.include(sid: identity.sid, sequence: identity.sequence)
+            try nextSet.include(identity)
             try emitTransaction(complete); transactionCount += 1; completeGTIDs = nextSet
         }
         if case .rotate(let destination) = event.control { rotatedTo = destination }

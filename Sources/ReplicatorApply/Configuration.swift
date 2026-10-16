@@ -277,6 +277,8 @@ extension ApplyTable {
     }
 }
 public struct TargetConfiguration: Decodable {
+    /// Keep the source identity in the target binlog unless explicitly disabled.
+    public let preserveSourceGTIDs: Bool
     public enum TLSVerification: String, Decodable {
         case verifyIdentity = "verify-identity"
         case verifyCA = "verify-ca"
@@ -295,9 +297,10 @@ public struct TargetConfiguration: Decodable {
     public let explicitTableLocks: Bool
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,tlsVerification,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks}
+    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,tlsVerification,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks,preserveSourceGTIDs}
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
+        preserveSourceGTIDs=try c.decodeIfPresent(Bool.self,forKey:.preserveSourceGTIDs) ?? true
         guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
         host=try c.decodeIfPresent(String.self,forKey:.host); port=try c.decodeIfPresent(Int.self,forKey:.port)
         unixSocket=try c.decodeIfPresent(String.self,forKey:.unixSocket)
