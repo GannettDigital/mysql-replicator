@@ -471,7 +471,8 @@ jobs:
     container: swift:6.2.1-jammy@sha256:6e33c70a59180c9b518f67728538312975cb3891177d20215cd2e31bdfe70791
     steps:
       - uses: actions/checkout@v4
-      - run: make lint
+      # The Swift SDK image has the formatter, but does not include make.
+      - run: swift format lint --strict --parallel --recursive Sources tests
 
   periphery:
     needs: select-suite
