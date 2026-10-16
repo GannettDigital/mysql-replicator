@@ -179,7 +179,7 @@ enum ModifyIndexCases {
         try reporter.run(sourceRejected) {
             let seed=cases[0].seed.replacingOccurrences(of:"explicit_default_engine",with:"mi").replacingOccurrences(of:"utf8mb4_bin",with:"utf8mb4_unicode_ci")
             _ = try h.sql("native","STOP REPLICA")
-            for service in h.services {_ = try h.sql(service,seed+"; CREATE INDEX ix ON demo.mi(name); INSERT INTO demo.mi VALUES(2,'SEED-two',NULL,NULL)")}
+            for service in h.services {_ = try h.sqlScript(service,seed+"; CREATE INDEX ix ON demo.mi(name); INSERT INTO demo.mi VALUES(2,'SEED-two',NULL,NULL)")}
             let before=try h.boundary("source")
             var observations:[[String:Any]]=[]
             for sql in ["ALTER TABLE demo.mi MODIFY name VARCHAR(2) NOT NULL","ALTER TABLE demo.mi MODIFY b VARBINARY(8) NOT NULL","CREATE UNIQUE INDEX prefix_conflict ON demo.mi(name(4))","CREATE INDEX bad ON demo.mi(name(100))","DROP INDEX absent ON demo.mi","CREATE INDEX ix ON demo.mi(n)"] {
