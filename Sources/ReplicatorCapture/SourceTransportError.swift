@@ -1,13 +1,14 @@
 import Foundation
+import MySQLNIO
 import NIOCore
 import NIOSSL
-import MySQLNIO
+
 #if canImport(Musl)
-import Musl
+    import Musl
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #else
-import Darwin
+    import Darwin
 #endif
 
 /// Only source socket operations may create this error. Decoder, callback and
@@ -23,7 +24,7 @@ func sourceTransportFailure(_ error: Error) -> Error {
     if let mysql = error as? MySQLError {
         switch mysql {
         case .closed: retry = true
-        case .server(let packet): retry = packet.errorCode == 1053 // server shutdown
+        case .server(let packet): retry = packet.errorCode == 1053  // server shutdown
         default: break
         }
     } else if let channel = error as? ChannelError {
@@ -32,17 +33,18 @@ func sourceTransportFailure(_ error: Error) -> Error {
         default: break
         }
     } else if let io = error as? IOError {
-        retry = [ECONNRESET, ECONNREFUSED, ECONNABORTED, EPIPE, ETIMEDOUT,
-                 ENETUNREACH, EHOSTUNREACH, ENETDOWN, EHOSTDOWN].contains(io.errnoCode)
+        retry = [
+            ECONNRESET, ECONNREFUSED, ECONNABORTED, EPIPE, ETIMEDOUT,
+            ENETUNREACH, EHOSTUNREACH, ENETDOWN, EHOSTDOWN,
+        ].contains(io.errnoCode)
     } else if let address = error as? SocketAddressError, case .unknown = address {
         retry = true
     } else if let ssl = error as? NIOSSLError, case .uncleanShutdown = ssl {
         retry = true
     }
-    return retry ? SourceTransportError(String(describing:error)) : error
+    return retry ? SourceTransportError(String(describing: error)) : error
 }
 
 func sourceNetworkOperation<T>(_ operation: () throws -> T) throws -> T {
-    do { return try operation() }
-    catch { throw sourceTransportFailure(error) }
+    do { return try operation() } catch { throw sourceTransportFailure(error) }
 }

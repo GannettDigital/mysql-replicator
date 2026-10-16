@@ -165,11 +165,11 @@ commits. Audit history is not automatically pruned; include it in storage planni
 Recovery currently accepts formats 9 through 12 for InnoDB-profile DML only. DDL reconciliation,
 MyISAM recovery and automatic repair remain outside this command's scope.
 
-SQLite state format 12 records the GTID preservation setting. It also retains
+SQLite state format 13 records the GTID preservation setting and table filters. It also retains
 tagged source GTIDs and the profile and table-name
 case settings from format 10. Older state requires `target.preserveSourceGTIDs: false` and
 can upgrade with `source.lowerCaseTableNames: 0`. It cannot adopt mode 1 or a
-different replication profile. Runtimes without format-12 support reject this state. Back up the
+different replication profile. Runtimes without format-13 support reject this state. Back up the
 stopped state before upgrading.
 
 ## Demo

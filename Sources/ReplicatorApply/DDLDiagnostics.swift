@@ -37,7 +37,7 @@ struct DDLQueryContextDiagnostic: Codable {
     // Known native identities, not a substitution map.
     // Unknown IDs remain numeric rather than guessing their names.
     static func knownCollationName(_ id: UInt32) -> String? {
-        CharacterSetRegistry.collation(id:id)?.diagnosticName
+        CharacterSetRegistry.collation(id: id)?.diagnosticName
     }
     static func collation(_ id: UInt32) -> String {
         "ID \(id)" + (knownCollationName(id).map { " (\($0))" } ?? "")

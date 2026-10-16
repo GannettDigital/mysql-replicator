@@ -74,7 +74,7 @@ class ChangedScopeTests(unittest.TestCase):
         from ci_scope import check_results
         for scope in ('docs', 'tools', 'pr-smoke', 'full'):
             results = {job: {'result': 'success'} for job in
-                       ('select-suite', 'tool-tests', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration')}
+                       ('select-suite', 'tool-tests', 'swift-lint', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration')}
             if scope in ('docs', 'tools'):
                 for job in ('unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration'):
                     results[job]['result'] = 'skipped'

@@ -24,7 +24,7 @@ public struct ApplySummary: Encodable {
     public let drainRequested: Bool
     public var stopReason: String? = nil
     public var activeBatchTransactions: Int = 0
-    public var skippedTransactionsByCode: [String:Int] = [:]
+    public var skippedTransactionsByCode: [String: Int] = [:]
     public var estimate: ProgressEstimate? = nil
     public var counters: ApplyCounters? = nil
     public var applyQueue: ApplyQueueSnapshot? = nil
@@ -48,72 +48,111 @@ public enum ApplyRun {
 
     /// Safe source/target transport failures reconnect from durable applied progress.
     /// Interrupted processes and uncertain target outcomes are never retried.
-    public static func run(configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
-                           initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(), archive: ArchiveReplay? = nil, control: RunControl? = nil, emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }) throws -> ApplySummary {
-        try configuration.validate(offline:archive != nil)
-        if archive != nil { try require(configuration.source.mode == "gtid","offline replay requires GTID positioning") }
+    public static func run(
+        configuration: ApplyConfiguration, sourcePassword: String, targetPassword: String,
+        initialize: Bool = false, cancellation: CaptureCancellation = .init(), drain: CaptureCancellation = .init(),
+        archive: ArchiveReplay? = nil, control: RunControl? = nil,
+        emitProgress: @escaping (ApplySummary) throws -> Void = { _ in }
+    ) throws -> ApplySummary {
+        try configuration.validate(offline: archive != nil)
+        if archive != nil {
+            try require(configuration.source.mode == "gtid", "offline replay requires GTID positioning")
+        }
         let profile = configuration.replicationProfile
         let legacyMetadata = profile.sourceContract.requiresHistoricalSchema
-        let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [],including:configuration.replicateWildDoTable ?? [],lowerCaseTableNames:configuration.source.tableNameCaseSetting)
+        let filter = try TableFilter(
+            configuration.replicateWildIgnoreTable ?? [], including: configuration.replicateWildDoTable ?? [],
+            lowerCaseTableNames: configuration.source.tableNameCaseSetting)
         let timings = StageTimings()
         let producerTimings = StageTimings()
         let targetTimings = StageTimings()
-        var pipeline = ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
-        var retry = SourceRetryState(policy:configuration.reconnectPolicy)
+        var pipeline = ApplyPipeline(
+            maximumItemBytes: configuration.source.transactionLimits.retainedBytes
+                + Int(configuration.source.transactionLimits.wireBytes) + 65536)
+        var retry = SourceRetryState(policy: configuration.reconnectPolicy)
         var reconnectReason: String?
-        var targetRetry = SourceRetryState(policy:configuration.targetReconnectPolicy)
+        var targetRetry = SourceRetryState(policy: configuration.targetReconnectPolicy)
         var targetReason: String?
         var targetFailure: TargetFailureDiagnostic?
         var consumerPending = false
-        var limits=try StopConditions(transactions:configuration.source.stopAfterTransactions,gtids:configuration.source.stopAfterGTIDs)
+        var limits = try StopConditions(
+            transactions: configuration.source.stopAfterTransactions, gtids: configuration.source.stopAfterGTIDs)
         var stopReason: String?
         var finalResult: ApplySummary?
-        var activeBatchTransactions=0
+        var activeBatchTransactions = 0
         var executionQueue: DMLExecutor?
-        let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
-        let statistics=configuration.statistics ?? StatisticsPolicy()
-        let estimator=ProgressEstimator(window:statistics.rateWindowSeconds)
-        let monitor=archive == nil ? SourceMonitor() : nil
-        monitor?.start(source:configuration.source,password:sourcePassword,contract:profile.sourceContract,interval:statistics.sourcePollIntervalSeconds)
-        defer {monitor?.stop()}
-        var savedObservation:Double?
-        func estimate(_ lifecycle:String) -> ProgressEstimate {
-            let sample=monitor?.snapshot()
-            let observation=sample?.observation
-            let goal=archive != nil ? (limits.stopAfterGTIDs ?? archive?.availableGTIDs) : observation?.executedGTIDs
-            var value=estimator.update(now:ProcessInfo.processInfo.systemUptime,transactions:state.transactions,bytes:state.counters.processedBinlogBytes,
-                completed:state.gtids,goal:goal,replay:archive != nil,lifecycle:lifecycle,observation:observation)
-            value.sourceObservation=observation;value.monitoringError=sample?.error
+        let state = try StateStore(configuration: configuration, initialize: initialize, timings: timings)
+        let statistics = configuration.statistics ?? StatisticsPolicy()
+        let estimator = ProgressEstimator(window: statistics.rateWindowSeconds)
+        let monitor = archive == nil ? SourceMonitor() : nil
+        monitor?.start(
+            source: configuration.source, password: sourcePassword, contract: profile.sourceContract,
+            interval: statistics.sourcePollIntervalSeconds)
+        defer { monitor?.stop() }
+        var savedObservation: Double?
+        func estimate(_ lifecycle: String) -> ProgressEstimate {
+            let sample = monitor?.snapshot()
+            let observation = sample?.observation
+            let goal = archive != nil ? (limits.stopAfterGTIDs ?? archive?.availableGTIDs) : observation?.executedGTIDs
+            var value = estimator.update(
+                now: ProcessInfo.processInfo.systemUptime, transactions: state.transactions,
+                bytes: state.counters.processedBinlogBytes,
+                completed: state.gtids, goal: goal, replay: archive != nil, lifecycle: lifecycle,
+                observation: observation)
+            value.sourceObservation = observation
+            value.monitoringError = sample?.error
             if let observation {
-                let age=max(0,Date().timeIntervalSince1970-observation.observedAt)
-                value.sourceObservationAgeSeconds=age;value.sourceObservationStale=age > Double(statistics.sourcePollIntervalSeconds*2) || sample?.error != nil
-                if value.sourceObservationStale {value.estimatedSecondsRemaining=nil;value.status="staleSourceSample"}
-                if let applied=state.applied {value.remainingBinlogBytes=observation.bytesRemaining(after:applied)}
+                let age = max(0, Date().timeIntervalSince1970 - observation.observedAt)
+                value.sourceObservationAgeSeconds = age
+                value.sourceObservationStale =
+                    age > Double(statistics.sourcePollIntervalSeconds * 2) || sample?.error != nil
+                if value.sourceObservationStale {
+                    value.estimatedSecondsRemaining = nil
+                    value.status = "staleSourceSample"
+                }
+                if let applied = state.applied {
+                    value.remainingBinlogBytes = observation.bytesRemaining(after: applied)
+                }
             }
             return value
         }
-        func finalTimings() -> [String:StageTimings.Sample] {
+        func finalTimings() -> [String: StageTimings.Sample] {
             let merged = StageTimings()
-            merged.merge(timings.snapshot); merged.merge(producerTimings.snapshot); merged.merge(targetTimings.snapshot)
+            merged.merge(timings.snapshot)
+            merged.merge(producerTimings.snapshot)
+            merged.merge(targetTimings.snapshot)
             return merged.snapshot
         }
         func summary(_ lifecycle: String) -> ApplySummary {
-            ApplySummary(lifecycle:lifecycle,transactionsApplied:state.transactions,rowsApplied:state.rows,ddlApplied:state.ddlApplied,
-                appliedPosition:state.applied,appliedGTIDSet:state.gtids,pendingGTID:state.pendingGTID,stateDirectory:state.directory.path,stageTimings:["RUNNING","DRAINING"].contains(lifecycle) ? nil : finalTimings(),
-                pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
-                sourceReconnectEnabled:archive == nil && configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
-                targetReconnectEnabled:configuration.targetReconnectPolicy.enabled,targetReconnectAttempts:targetRetry.attempts,
-                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions,skippedTransactionsByCode:state.skippedTransactionsByCode,estimate:estimate(lifecycle),counters:state.counters,applyQueue:executionQueue?.snapshot)
+            ApplySummary(
+                lifecycle: lifecycle, transactionsApplied: state.transactions, rowsApplied: state.rows,
+                ddlApplied: state.ddlApplied,
+                appliedPosition: state.applied, appliedGTIDSet: state.gtids, pendingGTID: state.pendingGTID,
+                stateDirectory: state.directory.path,
+                stageTimings: ["RUNNING", "DRAINING"].contains(lifecycle) ? nil : finalTimings(),
+                pipeline: lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
+                sourceReconnectEnabled: archive == nil && configuration.reconnectPolicy.enabled,
+                sourceReconnectAttempts: retry.attempts, sourceReconnectReason: reconnectReason,
+                targetReconnectEnabled: configuration.targetReconnectPolicy.enabled,
+                targetReconnectAttempts: targetRetry.attempts,
+                targetReconnectReason: targetReason, targetFailure: targetFailure, drainRequested: drain.isCancelled,
+                stopReason: stopReason, activeBatchTransactions: activeBatchTransactions,
+                skippedTransactionsByCode: state.skippedTransactionsByCode, estimate: estimate(lifecycle),
+                counters: state.counters, applyQueue: executionQueue?.snapshot)
         }
         func report(_ value: ApplySummary) throws {
-            if let observation=value.estimate?.sourceObservation,observation.observedAt != savedObservation {
-                try state.saveSourceObservation(observation);savedObservation=observation.observedAt
+            if let observation = value.estimate?.sourceObservation, observation.observedAt != savedObservation {
+                try state.saveSourceObservation(observation)
+                savedObservation = observation.observedAt
             }
-            control?.publish(value);try emitProgress(value)
+            control?.publish(value)
+            try emitProgress(value)
         }
         func stoppedResult() -> ApplySummary {
-            if drain.isCancelled { stopReason="drainRequested" }
-            let result=summary("STOPPED");finalResult=result;return result
+            if drain.isCancelled { stopReason = "drainRequested" }
+            let result = summary("STOPPED")
+            finalResult = result
+            return result
         }
         defer { control?.finish(finalResult ?? summary("BLOCKED")) }
         func progress() throws {
@@ -126,377 +165,540 @@ public enum ApplyRun {
         let initialTransactions = state.transactions
         var started = false
         do {
-          control?.publish(summary("STARTING"))
-          try control?.start(directory:state.directory)
-          if let archive {
-              do {
-                  try archive.validate(baseline:state.gtids,stopAfterGTIDs:limits.stopAfterGTIDs,
-                      isCancelled:{ cancellation.isCancelled || drain.isCancelled })
-              } catch is CaptureCancelled {
-                  try state.archiveValidationStopped();return stoppedResult()
-              }
-          }
-          while true {
-           do {
-            let target = try TargetSession(configuration:configuration,password:targetPassword,timings:targetTimings)
-            defer { try? target.unlock() }
-            try target.preflight()
-            try state.bindTargetIdentity(target.targetUUID!)
-            for identity in try state.pendingGTIDMarkers() {
-                try SourceGTIDExecution.validate(identity,targetVersion:target.serverVersionID ?? 0)
-                if try target.scalar("SELECT GTID_SUBSET(?,@@GLOBAL.gtid_executed) AS v",[.init(string:identity.canonical)]) == "0" {
-                    try target.emptySourceGTID(identity)
-                }
-                try state.completeGTIDMarker(identity)
-            }
-            for table in state.currentSchemas where !filter.ignores(database: table.database, table: table.table) {
-                try require(try target.readSchema(database:table.database,name:table.table) == table,"target schema differs from saved checkpoint")
-                // DDL barriers must see every validated saved table, including
-                // tables with no row event since resume (e.g. DROP DATABASE).
-                target.discovered[table.identity]=table
-            }
-            try state.running(); started = true
-            targetReason=nil
-            try progress()
-            let executor = DMLExecutor(capacity:configuration.batchPolicy.overlapPreparation ? configuration.batchPolicy.maximumPreparedBatches : 1)
-            executionQueue=executor
-            let byteLimit = target.insertByteLimit
-            let executionStop = CaptureCancellation(parent:cancellation)
-            func checkSourceFailure() throws {
-                try pipeline.queue.checkFailure(allowSourceReconnect:configuration.reconnectPolicy.enabled,allowDrain:true)
-            }
-            var planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
-            func finishOneExecution() throws {
-                guard executor.active else { return }
+            control?.publish(summary("STARTING"))
+            try control?.start(directory: state.directory)
+            if let archive {
                 do {
-                    guard let outcome = timings.measure("apply.execution_wait",{ executor.join() }) else {
-                        throw ApplyError("prepared batch was not executed after an earlier failure")
-                    }
-                    var outcomes=[outcome]
-                    while outcomes.last!.failure == nil && executor.ready {
-                        guard let next=executor.join() else { throw ApplyError("missing prepared batch outcome") }
-                        outcomes.append(next)
-                    }
-                    if let diagnostic=outcomes.last!.diagnostic { targetFailure=diagnostic }
-                    try DMLExecution.Outcome.record(outcomes,in:state)
-                    activeBatchTransactions -= outcomes.reduce(0) { $0+$1.acknowledged.count }
-                    try progress()
-                } catch {
-                    // A checkpoint failure can race a later, already-durable
-                    // batch. Stop and join it; retain all outstanding intents.
-                    executionStop.cancel(); executor.cancelAndWait()
-                    activeBatchTransactions=0
-                    throw error
+                    try archive.validate(
+                        baseline: state.gtids, stopAfterGTIDs: limits.stopAfterGTIDs,
+                        isCancelled: { cancellation.isCancelled || drain.isCancelled })
+                } catch is CaptureCancelled {
+                    try state.archiveValidationStopped()
+                    return stoppedResult()
                 }
-            }
-            func finishExecution() throws {
-                while executor.active { try finishOneExecution() }
-            }
-            // Always join before target destruction, diagnostics or a journal
-            // error path. Main-thread failures stop further target statements.
-            defer { executionStop.cancel(); executor.cancelAndWait() }
-            // Collect up to half the durable queue per preparation window,
-            // leaving room to journal ahead of the currently executing window.
-            // Row, byte, age, table and DDL boundaries still bound collection.
-            let transactionsPerBatch=configuration.batchPolicy.maximumTransactions
-            var preparationPolicy=configuration.batchPolicy
-            preparationPolicy.maximumTransactions *= max(1,executor.capacity/2)
-            let batch = DMLBatch(policy:preparationPolicy,onFlush:{ reason in timings.measure("apply.batch.flush." + reason) {} }) { groups in
-                let large = groups.contains { $0.wireBytes > configuration.batchPolicy.maximumWireBytes }
-                if large { try finishExecution() }
-                let batches=stride(from:0,to:groups.count,by:transactionsPerBatch).map {
-                    Array(groups[$0..<min($0+transactionsPerBatch,groups.count)])
-                }
-                // Reap published completions together, sharing one SQLite commit.
-                if executor.ready { try finishOneExecution() }
-                while executor.available < batches.count { try finishOneExecution() }
-                try checkSourceFailure()
-                try timings.measure("apply.batch.prepare") { try state.beginBatches(batches) }
-                activeBatchTransactions += groups.count
-                control?.publish(summary("RUNNING"))
-                for prepared in batches {
-                    executor.start {
-                        targetTimings.measure("apply.batch.execute") {
-                            target.execute(prepared,cancellation:executionStop,maximumInsertBytes:byteLimit,checkSourceFailure:checkSourceFailure)
-                        }
-                    }
-                }
-                if large || !configuration.batchPolicy.overlapPreparation { try finishExecution() }
-            }
-            func barrier(_ reason: String = "barrier") throws { try batch.flush(reason:reason); try finishExecution() }
-            func maintainExecution() throws {
-                // Successful tickets may wait until the next preparation window
-                // or barrier. Failure is handled promptly, without issuing more SQL.
-                if executor.failed { try finishExecution() }
-                if !executor.active { try target.checkConnection(); try target.releaseExpiredLock() }
-            }
-            func event(_ record: LiveRecord) throws {
-                if !cancellation.isCancelled { try batch.flushIfExpired() }
-                try maintainExecution()
-                try timings.measure("relay.append") { try state.append(record) }
-                if let decoded = record.event {
-                    if case .gtid = decoded.control { consumerPending = true }
-                    if decoded.eventType == 19 && !decoded.replicationFiltered {
-                        guard let database = decoded.database, let name = decoded.table else { throw ApplyError("missing table-map identity") }
-                        let identity = SQLNameKey.table(database,name)
-                        let table: ApplyTable
-                        if planningCache.tables[identity] != nil {
-                            table = try state.profile("target.discover") { try planningCache.validate(decoded) }
-                        } else {
-                            try barrier()
-                            table = try target.discover(decoded)
-                            try planningCache.insert(table)
-                            _ = try planningCache.validate(decoded)
-                        }
-                        guard let offset = UInt64(decoded.offset) else { throw ApplyError("invalid table-map coordinate") }
-                        try state.schema(table,event:decoded,coordinate:BinlogCoordinate(file:record.file,position:offset))
-                    }
-                }
-            }
-            func transaction(_ group: CompleteTransaction) throws {
-                defer { consumerPending = false }
-                if group.outcome == .statement {
-                    try barrier()
-                    target.statementTrace = .init()
-                    try state.begin(group)
-                    control?.publish(summary("RUNNING"))
-                    var hasDDLIntent = false
-                    do {
-                    try target.unlock()
-                    try target.checkSourceGTID(group.gtid!)
-                    try require(group.events.count == 2, "invalid standalone DDL group")
-                    guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
-                    guard let version=target.serverVersionID else {throw ApplyError("target version is unavailable")}
-                    let view = try LoggedDDL.parsingView(query,targetVersion:version)
-                    let ddlTokens = try target.ddlTokens(view)
-                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile,tokens:ddlTokens,targetVersion:version) {
-                        try target.emptySourceGTID(group.gtid!)
-                        try state.complete(group,rowCount:0,filtered:true,skippedDDL:skipped)
-                        try progress(); return
-                    }
-                    if try filter.ignores(view,tokens:ddlTokens) {
-                        try target.emptySourceGTID(group.gtid!)
-                        try state.complete(group,rowCount:0,filtered:true)
-                        try progress(); return
-                    }
-                    let statement=try DDLStatement.from(group,profile:profile,tokens:ddlTokens,lowerCaseTableNames:configuration.source.tableNameCaseSetting,targetVersion:version)
-                    var plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp),tokens:ddlTokens)
-                    if configuration.target.preserveSourceGTIDs && !profile.transactional {
-                        let databases=[plan.database?.name,plan.statement.name?.database,plan.before?.database,plan.after?.database].compactMap {$0}
-                            + plan.additional.flatMap {[$0.before?.database,$0.after?.database].compactMap {$0}}
-                        try require(!databases.contains {$0.lowercased() == "_mysql_replicator_gtid"},"source DDL conflicts with the reserved GTID scratch database")
-                    }
-                    if view.sql != query.sql {plan.compatibilityRules.append(LoggedDDL.commentRule)}
-                    try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
-                    hasDDLIntent = true
-                    try require(!cancellation.isCancelled,"apply cancelled")
-                    try checkSourceFailure()
-                    try target.sourceStatement(group.gtid!) {try target.applyDDL(&plan)}
-                    planningCache = try DMLPlanningCache(target.discovered,compatibility:configuration.compatibilityPolicy,legacyMetadata:legacyMetadata)
-                    try state.complete(group,rowCount:0,ddl:plan)
-                    try progress()
-                    return
-                    } catch {
-                        if !hasDDLIntent && target.statementTrace.phase == .notIssued && !cancellation.isCancelled,
-                           let skip=configuration.skipErrorPolicy.match(error,at:.beforeWrites) {
-                            try target.emptySourceGTID(group.gtid!)
-                            try state.skipUnwritten(group,error:skip)
-                            try progress();return
-                        }
-                        let failedQuery=group.events.compactMap { event -> QueryControl? in
-                            if case .query(let query)=event.control { return query }; return nil
-                        }.first
-                        let diagnostic=TargetFailureDiagnostic(reason:String(describing:error),statement:target.statementTrace,
-                            rows:[],ddlGTID:state.pendingGTID,ddlSQL:failedQuery.map { String(decoding:$0.sql,as:UTF8.self) },
-                            ddlContext:failedQuery.flatMap { DDLQueryContextDiagnostic(query:$0) })
-                        targetFailure=diagnostic; try state.recordTargetFailure(diagnostic)
-                        if error is TargetConnectionFailure && target.statementTrace.phase == .notIssued {
-                            try state.discardUnwrittenPending()
-                        }
-                        throw error
-                    }
-                }
-                let mutations: [Mutation]
-                do { mutations = try state.profile("dml.plan") { try DMLPlan.make(group,tables:planningCache.tables,transactional:profile.transactional) } }
-                catch {
-                    try barrier()
-                    try state.begin(group) // Keep rejected, unwritten groups explicitly skippable.
-                    if !cancellation.isCancelled,let skip=configuration.skipErrorPolicy.match(error,at:.beforeWrites) {
-                        try target.emptySourceGTID(group.gtid!)
-                            try state.skipUnwritten(group,error:skip)
-                        try progress();return
-                    }
-                    throw error
-                }
-                if mutations.isEmpty {
-                    try barrier()
-                    try target.unlock()
-                    try state.begin(group)
-                    try target.checkSourceGTID(group.gtid!)
-                    try target.emptySourceGTID(group.gtid!)
-                        try state.complete(group,rowCount:0,filtered:true)
-                    try progress(); return
-                }
-                try batch.append(PreparedDMLGroup(group:group,mutations:mutations,relayEnd:state.relayLength))
             }
             while true {
-              if drain.isCancelled { try report(summary("DRAINING")); try state.discardUnappliedCapture(); break }
-              if let reason=limits.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) {
-                  stopReason=reason == "gtidsSatisfied" && state.transactions == initialTransactions ? "alreadySatisfied" : reason
-                  break
-              }
-              let remaining = limits.stopAfterTransactions.map { $0-(state.transactions-initialTransactions) }
-              var capture = try state.captureConfiguration(configuration.source,remainingTransactions:remaining)
-              capture.stopAfterTransactions=remaining;capture.stopAfterGTIDs=limits.stopAfterGTIDs
-              do {
-                try pipeline.run(cancellation:cancellation,producerTimings:producerTimings,produce:{ stop, send in
-                    let resolver: ((DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation])? = legacyMetadata ? { event,_ in
-                        let request = ApplySchemaRequest(event)
-                        try send(.schema(request))
-                        return try producerTimings.measure("capture.schema_wait") { try request.wait(cancellation:stop) }
-                    } : nil
-                    if let archive {
-                        try archive.run(configuration:capture,cancellation:stop,retainRawBytes:true,
-                            emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
-                            resolveSchema:resolver,timings:producerTimings,
-                            ignoreTable:filter.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
-                    } else {
-                    _ = try LiveInspection.run(configuration:capture,password:sourcePassword,retainRawBytes:true,cancellation:stop,
-                        emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
-                        resolveSchema:resolver,
-                        timings:producerTimings,onIdle:{ try send(.idle) },allowDDL:true,
-                        ignoreTable:filter.isEmpty ? nil : { filter.ignores(database:$0,table:$1) },sourceContract:profile.sourceContract)
+                do {
+                    let target = try TargetSession(
+                        configuration: configuration, password: targetPassword, timings: targetTimings)
+                    defer { try? target.unlock() }
+                    try target.preflight()
+                    try state.bindTargetIdentity(target.targetUUID!)
+                    for identity in try state.pendingGTIDMarkers() {
+                        try SourceGTIDExecution.validate(identity, targetVersion: target.serverVersionID ?? 0)
+                        if try target.scalar(
+                            "SELECT GTID_SUBSET(?,@@GLOBAL.gtid_executed) AS v", [.init(string: identity.canonical)])
+                            == "0"
+                        {
+                            try target.emptySourceGTID(identity)
+                        }
+                        try state.completeGTIDMarker(identity)
                     }
-                },consume:{ message in
-                    if drain.isCancelled { throw ApplyDrainRequested() }
-                    if control?.reloadRequested == true { throw ApplyReloadRequested() }
-                    try timings.measure("apply.consume") {
-                        switch message {
-                        case .event(let record): try event(record)
-                        case .transaction(let group): try transaction(group)
-                        case .schema(let request):
-                            do {
-                                guard let db=request.event.database,let name=request.event.table else { throw ApplyError("missing schema identity") }
-                                let identity = SQLNameKey.table(db,name)
-                                if planningCache.tables[identity] == nil {
-                                    try barrier("schema")
-                                    let table = try target.discover(request.event)
-                                    try planningCache.insert(table)
+                    for table in state.currentSchemas
+                    where !filter.ignores(database: table.database, table: table.table) {
+                        try require(
+                            try target.readSchema(database: table.database, name: table.table) == table,
+                            "target schema differs from saved checkpoint")
+                        // DDL barriers must see every validated saved table, including
+                        // tables with no row event since resume (e.g. DROP DATABASE).
+                        target.discovered[table.identity] = table
+                    }
+                    try state.running()
+                    started = true
+                    targetReason = nil
+                    try progress()
+                    let executor = DMLExecutor(
+                        capacity: configuration.batchPolicy.overlapPreparation
+                            ? configuration.batchPolicy.maximumPreparedBatches : 1)
+                    executionQueue = executor
+                    let byteLimit = target.insertByteLimit
+                    let executionStop = CaptureCancellation(parent: cancellation)
+                    func checkSourceFailure() throws {
+                        try pipeline.queue.checkFailure(
+                            allowSourceReconnect: configuration.reconnectPolicy.enabled, allowDrain: true)
+                    }
+                    var planningCache = try DMLPlanningCache(
+                        target.discovered, compatibility: configuration.compatibilityPolicy,
+                        legacyMetadata: legacyMetadata)
+                    func finishOneExecution() throws {
+                        guard executor.active else { return }
+                        do {
+                            guard let outcome = timings.measure("apply.execution_wait", { executor.join() }) else {
+                                throw ApplyError("prepared batch was not executed after an earlier failure")
+                            }
+                            var outcomes = [outcome]
+                            while outcomes.last!.failure == nil && executor.ready {
+                                guard let next = executor.join() else {
+                                    throw ApplyError("missing prepared batch outcome")
                                 }
-                                let table = try planningCache.validate(request.event)
-                                request.complete(.success(table.columns.map(\.interpretation)))
-                            } catch { request.complete(.failure(error)); throw error }
-                        case .idle:
-                            if !cancellation.isCancelled { try barrier("idle") }
-                            else { try finishExecution() }
-                            try target.unlock()
+                                outcomes.append(next)
+                            }
+                            if let diagnostic = outcomes.last!.diagnostic { targetFailure = diagnostic }
+                            try DMLExecution.Outcome.record(outcomes, in: state)
+                            activeBatchTransactions -= outcomes.reduce(0) { $0 + $1.acknowledged.count }
+                            try progress()
+                        } catch {
+                            // A checkpoint failure can race a later, already-durable
+                            // batch. Stop and join it; retain all outstanding intents.
+                            executionStop.cancel()
+                            executor.cancelAndWait()
+                            activeBatchTransactions = 0
+                            throw error
                         }
                     }
-                },onWait:{
-                    if drain.isCancelled { throw ApplyDrainRequested() }
-                    if control?.reloadRequested == true { throw ApplyReloadRequested() }
-                    if !cancellation.isCancelled { try batch.flushIfExpired() }
-                    try maintainExecution()
-                },timings:timings)
-                if drain.isCancelled {
-                    try report(summary("DRAINING"))
-                    try finishExecution(); try state.discardUnappliedCapture(); batch.discard()
-                } else { try barrier("end") } // Includes finite capture and clean EOF.
-                stopReason=limits.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) ?? "endOfInput"
-                break
-              } catch {
-                let sourceInterrupted = configuration.reconnectPolicy.enabled
-                    && (error as? LiveInspectionError)?.isRetryableSourceFailure == true
-                let draining = error is ApplyDrainRequested
-                let reloading = error is ApplyReloadRequested
-                if !sourceInterrupted && !draining && !reloading { executionStop.cancel() }
-                if draining { try report(summary("DRAINING")) }
-                // Preserve acknowledged work even if preparation/decoding failed.
-                // Unwritten collected work is discarded; uncertain SQL is never retried.
-                do { try finishExecution() }
-                catch let executionError {
-                    if sourceInterrupted || draining || reloading { throw executionError }
-                    throw ApplyError("\(error); target completion: \(executionError)")
-                }
-                if draining {
-                    try state.discardUnappliedCapture()
-                    batch.discard(); consumerPending=false
-                    break
-                }
-                if reloading,let control {
-                    try state.discardUnappliedCapture();batch.discard();consumerPending=false
+                    func finishExecution() throws {
+                        while executor.active { try finishOneExecution() }
+                    }
+                    // Always join before target destruction, diagnostics or a journal
+                    // error path. Main-thread failures stop further target statements.
+                    defer {
+                        executionStop.cancel()
+                        executor.cancelAndWait()
+                    }
+                    // Collect up to half the durable queue per preparation window,
+                    // leaving room to journal ahead of the currently executing window.
+                    // Row, byte, age, table and DDL boundaries still bound collection.
+                    let transactionsPerBatch = configuration.batchPolicy.maximumTransactions
+                    var preparationPolicy = configuration.batchPolicy
+                    preparationPolicy.maximumTransactions *= max(1, executor.capacity / 2)
+                    let batch = DMLBatch(
+                        policy: preparationPolicy,
+                        onFlush: { reason in timings.measure("apply.batch.flush." + reason) {} }
+                    ) { groups in
+                        let large = groups.contains { $0.wireBytes > configuration.batchPolicy.maximumWireBytes }
+                        if large { try finishExecution() }
+                        let batches = stride(from: 0, to: groups.count, by: transactionsPerBatch).map {
+                            Array(groups[$0..<min($0 + transactionsPerBatch, groups.count)])
+                        }
+                        // Reap published completions together, sharing one SQLite commit.
+                        if executor.ready { try finishOneExecution() }
+                        while executor.available < batches.count { try finishOneExecution() }
+                        try checkSourceFailure()
+                        try timings.measure("apply.batch.prepare") { try state.beginBatches(batches) }
+                        activeBatchTransactions += groups.count
+                        control?.publish(summary("RUNNING"))
+                        for prepared in batches {
+                            executor.start {
+                                targetTimings.measure("apply.batch.execute") {
+                                    target.execute(
+                                        prepared, cancellation: executionStop, maximumInsertBytes: byteLimit,
+                                        checkSourceFailure: checkSourceFailure)
+                                }
+                            }
+                        }
+                        if large || !configuration.batchPolicy.overlapPreparation { try finishExecution() }
+                    }
+                    func barrier(_ reason: String = "barrier") throws {
+                        try batch.flush(reason: reason)
+                        try finishExecution()
+                    }
+                    func maintainExecution() throws {
+                        // Successful tickets may wait until the next preparation window
+                        // or barrier. Failure is handled promptly, without issuing more SQL.
+                        if executor.failed { try finishExecution() }
+                        if !executor.active {
+                            try target.checkConnection()
+                            try target.releaseExpiredLock()
+                        }
+                    }
+                    func event(_ record: LiveRecord) throws {
+                        if !cancellation.isCancelled { try batch.flushIfExpired() }
+                        try maintainExecution()
+                        try timings.measure("relay.append") { try state.append(record) }
+                        if let decoded = record.event {
+                            if case .gtid = decoded.control { consumerPending = true }
+                            if decoded.eventType == 19 && !decoded.replicationFiltered {
+                                guard let database = decoded.database, let name = decoded.table else {
+                                    throw ApplyError("missing table-map identity")
+                                }
+                                let identity = SQLNameKey.table(database, name)
+                                let table: ApplyTable
+                                if planningCache.tables[identity] != nil {
+                                    table = try state.profile("target.discover") { try planningCache.validate(decoded) }
+                                } else {
+                                    try barrier()
+                                    table = try target.discover(decoded)
+                                    try planningCache.insert(table)
+                                    _ = try planningCache.validate(decoded)
+                                }
+                                guard let offset = UInt64(decoded.offset) else {
+                                    throw ApplyError("invalid table-map coordinate")
+                                }
+                                try state.schema(
+                                    table, event: decoded,
+                                    coordinate: BinlogCoordinate(file: record.file, position: offset))
+                            }
+                        }
+                    }
+                    func transaction(_ group: CompleteTransaction) throws {
+                        defer { consumerPending = false }
+                        if group.outcome == .statement {
+                            try barrier()
+                            target.statementTrace = .init()
+                            try state.begin(group)
+                            control?.publish(summary("RUNNING"))
+                            var hasDDLIntent = false
+                            do {
+                                try target.unlock()
+                                try target.checkSourceGTID(group.gtid!)
+                                try require(group.events.count == 2, "invalid standalone DDL group")
+                                guard case .query(let query) = group.events[1].control else {
+                                    throw ApplyError("missing DDL query")
+                                }
+                                guard let version = target.serverVersionID else {
+                                    throw ApplyError("target version is unavailable")
+                                }
+                                let view = try LoggedDDL.parsingView(query, targetVersion: version)
+                                let ddlTokens = try target.ddlTokens(view)
+                                if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(
+                                    query, profile: profile, tokens: ddlTokens, targetVersion: version)
+                                {
+                                    try target.emptySourceGTID(group.gtid!)
+                                    try state.complete(group, rowCount: 0, filtered: true, skippedDDL: skipped)
+                                    try progress()
+                                    return
+                                }
+                                if try filter.ignores(view, tokens: ddlTokens) {
+                                    try target.emptySourceGTID(group.gtid!)
+                                    try state.complete(group, rowCount: 0, filtered: true)
+                                    try progress()
+                                    return
+                                }
+                                let statement = try DDLStatement.from(
+                                    group, profile: profile, tokens: ddlTokens,
+                                    lowerCaseTableNames: configuration.source.tableNameCaseSetting,
+                                    targetVersion: version)
+                                var plan = try target.prepareDDL(
+                                    statement, query: query, timestamp: UInt64(group.events[1].timestamp),
+                                    tokens: ddlTokens)
+                                if configuration.target.preserveSourceGTIDs && !profile.transactional {
+                                    let databases =
+                                        [
+                                            plan.database?.name, plan.statement.name?.database, plan.before?.database,
+                                            plan.after?.database,
+                                        ].compactMap { $0 }
+                                        + plan.additional.flatMap {
+                                            [$0.before?.database, $0.after?.database].compactMap { $0 }
+                                        }
+                                    try require(
+                                        !databases.contains { $0.lowercased() == "_mysql_replicator_gtid" },
+                                        "source DDL conflicts with the reserved GTID scratch database")
+                                }
+                                if view.sql != query.sql { plan.compatibilityRules.append(LoggedDDL.commentRule) }
+                                try state.ddlIntent(plan, event: group.events[1], coordinate: group.start)
+                                hasDDLIntent = true
+                                try require(!cancellation.isCancelled, "apply cancelled")
+                                try checkSourceFailure()
+                                try target.sourceStatement(group.gtid!) { try target.applyDDL(&plan) }
+                                planningCache = try DMLPlanningCache(
+                                    target.discovered, compatibility: configuration.compatibilityPolicy,
+                                    legacyMetadata: legacyMetadata)
+                                try state.complete(group, rowCount: 0, ddl: plan)
+                                try progress()
+                                return
+                            } catch {
+                                if !hasDDLIntent && target.statementTrace.phase == .notIssued
+                                    && !cancellation.isCancelled,
+                                    let skip = configuration.skipErrorPolicy.match(error, at: .beforeWrites)
+                                {
+                                    try target.emptySourceGTID(group.gtid!)
+                                    try state.skipUnwritten(group, error: skip)
+                                    try progress()
+                                    return
+                                }
+                                let failedQuery = group.events.compactMap { event -> QueryControl? in
+                                    if case .query(let query) = event.control { return query }
+                                    return nil
+                                }.first
+                                let diagnostic = TargetFailureDiagnostic(
+                                    reason: String(describing: error), statement: target.statementTrace,
+                                    rows: [], ddlGTID: state.pendingGTID,
+                                    ddlSQL: failedQuery.map { String(decoding: $0.sql, as: UTF8.self) },
+                                    ddlContext: failedQuery.flatMap { DDLQueryContextDiagnostic(query: $0) })
+                                targetFailure = diagnostic
+                                try state.recordTargetFailure(diagnostic)
+                                if error is TargetConnectionFailure && target.statementTrace.phase == .notIssued {
+                                    try state.discardUnwrittenPending()
+                                }
+                                throw error
+                            }
+                        }
+                        let mutations: [Mutation]
+                        do {
+                            mutations = try state.profile("dml.plan") {
+                                try DMLPlan.make(
+                                    group, tables: planningCache.tables, transactional: profile.transactional)
+                            }
+                        } catch {
+                            try barrier()
+                            try state.begin(group)  // Keep rejected, unwritten groups explicitly skippable.
+                            if !cancellation.isCancelled,
+                                let skip = configuration.skipErrorPolicy.match(error, at: .beforeWrites)
+                            {
+                                try target.emptySourceGTID(group.gtid!)
+                                try state.skipUnwritten(group, error: skip)
+                                try progress()
+                                return
+                            }
+                            throw error
+                        }
+                        if mutations.isEmpty {
+                            try barrier()
+                            try target.unlock()
+                            try state.begin(group)
+                            try target.checkSourceGTID(group.gtid!)
+                            try target.emptySourceGTID(group.gtid!)
+                            try state.complete(group, rowCount: 0, filtered: true)
+                            try progress()
+                            return
+                        }
+                        try batch.append(
+                            PreparedDMLGroup(group: group, mutations: mutations, relayEnd: state.relayLength))
+                    }
+                    while true {
+                        if drain.isCancelled {
+                            try report(summary("DRAINING"))
+                            try state.discardUnappliedCapture()
+                            break
+                        }
+                        if let reason = limits.reason(
+                            transactions: state.transactions - initialTransactions, executed: try GTIDSet(state.gtids))
+                        {
+                            stopReason =
+                                reason == "gtidsSatisfied" && state.transactions == initialTransactions
+                                ? "alreadySatisfied" : reason
+                            break
+                        }
+                        let remaining = limits.stopAfterTransactions.map {
+                            $0 - (state.transactions - initialTransactions)
+                        }
+                        var capture = try state.captureConfiguration(
+                            configuration.source, remainingTransactions: remaining)
+                        capture.stopAfterTransactions = remaining
+                        capture.stopAfterGTIDs = limits.stopAfterGTIDs
+                        do {
+                            try pipeline.run(
+                                cancellation: cancellation, producerTimings: producerTimings,
+                                produce: { stop, send in
+                                    let resolver: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? =
+                                        legacyMetadata
+                                        ? { event, _ in
+                                            let request = ApplySchemaRequest(event)
+                                            try send(.schema(request))
+                                            return try producerTimings.measure("capture.schema_wait") {
+                                                try request.wait(cancellation: stop)
+                                            }
+                                        } : nil
+                                    if let archive {
+                                        try archive.run(
+                                            configuration: capture, cancellation: stop, retainRawBytes: true,
+                                            emitEvent: { try send(.event($0)) },
+                                            emitTransaction: { try send(.transaction($0)) },
+                                            resolveSchema: resolver, timings: producerTimings,
+                                            ignoreTable: filter.isEmpty
+                                                ? nil : { filter.ignores(database: $0, table: $1) })
+                                    } else {
+                                        _ = try LiveInspection.run(
+                                            configuration: capture, password: sourcePassword, retainRawBytes: true,
+                                            cancellation: stop,
+                                            emitEvent: { try send(.event($0)) },
+                                            emitTransaction: { try send(.transaction($0)) },
+                                            resolveSchema: resolver,
+                                            timings: producerTimings, onIdle: { try send(.idle) }, allowDDL: true,
+                                            ignoreTable: filter.isEmpty
+                                                ? nil : { filter.ignores(database: $0, table: $1) },
+                                            sourceContract: profile.sourceContract)
+                                    }
+                                },
+                                consume: { message in
+                                    if drain.isCancelled { throw ApplyDrainRequested() }
+                                    if control?.reloadRequested == true { throw ApplyReloadRequested() }
+                                    try timings.measure("apply.consume") {
+                                        switch message {
+                                        case .event(let record): try event(record)
+                                        case .transaction(let group): try transaction(group)
+                                        case .schema(let request):
+                                            do {
+                                                guard let db = request.event.database, let name = request.event.table
+                                                else { throw ApplyError("missing schema identity") }
+                                                let identity = SQLNameKey.table(db, name)
+                                                if planningCache.tables[identity] == nil {
+                                                    try barrier("schema")
+                                                    let table = try target.discover(request.event)
+                                                    try planningCache.insert(table)
+                                                }
+                                                let table = try planningCache.validate(request.event)
+                                                request.complete(.success(table.columns.map(\.interpretation)))
+                                            } catch {
+                                                request.complete(.failure(error))
+                                                throw error
+                                            }
+                                        case .idle:
+                                            if !cancellation.isCancelled {
+                                                try barrier("idle")
+                                            } else {
+                                                try finishExecution()
+                                            }
+                                            try target.unlock()
+                                        }
+                                    }
+                                },
+                                onWait: {
+                                    if drain.isCancelled { throw ApplyDrainRequested() }
+                                    if control?.reloadRequested == true { throw ApplyReloadRequested() }
+                                    if !cancellation.isCancelled { try batch.flushIfExpired() }
+                                    try maintainExecution()
+                                }, timings: timings)
+                            if drain.isCancelled {
+                                try report(summary("DRAINING"))
+                                try finishExecution()
+                                try state.discardUnappliedCapture()
+                                batch.discard()
+                            } else {
+                                try barrier("end")
+                            }  // Includes finite capture and clean EOF.
+                            stopReason =
+                                limits.reason(
+                                    transactions: state.transactions - initialTransactions,
+                                    executed: try GTIDSet(state.gtids)) ?? "endOfInput"
+                            break
+                        } catch {
+                            let sourceInterrupted =
+                                configuration.reconnectPolicy.enabled
+                                && (error as? LiveInspectionError)?.isRetryableSourceFailure == true
+                            let draining = error is ApplyDrainRequested
+                            let reloading = error is ApplyReloadRequested
+                            if !sourceInterrupted && !draining && !reloading { executionStop.cancel() }
+                            if draining { try report(summary("DRAINING")) }
+                            // Preserve acknowledged work even if preparation/decoding failed.
+                            // Unwritten collected work is discarded; uncertain SQL is never retried.
+                            do { try finishExecution() } catch let executionError {
+                                if sourceInterrupted || draining || reloading { throw executionError }
+                                throw ApplyError("\(error); target completion: \(executionError)")
+                            }
+                            if draining {
+                                try state.discardUnappliedCapture()
+                                batch.discard()
+                                consumerPending = false
+                                break
+                            }
+                            if reloading, let control {
+                                try state.discardUnappliedCapture()
+                                batch.discard()
+                                consumerPending = false
+                                try target.unlock()
+                                do {
+                                    let candidate = try control.candidate()
+                                    try require(
+                                        candidate.reason(
+                                            transactions: state.transactions - initialTransactions,
+                                            executed: try GTIDSet(state.gtids)) == nil,
+                                        "new stop condition is already satisfied after issued work; it cannot rewind the target"
+                                    )
+                                    if let archive {
+                                        try archive.validate(
+                                            baseline: state.gtids, stopAfterGTIDs: candidate.stopAfterGTIDs)
+                                    }
+                                    limits = candidate
+                                    control.publish(summary("RUNNING"))
+                                    control.acknowledge(.success(candidate))
+                                } catch {
+                                    control.publish(summary("RUNNING"))
+                                    control.acknowledge(.failure(error))
+                                }
+                                pipeline = ApplyPipeline(
+                                    maximumItemBytes: configuration.source.transactionLimits.retainedBytes
+                                        + Int(configuration.source.transactionLimits.wireBytes) + 65536)
+                                continue
+                            }
+                            if sourceInterrupted {
+                                // The pipeline and receiver have joined. Only acknowledged,
+                                // journaled target work may advance the restart boundary.
+                                try state.discardUnappliedCapture()
+                                batch.discard()
+                                consumerPending = false
+                                try target.unlock()
+                                if cancellation.isCancelled || drain.isCancelled { break }
+                                if let reason = limits.reason(
+                                    transactions: state.transactions - initialTransactions,
+                                    executed: try GTIDSet(state.gtids))
+                                {
+                                    stopReason = reason
+                                    break
+                                }
+                                reconnectReason = String(describing: error)
+                                let delay: Int
+                                do { delay = try retry.nextDelay(appliedTransactions: state.transactions) } catch {
+                                    throw ApplyError("\(error); last source failure: \(reconnectReason!)")
+                                }
+                                try report(summary("RECONNECTING"))
+                                timings.measure("source.reconnect_wait") {
+                                    SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
+                                }
+                                if cancellation.isCancelled || drain.isCancelled { break }
+                                pipeline = ApplyPipeline(
+                                    maximumItemBytes: configuration.source.transactionLimits.retainedBytes
+                                        + Int(configuration.source.transactionLimits.wireBytes) + 65536)
+                                reconnectReason = nil
+                                continue
+                            }
+                            guard !consumerPending && canStopCleanly(error, pendingGTID: state.pendingGTID) else {
+                                throw error
+                            }
+                            break
+                        }
+                    }
                     try target.unlock()
-                    do {
-                        let candidate=try control.candidate()
-                        try require(candidate.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) == nil,
-                            "new stop condition is already satisfied after issued work; it cannot rewind the target")
-                        if let archive { try archive.validate(baseline:state.gtids,stopAfterGTIDs:candidate.stopAfterGTIDs) }
-                        limits=candidate
-                        control.publish(summary("RUNNING"));control.acknowledge(.success(candidate))
-                    } catch { control.publish(summary("RUNNING"));control.acknowledge(.failure(error)) }
-                    pipeline=ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
-                    continue
-                }
-                if sourceInterrupted {
-                    // The pipeline and receiver have joined. Only acknowledged,
-                    // journaled target work may advance the restart boundary.
+                    try state.stopped()
+                    return stoppedResult()
+                } catch {
+                    guard error is TargetConnectionFailure, configuration.targetReconnectPolicy.enabled,
+                        state.pendingGTID == nil
+                    else { throw error }
+                    // The old target session and its executor have been destroyed before
+                    // reconnect. Only fully acknowledged groups can advance this boundary.
                     try state.discardUnappliedCapture()
-                    batch.discard(); consumerPending=false
-                    try target.unlock()
-                    if cancellation.isCancelled || drain.isCancelled { break }
-                    if let reason=limits.reason(transactions:state.transactions-initialTransactions,executed:try GTIDSet(state.gtids)) { stopReason=reason;break }
-                    reconnectReason=String(describing:error)
+                    consumerPending = false
+                    targetReason = String(describing: error)
+                    if cancellation.isCancelled || drain.isCancelled {
+                        try require(state.targetUUID != nil, "target unavailable before identity was established")
+                        try state.stopped()
+                        return stoppedResult()
+                    }
                     let delay: Int
-                    do { delay = try retry.nextDelay(appliedTransactions:state.transactions) }
-                    catch { throw ApplyError("\(error); last source failure: \(reconnectReason!)") }
-                    try report(summary("RECONNECTING"))
-                    timings.measure("source.reconnect_wait") { SourceRetryState.wait(seconds:delay,cancellation:cancellation,drain:drain) }
-                    if cancellation.isCancelled || drain.isCancelled { break }
-                    pipeline=ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
-                    reconnectReason=nil
-                    continue
+                    do { delay = try targetRetry.nextDelay(appliedTransactions: state.transactions) } catch {
+                        throw ApplyError("target reconnect attempts exhausted; last failure: \(targetReason!)")
+                    }
+                    try report(summary("TARGET_RECONNECTING"))
+                    timings.measure("target.reconnect_wait") {
+                        SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
+                    }
+                    if cancellation.isCancelled || drain.isCancelled {
+                        try require(state.targetUUID != nil, "target unavailable before identity was established")
+                        try state.stopped()
+                        return stoppedResult()
+                    }
+                    pipeline = ApplyPipeline(
+                        maximumItemBytes: configuration.source.transactionLimits.retainedBytes
+                            + Int(configuration.source.transactionLimits.wireBytes) + 65536)
                 }
-                guard !consumerPending && canStopCleanly(error, pendingGTID: state.pendingGTID) else { throw error }
-                break
-              }
             }
-            try target.unlock()
-            try state.stopped()
-            return stoppedResult()
-           } catch {
-            guard error is TargetConnectionFailure, configuration.targetReconnectPolicy.enabled,
-                  state.pendingGTID == nil else { throw error }
-            // The old target session and its executor have been destroyed before
-            // reconnect. Only fully acknowledged groups can advance this boundary.
-            try state.discardUnappliedCapture()
-            consumerPending=false
-            targetReason=String(describing:error)
-            if cancellation.isCancelled || drain.isCancelled {
-                try require(state.targetUUID != nil,"target unavailable before identity was established")
-                try state.stopped(); return stoppedResult()
-            }
-            let delay: Int
-            do { delay = try targetRetry.nextDelay(appliedTransactions:state.transactions) }
-            catch { throw ApplyError("target reconnect attempts exhausted; last failure: \(targetReason!)") }
-            try report(summary("TARGET_RECONNECTING"))
-            timings.measure("target.reconnect_wait") { SourceRetryState.wait(seconds:delay,cancellation:cancellation,drain:drain) }
-            if cancellation.isCancelled || drain.isCancelled {
-                try require(state.targetUUID != nil,"target unavailable before identity was established")
-                try state.stopped(); return stoppedResult()
-            }
-            pipeline=ApplyPipeline(maximumItemBytes:configuration.source.transactionLimits.retainedBytes + Int(configuration.source.transactionLimits.wireBytes) + 65536)
-           }
-          }
         } catch {
             let reason: String
-            let code=(error as? ApplyError)?.code
-            if let live = error as? LiveInspectionError { reason = live.reason }
-            else { reason = String(describing:error) }
+            let code = (error as? ApplyError)?.code
+            if let live = error as? LiveInspectionError {
+                reason = live.reason
+            } else {
+                reason = String(describing: error)
+            }
             // A rejected resume/preflight must not rewrite the saved checkpoint.
-            if !initialize && !started { throw ApplyRunError(reason:reason,progress:summary("STOPPED"),code:code) }
-            do { try state.block(reason) }
-            catch { throw ApplyRunError(reason:reason + "; additionally failed to persist BLOCKED diagnostic",progress:summary("BLOCKED"),code:code) }
-            throw ApplyRunError(reason:reason,progress:summary("BLOCKED"),code:code)
+            if !initialize && !started { throw ApplyRunError(reason: reason, progress: summary("STOPPED"), code: code) }
+            do { try state.block(reason) } catch {
+                throw ApplyRunError(
+                    reason: reason + "; additionally failed to persist BLOCKED diagnostic",
+                    progress: summary("BLOCKED"), code: code)
+            }
+            throw ApplyRunError(reason: reason, progress: summary("BLOCKED"), code: code)
         }
     }
 }

@@ -23,7 +23,7 @@ final class DMLExecutor {
         init() { done.enter() }
     }
     let capacity: Int
-    private let queue = DispatchQueue(label:"mysql-replicator.target")
+    private let queue = DispatchQueue(label: "mysql-replicator.target")
     private var tickets: [Ticket] = []
     private let lock = NSLock()
     private var stopped = false
@@ -33,45 +33,52 @@ final class DMLExecutor {
 
     init(capacity: Int = 1) {
         precondition((1...16).contains(capacity))
-        self.capacity=capacity
+        self.capacity = capacity
     }
     var active: Bool { !tickets.isEmpty }
-    var available: Int { capacity-tickets.count }
+    var available: Int { capacity - tickets.count }
     var full: Bool { available == 0 }
     var failed: Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return stopped
     }
-    var ready: Bool { tickets.first.map { $0.done.wait(timeout:.now()) == .success } ?? false }
+    var ready: Bool { tickets.first.map { $0.done.wait(timeout: .now()) == .success } ?? false }
     var snapshot: ApplyQueueSnapshot {
-        lock.lock(); defer { lock.unlock() }
-        return .init(capacity:capacity,maximumOutstandingBatches:maximumOutstanding,
-                     batchesEnqueued:enqueued,batchesExecuted:executed,batchesNotIssued:notIssued,
-                     busySeconds:Double(busy)/1e9,idleSeconds:Double(idle)/1e9,spanSeconds:Double(busy+idle)/1e9)
+        lock.lock()
+        defer { lock.unlock() }
+        return .init(
+            capacity: capacity, maximumOutstandingBatches: maximumOutstanding,
+            batchesEnqueued: enqueued, batchesExecuted: executed, batchesNotIssued: notIssued,
+            busySeconds: Double(busy) / 1e9, idleSeconds: Double(idle) / 1e9, spanSeconds: Double(busy + idle) / 1e9)
     }
     func start(_ work: @escaping () -> DMLExecution.Outcome) {
         precondition(!full)
-        let ticket=Ticket()
+        let ticket = Ticket()
         tickets.append(ticket)
         lock.lock()
-        enqueued += 1; maximumOutstanding=max(maximumOutstanding,tickets.count)
+        enqueued += 1
+        maximumOutstanding = max(maximumOutstanding, tickets.count)
         lock.unlock()
         queue.async {
-            let start=DispatchTime.now().uptimeNanoseconds
+            let start = DispatchTime.now().uptimeNanoseconds
             self.lock.lock()
             let run = !self.stopped
             if run {
                 self.executed += 1
-                if let end=self.lastCompletion { self.idle += start-end }
-            } else { self.notIssued += 1 }
+                if let end = self.lastCompletion { self.idle += start - end }
+            } else {
+                self.notIssued += 1
+            }
             self.lock.unlock()
             if run {
-                ticket.outcome=work()
-                let end=DispatchTime.now().uptimeNanoseconds
+                ticket.outcome = work()
+                let end = DispatchTime.now().uptimeNanoseconds
                 self.lock.lock()
-                self.busy += end-start; self.lastCompletion=end
+                self.busy += end - start
+                self.lastCompletion = end
                 // Set before publishing completion or starting the next ticket.
-                if ticket.outcome?.failure != nil { self.stopped=true }
+                if ticket.outcome?.failure != nil { self.stopped = true }
                 self.lock.unlock()
             }
             ticket.done.leave()
@@ -80,13 +87,15 @@ final class DMLExecutor {
     /// A nil result with an outstanding ticket means prior failure prevented its
     /// execution. Its durable intents stay pending; it must never be acknowledged.
     func join() -> DMLExecution.Outcome? {
-        guard let ticket=tickets.first else { return nil }
+        guard let ticket = tickets.first else { return nil }
         ticket.done.wait()
         tickets.removeFirst()
         return ticket.outcome
     }
     func cancelAndWait() {
-        lock.lock(); stopped=true; lock.unlock()
+        lock.lock()
+        stopped = true
+        lock.unlock()
         while active { _ = join() }
     }
     deinit { cancelAndWait() }

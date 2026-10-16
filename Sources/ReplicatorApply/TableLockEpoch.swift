@@ -9,17 +9,23 @@ struct TableLockEpoch {
     let maximumGroups: Int
     let maximumSeconds: Double
     init(maximumGroups: Int = 32, maximumSeconds: Double = 0.05) {
-        self.maximumGroups = maximumGroups; self.maximumSeconds = maximumSeconds
+        self.maximumGroups = maximumGroups
+        self.maximumSeconds = maximumSeconds
     }
     func expired(at now: Double) -> Bool {
-        table != nil && (groups >= maximumGroups || now-started >= maximumSeconds)
+        table != nil && (groups >= maximumGroups || now - started >= maximumSeconds)
     }
     func canReuse(_ candidate: ApplyTable, at now: Double) -> Bool {
         table == candidate && !expired(at: now)
     }
     mutating func acquired(_ table: ApplyTable, at now: Double) {
-        self.table = table; started = now; groups = 0
+        self.table = table
+        started = now
+        groups = 0
     }
     mutating func completedGroup() { groups += 1 }
-    mutating func released() { table = nil; groups = 0 }
+    mutating func released() {
+        table = nil
+        groups = 0
+    }
 }

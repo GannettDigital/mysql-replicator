@@ -413,7 +413,7 @@ jobs:
   packaging-and-smoke:
     # Preserve the required check name. Full scope also requires packages.
     name: Debian Packaging & Integration Smoke
-    needs: [select-suite, tool-tests, unit-tests, periphery, lab-tools, build-images, integration]
+    needs: [select-suite, tool-tests, unit-tests, periphery, swift-lint, lab-tools, build-images, integration]
     if: always() && needs.select-suite.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
@@ -464,6 +464,15 @@ jobs:
           path: artifacts/coverage/combined/metrics.json
           if-no-files-found: error
 
+  swift-lint:
+    needs: select-suite
+    name: Swift Syntax and Format
+    runs-on: ubuntu-24.04
+    container: swift:6.2.1-jammy@sha256:6e33c70a59180c9b518f67728538312975cb3891177d20215cd2e31bdfe70791
+    steps:
+      - uses: actions/checkout@v4
+      - run: make lint
+
   periphery:
     needs: select-suite
     if: needs.select-suite.outputs.periphery == 'true'
@@ -511,7 +520,7 @@ jobs:
 
   measurements:
     name: Timing & Profile Coverage Report
-    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery]
+    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, swift-lint]
     if: always() && !cancelled() && needs.lab-tools.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
@@ -558,7 +567,7 @@ jobs:
 
   release-evidence:
     name: Full Suite / Release Evidence
-    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, measurements]
+    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, swift-lint, measurements]
     if: always() && !cancelled() && needs.lab-tools.outputs.scope == 'full'
     runs-on: ubuntu-24.04
     steps:

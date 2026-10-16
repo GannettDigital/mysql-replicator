@@ -1,13 +1,14 @@
-import Foundation
 import CSQLite
-import ReplicatorCodec
+import Foundation
 import ReplicatorCapture
+import ReplicatorCodec
+
 #if canImport(Musl)
-import Musl
+    import Musl
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #else
-import Darwin
+    import Darwin
 #endif
 
 /// SQLite invokes the hook after a successful WAL commit. It only records sizes;
@@ -15,10 +16,10 @@ import Darwin
 private final class WALGrowth {
     var frames: Int64 = 0
     var growthFrames: Int64 = 0
-    var bytes: Int64 { frames == 0 ? 0 : 32+frames*(4096+24) }
+    var bytes: Int64 { frames == 0 ? 0 : 32 + frames * (4096 + 24) }
     func committed(frames: Int32) {
         let next = Int64(frames)
-        growthFrames += next >= self.frames ? next-self.frames : next
+        growthFrames += next >= self.frames ? next - self.frames : next
         self.frames = next
     }
 }
@@ -37,7 +38,7 @@ final class StateStore {
     private(set) var relayLength: UInt64 = 0
     private var groupStart: UInt64 = 0
     private var completedGTIDs: GTIDSet
-    private(set) var counters=ApplyCounters()
+    private(set) var counters = ApplyCounters()
     private(set) var transactions = 0
     private(set) var rows = 0
     private(set) var ddlApplied = 0
@@ -52,15 +53,15 @@ final class StateStore {
     private var skipBoundary: BinlogCoordinate?
     private let skipPolicy: SkipErrorPolicy
     private var skipJournalReady = false
-    private(set) var skippedTransactionsByCode: [String:Int] = [:]
-    private var schemas: [SQLNameKey:(Int64,ApplyTable)] = [:]
+    private(set) var skippedTransactionsByCode: [String: Int] = [:]
+    private var schemas: [SQLNameKey: (Int64, ApplyTable)] = [:]
     private var inTransaction = false
     private var maintenance = false
     private var ready = false
     // Used serially by this store, including formatting retention cutoffs.
     private let timestampFormatter: ISO8601DateFormatter = {
-        let formatter=ISO8601DateFormatter()
-        formatter.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
     private let now: () -> Date
@@ -79,46 +80,62 @@ final class StateStore {
     // Reserve enough of the total SQLite budget for a transaction touching every
     // database page, its WAL frame headers, shared memory, and maintenance.
     var databaseLimit: Int64 { ((policy.maximumSQLiteBytes - 131072) / 3 / 4096) * 4096 }
-    init(configuration c: ApplyConfiguration, initialize: Bool = true, timings: StageTimings = .init(), skipGTIDs: GTIDSet? = nil, now: @escaping () -> Date = Date.init,
-         uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
-         freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace) throws {
+    init(
+        configuration c: ApplyConfiguration, initialize: Bool = true, timings: StageTimings = .init(),
+        skipGTIDs: GTIDSet? = nil, now: @escaping () -> Date = Date.init,
+        uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
+        freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace
+    ) throws {
         self.timings = timings
         applierProfiling = c.applierProfiling ?? false
-        directory = URL(fileURLWithPath:c.stateDirectory).standardizedFileURL
-        maximumBytes = c.maximumRelayBytes ?? 256*1024*1024
-        lowerCaseTableNames=c.source.tableNameCaseSetting
-        policy = c.policy; try policy.validate()
-        compatibility = c.compatibilityPolicy; try compatibility.validate()
+        directory = URL(fileURLWithPath: c.stateDirectory).standardizedFileURL
+        maximumBytes = c.maximumRelayBytes ?? 256 * 1024 * 1024
+        lowerCaseTableNames = c.source.tableNameCaseSetting
+        policy = c.policy
+        try policy.validate()
+        compatibility = c.compatibilityPolicy
+        try compatibility.validate()
         replicationProfile = c.replicationProfile
         skipPolicy = c.skipErrorPolicy
         maximumPreparedBatches = c.batchPolicy.overlapPreparation ? c.batchPolicy.maximumPreparedBatches : 1
-        self.now = now; self.freeDisk = freeDisk; self.uptime = uptime
+        self.now = now
+        self.freeDisk = freeDisk
+        self.uptime = uptime
         completedGTIDs = try GTIDSet(c.source.start.executedGTIDs)
-        try require(skipGTIDs == nil || !initialize,"skip requires existing state")
+        try require(skipGTIDs == nil || !initialize, "skip requires existing state")
         if initialize {
-            guard mkdir(directory.path,0o700) == 0 else { throw ApplyError("state directory must be new for --initialize; omit --initialize to resume saved STOPPED state") }
+            guard mkdir(directory.path, 0o700) == 0 else {
+                throw ApplyError(
+                    "state directory must be new for --initialize; omit --initialize to resume saved STOPPED state")
+            }
         } else {
             var isDirectory: ObjCBool = false
-            try require(FileManager.default.fileExists(atPath:directory.path,isDirectory:&isDirectory) && isDirectory.boolValue,
+            try require(
+                FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+                    && isDirectory.boolValue,
                 "saved state directory is missing; use --initialize only for an externally prepared baseline")
         }
         do {
-            let lockFD = open(directory.appendingPathComponent("writer.lock").path,O_RDWR|O_CREAT,0o600)
+            let lockFD = open(directory.appendingPathComponent("writer.lock").path, O_RDWR | O_CREAT, 0o600)
             guard lockFD >= 0 else { throw ApplyError("cannot open state writer lock") }
-            writerLock = FileHandle(fileDescriptor:lockFD,closeOnDealloc:true)
-            try require(flock(lockFD,LOCK_EX|LOCK_NB) == 0,"state directory already has an active writer")
+            writerLock = FileHandle(fileDescriptor: lockFD, closeOnDealloc: true)
+            try require(flock(lockFD, LOCK_EX | LOCK_NB) == 0, "state directory already has an active writer")
             if !initialize {
-                try reopen(configuration:c,skipGTIDs:skipGTIDs)
+                try reopen(configuration: c, skipGTIDs: skipGTIDs)
                 return
             }
-            baseline = try coordinate(c.source.start.file,c.source.start.position.map(String.init))
+            baseline = try coordinate(c.source.start.file, c.source.start.position.map(String.init))
             try Self.syncDirectory(directory.deletingLastPathComponent())
-            try checkDisk(extra:policy.maximumSQLiteBytes)
-            let fd = open(directory.appendingPathComponent("relay.frames").path,O_WRONLY|O_CREAT|O_EXCL,0o600)
+            try checkDisk(extra: policy.maximumSQLiteBytes)
+            let fd = open(directory.appendingPathComponent("relay.frames").path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
             guard fd >= 0 else { throw ApplyError("cannot create relay file") }
-            relay = FileHandle(fileDescriptor:fd,closeOnDealloc:true)
-            guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,nil) == SQLITE_OK else {throw ApplyError("cannot create SQLite state")}
-            sqlite3_busy_timeout(db,1000)
+            relay = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            guard
+                sqlite3_open_v2(
+                    directory.appendingPathComponent("state.sqlite").path, &db,
+                    SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK
+            else { throw ApplyError("cannot create SQLite state") }
+            sqlite3_busy_timeout(db, 1000)
             try execute("PRAGMA page_size=4096")
             try execute("PRAGMA auto_vacuum=INCREMENTAL")
             try execute("PRAGMA max_page_count=\(databaseLimit/4096)")
@@ -130,215 +147,334 @@ final class StateStore {
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
             try execute("PRAGMA user_version=13")
-            try pinFilters(c,initializing:true)
+            try pinFilters(c, initializing: true)
             try createGTIDModeJournal(c.target.preserveSourceGTIDs)
             try createProfileJournal()
             try createNameCaseJournal()
-            try execute("CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)")
-            try execute("CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)")
+            try execute(
+                "CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1),lifecycle TEXT NOT NULL,source_uuid TEXT NOT NULL,target_uuid TEXT,baseline_file TEXT,baseline_position TEXT,baseline_gtids TEXT NOT NULL,applied_file TEXT,applied_position TEXT,applied_sequence INTEGER NOT NULL DEFAULT 0,transactions_applied INTEGER NOT NULL DEFAULT 0,rows_applied INTEGER NOT NULL DEFAULT 0,ddl_applied INTEGER NOT NULL DEFAULT 0,durable_relay_length INTEGER NOT NULL DEFAULT 0,active_gtid TEXT,updated_at TEXT NOT NULL,last_applied_at TEXT,diagnostic TEXT)"
+            )
+            try execute(
+                "CREATE TABLE schemas(id INTEGER PRIMARY KEY,identity TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 1,retired_at TEXT,discovered_at TEXT NOT NULL,source_file TEXT NOT NULL,source_position TEXT NOT NULL,event_hash TEXT NOT NULL,schema_json TEXT NOT NULL,wire_json TEXT NOT NULL)"
+            )
             try execute("CREATE UNIQUE INDEX schemas_current ON schemas(identity) WHERE current=1")
-            try execute("CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,database_json TEXT,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
-            try execute("CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)")
+            try execute(
+                "CREATE TABLE ddl_intents(gtid TEXT PRIMARY KEY,before_schema_id INTEGER,after_schema_id INTEGER,target_sql TEXT NOT NULL,database_json TEXT,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)"
+            )
+            try execute(
+                "CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)"
+            )
             try createDDLSkips()
             try createCompatibilityJournal()
             try execute("CREATE INDEX groups_retention ON groups(status,completed_at)")
-            try execute("CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))")
-            try execute("CREATE TABLE snapshots(id INTEGER PRIMARY KEY,covered_sequence INTEGER NOT NULL,gtids TEXT NOT NULL,source_file TEXT,source_position TEXT,created_at TEXT NOT NULL)")
-            try execute("INSERT INTO state(id,lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,updated_at) VALUES(1,'STARTING',?,?,?,?,?,?)",[c.source.sourceUUID,nil,c.source.start.file,c.source.start.position.map(String.init),completedGTIDs.canonical,timestamp()])
+            try execute(
+                "CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))"
+            )
+            try execute(
+                "CREATE TABLE snapshots(id INTEGER PRIMARY KEY,covered_sequence INTEGER NOT NULL,gtids TEXT NOT NULL,source_file TEXT,source_position TEXT,created_at TEXT NOT NULL)"
+            )
+            try execute(
+                "INSERT INTO state(id,lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,updated_at) VALUES(1,'STARTING',?,?,?,?,?,?)",
+                [
+                    c.source.sourceUUID, nil, c.source.start.file, c.source.start.position.map(String.init),
+                    completedGTIDs.canonical, timestamp(),
+                ])
             try openCounters()
             try snapshot()
             try checkpoint()
             ready = true
             try Self.syncDirectory(directory)
-        } catch {closeDatabase(); try? relay?.close(); relay=nil; throw error}
+        } catch {
+            closeDatabase()
+            try? relay?.close()
+            relay = nil
+            throw error
+        }
     }
-    deinit {try? relay?.close(); closeDatabase(); try? writerLock?.close()}
+    deinit {
+        try? relay?.close()
+        closeDatabase()
+        try? writerLock?.close()
+    }
     private func closeDatabase() {
-        statements?.close(); statements=nil
-        sqlite3_close(db); db=nil
+        statements?.close()
+        statements = nil
+        sqlite3_close(db)
+        db = nil
     }
 
     private func coordinate(_ file: String?, _ position: String?) throws -> BinlogCoordinate? {
         if file == nil && position == nil { return nil }
         guard let file, !file.isEmpty, !file.utf8.contains(0), file.utf8.count <= 255,
-              let position, let n = UInt32(position), n >= 4 else { throw ApplyError("invalid saved binlog coordinate") }
-        return BinlogCoordinate(file:file,position:UInt64(n))
+            let position, let n = UInt32(position), n >= 4
+        else { throw ApplyError("invalid saved binlog coordinate") }
+        return BinlogCoordinate(file: file, position: UInt64(n))
     }
-    func saveSourceObservation(_ observation:SourceObservation) throws {
-        let text=String(decoding:try JSONEncoder().encode(observation),as:UTF8.self)
+    func saveSourceObservation(_ observation: SourceObservation) throws {
+        let text = String(decoding: try JSONEncoder().encode(observation), as: UTF8.self)
         try atomic {
-            try execute("CREATE TABLE IF NOT EXISTS source_observation(id INTEGER PRIMARY KEY CHECK(id=1),observation_json TEXT NOT NULL)")
-            try execute("INSERT OR REPLACE INTO source_observation VALUES(1,?)",[text])
+            try execute(
+                "CREATE TABLE IF NOT EXISTS source_observation(id INTEGER PRIMARY KEY CHECK(id=1),observation_json TEXT NOT NULL)"
+            )
+            try execute("INSERT OR REPLACE INTO source_observation VALUES(1,?)", [text])
         }
     }
     private func openCounters() throws {
-        try execute("CREATE TABLE IF NOT EXISTS apply_totals(id INTEGER PRIMARY KEY CHECK(id=1),since_transaction INTEGER NOT NULL,insert_rows INTEGER NOT NULL,update_rows INTEGER NOT NULL,delete_rows INTEGER NOT NULL,dml_transactions INTEGER NOT NULL,filtered_transactions INTEGER NOT NULL,policy_skips INTEGER NOT NULL,error_skips INTEGER NOT NULL,binlog_bytes INTEGER NOT NULL,events INTEGER NOT NULL)")
-        let saved=try query("SELECT since_transaction,insert_rows,update_rows,delete_rows,dml_transactions,filtered_transactions,policy_skips,error_skips,binlog_bytes,events FROM apply_totals WHERE id=1")
-        if let row=saved.first { counters=try ApplyCounters(saved:row) }
-        else {
-            counters=ApplyCounters(sinceTransaction:Int64(transactions))
+        try execute(
+            "CREATE TABLE IF NOT EXISTS apply_totals(id INTEGER PRIMARY KEY CHECK(id=1),since_transaction INTEGER NOT NULL,insert_rows INTEGER NOT NULL,update_rows INTEGER NOT NULL,delete_rows INTEGER NOT NULL,dml_transactions INTEGER NOT NULL,filtered_transactions INTEGER NOT NULL,policy_skips INTEGER NOT NULL,error_skips INTEGER NOT NULL,binlog_bytes INTEGER NOT NULL,events INTEGER NOT NULL)"
+        )
+        let saved = try query(
+            "SELECT since_transaction,insert_rows,update_rows,delete_rows,dml_transactions,filtered_transactions,policy_skips,error_skips,binlog_bytes,events FROM apply_totals WHERE id=1"
+        )
+        if let row = saved.first {
+            counters = try ApplyCounters(saved: row)
+        } else {
+            counters = ApplyCounters(sinceTransaction: Int64(transactions))
             try saveCounters(counters)
         }
     }
-    private func saveCounters(_ value:ApplyCounters) throws {
-        try execute("INSERT OR REPLACE INTO apply_totals VALUES(1,?,?,?,?,?,?,?,?,?,?)",value.values)
+    private func saveCounters(_ value: ApplyCounters) throws {
+        try execute("INSERT OR REPLACE INTO apply_totals VALUES(1,?,?,?,?,?,?,?,?,?,?)", value.values)
     }
-    private func pinFilters(_ c:ApplyConfiguration,initializing:Bool) throws {
-        let policy=try c.filterIdentity()
-        let exists=try !query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='replication_filters'").isEmpty
+    private func pinFilters(_ c: ApplyConfiguration, initializing: Bool) throws {
+        let policy = try c.filterIdentity()
+        let exists = try !query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='replication_filters'").isEmpty
         if exists {
-            try require(try query("SELECT policy FROM replication_filters WHERE id=1") == [[policy]],"table filters differ from saved state; use the original filters or prepare a new baseline")
+            try require(
+                try query("SELECT policy FROM replication_filters WHERE id=1") == [[policy]],
+                "table filters differ from saved state; use the original filters or prepare a new baseline")
         } else {
-            try require(initializing || (c.replicateWildDoTable ?? []).isEmpty,"legacy state has no include filters; prepare a new baseline to enable them")
+            try require(
+                initializing || (c.replicateWildDoTable ?? []).isEmpty,
+                "legacy state has no include filters; prepare a new baseline to enable them")
             try atomic {
                 try execute("CREATE TABLE replication_filters(id INTEGER PRIMARY KEY CHECK(id=1),policy TEXT NOT NULL)")
-                try execute("INSERT INTO replication_filters VALUES(1,?)",[policy])
+                try execute("INSERT INTO replication_filters VALUES(1,?)", [policy])
             }
         }
     }
     private func reopen(configuration c: ApplyConfiguration, skipGTIDs: GTIDSet?) throws {
-        try require(sqliteBytes <= policy.maximumSQLiteBytes,"saved SQLite exceeds configured storage limit")
-        guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil) == SQLITE_OK else {
+        try require(sqliteBytes <= policy.maximumSQLiteBytes, "saved SQLite exceeds configured storage limit")
+        guard
+            sqlite3_open_v2(
+                directory.appendingPathComponent("state.sqlite").path, &db,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK
+        else {
             throw ApplyError("cannot open existing SQLite state; no new state was initialized")
         }
-        sqlite3_busy_timeout(db,1000)
-        let version=try number("PRAGMA user_version")
-        try require([4,5,6,7,8,9,10,11,12,13].contains(version),"unsupported saved state version")
+        sqlite3_busy_timeout(db, 1000)
+        let version = try number("PRAGMA user_version")
+        try require([4, 5, 6, 7, 8, 9, 10, 11, 12, 13].contains(version), "unsupported saved state version")
         if version >= 12 {
-            try require(try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(c.target.preserveSourceGTIDs)]],"target.preserveSourceGTIDs differs from saved state; restore the recorded mode")
+            try require(
+                try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(c.target.preserveSourceGTIDs)]],
+                "target.preserveSourceGTIDs differs from saved state; restore the recorded mode")
         } else {
-            try require(!c.target.preserveSourceGTIDs,"legacy state did not preserve source GTIDs; set target.preserveSourceGTIDs: false to resume; enabling source GTID preservation requires a new verified baseline")
+            try require(
+                !c.target.preserveSourceGTIDs,
+                "legacy state did not preserve source GTIDs; set target.preserveSourceGTIDs: false to resume; enabling source GTID preservation requires a new verified baseline"
+            )
         }
         if version >= 10 {
-            try require(try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],"table-name case setting differs from saved state")
-        } else { try require(lowerCaseTableNames == 0,"legacy state requires source.lowerCaseTableNames=0") }
-        if version >= 9 {
-            try require(try query("SELECT profile FROM replication_profile WHERE id=1") == [[replicationProfile.rawValue]],"replication profile differs from saved state")
+            try require(
+                try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],
+                "table-name case setting differs from saved state")
         } else {
-            try require(replicationProfile == .mysql84To57MyISAM,"legacy state belongs to mysql84-to-mysql57-myisam; another profile requires a new baseline")
+            try require(lowerCaseTableNames == 0, "legacy state requires source.lowerCaseTableNames=0")
+        }
+        if version >= 9 {
+            try require(
+                try query("SELECT profile FROM replication_profile WHERE id=1") == [[replicationProfile.rawValue]],
+                "replication profile differs from saved state")
+        } else {
+            try require(
+                replicationProfile == .mysql84To57MyISAM,
+                "legacy state belongs to mysql84-to-mysql57-myisam; another profile requires a new baseline")
         }
         if version >= 8 {
             let saved = try query("SELECT policy_json FROM compatibility WHERE id=1")
-            guard saved.count == 1, let json = saved[0][0] else { throw ApplyError("missing saved compatibility policy") }
-            let policy = try JSONDecoder().decode(CompatibilityPolicy.self,from:Data(json.utf8))
-            try require(policy == compatibility,"compatibility policy differs from saved state; restore the original rules or initialize a newly prepared baseline")
+            guard saved.count == 1, let json = saved[0][0] else {
+                throw ApplyError("missing saved compatibility policy")
+            }
+            let policy = try JSONDecoder().decode(CompatibilityPolicy.self, from: Data(json.utf8))
+            try require(
+                policy == compatibility,
+                "compatibility policy differs from saved state; restore the original rules or initialize a newly prepared baseline"
+            )
         } else {
-            try require(compatibility == CompatibilityPolicy(),"legacy state uses strict compatibility semantics; enabling translation requires a newly prepared baseline")
+            try require(
+                compatibility == CompatibilityPolicy(),
+                "legacy state uses strict compatibility semantics; enabling translation requires a newly prepared baseline"
+            )
         }
-        try require(version != 4 || skipGTIDs == nil,"format-4 BLOCKED state requires resolution with its original runtime before upgrading")
-        try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")
-        let states = try query("SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1")
-        try require(states.count == 1,"missing saved replication state")
+        try require(
+            version != 4 || skipGTIDs == nil,
+            "format-4 BLOCKED state requires resolution with its original runtime before upgrading")
+        try require(try query("PRAGMA quick_check") == [["ok"]], "saved SQLite integrity check failed")
+        let states = try query(
+            "SELECT lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,applied_file,applied_position,applied_sequence,transactions_applied,rows_applied,ddl_applied,durable_relay_length,active_gtid,diagnostic FROM state WHERE id=1"
+        )
+        try require(states.count == 1, "missing saved replication state")
         let r = states[0]
         if let skipGTIDs {
-            try require(r[0] == "BLOCKED" && r[13] != nil,"skip requires BLOCKED state with a captured pending GTID")
+            try require(r[0] == "BLOCKED" && r[13] != nil, "skip requires BLOCKED state with a captured pending GTID")
             let id = r[13]!
             _ = try singleton(id)
-            try require(try !skipGTIDs.isEmpty && skipGTIDs == GTIDSet(id),
+            try require(
+                try !skipGTIDs.isEmpty && skipGTIDs == GTIDSet(id),
                 "skip set must equal the captured pending GTID; uncaptured or additional GTIDs cannot be skipped")
-            pendingGTID=id
+            pendingGTID = id
         } else {
-            try require(r[0] == "STOPPED" && r[13] == nil && r[14] == nil,
-                "saved state must be cleanly STOPPED; BLOCKED, unfinished and crash recovery require explicit resolution")
+            try require(
+                r[0] == "STOPPED" && r[13] == nil && r[14] == nil,
+                "saved state must be cleanly STOPPED; BLOCKED, unfinished and crash recovery require explicit resolution"
+            )
         }
-        try require(r[1]?.lowercased() == c.source.sourceUUID.lowercased(),"saved source UUID differs from configuration")
+        try require(
+            r[1]?.lowercased() == c.source.sourceUUID.lowercased(), "saved source UUID differs from configuration")
         if let uuid = r[2] {
-            try require(UUID(uuidString:uuid) != nil,"saved target UUID is invalid")
+            try require(UUID(uuidString: uuid) != nil, "saved target UUID is invalid")
             targetUUID = uuid.lowercased()
         } else {
             // Archive validation can stop before the first target connection.
             // Only an empty, clean checkpoint may establish identity on resume.
-            try require(try number("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='startup_cancelled'") == 1,
+            try require(
+                try number("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='startup_cancelled'") == 1,
                 "saved target UUID is missing without an archive cancellation record")
-            try require(skipGTIDs == nil && r[6] == nil && r[7] == nil
-                && r[8] == "0" && r[9] == "0" && r[10] == "0" && r[11] == "0" && r[12] == "0",
+            try require(
+                skipGTIDs == nil && r[6] == nil && r[7] == nil
+                    && r[8] == "0" && r[9] == "0" && r[10] == "0" && r[11] == "0" && r[12] == "0",
                 "saved target UUID is missing from nonempty state")
             for table in ["groups", "schemas", "row_intents", "ddl_intents", "ddl_details", "ddl_skips"] {
-                try require(try number("SELECT COUNT(*) FROM " + table) == 0,
+                try require(
+                    try number("SELECT COUNT(*) FROM " + table) == 0,
                     "saved target UUID is missing from nonempty state")
             }
         }
-        baseline = try coordinate(r[3],r[4]); applied = try coordinate(r[6],r[7])
+        baseline = try coordinate(r[3], r[4])
+        applied = try coordinate(r[6], r[7])
         guard let baseText = r[5], let seq = Int64(r[8] ?? ""), seq >= 0, seq < Int64.max,
-              let tx = Int(r[9] ?? ""), tx >= 0, Int64(tx) == seq,
-              let count = Int(r[10] ?? ""), count >= 0,
-              let ddl = Int(r[11] ?? ""), ddl >= 0, ddl <= tx,
-              let length = UInt64(r[12] ?? ""), length <= maximumBytes else { throw ApplyError("invalid saved progress or relay limit") }
-        try require(seq == 0 ? (count == 0 && ddl == 0) : applied != nil,"saved checkpoint does not match applied work")
+            let tx = Int(r[9] ?? ""), tx >= 0, Int64(tx) == seq,
+            let count = Int(r[10] ?? ""), count >= 0,
+            let ddl = Int(r[11] ?? ""), ddl >= 0, ddl <= tx,
+            let length = UInt64(r[12] ?? ""), length <= maximumBytes
+        else { throw ApplyError("invalid saved progress or relay limit") }
+        try require(
+            seq == 0 ? (count == 0 && ddl == 0) : applied != nil, "saved checkpoint does not match applied work")
         if let id = pendingGTID {
-            let pending = try query("SELECT sequence,source_file,start_position,end_position,relay_start,relay_end,status,completed_at FROM groups WHERE gtid=?",[id])
+            let pending = try query(
+                "SELECT sequence,source_file,start_position,end_position,relay_start,relay_end,status,completed_at FROM groups WHERE gtid=?",
+                [id])
             guard pending.count == 1 else { throw ApplyError("skip requires one captured pending group") }
-            let p=pending[0]
-            guard Int64(p[0] ?? "") == seq+1, p[6] == "PENDING", p[7] == nil,
-                  let start = try coordinate(p[1],p[2]), let end = try coordinate(p[1],p[3]), start.position < end.position,
-                  let relayStart=UInt64(p[4] ?? ""), let relayEnd=UInt64(p[5] ?? ""), relayStart < relayEnd, relayEnd == length else {
+            let p = pending[0]
+            guard Int64(p[0] ?? "") == seq + 1, p[6] == "PENDING", p[7] == nil,
+                let start = try coordinate(p[1], p[2]), let end = try coordinate(p[1], p[3]),
+                start.position < end.position,
+                let relayStart = UInt64(p[4] ?? ""), let relayEnd = UInt64(p[5] ?? ""), relayStart < relayEnd,
+                relayEnd == length
+            else {
                 throw ApplyError("invalid pending group boundary; cannot skip")
             }
-            if let applied, applied.file == start.file { try require(applied.position <= start.position,"pending group precedes applied boundary") }
-            try require(try query("SELECT 1 FROM row_intents WHERE gtid=? UNION ALL SELECT 1 FROM ddl_intents WHERE gtid=? LIMIT 1",[id,id]).isEmpty,
+            if let applied, applied.file == start.file {
+                try require(applied.position <= start.position, "pending group precedes applied boundary")
+            }
+            try require(
+                try query(
+                    "SELECT 1 FROM row_intents WHERE gtid=? UNION ALL SELECT 1 FROM ddl_intents WHERE gtid=? LIMIT 1",
+                    [id, id]
+                ).isEmpty,
                 "cannot skip a group with target write intents; partial or uncertain writes require manual resolution")
-            try require(try query("SELECT 1 FROM groups WHERE gtid!=? AND (status!='APPLIED' OR sequence>?) LIMIT 1",[id,String(seq)]).isEmpty,"saved state contains other unresolved groups")
-            skipBoundary=end
+            try require(
+                try query(
+                    "SELECT 1 FROM groups WHERE gtid!=? AND (status!='APPLIED' OR sequence>?) LIMIT 1",
+                    [id, String(seq)]
+                ).isEmpty, "saved state contains other unresolved groups")
+            skipBoundary = end
         } else {
-            try require(try number("SELECT COUNT(*) FROM groups WHERE status!='APPLIED' OR sequence>\(seq)") == 0,"saved state contains unresolved groups")
+            try require(
+                try number("SELECT COUNT(*) FROM groups WHERE status!='APPLIED' OR sequence>\(seq)") == 0,
+                "saved state contains unresolved groups")
         }
-        try require(try number("SELECT COUNT(*) FROM row_intents WHERE status!='DONE'") == 0 && number("SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == 0,"saved state contains unresolved intents")
-        let snapshots = try query("SELECT covered_sequence,gtids,source_file,source_position FROM snapshots ORDER BY id DESC LIMIT 1")
-        guard let snap = snapshots.first, let covered = Int64(snap[0] ?? ""), covered >= 0, covered <= seq, let gtids = snap[1] else { throw ApplyError("missing or invalid covering GTID snapshot") }
+        try require(
+            try number("SELECT COUNT(*) FROM row_intents WHERE status!='DONE'") == 0
+                && number("SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == 0,
+            "saved state contains unresolved intents")
+        let snapshots = try query(
+            "SELECT covered_sequence,gtids,source_file,source_position FROM snapshots ORDER BY id DESC LIMIT 1")
+        guard let snap = snapshots.first, let covered = Int64(snap[0] ?? ""), covered >= 0, covered <= seq,
+            let gtids = snap[1]
+        else { throw ApplyError("missing or invalid covering GTID snapshot") }
         completedGTIDs = try GTIDSet(gtids)
         if skipGTIDs != nil && covered < seq {
-            var expected=covered
-            var boundary=try coordinate(snap[2],snap[3])
-            for delta in try query("SELECT sequence,gtid,source_file,end_position FROM groups WHERE status='APPLIED' AND sequence>? ORDER BY sequence",[String(covered)]) {
+            var expected = covered
+            var boundary = try coordinate(snap[2], snap[3])
+            for delta in try query(
+                "SELECT sequence,gtid,source_file,end_position FROM groups WHERE status='APPLIED' AND sequence>? ORDER BY sequence",
+                [String(covered)])
+            {
                 expected += 1
-                try require(Int64(delta[0] ?? "") == expected,"saved applied GTID history has a gap")
-                let identity=try singleton(delta[1] ?? "")
-                try require(!completedGTIDs.contains(identity),"duplicate applied GTID delta")
+                try require(Int64(delta[0] ?? "") == expected, "saved applied GTID history has a gap")
+                let identity = try singleton(delta[1] ?? "")
+                try require(!completedGTIDs.contains(identity), "duplicate applied GTID delta")
                 try completedGTIDs.include(identity)
-                boundary=try coordinate(delta[2],delta[3])
+                boundary = try coordinate(delta[2], delta[3])
             }
-            try require(expected == seq && boundary == applied,"saved applied history does not reach checkpoint")
+            try require(expected == seq && boundary == applied, "saved applied history does not reach checkpoint")
         } else {
-            try require(covered == seq,"clean stop lacks a covering GTID snapshot")
-            try require(try coordinate(snap[2],snap[3]) == applied,"snapshot and applied coordinates differ")
+            try require(covered == seq, "clean stop lacks a covering GTID snapshot")
+            try require(try coordinate(snap[2], snap[3]) == applied, "snapshot and applied coordinates differ")
         }
         let base = try GTIDSet(baseText)
         // A skip can advance coverage before the first successfully applied group.
-        try require(completedGTIDs.covers(base) && (seq != 0 || ((completedGTIDs == base) == (applied == nil))),"saved GTID coverage differs from baseline")
-        if let id=pendingGTID {
-            let identity=try singleton(id)
-            try require(!completedGTIDs.contains(identity),"pending GTID is already covered")
+        try require(
+            completedGTIDs.covers(base) && (seq != 0 || ((completedGTIDs == base) == (applied == nil))),
+            "saved GTID coverage differs from baseline")
+        if let id = pendingGTID {
+            let identity = try singleton(id)
+            try require(!completedGTIDs.contains(identity), "pending GTID is already covered")
         }
         for row in try query("SELECT gtid FROM groups WHERE status='APPLIED'") {
             guard let id = row[0] else { throw ApplyError("missing saved group GTID") }
-            try require(try completedGTIDs.covers(GTIDSet(id)),"snapshot does not cover saved applied groups")
+            try require(try completedGTIDs.covers(GTIDSet(id)), "snapshot does not cover saved applied groups")
         }
-        sequence=seq; snapshotSequence=covered; transactions=tx; rows=count; ddlApplied=ddl
+        sequence = seq
+        snapshotSequence = covered
+        transactions = tx
+        rows = count
+        ddlApplied = ddl
         if try number("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='error_skip_counts'") != 0 {
-            skipJournalReady=true
+            skipJournalReady = true
             for row in try query("SELECT code,transactions FROM error_skip_counts") {
-                guard let code=row[0],ApplyErrorCode(rawValue:code) != nil,let count=Int(row[1] ?? ""),count >= 0 else { throw ApplyError("invalid skipped transaction counters") }
-                skippedTransactionsByCode[code]=count
+                guard let code = row[0], ApplyErrorCode(rawValue: code) != nil, let count = Int(row[1] ?? ""),
+                    count >= 0
+                else { throw ApplyError("invalid skipped transaction counters") }
+                skippedTransactionsByCode[code] = count
             }
         }
         for row in try query("SELECT id,identity,schema_json FROM schemas WHERE current=1") {
-            guard let id=Int64(row[0] ?? ""), let json=row[2] else { throw ApplyError("invalid saved schema") }
-            let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
-            let identity=String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self)
-            try require(SQLTextBytes.equal(row[1],identity) && schemas[table.identity] == nil && schemas.count < maximumCachedTables,"invalid saved schema identity/cache")
-            schemas[table.identity]=(id,table)
+            guard let id = Int64(row[0] ?? ""), let json = row[2] else { throw ApplyError("invalid saved schema") }
+            let table = try JSONDecoder().decode(ApplyTable.self, from: Data(json.utf8))
+            try table.validate()
+            let identity = String(decoding: try JSONEncoder().encode([table.database, table.table]), as: UTF8.self)
+            try require(
+                SQLTextBytes.equal(row[1], identity) && schemas[table.identity] == nil
+                    && schemas.count < maximumCachedTables, "invalid saved schema identity/cache")
+            schemas[table.identity] = (id, table)
         }
         // Resume from the applied boundary, never from received-but-unapplied bytes.
-        let fd=open(directory.appendingPathComponent("relay.frames").path,O_WRONLY|O_APPEND)
+        let fd = open(directory.appendingPathComponent("relay.frames").path, O_WRONLY | O_APPEND)
         guard fd >= 0 else { throw ApplyError("saved relay file is missing") }
-        relay=FileHandle(fileDescriptor:fd,closeOnDealloc:true)
-        try require(try relay!.seekToEnd() == length,"saved relay length differs from durable state")
-        relayLength=length; groupStart=length
+        relay = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        try require(try relay!.seekToEnd() == length, "saved relay length differs from durable state")
+        relayLength = length
+        groupStart = length
         _ = try captureConfiguration(c.source)
-        try checkDisk(extra:policy.maximumSQLiteBytes)
-        try require(try number("PRAGMA page_size") == 4096 && number("PRAGMA page_count") <= databaseLimit/4096,"saved SQLite exceeds configured page budget")
+        try checkDisk(extra: policy.maximumSQLiteBytes)
+        try require(
+            try number("PRAGMA page_size") == 4096 && number("PRAGMA page_count") <= databaseLimit / 4096,
+            "saved SQLite exceeds configured page budget")
         try execute("PRAGMA max_page_count=\(databaseLimit/4096)")
-        try require(try query("PRAGMA journal_mode=WAL").first?.first == "wal","saved SQLite must use WAL")
+        try require(try query("PRAGMA journal_mode=WAL").first?.first == "wal", "saved SQLite must use WAL")
         try execute("PRAGMA synchronous=FULL")
         try execute("PRAGMA journal_size_limit=1048576")
         try execute("PRAGMA cache_spill=OFF")
@@ -349,9 +485,10 @@ final class StateStore {
             // Old runtimes accepted only the primary index. Validate every
             // retained schema before changing the version; never bless unknown data.
             for row in try query("SELECT schema_json FROM schemas") {
-                guard let json=row[0] else {throw ApplyError("missing legacy schema")}
-                let table=try JSONDecoder().decode(ApplyTable.self,from:Data(json.utf8)); try table.validate()
-                try require(table.secondaryIndexes.isEmpty,"format-4 state contains unsupported index metadata")
+                guard let json = row[0] else { throw ApplyError("missing legacy schema") }
+                let table = try JSONDecoder().decode(ApplyTable.self, from: Data(json.utf8))
+                try table.validate()
+                try require(table.secondaryIndexes.isEmpty, "format-4 state contains unsupported index metadata")
             }
         }
         // Preserve every existing relay byte and offset. New frames carry their
@@ -370,166 +507,232 @@ final class StateStore {
             }
         }
         if version < 10 {
-            try atomic { try createNameCaseJournal(); try execute("PRAGMA user_version=10") }
+            try atomic {
+                try createNameCaseJournal()
+                try execute("PRAGMA user_version=10")
+            }
         }
         // Format 11 permits tagged GTID text. Older readers must reject it.
-        if version < 11 {try atomic {try execute("PRAGMA user_version=11")}}
-        if version < 12 {try atomic {try createGTIDModeJournal(c.target.preserveSourceGTIDs);try execute("PRAGMA user_version=12")}}
-        try pinFilters(c,initializing:false)
+        if version < 11 { try atomic { try execute("PRAGMA user_version=11") } }
+        if version < 12 {
+            try atomic {
+                try createGTIDModeJournal(c.target.preserveSourceGTIDs)
+                try execute("PRAGMA user_version=12")
+            }
+        }
+        try pinFilters(c, initializing: false)
         if version < 13 { try execute("PRAGMA user_version=13") }
         try openCounters()
-        ready=true
+        ready = true
     }
-    private func createGTIDModeJournal(_ preserveSourceGTIDs:Bool) throws {
-        try execute("CREATE TABLE IF NOT EXISTS target_gtid_mode(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL)")
-        try execute("INSERT OR REPLACE INTO target_gtid_mode VALUES(1,?)",[String(preserveSourceGTIDs)])
+    private func createGTIDModeJournal(_ preserveSourceGTIDs: Bool) throws {
+        try execute(
+            "CREATE TABLE IF NOT EXISTS target_gtid_mode(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL)")
+        try execute("INSERT OR REPLACE INTO target_gtid_mode VALUES(1,?)", [String(preserveSourceGTIDs)])
         try execute("CREATE TABLE IF NOT EXISTS pending_gtid_markers(gtid TEXT PRIMARY KEY)")
     }
     func pendingGTIDMarkers() throws -> [SourceGTID] {
-        try query("SELECT gtid FROM pending_gtid_markers ORDER BY gtid").map {try SourceGTID(parsing:$0[0]!)}
+        try query("SELECT gtid FROM pending_gtid_markers ORDER BY gtid").map { try SourceGTID(parsing: $0[0]!) }
     }
-    func completeGTIDMarker(_ id:SourceGTID) throws {
-        try atomic {try execute("DELETE FROM pending_gtid_markers WHERE gtid=?",[id.canonical])}
+    func completeGTIDMarker(_ id: SourceGTID) throws {
+        try atomic { try execute("DELETE FROM pending_gtid_markers WHERE gtid=?", [id.canonical]) }
     }
     private func createNameCaseJournal() throws {
-        try execute("CREATE TABLE IF NOT EXISTS name_case(id INTEGER PRIMARY KEY CHECK(id=1),lower_case_table_names INTEGER NOT NULL CHECK(lower_case_table_names IN (0,1)))")
-        try execute("INSERT OR IGNORE INTO name_case VALUES(1,?)",[String(lowerCaseTableNames)])
-        try require(try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],"table-name case setting differs from saved state")
+        try execute(
+            "CREATE TABLE IF NOT EXISTS name_case(id INTEGER PRIMARY KEY CHECK(id=1),lower_case_table_names INTEGER NOT NULL CHECK(lower_case_table_names IN (0,1)))"
+        )
+        try execute("INSERT OR IGNORE INTO name_case VALUES(1,?)", [String(lowerCaseTableNames)])
+        try require(
+            try query("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(lowerCaseTableNames)]],
+            "table-name case setting differs from saved state")
     }
     private func createProfileJournal() throws {
         try execute("CREATE TABLE replication_profile(id INTEGER PRIMARY KEY CHECK(id=1),profile TEXT NOT NULL)")
-        try execute("INSERT INTO replication_profile VALUES(1,?)",[replicationProfile.rawValue])
+        try execute("INSERT INTO replication_profile VALUES(1,?)", [replicationProfile.rawValue])
     }
     private func createCompatibilityJournal() throws {
         try execute("CREATE TABLE compatibility(id INTEGER PRIMARY KEY CHECK(id=1),policy_json TEXT NOT NULL)")
-        try execute("INSERT INTO compatibility VALUES(1,?)",[String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)])
-        try execute("CREATE TABLE ddl_details(gtid TEXT PRIMARY KEY,source_sql TEXT NOT NULL,context_json TEXT,policy_json TEXT NOT NULL,transitions_json TEXT NOT NULL)")
+        try execute(
+            "INSERT INTO compatibility VALUES(1,?)",
+            [String(decoding: try JSONEncoder().encode(compatibility), as: UTF8.self)])
+        try execute(
+            "CREATE TABLE ddl_details(gtid TEXT PRIMARY KEY,source_sql TEXT NOT NULL,context_json TEXT,policy_json TEXT NOT NULL,transitions_json TEXT NOT NULL)"
+        )
     }
     private func createDDLSkips() throws {
-        try execute("CREATE TABLE ddl_skips(gtid TEXT PRIMARY KEY,database_name TEXT NOT NULL,object_name TEXT NOT NULL,source_sql TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL)")
+        try execute(
+            "CREATE TABLE ddl_skips(gtid TEXT PRIMARY KEY,database_name TEXT NOT NULL,object_name TEXT NOT NULL,source_sql TEXT NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL)"
+        )
     }
-    private func singleton(_ text:String) throws -> SourceGTID {try SourceGTID(parsing:text)}
+    private func singleton(_ text: String) throws -> SourceGTID { try SourceGTID(parsing: text) }
     /// Explicitly exclude a captured group before any target write was attempted.
     /// All validation happens during reopen, under the same exclusive writer lock.
     func skip() throws -> SkipSummary {
-        guard let id=pendingGTID, let boundary=skipBoundary else { throw ApplyError("state was not opened for skip") }
-        let identity=try singleton(id)
-        var next=completedGTIDs
+        guard let id = pendingGTID, let boundary = skipBoundary else {
+            throw ApplyError("state was not opened for skip")
+        }
+        let identity = try singleton(id)
+        var next = completedGTIDs
         try next.include(identity)
-        let time=timestamp()
+        let time = timestamp()
         // Do not prune history as a side effect of an operator resolution. Reopen
         // has checked disk/page budgets; FULL WAL and SQLite caps still apply.
-        maintenance=true; defer {maintenance=false}
+        maintenance = true
+        defer { maintenance = false }
         try atomic {
             if try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [["true"]] {
-                try execute("INSERT OR IGNORE INTO pending_gtid_markers VALUES(?)",[id])
+                try execute("INSERT OR IGNORE INTO pending_gtid_markers VALUES(?)", [id])
             }
-            try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'",[id])
-            try execute("INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",[String(sequence),next.canonical,boundary.file,String(boundary.position),time])
-            try execute("UPDATE state SET applied_file=?,applied_position=?,lifecycle='STOPPED',active_gtid=NULL,diagnostic=NULL,updated_at=? WHERE id=1",[boundary.file,String(boundary.position),time])
+            try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'", [id])
+            try execute(
+                "INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",
+                [String(sequence), next.canonical, boundary.file, String(boundary.position), time])
+            try execute(
+                "UPDATE state SET applied_file=?,applied_position=?,lifecycle='STOPPED',active_gtid=NULL,diagnostic=NULL,updated_at=? WHERE id=1",
+                [boundary.file, String(boundary.position), time])
         }
-        completedGTIDs=next; applied=boundary; pendingGTID=nil; skipBoundary=nil; snapshotSequence=sequence
-        return SkipSummary(skippedGTIDSet:try GTIDSet(id).canonical,resumeGTIDSet:next.canonical,resumePosition:boundary,stateDirectory:directory.path)
+        completedGTIDs = next
+        applied = boundary
+        pendingGTID = nil
+        skipBoundary = nil
+        snapshotSequence = sequence
+        return SkipSummary(
+            skippedGTIDSet: try GTIDSet(id).canonical, resumeGTIDSet: next.canonical, resumePosition: boundary,
+            stateDirectory: directory.path)
     }
-    func captureConfiguration(_ source: CaptureConfiguration, remainingTransactions: Int? = nil) throws -> CaptureConfiguration {
+    func captureConfiguration(_ source: CaptureConfiguration, remainingTransactions: Int? = nil) throws
+        -> CaptureConfiguration
+    {
         let boundary = applied ?? baseline
-        let resumed = source.resuming(file:boundary?.file,position:boundary.map { UInt32($0.position) },executedGTIDs:gtids,remainingTransactions:remainingTransactions)
+        let resumed = source.resuming(
+            file: boundary?.file, position: boundary.map { UInt32($0.position) }, executedGTIDs: gtids,
+            remainingTransactions: remainingTransactions)
         // Connection credentials are validated/resolved by the selected input;
         // offline replay only needs the source identity and durable boundary.
-        _ = try resumed.validate(connection:false)
+        _ = try resumed.validate(connection: false)
         return resumed
     }
     static func availableSpace(_ url: URL) throws -> Int64 {
-        guard let n = try FileManager.default.attributesOfFileSystem(forPath:url.path)[.systemFreeSize] as? NSNumber else {throw ApplyError("cannot inspect free disk space")}
+        guard let n = try FileManager.default.attributesOfFileSystem(forPath: url.path)[.systemFreeSize] as? NSNumber
+        else { throw ApplyError("cannot inspect free disk space") }
         return n.int64Value
     }
     func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
         if !applierProfiling { return try body() }
-        return try timings.measure("apply.detail." + stage,body)
+        return try timings.measure("apply.detail." + stage, body)
     }
     func timestamp(_ date: Date? = nil) -> String {
         profile("journal.timestamp") {
-            timestampFormatter.string(from:date ?? now())
+            timestampFormatter.string(from: date ?? now())
         }
     }
     static func syncDirectory(_ url: URL) throws {
-        let fd = open(url.path,O_RDONLY); guard fd >= 0 else {throw ApplyError("cannot open state directory")}
-        defer {close(fd)}
-        guard fsync(fd)==0 else {throw ApplyError("cannot synchronize state directory")}
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { throw ApplyError("cannot open state directory") }
+        defer { close(fd) }
+        guard fsync(fd) == 0 else { throw ApplyError("cannot synchronize state directory") }
     }
     private func checkDisk(extra: Int64) throws {
-        try require(try timings.measure("storage.free_space", { try freeDisk(directory) }) >= policy.minimumFreeDiskBytes + extra,"storage pressure: free-disk reserve reached; replication stopped")
+        try require(
+            try timings.measure("storage.free_space", { try freeDisk(directory) }) >= policy.minimumFreeDiskBytes
+                + extra, "storage pressure: free-disk reserve reached; replication stopped")
     }
     private func installWALTracking() {
-        wal.frames = max(0,(walBytes-32)/(4096+24))
-        sqlite3_wal_hook(db, { context, _, _, frames in
-            guard let context else { return SQLITE_OK }
-            Unmanaged<WALGrowth>.fromOpaque(context).takeUnretainedValue().committed(frames:frames)
-            return SQLITE_OK
-        },Unmanaged.passUnretained(wal).toOpaque())
+        wal.frames = max(0, (walBytes - 32) / (4096 + 24))
+        sqlite3_wal_hook(
+            db,
+            { context, _, _, frames in
+                guard let context else { return SQLITE_OK }
+                Unmanaged<WALGrowth>.fromOpaque(context).takeUnretainedValue().committed(frames: frames)
+                return SQLITE_OK
+            }, Unmanaged.passUnretained(wal).toOpaque())
     }
     private func checkpoint() throws {
-        let rc = timings.measure("sqlite.checkpoint") { sqlite3_wal_checkpoint_v2(db,nil,SQLITE_CHECKPOINT_TRUNCATE,nil,nil) }
-        try require(rc == SQLITE_OK,"storage pressure: SQLite WAL checkpoint blocked (reader or I/O error)")
+        let rc = timings.measure("sqlite.checkpoint") {
+            sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil)
+        }
+        try require(rc == SQLITE_OK, "storage pressure: SQLite WAL checkpoint blocked (reader or I/O error)")
         wal.frames = 0
     }
-    private func query(_ sql: String,_ args: [String?] = []) throws -> [[String?]] {
+    private func query(_ sql: String, _ args: [String?] = []) throws -> [[String?]] {
         guard let db else { throw ApplyError("SQLite is not open") }
-        if statements == nil { statements=SQLiteStatementCache(db:db,timings:timings,profiling:applierProfiling) }
-        return try statements!.query(sql,args)
+        if statements == nil {
+            statements = SQLiteStatementCache(db: db, timings: timings, profiling: applierProfiling)
+        }
+        return try statements!.query(sql, args)
     }
 
-    private func number(_ sql: String,_ args: [String?] = []) throws -> Int64 {Int64(try query(sql,args).first?.first.flatMap{$0} ?? "") ?? 0}
-    private func execute(_ sql: String,_ args: [String?] = []) throws {
-        if ready && !inTransaction && !maintenance {try ensureCapacity(force:false)}
-        _ = try timings.measure(inTransaction || sql.hasPrefix("PRAGMA ") ? "sqlite.statement" : "sqlite.commit") { try query(sql,args) }
+    private func number(_ sql: String, _ args: [String?] = []) throws -> Int64 {
+        Int64(try query(sql, args).first?.first.flatMap { $0 } ?? "") ?? 0
+    }
+    private func execute(_ sql: String, _ args: [String?] = []) throws {
+        if ready && !inTransaction && !maintenance { try ensureCapacity(force: false) }
+        _ = try timings.measure(inTransaction || sql.hasPrefix("PRAGMA ") ? "sqlite.statement" : "sqlite.commit") {
+            try query(sql, args)
+        }
     }
     private func atomic(_ body: () throws -> Void) throws {
-        if ready && !maintenance {try ensureCapacity(force:false)}
-        _ = try query("BEGIN IMMEDIATE"); inTransaction=true
-        defer {inTransaction=false}
-        do {try body(); _ = try timings.measure("sqlite.commit") { try query("COMMIT") }}
-        catch {_ = try? query("ROLLBACK"); throw error}
+        if ready && !maintenance { try ensureCapacity(force: false) }
+        _ = try query("BEGIN IMMEDIATE")
+        inTransaction = true
+        defer { inTransaction = false }
+        do {
+            try body()
+            _ = try timings.measure("sqlite.commit") { try query("COMMIT") }
+        } catch {
+            _ = try? query("ROLLBACK")
+            throw error
+        }
     }
     var sqliteBytes: Int64 {
-        ["state.sqlite","state.sqlite-wal","state.sqlite-shm"].reduce(0) {sum,name in
-            sum + ((try? FileManager.default.attributesOfItem(atPath:directory.appendingPathComponent(name).path)[.size] as? NSNumber)?.int64Value ?? 0)
+        ["state.sqlite", "state.sqlite-wal", "state.sqlite-shm"].reduce(0) { sum, name in
+            sum
+                + ((try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)[
+                    .size] as? NSNumber)?.int64Value ?? 0)
         }
     }
     /// Pressure-triggered, age-gated reclamation. Retention is a minimum age:
     /// young completed records are never evicted merely to keep running.
     var walBytes: Int64 {
-        ((try? FileManager.default.attributesOfItem(atPath:directory.appendingPathComponent("state.sqlite-wal").path)[.size] as? NSNumber)?.int64Value) ?? 0
+        ((try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent("state.sqlite-wal").path)[
+            .size] as? NSNumber)?.int64Value) ?? 0
     }
     // Keep room for a worst-case next transaction, WAL headers and diagnostics.
-    var transactionReserve: Int64 { databaseLimit + databaseLimit/4096*24 + 131072 }
-    var checkpointThreshold: Int64 { min(1024*1024, databaseLimit/4) }
+    var transactionReserve: Int64 { databaseLimit + databaseLimit / 4096 * 24 + 131072 }
+    var checkpointThreshold: Int64 { min(1024 * 1024, databaseLimit / 4) }
     func ensureCapacity(force: Bool = true, incomingRelayBytes: Int64 = 0) throws {
         // Always cheap: a very large group cannot bypass the WAL bound merely
         // because no source transaction has completed yet.
         if wal.bytes >= checkpointThreshold { try checkpoint() }
-        if force || capacity.needsInspection(sequence:sequence,time:uptime(),relay:relayLength,
-            incoming:incomingRelayBytes,growth:wal.growthFrames*4096,databaseLimit:databaseLimit,policy:policy) {
-            try timings.measure("sqlite.capacity") { try checkCapacity(incomingRelayBytes:incomingRelayBytes) }
+        if force
+            || capacity.needsInspection(
+                sequence: sequence, time: uptime(), relay: relayLength,
+                incoming: incomingRelayBytes, growth: wal.growthFrames * 4096, databaseLimit: databaseLimit,
+                policy: policy)
+        {
+            try timings.measure("sqlite.capacity") { try checkCapacity(incomingRelayBytes: incomingRelayBytes) }
         }
-        try require(databaseLimit+wal.bytes+131072+transactionReserve < policy.maximumSQLiteBytes,
-                    "storage pressure: SQLite transaction reserve exhausted")
+        try require(
+            databaseLimit + wal.bytes + 131072 + transactionReserve < policy.maximumSQLiteBytes,
+            "storage pressure: SQLite transaction reserve exhausted")
     }
     private func checkCapacity(incomingRelayBytes: Int64) throws {
-        if walBytes >= checkpointThreshold || sqliteBytes >= policy.maximumSQLiteBytes-transactionReserve {
+        if walBytes >= checkpointThreshold || sqliteBytes >= policy.maximumSQLiteBytes - transactionReserve {
             try checkpoint()
         }
         let free = try timings.measure("storage.free_space") { try freeDisk(directory) }
-        try require(free >= policy.minimumFreeDiskBytes+policy.maximumSQLiteBytes+incomingRelayBytes,
-                    "storage pressure: free-disk reserve reached; replication stopped")
-        var used = try (number("PRAGMA page_count") - number("PRAGMA freelist_count"))*4096
-        let threshold = databaseLimit * Int64(policy.pruneAtPercent)/100
-        let diskPressure = free < policy.minimumFreeDiskBytes + policy.maximumSQLiteBytes*2
+        try require(
+            free >= policy.minimumFreeDiskBytes + policy.maximumSQLiteBytes + incomingRelayBytes,
+            "storage pressure: free-disk reserve reached; replication stopped")
+        var used = try (number("PRAGMA page_count") - number("PRAGMA freelist_count")) * 4096
+        let threshold = databaseLimit * Int64(policy.pruneAtPercent) / 100
+        let diskPressure = free < policy.minimumFreeDiskBytes + policy.maximumSQLiteBytes * 2
         if used >= threshold || diskPressure {
-            maintenance=true; defer {maintenance=false}
+            maintenance = true
+            defer { maintenance = false }
             // Durable snapshot first. A crash between this commit and DELETE
             // leaves redundant deltas, never a gap in applied coverage.
-            if sequence != snapshotSequence {try snapshot()}
+            if sequence != snapshotSequence { try snapshot() }
             try checkpoint()
             let cutoff = timestamp(now().addingTimeInterval(-Double(policy.historyRetentionSeconds)))
             repeat {
@@ -537,352 +740,559 @@ final class StateStore {
                 try atomic {
                     try execute("CREATE TEMP TABLE IF NOT EXISTS prune_groups(gtid TEXT PRIMARY KEY)")
                     try execute("DELETE FROM prune_groups")
-                    try execute("INSERT INTO prune_groups SELECT gtid FROM groups WHERE status='APPLIED' AND sequence<=? AND completed_at<? ORDER BY sequence LIMIT 128",[String(snapshotSequence),cutoff])
+                    try execute(
+                        "INSERT INTO prune_groups SELECT gtid FROM groups WHERE status='APPLIED' AND sequence<=? AND completed_at<? ORDER BY sequence LIMIT 128",
+                        [String(snapshotSequence), cutoff])
                     removed = try number("SELECT COUNT(*) FROM prune_groups")
                     try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM ddl_skips WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM ddl_details WHERE gtid IN (SELECT gtid FROM prune_groups)")
                     try execute("DELETE FROM groups WHERE gtid IN (SELECT gtid FROM prune_groups)")
-                    try execute("DELETE FROM snapshots WHERE covered_sequence<? AND created_at<?",[String(snapshotSequence),cutoff])
+                    try execute(
+                        "DELETE FROM snapshots WHERE covered_sequence<? AND created_at<?",
+                        [String(snapshotSequence), cutoff])
                     if skipJournalReady {
-                        removed += try number("SELECT COUNT(*) FROM (SELECT gtid FROM error_skips WHERE created_at<? LIMIT 128)",[cutoff])
-                        try execute("DELETE FROM error_skips WHERE gtid IN (SELECT gtid FROM error_skips WHERE created_at<? LIMIT 128)",[cutoff])
+                        removed += try number(
+                            "SELECT COUNT(*) FROM (SELECT gtid FROM error_skips WHERE created_at<? LIMIT 128)", [cutoff]
+                        )
+                        try execute(
+                            "DELETE FROM error_skips WHERE gtid IN (SELECT gtid FROM error_skips WHERE created_at<? LIMIT 128)",
+                            [cutoff])
                     }
-                    try execute("DELETE FROM schemas WHERE current=0 AND retired_at<? AND NOT EXISTS(SELECT 1 FROM row_intents WHERE schema_id=schemas.id) AND NOT EXISTS(SELECT 1 FROM ddl_intents WHERE before_schema_id=schemas.id OR after_schema_id=schemas.id)",[cutoff])
+                    try execute(
+                        "DELETE FROM schemas WHERE current=0 AND retired_at<? AND NOT EXISTS(SELECT 1 FROM row_intents WHERE schema_id=schemas.id) AND NOT EXISTS(SELECT 1 FROM ddl_intents WHERE before_schema_id=schemas.id OR after_schema_id=schemas.id)",
+                        [cutoff])
                 }
                 try checkpoint()
                 try execute("PRAGMA incremental_vacuum(128)")
                 try checkpoint()
-                used = try (number("PRAGMA page_count") - number("PRAGMA freelist_count"))*4096
-                if removed == 0 {break}
+                used = try (number("PRAGMA page_count") - number("PRAGMA freelist_count")) * 4096
+                if removed == 0 { break }
             } while used >= threshold
         }
         // Leave a margin for the next write/diagnostic. max_page_count is the
         // independent hard limit if a single oversized operation exceeds it.
-        try require(used < databaseLimit * 95/100 && sqliteBytes < policy.maximumSQLiteBytes - transactionReserve,"storage pressure: SQLite budget reached; no eligible old history can free enough space")
-        capacity.record(sequence:sequence,time:uptime(),relay:relayLength,free:free,used:used)
+        try require(
+            used < databaseLimit * 95 / 100 && sqliteBytes < policy.maximumSQLiteBytes - transactionReserve,
+            "storage pressure: SQLite budget reached; no eligible old history can free enough space")
+        capacity.record(sequence: sequence, time: uptime(), relay: relayLength, free: free, used: used)
         wal.growthFrames = 0
     }
     private func snapshot() throws {
         try profile("journal.snapshot") {
-            if ready && !maintenance {try ensureCapacity(force:false)}
-            if ready && sequence == snapshotSequence {return}
-            let wasMaintenance=maintenance; maintenance=true
-            defer {maintenance=wasMaintenance}
+            if ready && !maintenance { try ensureCapacity(force: false) }
+            if ready && sequence == snapshotSequence { return }
+            let wasMaintenance = maintenance
+            maintenance = true
+            defer { maintenance = wasMaintenance }
             try atomic {
-                try execute("INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",[String(sequence),completedGTIDs.canonical,applied?.file,applied.map{String($0.position)},timestamp()])
+                try execute(
+                    "INSERT INTO snapshots(covered_sequence,gtids,source_file,source_position,created_at) VALUES(?,?,?,?,?)",
+                    [
+                        String(sequence), completedGTIDs.canonical, applied?.file, applied.map { String($0.position) },
+                        timestamp(),
+                    ])
             }
-            snapshotSequence=sequence
+            snapshotSequence = sequence
         }
     }
-    private func insertSchema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws -> Int64 {
-        let schema=String(decoding:try JSONEncoder().encode(table),as:UTF8.self)
-        let wire=String(decoding:try JSONEncoder().encode(event.wireColumns),as:UTF8.self)
-        try execute("INSERT INTO schemas(identity,discovered_at,source_file,source_position,event_hash,schema_json,wire_json) VALUES(?,?,?,?,?,?,?)",[String(decoding:try JSONEncoder().encode([table.database,table.table]),as:UTF8.self),timestamp(),coordinate.file,String(coordinate.position),event.sha256,schema,wire])
+    private func insertSchema(_ table: ApplyTable, event: DecodedEvent, coordinate: BinlogCoordinate) throws -> Int64 {
+        let schema = String(decoding: try JSONEncoder().encode(table), as: UTF8.self)
+        let wire = String(decoding: try JSONEncoder().encode(event.wireColumns), as: UTF8.self)
+        try execute(
+            "INSERT INTO schemas(identity,discovered_at,source_file,source_position,event_hash,schema_json,wire_json) VALUES(?,?,?,?,?,?,?)",
+            [
+                String(decoding: try JSONEncoder().encode([table.database, table.table]), as: UTF8.self), timestamp(),
+                coordinate.file, String(coordinate.position), event.sha256, schema, wire,
+            ])
         return sqlite3_last_insert_rowid(db)
     }
-    func schema(_ table: ApplyTable,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
+    func schema(_ table: ApplyTable, event: DecodedEvent, coordinate: BinlogCoordinate) throws {
         try profile("journal.schema") {
-            if let old=schemas[table.identity] {try require(old.1==table,"schema changed without ordered DDL");return}
-            try require(schemas.count<maximumCachedTables,"schema cache limit reached")
-            schemas[table.identity]=(try insertSchema(table,event:event,coordinate:coordinate),table)
+            if let old = schemas[table.identity] {
+                try require(old.1 == table, "schema changed without ordered DDL")
+                return
+            }
+            try require(schemas.count < maximumCachedTables, "schema cache limit reached")
+            schemas[table.identity] = (try insertSchema(table, event: event, coordinate: coordinate), table)
         }
     }
-    func ddlIntent(_ plan: PreparedDDL,event: DecodedEvent,coordinate: BinlogCoordinate) throws {
-        try require(pendingGTID != nil,"DDL intent without pending group")
-        if let before=plan.before {try schema(before,event:event,coordinate:coordinate)}
+    func ddlIntent(_ plan: PreparedDDL, event: DecodedEvent, coordinate: BinlogCoordinate) throws {
+        try require(pendingGTID != nil, "DDL intent without pending group")
+        if let before = plan.before { try schema(before, event: event, coordinate: coordinate) }
         for change in plan.additional {
-            if let before=change.before {try schema(before,event:event,coordinate:coordinate)}
+            if let before = change.before { try schema(before, event: event, coordinate: coordinate) }
         }
-        let beforeID=plan.statement.name.flatMap{schemas[$0.identity]?.0}
-        let databaseJSON=try plan.database.map{String(decoding:try JSONEncoder().encode($0),as:UTF8.self)}
+        let beforeID = plan.statement.name.flatMap { schemas[$0.identity]?.0 }
+        let databaseJSON = try plan.database.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
         guard case .query(let source) = event.control else { throw ApplyError("DDL intent lacks source query") }
-        var diagnostic = DDLQueryContextDiagnostic(query:source)
+        var diagnostic = DDLQueryContextDiagnostic(query: source)
         diagnostic?.targetSQLBase64 = plan.rawSQL?.base64EncodedString()
         diagnostic?.nativeCompatibilityRules = plan.compatibilityRules.isEmpty ? nil : plan.compatibilityRules
         diagnostic?.viewTransitions = plan.viewTransitions.isEmpty ? nil : plan.viewTransitions
-        let contextJSON = try diagnostic.map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
-        let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,supportingIndexReplacements:plan.supportingIndexReplacements,removableSupportingIndexes:plan.removableSupportingIndexes)] : [])
-        let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)
-        let transitionsJSON = String(decoding:try JSONEncoder().encode(transitions),as:UTF8.self)
+        let contextJSON = try diagnostic.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
+        let transitions =
+            plan.additional
+            + ((plan.before != nil || plan.after != nil)
+                ? [
+                    SchemaTransition(
+                        before: plan.before, after: plan.after,
+                        supportingIndexReplacements: plan.supportingIndexReplacements,
+                        removableSupportingIndexes: plan.removableSupportingIndexes)
+                ] : [])
+        let policyJSON = String(decoding: try JSONEncoder().encode(compatibility), as: UTF8.self)
+        let transitionsJSON = String(decoding: try JSONEncoder().encode(transitions), as: UTF8.self)
         try atomic {
-            try execute("INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",[pendingGTID,beforeID.map(String.init),plan.sql,databaseJSON,timestamp()])
-            try execute("INSERT INTO ddl_details VALUES(?,?,?,?,?)",[pendingGTID,String(decoding:source.sql,as:UTF8.self),contextJSON,policyJSON,transitionsJSON])
+            try execute(
+                "INSERT INTO ddl_intents(gtid,before_schema_id,target_sql,database_json,status,created_at) VALUES(?,?,?,?,'PENDING',?)",
+                [pendingGTID, beforeID.map(String.init), plan.sql, databaseJSON, timestamp()])
+            try execute(
+                "INSERT INTO ddl_details VALUES(?,?,?,?,?)",
+                [pendingGTID, String(decoding: source.sql, as: UTF8.self), contextJSON, policyJSON, transitionsJSON])
         }
     }
     func append(_ record: LiveRecord) throws {
-        let bytes: Data = try record.rawBytes ?? profile("relay.base64") {
-            guard let encoded = record.event?.rawBase64 ?? record.rawBase64, let bytes = Data(base64Encoded:encoded) else {throw ApplyError("relay event lacks original bytes")}
-            return bytes
-        }
+        let bytes: Data =
+            try record.rawBytes
+            ?? profile("relay.base64") {
+                guard let encoded = record.event?.rawBase64 ?? record.rawBase64,
+                    let bytes = Data(base64Encoded: encoded)
+                else { throw ApplyError("relay event lacks original bytes") }
+                return bytes
+            }
         let metadata = try profile("relay.metadata") {
-            try RelayMetadata(kind:record.kind,file:record.file,observedPosition:record.observedPosition).encoded()
+            try RelayMetadata(kind: record.kind, file: record.file, observedPosition: record.observedPosition).encoded()
         }
         let frame = profile("relay.frame") {
             var frame = Data()
-            for n in [UInt32(metadata.count),UInt32(bytes.count)] {var le=n.littleEndian; withUnsafeBytes(of:&le){frame.append(contentsOf:$0)}}
-            frame += metadata; frame += bytes
+            for n in [UInt32(metadata.count), UInt32(bytes.count)] {
+                var le = n.littleEndian
+                withUnsafeBytes(of: &le) { frame.append(contentsOf: $0) }
+            }
+            frame += metadata
+            frame += bytes
             return frame
         }
-        try require(UInt64(frame.count) <= maximumBytes-relayLength,"relay storage limit reached")
-        try ensureCapacity(force:false,incomingRelayBytes:Int64(frame.count))
-        try profile("relay.write") { try relay!.write(contentsOf:frame) }
+        try require(UInt64(frame.count) <= maximumBytes - relayLength, "relay storage limit reached")
+        try ensureCapacity(force: false, incomingRelayBytes: Int64(frame.count))
+        try profile("relay.write") { try relay!.write(contentsOf: frame) }
         relayLength += UInt64(frame.count)
     }
 
     func bindTargetIdentity(_ uuid: String) throws {
-        try require(UUID(uuidString:uuid) != nil,"invalid discovered target identity")
+        try require(UUID(uuidString: uuid) != nil, "invalid discovered target identity")
         if let targetUUID {
-            try require(targetUUID == uuid.lowercased(),"saved target UUID differs from the connected target")
+            try require(targetUUID == uuid.lowercased(), "saved target UUID differs from the connected target")
             return
         }
-        try execute("UPDATE state SET target_uuid=?,updated_at=? WHERE id=1 AND target_uuid IS NULL",[uuid.lowercased(),timestamp()])
+        try execute(
+            "UPDATE state SET target_uuid=?,updated_at=? WHERE id=1 AND target_uuid IS NULL",
+            [uuid.lowercased(), timestamp()])
         try execute("DROP TABLE IF EXISTS startup_cancelled")
-        targetUUID=uuid.lowercased()
+        targetUUID = uuid.lowercased()
     }
-    func running() throws {try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1",[timestamp()])}
+    func running() throws { try execute("UPDATE state SET lifecycle='RUNNING',updated_at=? WHERE id=1", [timestamp()]) }
     func beginBatch(_ batch: [PreparedDMLGroup]) throws { try beginBatches([batch]) }
     /// One relay sync and one FULL SQLite commit prepare an ordered window.
     /// Each execution batch and source group retains its identity and boundary.
     func beginBatches(_ batches: [[PreparedDMLGroup]]) throws {
         try profile("journal.prepare_batch") {
-            try require((pendingGTID == nil || !pendingBatch.isEmpty) && !batches.isEmpty
-                        && pendingBatchSizes.count+batches.count <= maximumPreparedBatches
-                        && batches.allSatisfy { !$0.isEmpty && $0.count <= 256 },"invalid pending DML batch")
-            let batch=batches.flatMap { $0 }
-            var seen=completedGTIDs, relayStart=pendingBatch.last?.relayEnd ?? groupStart
+            try require(
+                (pendingGTID == nil || !pendingBatch.isEmpty) && !batches.isEmpty
+                    && pendingBatchSizes.count + batches.count <= maximumPreparedBatches
+                    && batches.allSatisfy { !$0.isEmpty && $0.count <= 256 }, "invalid pending DML batch")
+            let batch = batches.flatMap { $0 }
+            var seen = completedGTIDs
+            var relayStart = pendingBatch.last?.relayEnd ?? groupStart
             for item in pendingBatch { try seen.include(item.group.gtid!) }
             for item in batch {
-                guard let id=item.group.gtid else { throw ApplyError("batch lacks source GTID") }
-                try require(!item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,"invalid DML batch relay boundary")
-                try require(!seen.contains(id),"duplicate or excluded batch GTID")
+                guard let id = item.group.gtid else { throw ApplyError("batch lacks source GTID") }
+                try require(
+                    !item.mutations.isEmpty && item.relayEnd > relayStart && item.relayEnd <= relayLength,
+                    "invalid DML batch relay boundary")
+                try require(!seen.contains(id), "duplicate or excluded batch GTID")
                 try profile("journal.gtid") { try seen.include(id) }
-                relayStart=item.relayEnd
-                for row in item.mutations { try require(schemas[row.table.identity]?.1 == row.table,"batch schema is not current") }
+                relayStart = item.relayEnd
+                for row in item.mutations {
+                    try require(schemas[row.table.identity]?.1 == row.table, "batch schema is not current")
+                }
             }
             try timings.measure("relay.sync") { try relay!.synchronize() }
-            let time=timestamp()
+            let time = timestamp()
             try atomic {
-                var start=pendingBatch.last?.relayEnd ?? groupStart
-                for (index,item) in batch.enumerated() {
-                    try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+Int64(pendingBatch.count+index)+1),item.id,item.group.start.file,String(item.group.start.position),String(item.group.end.position),String(start),String(item.relayEnd),time])
-                    for (ordinal,row) in item.mutations.enumerated() {
-                        try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[item.id,String(ordinal),row.eventOffset,String(row.rowIndex),String(schemas[row.table.identity]!.0),time])
+                var start = pendingBatch.last?.relayEnd ?? groupStart
+                for (index, item) in batch.enumerated() {
+                    try execute(
+                        "INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",
+                        [
+                            String(sequence + Int64(pendingBatch.count + index) + 1), item.id, item.group.start.file,
+                            String(item.group.start.position), String(item.group.end.position), String(start),
+                            String(item.relayEnd), time,
+                        ])
+                    for (ordinal, row) in item.mutations.enumerated() {
+                        try execute(
+                            "INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",
+                            [
+                                item.id, String(ordinal), row.eventOffset, String(row.rowIndex),
+                                String(schemas[row.table.identity]!.0), time,
+                            ])
                     }
-                    start=item.relayEnd
+                    start = item.relayEnd
                 }
-                try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[pendingGTID ?? batch[0].id,String(relayLength),time])
+                try execute(
+                    "UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",
+                    [pendingGTID ?? batch[0].id, String(relayLength), time])
             }
-            pendingBatch.append(contentsOf:batch); pendingBatchSizes.append(contentsOf:batches.map(\.count))
-            pendingGTID=pendingBatch[0].id; pendingSequence=sequence+1
+            pendingBatch.append(contentsOf: batch)
+            pendingBatchSizes.append(contentsOf: batches.map(\.count))
+            pendingGTID = pendingBatch[0].id
+            pendingSequence = sequence + 1
         }
     }
     /// Commit only the acknowledged prefix. On crash before this commit every
     /// prepared row remains uncertain. No target write is inferred or retried.
-    func finishBatch(acknowledgedRows: [Int], skipped: [Int:SkippedApplyError] = [:], batchCount: Int = 1) throws {
+    func finishBatch(acknowledgedRows: [Int], skipped: [Int: SkippedApplyError] = [:], batchCount: Int = 1) throws {
         try profile("journal.complete_batch") {
-            try require(batchCount > 0 && batchCount <= pendingBatchSizes.count
-                        && pendingBatchSizes.prefix(batchCount).reduce(0,+) == acknowledgedRows.count
-                        && !acknowledgedRows.isEmpty,"completion without prepared batch")
-            let batch=Array(pendingBatch.prefix(acknowledgedRows.count))
-            try require(skipped.keys.allSatisfy { batch.indices.contains($0) },"skip outside prepared batch")
-            for (index,error) in skipped {
-                try require(replicationProfile.transactional && error.outcome == "rolledBack" && error.code == .duplicateKey && skipPolicy.codes.contains(error.code) && acknowledgedRows[index] == 0,"skip requires an authorized rolled-back InnoDB group")
+            try require(
+                batchCount > 0 && batchCount <= pendingBatchSizes.count
+                    && pendingBatchSizes.prefix(batchCount).reduce(0, +) == acknowledgedRows.count
+                    && !acknowledgedRows.isEmpty, "completion without prepared batch")
+            let batch = Array(pendingBatch.prefix(acknowledgedRows.count))
+            try require(skipped.keys.allSatisfy { batch.indices.contains($0) }, "skip outside prepared batch")
+            for (index, error) in skipped {
+                try require(
+                    replicationProfile.transactional && error.outcome == "rolledBack" && error.code == .duplicateKey
+                        && skipPolicy.codes.contains(error.code) && acknowledgedRows[index] == 0,
+                    "skip requires an authorized rolled-back InnoDB group")
             }
             if !skipped.isEmpty { try ensureSkipJournal() }
-            var totals=counters
-            var completed=0, rowCount=0, incomplete=false, next=completedGTIDs
-            for (index,item) in batch.enumerated() {
-                let count=acknowledgedRows[index]
-                try require((0...item.mutations.count).contains(count) && (!incomplete || (count == 0 && skipped[index] == nil)),"batch acknowledgments are not a contiguous prefix")
+            var totals = counters
+            var completed = 0
+            var rowCount = 0
+            var incomplete = false
+            var next = completedGTIDs
+            for (index, item) in batch.enumerated() {
+                let count = acknowledgedRows[index]
+                try require(
+                    (0...item.mutations.count).contains(count)
+                        && (!incomplete || (count == 0 && skipped[index] == nil)),
+                    "batch acknowledgments are not a contiguous prefix")
                 if count == item.mutations.count || skipped[index] != nil {
-                    totals.complete(item.group,rows:count,outcome:skipped[index] == nil ? .applied : .errorSkipped)
-                    completed+=1; rowCount+=count
+                    totals.complete(item.group, rows: count, outcome: skipped[index] == nil ? .applied : .errorSkipped)
+                    completed += 1
+                    rowCount += count
                     try profile("journal.gtid") { try next.include(item.group.gtid!) }
-                } else { incomplete=true }
+                } else {
+                    incomplete = true
+                }
             }
-            let active=completed < pendingBatch.count ? pendingBatch[completed].id : nil
-            let end=completed > 0 ? batch[completed-1].group.end : applied
-            let time=timestamp()
+            let active = completed < pendingBatch.count ? pendingBatch[completed].id : nil
+            let end = completed > 0 ? batch[completed - 1].group.end : applied
+            let time = timestamp()
             try atomic {
-                for (index,item) in batch.enumerated() {
-                    try require(try query("SELECT status FROM groups WHERE gtid=?",[item.id]) == [["PENDING"]]
-                        && number("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='PENDING'",[item.id]) == Int64(item.mutations.count),"batch journal no longer matches preparation")
-                    if let skip=skipped[index] {
-                        try recordSkip(item.group,error:skip,time:time)
-                        try execute("DELETE FROM row_intents WHERE gtid=?",[item.id])
-                        try execute("DELETE FROM groups WHERE gtid=?",[item.id])
+                for (index, item) in batch.enumerated() {
+                    try require(
+                        try query("SELECT status FROM groups WHERE gtid=?", [item.id]) == [["PENDING"]]
+                            && number("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='PENDING'", [item.id])
+                                == Int64(item.mutations.count),
+                        "batch journal no longer matches preparation")
+                    if let skip = skipped[index] {
+                        try recordSkip(item.group, error: skip, time: time)
+                        try execute("DELETE FROM row_intents WHERE gtid=?", [item.id])
+                        try execute("DELETE FROM groups WHERE gtid=?", [item.id])
                     } else if acknowledgedRows[index] > 0 {
-                        try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal<?",[time,item.id,String(acknowledgedRows[index])])
+                        try execute(
+                            "UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal<?",
+                            [time, item.id, String(acknowledgedRows[index])])
                     }
-                    if index < completed && skipped[index] == nil { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
+                    if index < completed && skipped[index] == nil {
+                        try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?", [time, item.id])
+                    }
                 }
                 try saveCounters(totals)
-                if !skipped.isEmpty { try coverSkippedPrefix(next,sequence:sequence+Int64(completed),end:end!,time:time) }
-                try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",[end?.file,end.map{String($0.position)},String(sequence+Int64(completed)),String(transactions+completed),String(rows+rowCount),active,time,String(completed),time])
+                if !skipped.isEmpty {
+                    try coverSkippedPrefix(next, sequence: sequence + Int64(completed), end: end!, time: time)
+                }
+                try execute(
+                    "UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",
+                    [
+                        end?.file, end.map { String($0.position) }, String(sequence + Int64(completed)),
+                        String(transactions + completed), String(rows + rowCount), active, time, String(completed),
+                        time,
+                    ])
             }
-            counters=totals
-            completedGTIDs=next; applied=end; sequence+=Int64(completed); transactions+=completed; rows+=rowCount
+            counters = totals
+            completedGTIDs = next
+            applied = end
+            sequence += Int64(completed)
+            transactions += completed
+            rows += rowCount
             if !skipped.isEmpty {
-                snapshotSequence=sequence
-                for error in skipped.values { skippedTransactionsByCode[error.code.rawValue,default:0] += 1 }
+                snapshotSequence = sequence
+                for error in skipped.values { skippedTransactionsByCode[error.code.rawValue, default: 0] += 1 }
             }
-            if completed > 0 { groupStart=batch[completed-1].relayEnd }
-            pendingGTID=active; pendingSequence=sequence+1
-            pendingBatch=Array(pendingBatch.dropFirst(completed))
-            var remaining=completed
-            while let first=pendingBatchSizes.first, remaining >= first {
-                remaining -= first; pendingBatchSizes.removeFirst()
+            if completed > 0 { groupStart = batch[completed - 1].relayEnd }
+            pendingGTID = active
+            pendingSequence = sequence + 1
+            pendingBatch = Array(pendingBatch.dropFirst(completed))
+            var remaining = completed
+            while let first = pendingBatchSizes.first, remaining >= first {
+                remaining -= first
+                pendingBatchSizes.removeFirst()
             }
             if remaining > 0 { pendingBatchSizes[0] -= remaining }
-            if sequence-snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
+            if sequence - snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
         }
     }
     func begin(_ group: CompleteTransaction) throws {
-        guard let identity = group.gtid else {throw ApplyError("group lacks GTID")}
-        try require(pendingGTID == nil && !completedGTIDs.contains(identity),"duplicate or excluded applied GTID")
-        let id=identity.canonical
+        guard let identity = group.gtid else { throw ApplyError("group lacks GTID") }
+        try require(pendingGTID == nil && !completedGTIDs.contains(identity), "duplicate or excluded applied GTID")
+        let id = identity.canonical
         try timings.measure("relay.sync") { try relay!.synchronize() }
         try atomic {
-            try execute("INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",[String(sequence+1),id,group.start.file,String(group.start.position),String(group.end.position),String(groupStart),String(relayLength),timestamp()])
-            try execute("UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",[id,String(relayLength),timestamp()])
+            try execute(
+                "INSERT INTO groups VALUES(?,?,?,?,?,?,?,'PENDING',?,NULL)",
+                [
+                    String(sequence + 1), id, group.start.file, String(group.start.position),
+                    String(group.end.position), String(groupStart), String(relayLength), timestamp(),
+                ])
+            try execute(
+                "UPDATE state SET active_gtid=?,durable_relay_length=?,updated_at=? WHERE id=1",
+                [id, String(relayLength), timestamp()])
         }
-        pendingGTID=id; pendingSequence=sequence+1
+        pendingGTID = id
+        pendingSequence = sequence + 1
     }
     /// No target intent may exist. Audit (when enabled), coverage, counters and
     /// deletion of temporary group history share one FULL SQLite transaction.
     func skipUnwritten(_ group: CompleteTransaction, error: SkippedApplyError) throws {
-        guard let identity=group.gtid else { throw ApplyError("skip lacks source GTID") }
-        let id=identity.canonical
-        try require(pendingBatch.isEmpty && pendingGTID == id && error.outcome == "notIssued"
-            && skipPolicy.codes.contains(error.code) && error.code != .duplicateKey && error.code != .targetSQL,"skip without matching unwritten group/policy")
-        try require(try query("SELECT sequence,source_file,start_position,end_position,status FROM groups WHERE gtid=?",[id]) == [[String(pendingSequence),group.start.file,String(group.start.position),String(group.end.position),"PENDING"]],"skip differs from journaled group")
-        try require(try number("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[id]) == 0
-            && number("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[id]) == 0,"cannot automatically skip target write intents")
+        guard let identity = group.gtid else { throw ApplyError("skip lacks source GTID") }
+        let id = identity.canonical
+        try require(
+            pendingBatch.isEmpty && pendingGTID == id && error.outcome == "notIssued"
+                && skipPolicy.codes.contains(error.code) && error.code != .duplicateKey && error.code != .targetSQL,
+            "skip without matching unwritten group/policy")
+        try require(
+            try query("SELECT sequence,source_file,start_position,end_position,status FROM groups WHERE gtid=?", [id])
+                == [
+                    [
+                        String(pendingSequence), group.start.file, String(group.start.position),
+                        String(group.end.position), "PENDING",
+                    ]
+                ], "skip differs from journaled group")
+        try require(
+            try number("SELECT COUNT(*) FROM row_intents WHERE gtid=?", [id]) == 0
+                && number("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?", [id]) == 0,
+            "cannot automatically skip target write intents")
         try ensureSkipJournal()
-        var next=completedGTIDs;try next.include(identity)
-        var totals=counters;totals.complete(group,rows:0,outcome:.errorSkipped)
-        let time=timestamp()
+        var next = completedGTIDs
+        try next.include(identity)
+        var totals = counters
+        totals.complete(group, rows: 0, outcome: .errorSkipped)
+        let time = timestamp()
         try atomic {
             try saveCounters(totals)
-            try recordSkip(group,error:error,time:time)
-            try coverSkippedPrefix(next,sequence:pendingSequence,end:group.end,time:time)
-            try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'",[id])
-            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),time,time])
+            try recordSkip(group, error: error, time: time)
+            try coverSkippedPrefix(next, sequence: pendingSequence, end: group.end, time: time)
+            try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'", [id])
+            try execute(
+                "UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",
+                [
+                    group.end.file, String(group.end.position), String(pendingSequence), String(transactions + 1), time,
+                    time,
+                ])
         }
-        completedGTIDs=next;applied=group.end;sequence=pendingSequence;snapshotSequence=sequence
-        counters=totals
-        transactions+=1;skippedTransactionsByCode[error.code.rawValue,default:0]+=1
-        pendingGTID=nil;groupStart=relayLength
+        completedGTIDs = next
+        applied = group.end
+        sequence = pendingSequence
+        snapshotSequence = sequence
+        counters = totals
+        transactions += 1
+        skippedTransactionsByCode[error.code.rawValue, default: 0] += 1
+        pendingGTID = nil
+        groupStart = relayLength
     }
     private func ensureSkipJournal() throws {
         guard !skipJournalReady else { return }
         try execute("CREATE TABLE IF NOT EXISTS error_skip_counts(code TEXT PRIMARY KEY,transactions INTEGER NOT NULL)")
-        try execute("CREATE TABLE IF NOT EXISTS error_skips(gtid TEXT PRIMARY KEY,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,diagnostic_json TEXT NOT NULL,source_sql TEXT,objects_json TEXT NOT NULL,created_at TEXT NOT NULL)")
-        skipJournalReady=true
+        try execute(
+            "CREATE TABLE IF NOT EXISTS error_skips(gtid TEXT PRIMARY KEY,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,diagnostic_json TEXT NOT NULL,source_sql TEXT,objects_json TEXT NOT NULL,created_at TEXT NOT NULL)"
+        )
+        skipJournalReady = true
     }
     private func recordSkip(_ group: CompleteTransaction, error: SkippedApplyError, time: String) throws {
-        try execute("INSERT OR IGNORE INTO error_skip_counts VALUES(?,0)",[error.code.rawValue])
-        try execute("UPDATE error_skip_counts SET transactions=transactions+1 WHERE code=?",[error.code.rawValue])
+        try execute("INSERT OR IGNORE INTO error_skip_counts VALUES(?,0)", [error.code.rawValue])
+        try execute("UPDATE error_skip_counts SET transactions=transactions+1 WHERE code=?", [error.code.rawValue])
         if skipPolicy.recordSkippedTransactions {
-            let diagnostic=String(decoding:try JSONEncoder().encode(error),as:UTF8.self)
-            let sql=group.events.compactMap { event -> String? in
-                if case .query(let query)=event.control { return String(decoding:query.sql,as:UTF8.self) };return nil
-            }.joined(separator:"\n")
-            let objects=Set(group.events.compactMap { event -> String? in
-                guard let database=event.database,let table=event.table else { return nil };return database+"."+table
-            }).sorted()
-            try execute("INSERT INTO error_skips VALUES(?,?,?,?,?,?,?,?)",[group.gtid!.canonical,group.start.file,String(group.start.position),String(group.end.position),diagnostic,sql.isEmpty ? nil : sql,String(decoding:try JSONEncoder().encode(objects),as:UTF8.self),time])
+            let diagnostic = String(decoding: try JSONEncoder().encode(error), as: UTF8.self)
+            let sql = group.events.compactMap { event -> String? in
+                if case .query(let query) = event.control { return String(decoding: query.sql, as: UTF8.self) }
+                return nil
+            }.joined(separator: "\n")
+            let objects = Set(
+                group.events.compactMap { event -> String? in
+                    guard let database = event.database, let table = event.table else { return nil }
+                    return database + "." + table
+                }
+            ).sorted()
+            try execute(
+                "INSERT INTO error_skips VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    group.gtid!.canonical, group.start.file, String(group.start.position), String(group.end.position),
+                    diagnostic, sql.isEmpty ? nil : sql,
+                    String(decoding: try JSONEncoder().encode(objects), as: UTF8.self), time,
+                ])
         }
     }
     private func coverSkippedPrefix(_ next: GTIDSet, sequence: Int64, end: BinlogCoordinate, time: String) throws {
         // Replace the latest covering snapshot, rather than retaining one row
         // per skip. Older normal history remains subject to existing retention.
-        try execute("UPDATE snapshots SET covered_sequence=?,gtids=?,source_file=?,source_position=?,created_at=? WHERE id=(SELECT MAX(id) FROM snapshots)",[String(sequence),next.canonical,end.file,String(end.position),time])
+        try execute(
+            "UPDATE snapshots SET covered_sequence=?,gtids=?,source_file=?,source_position=?,created_at=? WHERE id=(SELECT MAX(id) FROM snapshots)",
+            [String(sequence), next.canonical, end.file, String(end.position), time])
     }
-    func intent(_ ordinal: Int,_ mutation: Mutation) throws {
-        guard let schema = schemas[mutation.table.identity] else {throw ApplyError("mutation lacks discovered schema")}
-        try execute("INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",[pendingGTID,String(ordinal),mutation.eventOffset,String(mutation.rowIndex),String(schema.0),timestamp()])
+    func intent(_ ordinal: Int, _ mutation: Mutation) throws {
+        guard let schema = schemas[mutation.table.identity] else {
+            throw ApplyError("mutation lacks discovered schema")
+        }
+        try execute(
+            "INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",
+            [
+                pendingGTID, String(ordinal), mutation.eventOffset, String(mutation.rowIndex), String(schema.0),
+                timestamp(),
+            ])
     }
-    func rowDone(_ ordinal: Int) throws {try execute("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",[timestamp(),pendingGTID,String(ordinal)])}
-    func complete(_ group: CompleteTransaction,rowCount: Int,ddl: PreparedDDL? = nil,filtered: Bool = false, finalRow: Int? = nil, skippedDDL: SkippedDDL? = nil) throws {
-        try require(pendingBatch.isEmpty,"batched DML requires batch completion")
-        guard let identity=group.gtid,let pendingGTID,pendingGTID==identity.canonical,(rowCount>0 && ddl==nil && !filtered) || (rowCount==0 && ddl != nil && !filtered) || (filtered && rowCount==0 && ddl==nil) else {throw ApplyError("completion without matching pending group")}
+    func rowDone(_ ordinal: Int) throws {
+        try execute(
+            "UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=? AND ordinal=?",
+            [timestamp(), pendingGTID, String(ordinal)])
+    }
+    func complete(
+        _ group: CompleteTransaction, rowCount: Int, ddl: PreparedDDL? = nil, filtered: Bool = false,
+        finalRow: Int? = nil, skippedDDL: SkippedDDL? = nil
+    ) throws {
+        try require(pendingBatch.isEmpty, "batched DML requires batch completion")
+        guard let identity = group.gtid, let pendingGTID, pendingGTID == identity.canonical,
+            (rowCount > 0 && ddl == nil && !filtered) || (rowCount == 0 && ddl != nil && !filtered)
+                || (filtered && rowCount == 0 && ddl == nil)
+        else { throw ApplyError("completion without matching pending group") }
         if let skippedDDL {
-            try require(filtered && group.outcome == .statement && group.events.count == 2,"invalid skipped DDL completion")
-            guard case .query(let query) = group.events[1].control else { throw ApplyError("missing skipped DDL query") }
-            let expected = try DDLPolicy().skippedQuery(query,profile:replicationProfile,tokens:skippedDDL.tokens)
-            try require(expected?.sql == skippedDDL.sql && expected?.name == skippedDDL.name && expected?.reason == skippedDDL.reason,"skipped DDL differs from source query")
+            try require(
+                filtered && group.outcome == .statement && group.events.count == 2, "invalid skipped DDL completion")
+            guard case .query(let query) = group.events[1].control else {
+                throw ApplyError("missing skipped DDL query")
+            }
+            let expected = try DDLPolicy().skippedQuery(query, profile: replicationProfile, tokens: skippedDDL.tokens)
+            try require(
+                expected?.sql == skippedDDL.sql && expected?.name == skippedDDL.name
+                    && expected?.reason == skippedDDL.reason, "skipped DDL differs from source query")
         }
         if filtered {
-            try require(try query("SELECT COUNT(*) FROM row_intents WHERE gtid=?",[pendingGTID]) == [["0"]] && query("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[pendingGTID]) == [["0"]],"filtered completion has target write intents")
+            try require(
+                try query("SELECT COUNT(*) FROM row_intents WHERE gtid=?", [pendingGTID]) == [["0"]]
+                    && query("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?", [pendingGTID]) == [["0"]],
+                "filtered completion has target write intents")
         }
         if let finalRow {
-            try require(rowCount > 0 && ddl == nil && !filtered && finalRow == rowCount-1,
-                        "invalid final row completion")
+            try require(
+                rowCount > 0 && ddl == nil && !filtered && finalRow == rowCount - 1,
+                "invalid final row completion")
         }
         if ddl != nil {
-            try require(group.outcome == .statement && (try number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'")) == 1,"DDL completion without a pending intent")
+            try require(
+                group.outcome == .statement
+                    && (try number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'")) == 1,
+                "DDL completion without a pending intent")
         }
         var newSchemaID: Int64?
-        var additionalIDs: [SQLNameKey:Int64] = [:]
-        var next=completedGTIDs; try next.include(identity)
-        var totals=counters
-        totals.complete(group,rows:rowCount,outcome:skippedDDL != nil ? .policySkipped : (filtered ? .filtered : .applied))
-        let time=timestamp()
+        var additionalIDs: [SQLNameKey: Int64] = [:]
+        var next = completedGTIDs
+        try next.include(identity)
+        var totals = counters
+        totals.complete(
+            group, rows: rowCount, outcome: skippedDDL != nil ? .policySkipped : (filtered ? .filtered : .applied))
+        let time = timestamp()
         try atomic {
             try saveCounters(totals)
             if let skippedDDL {
-                try execute("INSERT INTO ddl_skips VALUES(?,?,?,?,?,?)",[pendingGTID,skippedDDL.name.database,skippedDDL.name.table,skippedDDL.sql,skippedDDL.reason,time])
+                try execute(
+                    "INSERT INTO ddl_skips VALUES(?,?,?,?,?,?)",
+                    [
+                        pendingGTID, skippedDDL.name.database, skippedDDL.name.table, skippedDDL.sql, skippedDDL.reason,
+                        time,
+                    ])
             }
             // Only the last, already acknowledged row is folded into this commit.
             // Its previously committed PENDING intent survives any failure here.
             if let finalRow {
-                try require(try query("SELECT status FROM row_intents WHERE gtid=? AND ordinal=?",[pendingGTID,String(finalRow)]) == [["PENDING"]], "final row has no pending intent")
+                try require(
+                    try query(
+                        "SELECT status FROM row_intents WHERE gtid=? AND ordinal=?", [pendingGTID, String(finalRow)])
+                        == [["PENDING"]], "final row has no pending intent")
                 try rowDone(finalRow)
             }
-            let done = try query("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='DONE'",[pendingGTID])[0][0]
-            try require(Int(done ?? "") == rowCount,"cannot complete group with unfinished row intents")
+            let done = try query("SELECT COUNT(*) FROM row_intents WHERE gtid=? AND status='DONE'", [pendingGTID])[0][0]
+            try require(Int(done ?? "") == rowCount, "cannot complete group with unfinished row intents")
 
             if let ddl {
                 for change in ddl.additional where change.before != change.after {
-                    if let before=change.before,let old=schemas[before.identity] {
-                        try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
+                    if let before = change.before, let old = schemas[before.identity] {
+                        try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?", [time, String(old.0)])
                     }
                 }
-                if ddl.preservesSchema {newSchemaID=ddl.statement.name.flatMap{schemas[$0.identity]?.0}}
-                else {
-                    if let name=ddl.statement.name,let old=schemas[name.identity] {
-                        try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?",[time,String(old.0)])
+                if ddl.preservesSchema {
+                    newSchemaID = ddl.statement.name.flatMap { schemas[$0.identity]?.0 }
+                } else {
+                    if let name = ddl.statement.name, let old = schemas[name.identity] {
+                        try execute("UPDATE schemas SET current=0,retired_at=? WHERE id=?", [time, String(old.0)])
                     }
-                    if let after=ddl.after {newSchemaID=try insertSchema(after,event:group.events[1],coordinate:group.end)}
+                    if let after = ddl.after {
+                        newSchemaID = try insertSchema(after, event: group.events[1], coordinate: group.end)
+                    }
                 }
                 // Retire all old names before inserting any new names: an
                 // atomic multi-table rename can replace or swap current entries.
                 for change in ddl.additional where change.before != change.after {
-                    if let after=change.after {additionalIDs[after.identity]=try insertSchema(after,event:group.events[1],coordinate:group.end)}
+                    if let after = change.after {
+                        additionalIDs[after.identity] = try insertSchema(
+                            after, event: group.events[1], coordinate: group.end)
+                    }
                 }
-                try execute("UPDATE ddl_intents SET status='DONE',completed_at=?,after_schema_id=? WHERE gtid=?",[time,newSchemaID.map(String.init),pendingGTID])
+                try execute(
+                    "UPDATE ddl_intents SET status='DONE',completed_at=?,after_schema_id=? WHERE gtid=?",
+                    [time, newSchemaID.map(String.init), pendingGTID])
             }
-            try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,pendingGTID])
-            try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,ddl_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),String(rows+rowCount),String(ddlApplied+(ddl == nil ? 0 : 1)),time,time])
+            try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?", [time, pendingGTID])
+            try execute(
+                "UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,ddl_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",
+                [
+                    group.end.file, String(group.end.position), String(pendingSequence), String(transactions + 1),
+                    String(rows + rowCount), String(ddlApplied + (ddl == nil ? 0 : 1)), time, time,
+                ])
         }
         if let ddl {
             for change in ddl.additional where change.before != change.after {
-                if let before=change.before {schemas.removeValue(forKey:before.identity)}
+                if let before = change.before { schemas.removeValue(forKey: before.identity) }
             }
             for change in ddl.additional where change.before != change.after {
-                if let after=change.after,let id=additionalIDs[after.identity] {schemas[after.identity]=(id,after)}
+                if let after = change.after, let id = additionalIDs[after.identity] {
+                    schemas[after.identity] = (id, after)
+                }
             }
-            if let name=ddl.statement.name {schemas.removeValue(forKey:name.identity)}
-            if let after=ddl.after,let newSchemaID {schemas[after.identity]=(newSchemaID,after)}
-            ddlApplied+=1
+            if let name = ddl.statement.name { schemas.removeValue(forKey: name.identity) }
+            if let after = ddl.after, let newSchemaID { schemas[after.identity] = (newSchemaID, after) }
+            ddlApplied += 1
         }
-        counters=totals
-        completedGTIDs=next; applied=group.end; transactions+=1; rows+=rowCount; sequence=pendingSequence
-        self.pendingGTID=nil; groupStart=relayLength
-        if sequence-snapshotSequence >= policy.snapshotEveryTransactions {try snapshot()}
+        counters = totals
+        completedGTIDs = next
+        applied = group.end
+        transactions += 1
+        rows += rowCount
+        sequence = pendingSequence
+        self.pendingGTID = nil
+        groupStart = relayLength
+        if sequence - snapshotSequence >= policy.snapshotEveryTransactions { try snapshot() }
     }
     func archiveValidationStopped() throws {
         if targetUUID == nil {
@@ -891,60 +1301,78 @@ final class StateStore {
         try stopped()
     }
     func stopped() throws {
-        try require(pendingGTID == nil,"cannot stop cleanly with a pending apply group")
+        try require(pendingGTID == nil, "cannot stop cleanly with a pending apply group")
         try timings.measure("relay.sync") { try relay!.synchronize() }
-        if sequence != snapshotSequence {try snapshot()}
-        try execute("UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
+        if sequence != snapshotSequence { try snapshot() }
+        try execute(
+            "UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",
+            [String(relayLength), timestamp()])
         try checkpoint()
     }
     /// In-process reconnect/drain only. Never resolve uncertain target writes
     /// or reopen crashed state here. Retain the journaled, fully applied prefix.
     func discardUnappliedCapture() throws {
-        try require(pendingGTID == nil && pendingBatch.isEmpty,"cannot reconnect with pending target intents")
-        try require(try number("SELECT COUNT(*) FROM groups WHERE status='PENDING'") == 0
-                    && number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'") == 0,"cannot reconnect with unresolved journal entries")
-        try require(groupStart <= relayLength,"invalid applied relay boundary")
-        try relay!.truncate(atOffset:groupStart)
-        relayLength=groupStart
-        try relay!.seek(toOffset:groupStart)
+        try require(pendingGTID == nil && pendingBatch.isEmpty, "cannot reconnect with pending target intents")
+        try require(
+            try number("SELECT COUNT(*) FROM groups WHERE status='PENDING'") == 0
+                && number("SELECT COUNT(*) FROM ddl_intents WHERE status='PENDING'") == 0,
+            "cannot reconnect with unresolved journal entries")
+        try require(groupStart <= relayLength, "invalid applied relay boundary")
+        try relay!.truncate(atOffset: groupStart)
+        relayLength = groupStart
+        try relay!.seek(toOffset: groupStart)
         try timings.measure("relay.sync") { try relay!.synchronize() }
-        try execute("UPDATE state SET durable_relay_length=?,updated_at=? WHERE id=1",[String(relayLength),timestamp()])
+        try execute(
+            "UPDATE state SET durable_relay_length=?,updated_at=? WHERE id=1", [String(relayLength), timestamp()])
     }
     /// Caller must prove no mutation was issued for any remaining group.
     /// Never used on process restart, ambiguous SQL, or a partially applied group.
     func discardUnwrittenPending() throws {
-        try require(try number("SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND gtid IN (SELECT gtid FROM groups WHERE status='PENDING')") == 0,
-                    "cannot discard a partially acknowledged group")
+        try require(
+            try number(
+                "SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND gtid IN (SELECT gtid FROM groups WHERE status='PENDING')"
+            ) == 0,
+            "cannot discard a partially acknowledged group")
         try atomic {
             try execute("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
             try execute("DELETE FROM ddl_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
             try execute("DELETE FROM ddl_details WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
             try execute("DELETE FROM groups WHERE status='PENDING'")
-            try execute("UPDATE state SET active_gtid=NULL,updated_at=? WHERE id=1",[timestamp()])
+            try execute("UPDATE state SET active_gtid=NULL,updated_at=? WHERE id=1", [timestamp()])
         }
-        pendingGTID=nil; pendingBatch=[]; pendingBatchSizes=[]
+        pendingGTID = nil
+        pendingBatch = []
+        pendingBatchSizes = []
     }
     func recordTargetFailure(_ diagnostic: TargetFailureDiagnostic) throws {
-        let data=try JSONEncoder().encode(diagnostic)
+        let data = try JSONEncoder().encode(diagnostic)
         // Failure-only evidence: no extra SQLite commits in the apply hot path.
-        try execute("CREATE TABLE IF NOT EXISTS target_failure (id INTEGER PRIMARY KEY CHECK(id=1),diagnostic_json TEXT NOT NULL,created_at TEXT NOT NULL)")
-        try execute("INSERT OR REPLACE INTO target_failure VALUES(1,?,?)",[String(decoding:data,as:UTF8.self),timestamp()])
+        try execute(
+            "CREATE TABLE IF NOT EXISTS target_failure (id INTEGER PRIMARY KEY CHECK(id=1),diagnostic_json TEXT NOT NULL,created_at TEXT NOT NULL)"
+        )
+        try execute(
+            "INSERT OR REPLACE INTO target_failure VALUES(1,?,?)", [String(decoding: data, as: UTF8.self), timestamp()])
     }
     func block(_ reason: String) throws {
         try timings.measure("relay.sync") { try relay!.synchronize() }
         // Best effort within existing page/WAL caps. Do not attempt retention or
         // a new large snapshot while recording a storage-pressure diagnostic.
-        maintenance=true; defer {maintenance=false}
-        try execute("UPDATE state SET lifecycle='BLOCKED',diagnostic=?,durable_relay_length=?,updated_at=? WHERE id=1",[String(reason.prefix(1024)),String(relayLength),timestamp()])
+        maintenance = true
+        defer { maintenance = false }
+        try execute(
+            "UPDATE state SET lifecycle='BLOCKED',diagnostic=?,durable_relay_length=?,updated_at=? WHERE id=1",
+            [String(reason.prefix(1024)), String(relayLength), timestamp()])
         try checkpoint()
     }
     func durableAppliedGTIDs() throws -> String {
         let latest = try query("SELECT covered_sequence,gtids FROM snapshots ORDER BY id DESC LIMIT 1")[0]
         var set = try GTIDSet(latest[1]!)
-        for row in try query("SELECT gtid FROM groups WHERE status='APPLIED' AND sequence>? ORDER BY sequence",[latest[0]]) {
-            try set.include(SourceGTID(parsing:row[0]!))
+        for row in try query(
+            "SELECT gtid FROM groups WHERE status='APPLIED' AND sequence>? ORDER BY sequence", [latest[0]])
+        {
+            try set.include(SourceGTID(parsing: row[0]!))
         }
         return set.canonical
     }
-    var gtids: String {completedGTIDs.canonical}
+    var gtids: String { completedGTIDs.canonical }
 }

@@ -1,3 +1,7 @@
+Current behavior: beta.6 adds wildcard includes and pins both filter lists in state.
+See [the current filter rules](../docs/SUPPORT.md#include-and-ignore-filters).
+The design below records the original ignore-only implementation.
+
 # Wildcard table exclusions
 
 The optional top-level apply configuration field `replicateWildIgnoreTable`

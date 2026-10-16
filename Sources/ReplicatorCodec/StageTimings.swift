@@ -20,12 +20,14 @@ public final class StageTimings {
     public var snapshot: [String: Sample] { samples }
     /// Import a worker's final snapshot only after that worker has joined.
     /// Times on separate workers overlap and are not children of this worker.
-    public func merge(_ other: [String:Sample]) {
-        for (name,value) in other {
+    public func merge(_ other: [String: Sample]) {
+        for (name, value) in other {
             var sample = samples[name] ?? Sample()
-            sample.count += value.count; sample.failures += value.failures
-            sample.seconds += value.seconds; sample.selfSeconds += value.selfSeconds
-            sample.maximumSeconds = max(sample.maximumSeconds,value.maximumSeconds)
+            sample.count += value.count
+            sample.failures += value.failures
+            sample.seconds += value.seconds
+            sample.selfSeconds += value.selfSeconds
+            sample.maximumSeconds = max(sample.maximumSeconds, value.maximumSeconds)
             samples[name] = sample
         }
     }
@@ -33,13 +35,15 @@ public final class StageTimings {
     /// Native stages run at most once per feed, so their duration is also max.
     func recordNative(_ stage: String, count: UInt64, failures: UInt64, nanoseconds: UInt64) {
         guard count != 0 else { return }
-        let seconds=Double(nanoseconds)/1_000_000_000
-        var sample=samples[stage] ?? Sample()
-        sample.count += count; sample.failures += failures
-        sample.seconds += seconds; sample.selfSeconds += seconds
-        sample.maximumSeconds=max(sample.maximumSeconds,seconds)
-        samples[stage]=sample
-        if !childNanoseconds.isEmpty { childNanoseconds[childNanoseconds.count-1] += nanoseconds }
+        let seconds = Double(nanoseconds) / 1_000_000_000
+        var sample = samples[stage] ?? Sample()
+        sample.count += count
+        sample.failures += failures
+        sample.seconds += seconds
+        sample.selfSeconds += seconds
+        sample.maximumSeconds = max(sample.maximumSeconds, seconds)
+        samples[stage] = sample
+        if !childNanoseconds.isEmpty { childNanoseconds[childNanoseconds.count - 1] += nanoseconds }
     }
     public func measure<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
         let start = clock()
@@ -48,13 +52,15 @@ public final class StageTimings {
         defer {
             let nanoseconds = clock() - start
             let children = childNanoseconds.removeLast()
-            if !childNanoseconds.isEmpty { childNanoseconds[childNanoseconds.count-1] += nanoseconds }
+            if !childNanoseconds.isEmpty { childNanoseconds[childNanoseconds.count - 1] += nanoseconds }
             let elapsed = Double(nanoseconds) / 1_000_000_000
             var sample = samples[stage] ?? Sample()
-            sample.count += 1; sample.failures += failed ? 1 : 0
-            sample.seconds += elapsed; sample.maximumSeconds = max(sample.maximumSeconds, elapsed)
+            sample.count += 1
+            sample.failures += failed ? 1 : 0
+            sample.seconds += elapsed
+            sample.maximumSeconds = max(sample.maximumSeconds, elapsed)
             // Native and Swift clocks can round at different resolutions.
-            sample.selfSeconds += Double(nanoseconds >= children ? nanoseconds-children : 0) / 1_000_000_000
+            sample.selfSeconds += Double(nanoseconds >= children ? nanoseconds - children : 0) / 1_000_000_000
             samples[stage] = sample
         }
         let result = try body()

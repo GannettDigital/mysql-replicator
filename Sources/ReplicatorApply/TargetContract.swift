@@ -27,10 +27,16 @@ extension MySQL57TargetContract {
     func configureDDL(_ target: TargetSession, context: QuerySessionContext) throws {}
     func ddlSQLMode(_ mode: UInt64) -> UInt64 { mode }
     func defaultUTF8MB4Collation(_ target: TargetSession) throws -> String? {
-        try target.scalar("SELECT DEFAULT_COLLATE_NAME AS v FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME='utf8mb4'")
+        try target.scalar(
+            "SELECT DEFAULT_COLLATE_NAME AS v FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME='utf8mb4'"
+        )
     }
-    func columnDefault(_ value: String?, type: String) throws -> String? { try TargetColumnMetadata.defaultValue(value,type:type,mysql84:false) }
-    func columnExtra(_ value: String?, defaultValue: String?, type: String) -> String? { value.flatMap { $0.isEmpty ? nil : $0 } }
+    func columnDefault(_ value: String?, type: String) throws -> String? {
+        try TargetColumnMetadata.defaultValue(value, type: type, mysql84: false)
+    }
+    func columnExtra(_ value: String?, defaultValue: String?, type: String) -> String? {
+        value.flatMap { $0.isEmpty ? nil : $0 }
+    }
 }
 
 struct MySQL57MyISAMContract: MySQL57TargetContract {
@@ -47,21 +53,21 @@ struct MySQL84InnoDBContract: InnoDBTargetContract {
     func ddlSQLMode(_ mode: UInt64) -> UInt64 {
         // MySQL 8.4 system_variables.h MODE_IGNORED_MASK and
         // Query_log_event::do_apply_event discard these obsolete 5.7 bits.
-        mode & ~UInt64(0x1003ff00)
+        mode & ~UInt64(0x1003_ff00)
     }
     func defaultUTF8MB4Collation(_ target: TargetSession) throws -> String? {
         try target.scalar("SELECT @@SESSION.default_collation_for_utf8mb4 AS v")
     }
     func columnDefault(_ value: String?, type: String) throws -> String? {
-        try TargetColumnMetadata.defaultValue(value,type:type,mysql84:true)
+        try TargetColumnMetadata.defaultValue(value, type: type, mysql84: true)
     }
     func columnExtra(_ value: String?, defaultValue: String?, type: String) -> String? {
-        TargetColumnMetadata.extra(value,defaultValue:defaultValue,type:type)
+        TargetColumnMetadata.extra(value, defaultValue: defaultValue, type: type)
     }
     func configureDDL(_ target: TargetSession, context: QuerySessionContext) throws {
         // Native 8.4 uses general_ci for 5.7 events without Q_DEFAULT_COLLATION.
         // This preserves source semantics; it does not translate collations.
-        try require(context.defaultUTF8MB4Collation == 45,"unexpected 5.7 default utf8mb4 collation")
+        try require(context.defaultUTF8MB4Collation == 45, "unexpected 5.7 default utf8mb4 collation")
         _ = try target.query("SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci")
     }
 }
@@ -76,9 +82,11 @@ extension InnoDBTargetContract {
     func configure(_ target: TargetSession) throws {
         // Start from a clean session. The shared GTID adapter assigns explicit
         // source identities only when target.preserveSourceGTIDs is true.
-        try require(try target.scalar("SELECT @@SESSION.GTID_NEXT AS v") == "AUTOMATIC","target session must start with GTID_NEXT=AUTOMATIC")
+        try require(
+            try target.scalar("SELECT @@SESSION.GTID_NEXT AS v") == "AUTOMATIC",
+            "target session must start with GTID_NEXT=AUTOMATIC")
         _ = try target.query("SET SESSION foreign_key_checks=1,unique_checks=1")
-        if let sql = NativeReplicationRules(profile:target.config.replicationProfile).foreignKeySessionSQL {
+        if let sql = NativeReplicationRules(profile: target.config.replicationProfile).foreignKeySessionSQL {
             _ = try target.query(sql)
         }
     }

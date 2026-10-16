@@ -12,15 +12,20 @@ public struct ApplyError: Error, CustomStringConvertible {
     public let sqlState: String?
     public var description: String { code.map { "[\($0.rawValue)] \(message)" } ?? message }
     public init(_ message: String, code: ApplyErrorCode? = nil, mysqlErrorNumber: Int? = nil, sqlState: String? = nil) {
-        self.message=message;self.code=code;self.mysqlErrorNumber=mysqlErrorNumber;self.sqlState=sqlState
+        self.message = message
+        self.code = code
+        self.mysqlErrorNumber = mysqlErrorNumber
+        self.sqlState = sqlState
     }
 }
 func require(_ condition: @autoclosure () throws -> Bool, _ message: String, code: ApplyErrorCode? = nil) throws {
-    if try !condition() { throw ApplyError(message,code:code) }
+    if try !condition() { throw ApplyError(message, code: code) }
 }
 func quoted(_ name: String) throws -> String {
-    try require(!name.isEmpty && name.unicodeScalars.count <= 64 && !name.contains("\0") && name.unicodeScalars.allSatisfy { $0.value <= 0xffff }, "invalid SQL identifier")
-    return "`" + name.replacingOccurrences(of:"`",with:"``") + "`"
+    try require(
+        !name.isEmpty && name.unicodeScalars.count <= 64 && !name.contains("\0")
+            && name.unicodeScalars.allSatisfy { $0.value <= 0xffff }, "invalid SQL identifier")
+    return "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
 }
 public struct ApplyColumn: Codable, Equatable {
     public var name: String
@@ -44,77 +49,114 @@ public struct ApplyColumn: Codable, Equatable {
     /// Parser-only source connection bytes. Cleared before a schema is saved.
     var inputChoiceBytes: [Data]? = nil
     var inputDefaultBytes: Data? = nil
-    public static func == (lhs:Self,rhs:Self) -> Bool {
+    public static func == (lhs: Self, rhs: Self) -> Bool {
         // Swift String equality merges canonically equivalent Unicode. MySQL
         // binary collations and encoded label metadata do not merge those bytes.
-        func same(_ left:String?,_ right:String?) -> Bool {
-            switch (left,right) {
-            case (nil,nil): return true
-            case (.some(let a),.some(let b)): return a.utf8.elementsEqual(b.utf8)
+        func same(_ left: String?, _ right: String?) -> Bool {
+            switch (left, right) {
+            case (nil, nil): return true
+            case (.some(let a), .some(let b)): return a.utf8.elementsEqual(b.utf8)
             default: return false
             }
         }
-        return same(lhs.name,rhs.name) && same(lhs.type,rhs.type)
+        return same(lhs.name, rhs.name) && same(lhs.type, rhs.type)
             && lhs.nullable == rhs.nullable && lhs.collation == rhs.collation
             && lhs.spatialReferenceID == rhs.spatialReferenceID
-            && lhs.characterSet == rhs.characterSet && same(lhs.defaultValue,rhs.defaultValue)
-            && same(lhs.defaultExpression,rhs.defaultExpression)
-            && lhs.extra == rhs.extra && same(lhs.generationExpression,rhs.generationExpression)
-            && lhs.choiceLabels == rhs.choiceLabels && lhs.choiceDefaultBytes == rhs.choiceDefaultBytes && lhs.choiceDefaultOrdinal == rhs.choiceDefaultOrdinal
+            && lhs.characterSet == rhs.characterSet && same(lhs.defaultValue, rhs.defaultValue)
+            && same(lhs.defaultExpression, rhs.defaultExpression)
+            && lhs.extra == rhs.extra && same(lhs.generationExpression, rhs.generationExpression)
+            && lhs.choiceLabels == rhs.choiceLabels && lhs.choiceDefaultBytes == rhs.choiceDefaultBytes
+            && lhs.choiceDefaultOrdinal == rhs.choiceDefaultOrdinal
             && lhs.binaryDefaultBytes == rhs.binaryDefaultBytes
             && lhs.numericDefaultLiteral == rhs.numericDefaultLiteral
             && lhs.inputChoiceBytes == rhs.inputChoiceBytes && lhs.inputDefaultBytes == rhs.inputDefaultBytes
     }
-    var hasDefaultValue: Bool { defaultExpression != nil || defaultValue != nil || choiceDefaultBytes != nil || binaryDefaultBytes != nil }
+    var hasDefaultValue: Bool {
+        defaultExpression != nil || defaultValue != nil || choiceDefaultBytes != nil || binaryDefaultBytes != nil
+    }
     var isGenerated: Bool { generationExpression != nil }
     var interpretation: ColumnInterpretation { (try? DMLColumnType(self).interpretation) ?? .signed }
     var width: Int? {
-        guard let parsed=try? DMLColumnType(self) else { return nil }
+        guard let parsed = try? DMLColumnType(self) else { return nil }
         if parsed.base == "varchar" || parsed.base == "varbinary" { return parsed.arguments[0] }
         return parsed.maximumBytes
     }
     func validate() throws {
         _ = try quoted(name)
         let parsed = try DMLColumnType(self)
-        try require(spatialReferenceID == nil || parsed.isSpatial,"SRID requires a spatial column")
+        try require(spatialReferenceID == nil || parsed.isSpatial, "SRID requires a spatial column")
         if let expression = generationExpression {
-            try require(["VIRTUAL GENERATED","STORED GENERATED"].contains(extra ?? "") && !hasDefaultValue,"invalid generated column metadata")
+            try require(
+                ["VIRTUAL GENERATED", "STORED GENERATED"].contains(extra ?? "") && !hasDefaultValue,
+                "invalid generated column metadata")
             _ = try DDLExpression.canonical(expression)
         } else {
-            try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
+            try require(
+                extra == nil || extra == "auto_increment"
+                    || ((parsed.base == "datetime" || parsed.base == "timestamp")
+                        && extra!.range(
+                            of: #"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#, options: .regularExpression) != nil),
+                "unsupported column EXTRA attribute")
         }
-        try require(inputChoiceBytes == nil && inputDefaultBytes == nil,"unresolved SQL literal bytes")
-        try require(numericDefaultLiteral == nil,"unresolved native default literal")
-        if let bytes=binaryDefaultBytes {
-            try require(["binary","varbinary"].contains(parsed.base) && defaultValue == nil,"invalid binary default metadata")
+        try require(inputChoiceBytes == nil && inputDefaultBytes == nil, "unresolved SQL literal bytes")
+        try require(numericDefaultLiteral == nil, "unresolved native default literal")
+        if let bytes = binaryDefaultBytes {
+            try require(
+                ["binary", "varbinary"].contains(parsed.base) && defaultValue == nil, "invalid binary default metadata")
             try parsed.validate(.binary(bytes))
         }
-        if choiceDefaultBytes != nil { try require(parsed.isChoice && parsed.characterSet == "binary" && defaultValue == nil,"invalid binary choice default metadata") }
+        if choiceDefaultBytes != nil {
+            try require(
+                parsed.isChoice && parsed.characterSet == "binary" && defaultValue == nil,
+                "invalid binary choice default metadata")
+        }
         if let ordinal = choiceDefaultOrdinal {
-            try require(parsed.isChoice && hasDefaultValue,"invalid ENUM/SET default metadata")
+            try require(parsed.isChoice && hasDefaultValue, "invalid ENUM/SET default metadata")
             try parsed.validate(.unsigned(ordinal))
         }
-        if let expression=defaultExpression {
-            try require(defaultValue == nil && binaryDefaultBytes == nil && choiceDefaultBytes == nil,"ambiguous default metadata")
+        if let expression = defaultExpression {
+            try require(
+                defaultValue == nil && binaryDefaultBytes == nil && choiceDefaultBytes == nil,
+                "ambiguous default metadata")
             _ = try DDLExpression.canonical(expression)
         }
         if parsed.base == "json" || parsed.isSpatial {
-            try require(!hasDefaultValue || defaultExpression != nil,"JSON/spatial non-NULL defaults require a parenthesized expression on MySQL 8.0.13 or later")
+            try require(
+                !hasDefaultValue || defaultExpression != nil,
+                "JSON/spatial non-NULL defaults require a parenthesized expression on MySQL 8.0.13 or later")
         }
         // 5.7 permits FLOAT/DOUBLE AUTO_INCREMENT. The 8.4 server rejects
         // that DDL itself. Row writes always retain the source's explicit key.
-        if extra == "auto_increment" { try require((parsed.integerBits != nil || parsed.floatingWidth != nil) && !nullable,"invalid auto-increment column") }
+        if extra == "auto_increment" {
+            try require(
+                (parsed.integerBits != nil || parsed.floatingWidth != nil) && !nullable, "invalid auto-increment column"
+            )
+        }
         if parsed.isText {
-            guard let encoding=(parsed.isChoice && collation == "binary" ? CharacterSetRegistry.collation(id:63) : CharacterSetRegistry.columnCollation(named:collation ?? "")) else { throw ApplyError("unsupported text collation") }
-            try require(characterSet == nil || CharacterSetRegistry.canonicalCharset(characterSet!) == encoding.characterSet,"column charset/collation mismatch")
-            if parsed.isChoice && !["utf8mb4","utf8mb3"].contains(encoding.characterSet) {
-                try require(choiceLabels != nil,"non-UTF8 ENUM/SET requires exact encoded label metadata")
+            guard
+                let encoding =
+                    (parsed.isChoice && collation == "binary"
+                        ? CharacterSetRegistry.collation(id: 63)
+                        : CharacterSetRegistry.columnCollation(named: collation ?? ""))
+            else { throw ApplyError("unsupported text collation") }
+            try require(
+                characterSet == nil || CharacterSetRegistry.canonicalCharset(characterSet!) == encoding.characterSet,
+                "column charset/collation mismatch")
+            if parsed.isChoice && !["utf8mb4", "utf8mb3"].contains(encoding.characterSet) {
+                try require(choiceLabels != nil, "non-UTF8 ENUM/SET requires exact encoded label metadata")
             }
-            if parsed.base == "varchar" { try require(parsed.maximumBytes! <= 65535,"VARCHAR byte width exceeds native limit") }
-        } else { try require(collation == nil && characterSet == nil, "encoding on non-text column") }
+            if parsed.base == "varchar" {
+                try require(parsed.maximumBytes! <= 65535, "VARCHAR byte width exceeds native limit")
+            }
+        } else {
+            try require(collation == nil && characterSet == nil, "encoding on non-text column")
+        }
     }
     func validate(_ value: DecodedValue) throws {
-        if value == .null { try require(nullable, "NULL in nonnullable column"); return }
+        if value == .null {
+            try require(nullable, "NULL in nonnullable column")
+            return
+        }
         try DMLColumnType(self).validate(value)
     }
 }
@@ -134,19 +176,27 @@ public struct ApplyIndex: Codable, Equatable {
     /// Parser-only; resolved against the table's existing index names.
     var implicitName: Bool? = nil
     var implicitNameByteLimit: Int? = nil
-    func resolvingName(among indexes:[ApplyIndex]) throws -> ApplyIndex {
+    func resolvingName(among indexes: [ApplyIndex]) throws -> ApplyIndex {
         guard implicitName == true else { return self }
-        var candidate=name
-        if SQLIdentifier.equal(candidate,"PRIMARY") || indexes.contains(where:{SQLIdentifier.equal($0.name,candidate)}) {
-            let bytes=Data(name.utf8.prefix(implicitNameByteLimit ?? 30))
-            guard let base=String(data:bytes,encoding:.utf8) else {throw ApplyError("native target index-name truncation splits a UTF-8 character; use an explicit index name")}
-            candidate="not_specified"
+        var candidate = name
+        if SQLIdentifier.equal(candidate, "PRIMARY")
+            || indexes.contains(where: { SQLIdentifier.equal($0.name, candidate) })
+        {
+            let bytes = Data(name.utf8.prefix(implicitNameByteLimit ?? 30))
+            guard let base = String(data: bytes, encoding: .utf8) else {
+                throw ApplyError(
+                    "native target index-name truncation splits a UTF-8 character; use an explicit index name")
+            }
+            candidate = "not_specified"
             for suffix in 2..<100 {
-                let attempt=base+"_"+String(suffix)
-                if !indexes.contains(where:{SQLIdentifier.equal($0.name,attempt)}) {candidate=attempt;break}
+                let attempt = base + "_" + String(suffix)
+                if !indexes.contains(where: { SQLIdentifier.equal($0.name, attempt) }) {
+                    candidate = attempt
+                    break
+                }
             }
         }
-        return ApplyIndex(name:candidate,unique:unique,parts:parts,type:type,parser:parser,visible:visible)
+        return ApplyIndex(name: candidate, unique: unique, parts: parts, type: type, parser: parser, visible: visible)
     }
 
 }
@@ -166,114 +216,204 @@ public struct ApplyTable: Codable, Equatable {
     public var foreignKeys: [ApplyForeignKey] = []
     let identity: SQLNameKey
     var savedRowIdentity: RowIdentity? = nil
-    var keyIndexes: [Int] { (rowIdentity?.columns ?? []).map { name in columns.firstIndex { SQLIdentifier.equal($0.name,name) }! } }
-    var keyIndex: Int { keyIndexes[0] }
-    init(database: String, table: String, columns: [ApplyColumn], primaryKey: String,
-         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
-        self.init(database:database,table:table,columns:columns,primaryKeyColumns:[primaryKey],
-                  defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions,foreignKeys:foreignKeys)
+    var keyIndexes: [Int] {
+        (rowIdentity?.columns ?? []).map { name in columns.firstIndex { SQLIdentifier.equal($0.name, name) }! }
     }
-    init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String], primaryKeyParts: [ApplyIndexPart]? = nil,
-         defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
-        self.database=database; self.table=table; self.identity = .table(database,table); self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
-        self.primaryKeyParts=primaryKeyParts
-        self.defaultCharacterSet=defaultCharacterSet; self.defaultCollation=defaultCollation; self.secondaryIndexes=secondaryIndexes
-        self.partitions=partitions; self.foreignKeys=foreignKeys
+    var keyIndex: Int { keyIndexes[0] }
+    init(
+        database: String, table: String, columns: [ApplyColumn], primaryKey: String,
+        defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [],
+        partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []
+    ) {
+        self.init(
+            database: database, table: table, columns: columns, primaryKeyColumns: [primaryKey],
+            defaultCharacterSet: defaultCharacterSet, defaultCollation: defaultCollation,
+            secondaryIndexes: secondaryIndexes, partitions: partitions, foreignKeys: foreignKeys)
+    }
+    init(
+        database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String],
+        primaryKeyParts: [ApplyIndexPart]? = nil,
+        defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [],
+        partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []
+    ) {
+        self.database = database
+        self.table = table
+        self.identity = .table(database, table)
+        self.columns = columns
+        self.primaryKeyColumns = primaryKeyColumns
+        self.primaryKeyParts = primaryKeyParts
+        self.defaultCharacterSet = defaultCharacterSet
+        self.defaultCollation = defaultCollation
+        self.secondaryIndexes = secondaryIndexes
+        self.partitions = partitions
+        self.foreignKeys = foreignKeys
     }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
-    func validate(requireRowIdentity:Bool = true) throws {
+    func validate(requireRowIdentity: Bool = true) throws {
         _ = try sqlName
-        try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map { SQLIdentifier.key($0.name) }).count == columns.count,"invalid column manifest")
+        try require(
+            !columns.isEmpty && columns.count <= 256
+                && Set(columns.map { SQLIdentifier.key($0.name) }).count == columns.count, "invalid column manifest")
         for c in columns { try c.validate() }
-        try require(foreignKeys.count <= 256,"foreign-key relationship limit exceeded")
+        try require(foreignKeys.count <= 256, "foreign-key relationship limit exceeded")
         for key in foreignKeys { try key.validate() }
-        try require(partitions.count <= 8192 && Set(partitions.map { SQLIdentifier.key($0.name) }).count == partitions.count,"invalid partition manifest")
+        try require(
+            partitions.count <= 8192 && Set(partitions.map { SQLIdentifier.key($0.name) }).count == partitions.count,
+            "invalid partition manifest")
         for partition in partitions { try partition.validate() }
-        let partitionNames=partitions.flatMap { [$0.name]+($0.subpartitions ?? []).map(\.name) }
-        let leaves=partitions.reduce(0) { $0+($1.subpartitions?.count ?? 1) }
-        try require(leaves <= 8192 && Set(partitionNames.map(SQLIdentifier.key)).count == partitionNames.count,"duplicate or excessive partitions/subpartitions")
-        if let first=partitions.first {
-            try require(partitions.allSatisfy { $0.method == first.method && $0.expression == first.expression && $0.keyAlgorithm == first.keyAlgorithm && $0.subpartitions?.count == first.subpartitions?.count },"inconsistent partition methods or subpartition counts")
-            if let child=first.subpartitions?.first {
-                try require(partitions.flatMap { $0.subpartitions ?? [] }.allSatisfy { $0.method == child.method && $0.expression == child.expression && $0.keyAlgorithm == child.keyAlgorithm },"inconsistent subpartition methods")
+        let partitionNames = partitions.flatMap { [$0.name] + ($0.subpartitions ?? []).map(\.name) }
+        let leaves = partitions.reduce(0) { $0 + ($1.subpartitions?.count ?? 1) }
+        try require(
+            leaves <= 8192 && Set(partitionNames.map(SQLIdentifier.key)).count == partitionNames.count,
+            "duplicate or excessive partitions/subpartitions")
+        if let first = partitions.first {
+            try require(
+                partitions.allSatisfy {
+                    $0.method == first.method && $0.expression == first.expression
+                        && $0.keyAlgorithm == first.keyAlgorithm
+                        && $0.subpartitions?.count == first.subpartitions?.count
+                }, "inconsistent partition methods or subpartition counts")
+            if let child = first.subpartitions?.first {
+                try require(
+                    partitions.flatMap { $0.subpartitions ?? [] }.allSatisfy {
+                        $0.method == child.method && $0.expression == child.expression
+                            && $0.keyAlgorithm == child.keyAlgorithm
+                    }, "inconsistent subpartition methods")
             }
         }
-        try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map { SQLIdentifier.key($0.name) }).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
+        try require(
+            secondaryIndexes.count <= 63
+                && Set(secondaryIndexes.map { SQLIdentifier.key($0.name) }).count == secondaryIndexes.count,
+            "duplicate or excessive secondary indexes")
         for key in secondaryIndexes {
             _ = try quoted(key.name)
-            try require(key.implicitName == nil,"unresolved index name")
-            try require(!SQLIdentifier.equal(key.name,"PRIMARY") && ["BTREE","SPATIAL","FULLTEXT"].contains(key.type) && (1...16).contains(key.parts.count),"unsupported secondary index")
-            if let parser=key.parser { _ = try quoted(parser);try require(key.type == "FULLTEXT","parser requires FULLTEXT index") }
+            try require(key.implicitName == nil, "unresolved index name")
+            try require(
+                !SQLIdentifier.equal(key.name, "PRIMARY") && ["BTREE", "SPATIAL", "FULLTEXT"].contains(key.type)
+                    && (1...16).contains(key.parts.count), "unsupported secondary index")
+            if let parser = key.parser {
+                _ = try quoted(parser)
+                try require(key.type == "FULLTEXT", "parser requires FULLTEXT index")
+            }
             if key.type == "FULLTEXT" {
-                try require(!key.unique && Set(key.parts.map { SQLIdentifier.key($0.column ?? "") }).count == key.parts.count,"invalid FULLTEXT index")
-                let collations=key.parts.compactMap { part in columns.first(where:{SQLIdentifier.equal($0.name,part.column ?? "")})?.collation }
-                try require(collations.count == key.parts.count && Set(collations).count == 1,"FULLTEXT columns require the same collation")
+                try require(
+                    !key.unique && Set(key.parts.map { SQLIdentifier.key($0.column ?? "") }).count == key.parts.count,
+                    "invalid FULLTEXT index")
+                let collations = key.parts.compactMap { part in
+                    columns.first(where: { SQLIdentifier.equal($0.name, part.column ?? "") })?.collation
+                }
+                try require(
+                    collations.count == key.parts.count && Set(collations).count == 1,
+                    "FULLTEXT columns require the same collation")
             }
             for part in key.parts {
-                if let expression=part.expression {
-                    try require(part.column == nil && part.prefix == nil && key.type == "BTREE" && ["A","D"].contains(part.direction ?? ""),"invalid functional index metadata")
+                if let expression = part.expression {
+                    try require(
+                        part.column == nil && part.prefix == nil && key.type == "BTREE"
+                            && ["A", "D"].contains(part.direction ?? ""), "invalid functional index metadata")
                     _ = try DDLExpression.canonical(expression)
                     continue
                 }
-                guard let column=columns.first(where:{SQLIdentifier.equal($0.name,part.column ?? "")}) else { throw ApplyError("index column is absent") }
-                let type=try DMLColumnType(column)
-                if key.type == "FULLTEXT" {
-                    try require(["char","varchar","tinytext","text","mediumtext","longtext"].contains(type.base)
-                        && !["binary","ucs2","utf16","utf16le","utf32"].contains(type.characterSet)
-                        && column.extra != "VIRTUAL GENERATED" && part.prefix == nil && part.direction == nil,"invalid FULLTEXT column or metadata")
-                } else if key.type == "SPATIAL" {
-                    try require(!key.unique && key.parts.count == 1 && type.isSpatial && !column.nullable && part.prefix == nil,"spatial index requires one full nonnullable spatial column")
-                } else if type.isSpatial {
-                    try require(key.type == "BTREE" && (part.prefix ?? 0) > 0,"geometry BTREE indexes require a positive byte prefix")
+                guard let column = columns.first(where: { SQLIdentifier.equal($0.name, part.column ?? "") }) else {
+                    throw ApplyError("index column is absent")
                 }
-                try require(column.type != "json","direct JSON indexes are unsupported")
-                try require(key.type == "FULLTEXT" || ["A","D"].contains(part.direction ?? ""),"unsupported descending index")
-                if let prefix=part.prefix { try require(prefix > 0 && (type.isSpatial || (column.width != nil && prefix <= column.width!)),"invalid index prefix") }
+                let type = try DMLColumnType(column)
+                if key.type == "FULLTEXT" {
+                    try require(
+                        ["char", "varchar", "tinytext", "text", "mediumtext", "longtext"].contains(type.base)
+                            && !["binary", "ucs2", "utf16", "utf16le", "utf32"].contains(type.characterSet)
+                            && column.extra != "VIRTUAL GENERATED" && part.prefix == nil && part.direction == nil,
+                        "invalid FULLTEXT column or metadata")
+                } else if key.type == "SPATIAL" {
+                    try require(
+                        !key.unique && key.parts.count == 1 && type.isSpatial && !column.nullable && part.prefix == nil,
+                        "spatial index requires one full nonnullable spatial column")
+                } else if type.isSpatial {
+                    try require(
+                        key.type == "BTREE" && (part.prefix ?? 0) > 0,
+                        "geometry BTREE indexes require a positive byte prefix")
+                }
+                try require(column.type != "json", "direct JSON indexes are unsupported")
+                try require(
+                    key.type == "FULLTEXT" || ["A", "D"].contains(part.direction ?? ""), "unsupported descending index")
+                if let prefix = part.prefix {
+                    try require(
+                        prefix > 0 && (type.isSpatial || (column.width != nil && prefix <= column.width!)),
+                        "invalid index prefix")
+                }
             }
         }
-        try require((0...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,"invalid primary-key columns")
-        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy { column in SQLIdentifier.contains(primaryKeyColumns,column.name) || secondaryIndexes.contains { $0.parts.contains { SQLIdentifier.equal($0.column ?? "",column.name) } } },"auto-increment requires an indexed column")
+        try require(
+            (0...16).contains(primaryKeyColumns.count)
+                && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,
+            "invalid primary-key columns")
+        try require(
+            columns.filter { $0.extra == "auto_increment" }.allSatisfy { column in
+                SQLIdentifier.contains(primaryKeyColumns, column.name)
+                    || secondaryIndexes.contains {
+                        $0.parts.contains { SQLIdentifier.equal($0.column ?? "", column.name) }
+                    }
+            }, "auto-increment requires an indexed column")
         try validatePrimaryKeyParts()
         if requireRowIdentity { try validateRowIdentity() }
     }
 }
 extension ApplyTable {
-    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,primaryKeyParts,rowIdentity,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions,foreignKeys }
+    enum CodingKeys: String, CodingKey {
+        case database, table, columns, primaryKey, primaryKeyColumns, primaryKeyParts, rowIdentity, defaultCharacterSet,
+            defaultCollation, secondaryIndexes, partitions, foreignKeys
+    }
     public init(from decoder: Decoder) throws {
-        let c=try decoder.container(keyedBy:CodingKeys.self)
-        database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
-        identity = .table(database,table)
-        columns=try c.decode([ApplyColumn].self,forKey:.columns)
-        if let names = try c.decodeIfPresent([String].self,forKey:.primaryKeyColumns) {
-            try require(!c.contains(.primaryKey),"ambiguous primary-key schema")
-            primaryKeyColumns=names
-        } else { primaryKeyColumns=[try c.decode(String.self,forKey:.primaryKey)] }
-        primaryKeyParts=try c.decodeIfPresent([ApplyIndexPart].self,forKey:.primaryKeyParts)
-        defaultCharacterSet=try c.decodeIfPresent(String.self,forKey:.defaultCharacterSet)
-        defaultCollation=try c.decodeIfPresent(String.self,forKey:.defaultCollation)
-        secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
-        partitions=try c.decodeIfPresent([ApplyPartition].self,forKey:.partitions) ?? []
-        foreignKeys=try c.decodeIfPresent([ApplyForeignKey].self,forKey:.foreignKeys) ?? []
-        savedRowIdentity=try c.decodeIfPresent(RowIdentity.self,forKey:.rowIdentity)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        database = try c.decode(String.self, forKey: .database)
+        table = try c.decode(String.self, forKey: .table)
+        identity = .table(database, table)
+        columns = try c.decode([ApplyColumn].self, forKey: .columns)
+        if let names = try c.decodeIfPresent([String].self, forKey: .primaryKeyColumns) {
+            try require(!c.contains(.primaryKey), "ambiguous primary-key schema")
+            primaryKeyColumns = names
+        } else {
+            primaryKeyColumns = [try c.decode(String.self, forKey: .primaryKey)]
+        }
+        primaryKeyParts = try c.decodeIfPresent([ApplyIndexPart].self, forKey: .primaryKeyParts)
+        defaultCharacterSet = try c.decodeIfPresent(String.self, forKey: .defaultCharacterSet)
+        defaultCollation = try c.decodeIfPresent(String.self, forKey: .defaultCollation)
+        secondaryIndexes = try c.decodeIfPresent([ApplyIndex].self, forKey: .secondaryIndexes) ?? []
+        partitions = try c.decodeIfPresent([ApplyPartition].self, forKey: .partitions) ?? []
+        foreignKeys = try c.decodeIfPresent([ApplyForeignKey].self, forKey: .foreignKeys) ?? []
+        savedRowIdentity = try c.decodeIfPresent(RowIdentity.self, forKey: .rowIdentity)
         if savedRowIdentity != nil { try validateRowIdentity() }
     }
     public func encode(to encoder: Encoder) throws {
-        var c=encoder.container(keyedBy:CodingKeys.self)
-        try c.encode(database,forKey:.database); try c.encode(table,forKey:.table); try c.encode(columns,forKey:.columns)
-        if primaryKeyColumns.count == 1 { try c.encode(primaryKey,forKey:.primaryKey) }
-        else { try c.encode(primaryKeyColumns,forKey:.primaryKeyColumns) }
-        try c.encodeIfPresent(primaryKeyParts,forKey:.primaryKeyParts)
-        if primaryKeyColumns.isEmpty { try c.encodeIfPresent(rowIdentity,forKey:.rowIdentity) }
-        try c.encodeIfPresent(defaultCharacterSet,forKey:.defaultCharacterSet)
-        try c.encodeIfPresent(defaultCollation,forKey:.defaultCollation)
-        try c.encode(secondaryIndexes,forKey:.secondaryIndexes)
-        try c.encode(partitions,forKey:.partitions)
-        if !foreignKeys.isEmpty { try c.encode(foreignKeys,forKey:.foreignKeys) }
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(database, forKey: .database)
+        try c.encode(table, forKey: .table)
+        try c.encode(columns, forKey: .columns)
+        if primaryKeyColumns.count == 1 {
+            try c.encode(primaryKey, forKey: .primaryKey)
+        } else {
+            try c.encode(primaryKeyColumns, forKey: .primaryKeyColumns)
+        }
+        try c.encodeIfPresent(primaryKeyParts, forKey: .primaryKeyParts)
+        if primaryKeyColumns.isEmpty { try c.encodeIfPresent(rowIdentity, forKey: .rowIdentity) }
+        try c.encodeIfPresent(defaultCharacterSet, forKey: .defaultCharacterSet)
+        try c.encodeIfPresent(defaultCollation, forKey: .defaultCollation)
+        try c.encode(secondaryIndexes, forKey: .secondaryIndexes)
+        try c.encode(partitions, forKey: .partitions)
+        if !foreignKeys.isEmpty { try c.encode(foreignKeys, forKey: .foreignKeys) }
     }
-    func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil, primaryKeyParts: [ApplyIndexPart]? = nil, partitions: [ApplyPartition]? = nil) -> ApplyTable {
-        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKey ?? primaryKeyColumns,primaryKeyParts:primaryKeyParts ?? (primaryKey == nil ? self.primaryKeyParts : nil),
-            defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
-            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)},partitions:partitions ?? self.partitions,foreignKeys:foreignKeys)
+    func replacing(
+        columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil,
+        primaryKeyParts: [ApplyIndexPart]? = nil, partitions: [ApplyPartition]? = nil
+    ) -> ApplyTable {
+        ApplyTable(
+            database: database, table: table, columns: columns ?? self.columns,
+            primaryKeyColumns: primaryKey ?? primaryKeyColumns,
+            primaryKeyParts: primaryKeyParts ?? (primaryKey == nil ? self.primaryKeyParts : nil),
+            defaultCharacterSet: defaultCharacterSet, defaultCollation: defaultCollation,
+            secondaryIndexes: (indexes ?? secondaryIndexes).sorted {
+                SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)
+            }, partitions: partitions ?? self.partitions, foreignKeys: foreignKeys)
     }
 }
 public struct TargetConfiguration: Decodable {
@@ -293,33 +433,46 @@ public struct TargetConfiguration: Decodable {
     public let explicitTableLocks: Bool
     /// Operator attestation: MySQL 5.7 does not expose this startup option via SQL.
     public let nativeAutoStartDisabled: Bool
-    enum CodingKeys: String, CodingKey {case host,port,unixSocket,requireTLS,tlsVerification,username,passwordEnvironment,password,serverHostname,caFile,nativeAutoStartDisabled,targetUUID,explicitTableLocks,preserveSourceGTIDs}
+    enum CodingKeys: String, CodingKey {
+        case host, port, unixSocket, requireTLS, tlsVerification, username, passwordEnvironment, password,
+            serverHostname, caFile, nativeAutoStartDisabled, targetUUID, explicitTableLocks, preserveSourceGTIDs
+    }
     public init(from decoder: Decoder) throws {
-        let c=try decoder.container(keyedBy:CodingKeys.self)
-        preserveSourceGTIDs=try c.decodeIfPresent(Bool.self,forKey:.preserveSourceGTIDs) ?? true
-        guard !c.contains(.targetUUID) else {throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")}
-        host=try c.decodeIfPresent(String.self,forKey:.host); port=try c.decodeIfPresent(Int.self,forKey:.port)
-        unixSocket=try c.decodeIfPresent(String.self,forKey:.unixSocket)
-        requireTLS=try c.decodeIfPresent(Bool.self,forKey:.requireTLS) ?? true
-        tlsVerification=try c.decodeIfPresent(TLSVerification.self,forKey:.tlsVerification) ?? .verifyIdentity
-        username=try c.decode(String.self,forKey:.username)
-        passwordEnvironment=try c.decodeIfPresent(String.self,forKey:.passwordEnvironment)
-        password=try c.decodeIfPresent(String.self,forKey:.password)
-        serverHostname=try c.decodeIfPresent(String.self,forKey:.serverHostname); caFile=try c.decodeIfPresent(String.self,forKey:.caFile)
-        explicitTableLocks=try c.decodeIfPresent(Bool.self,forKey:.explicitTableLocks) ?? false
-        nativeAutoStartDisabled=try c.decode(Bool.self,forKey:.nativeAutoStartDisabled)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        preserveSourceGTIDs = try c.decodeIfPresent(Bool.self, forKey: .preserveSourceGTIDs) ?? true
+        guard !c.contains(.targetUUID) else {
+            throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")
+        }
+        host = try c.decodeIfPresent(String.self, forKey: .host)
+        port = try c.decodeIfPresent(Int.self, forKey: .port)
+        unixSocket = try c.decodeIfPresent(String.self, forKey: .unixSocket)
+        requireTLS = try c.decodeIfPresent(Bool.self, forKey: .requireTLS) ?? true
+        tlsVerification = try c.decodeIfPresent(TLSVerification.self, forKey: .tlsVerification) ?? .verifyIdentity
+        username = try c.decode(String.self, forKey: .username)
+        passwordEnvironment = try c.decodeIfPresent(String.self, forKey: .passwordEnvironment)
+        password = try c.decodeIfPresent(String.self, forKey: .password)
+        serverHostname = try c.decodeIfPresent(String.self, forKey: .serverHostname)
+        caFile = try c.decodeIfPresent(String.self, forKey: .caFile)
+        explicitTableLocks = try c.decodeIfPresent(Bool.self, forKey: .explicitTableLocks) ?? false
+        nativeAutoStartDisabled = try c.decode(Bool.self, forKey: .nativeAutoStartDisabled)
     }
     func validate() throws {
-        try require(!username.isEmpty,"invalid target credentials")
-        try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"target")
+        try require(!username.isEmpty, "invalid target credentials")
+        try PasswordConfiguration.validate(
+            password: password, environmentVariable: passwordEnvironment, endpoint: "target")
         if let path = unixSocket {
-            try require(host == nil && port == nil,"choose target unixSocket or host/port, not both")
-            try require(path.hasPrefix("/") && !path.utf8.contains(0) && path.utf8.count <= 103,"target unixSocket must be an absolute path of at most 103 UTF-8 bytes without NUL")
+            try require(host == nil && port == nil, "choose target unixSocket or host/port, not both")
+            try require(
+                path.hasPrefix("/") && !path.utf8.contains(0) && path.utf8.count <= 103,
+                "target unixSocket must be an absolute path of at most 103 UTF-8 bytes without NUL")
         } else {
-            try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
+            try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0), "invalid target TCP address")
         }
-        do { try ConnectionTLS.validate(required:requireTLS,verification:tlsVerification,hostname:serverHostname,caFile:caFile,endpoint:"target") }
-        catch { throw ApplyError(String(describing:error)) }
+        do {
+            try ConnectionTLS.validate(
+                required: requireTLS, verification: tlsVerification, hostname: serverHostname, caFile: caFile,
+                endpoint: "target")
+        } catch { throw ApplyError(String(describing: error)) }
     }
 }
 public struct ApplyConfiguration: Decodable {
@@ -354,29 +507,37 @@ public struct ApplyConfiguration: Decodable {
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate(offline: Bool = false) throws {
         try statistics?.validate()
-        try supportBundle?.validate(stateDirectory:stateDirectory)
-        try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
-        _ = try source.validate(connection:!offline)
+        try supportBundle?.validate(stateDirectory: stateDirectory)
+        try require(
+            version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,
+            "use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist"
+        )
+        _ = try source.validate(connection: !offline)
         try target.validate()
-        try require(target.nativeAutoStartDisabled,"operator must disable automatic native replication start")
-        try require((UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),"relay limit must be 1 MiB to 1 GiB")
-        try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
+        try require(target.nativeAutoStartDisabled, "operator must disable automatic native replication start")
+        try require(
+            (UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),
+            "relay limit must be 1 MiB to 1 GiB")
+        try require((1...86400).contains(ddlDeadline), "DDL timeout must be 1 to 86400 seconds")
         try (ddlPolicy ?? DDLPolicy()).validate()
         try compatibilityPolicy.validate()
-        try require(!compatibilityPolicy.jsonYearToInteger || replicationProfile == .mysql57To84InnoDB,
-                    "compatibility.jsonYearToInteger requires profile mysql57-to-mysql84-innodb")
+        try require(
+            !compatibilityPolicy.jsonYearToInteger || replicationProfile == .mysql57To84InnoDB,
+            "compatibility.jsonYearToInteger requires profile mysql57-to-mysql84-innodb")
         if replicationProfile.transactional {
-            try require(!target.explicitTableLocks,"InnoDB profile cannot use explicit table locks")
-            try require(compatibilityPolicy.collations.isEmpty,"reverse profile preserves source collations; translation is not supported")
+            try require(!target.explicitTableLocks, "InnoDB profile cannot use explicit table locks")
+            try require(
+                compatibilityPolicy.collations.isEmpty,
+                "reverse profile preserves source collations; translation is not supported")
         }
         if replicationProfile.sourceContract.requiresHistoricalSchema {
-            try require(source.mode == "gtid","MySQL 5.7 source profiles require GTID positioning")
+            try require(source.mode == "gtid", "MySQL 5.7 source profiles require GTID positioning")
         }
-        _ = try TableFilter(replicateWildIgnoreTable ?? [],including:replicateWildDoTable ?? [])
+        _ = try TableFilter(replicateWildIgnoreTable ?? [], including: replicateWildDoTable ?? [])
         try policy.validate()
         try batchPolicy.validate()
         try reconnectPolicy.validate()
-        try targetReconnectPolicy.validate(endpoint:"target")
+        try targetReconnectPolicy.validate(endpoint: "target")
         try skipErrorPolicy.validate()
     }
 }
@@ -392,42 +553,62 @@ enum DMLPlan {
     /// Validate the entire group before the first mutation. The MyISAM contract
     /// permits one statement/table; transactional targets preserve whole groups.
     static func make(_ group: CompleteTransaction, tables: [ApplyTable]) throws -> [Mutation] {
-        var plans: [SQLNameKey:DMLTablePlan] = [:]
+        var plans: [SQLNameKey: DMLTablePlan] = [:]
         for table in tables {
-            try require(plans[table.identity] == nil,"duplicate table manifest")
+            try require(plans[table.identity] == nil, "duplicate table manifest")
             plans[table.identity] = try DMLTablePlan(table)
         }
-        return try make(group,tables:plans)
+        return try make(group, tables: plans)
     }
-    static func make(_ group: CompleteTransaction, tables: [SQLNameKey:DMLTablePlan], transactional: Bool = false) throws -> [Mutation] {
-        try require(group.outcome == .committed && group.gtid != nil && !group.anonymous,"unsupported transaction identity/outcome")
-        var statementEnds = 0, includedEvents = 0
+    static func make(_ group: CompleteTransaction, tables: [SQLNameKey: DMLTablePlan], transactional: Bool = false)
+        throws -> [Mutation]
+    {
+        try require(
+            group.outcome == .committed && group.gtid != nil && !group.anonymous,
+            "unsupported transaction identity/outcome")
+        var statementEnds = 0
+        var includedEvents = 0
         for event in group.events where event.rowFlags != nil {
             if event.rowFlags! & 1 != 0 { statementEnds += 1 }
             if !event.replicationFiltered { includedEvents += 1 }
         }
         if includedEvents == 0 { return [] }
-        try require(statementEnds >= 1,"source group lacks a statement boundary")
-        try require(transactional || statementEnds == 1,"only single-statement source groups are supported",code:.multipleStatements)
+        try require(statementEnds >= 1, "source group lacks a statement boundary")
+        try require(
+            transactional || statementEnds == 1, "only single-statement source groups are supported",
+            code: .multipleStatements)
         var result: [Mutation] = []
         var firstIdentity: SQLNameKey?
         for event in group.events where event.rowFlags != nil && !event.replicationFiltered {
             guard let database = event.database, let name = event.table,
-                  let plan = tables[.table(database,name)] else { throw ApplyError("row event outside configured scope") }
+                let plan = tables[.table(database, name)]
+            else { throw ApplyError("row event outside configured scope") }
             if !event.rows.isEmpty {
                 let identity = plan.table.identity
-                if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement",code:.multipleTables) }
-                else { firstIdentity = identity }
+                if let firstIdentity {
+                    try require(
+                        transactional || firstIdentity == identity,
+                        "initial applier requires a single-table DML statement", code: .multipleTables)
+                } else {
+                    firstIdentity = identity
+                }
             }
-            for (index,row) in event.rows.enumerated() {
-                try require(row.operation == "insert" || row.operation == "update" || row.operation == "delete","unsupported row operation")
-                try require((row.before != nil) == (row.operation != "insert") && (row.after != nil) == (row.operation != "delete"),"invalid row image shape")
+            for (index, row) in event.rows.enumerated() {
+                try require(
+                    row.operation == "insert" || row.operation == "update" || row.operation == "delete",
+                    "unsupported row operation")
+                try require(
+                    (row.before != nil) == (row.operation != "insert")
+                        && (row.after != nil) == (row.operation != "delete"), "invalid row image shape")
                 if let before = row.before { try plan.validate(before) }
                 if let after = row.after { try plan.validate(after) }
-                result.append(Mutation(table:plan.table,row:row,eventOffset:event.offset,rowIndex:index,foreignKeyChecks:event.rowFlags! & 2 == 0))
+                result.append(
+                    Mutation(
+                        table: plan.table, row: row, eventOffset: event.offset, rowIndex: index,
+                        foreignKeyChecks: event.rowFlags! & 2 == 0))
             }
         }
-        try require(!result.isEmpty,"initial applier requires a single-table DML statement")
+        try require(!result.isEmpty, "initial applier requires a single-table DML statement")
         return result
     }
 }
@@ -437,7 +618,7 @@ enum DMLPlan {
 func exactImage(_ lhs: [DecodedValue]?, _ rhs: [DecodedValue]?) -> Bool {
     guard let lhs, let rhs else { return lhs == nil && rhs == nil }
     guard lhs.count == rhs.count else { return false }
-    return zip(lhs,rhs).allSatisfy { a,b in
+    return zip(lhs, rhs).allSatisfy { a, b in
         if case .text(let x) = a, case .text(let y) = b { return x.utf8.elementsEqual(y.utf8) }
         return a == b
     }
@@ -452,21 +633,34 @@ public struct StoragePolicy: Codable {
     public var capacityCheckEveryTransactions: Int = 1000
     public var capacityCheckIntervalSeconds: Int = 5
     public init() {}
-    enum CodingKeys: String, CodingKey {case maximumSQLiteBytes, minimumFreeDiskBytes, pruneAtPercent, historyRetentionSeconds, snapshotEveryTransactions, capacityCheckEveryTransactions, capacityCheckIntervalSeconds}
+    enum CodingKeys: String, CodingKey {
+        case maximumSQLiteBytes, minimumFreeDiskBytes, pruneAtPercent, historyRetentionSeconds,
+            snapshotEveryTransactions, capacityCheckEveryTransactions, capacityCheckIntervalSeconds
+    }
     public init(from decoder: Decoder) throws {
-        self.init(); let c = try decoder.container(keyedBy:CodingKeys.self)
-        maximumSQLiteBytes = try c.decodeIfPresent(Int64.self,forKey:.maximumSQLiteBytes) ?? maximumSQLiteBytes
-        minimumFreeDiskBytes = try c.decodeIfPresent(Int64.self,forKey:.minimumFreeDiskBytes) ?? minimumFreeDiskBytes
-        pruneAtPercent = try c.decodeIfPresent(Int.self,forKey:.pruneAtPercent) ?? pruneAtPercent
-        historyRetentionSeconds = try c.decodeIfPresent(Int.self,forKey:.historyRetentionSeconds) ?? historyRetentionSeconds
-        snapshotEveryTransactions = try c.decodeIfPresent(Int.self,forKey:.snapshotEveryTransactions) ?? snapshotEveryTransactions
-        capacityCheckEveryTransactions = try c.decodeIfPresent(Int.self,forKey:.capacityCheckEveryTransactions) ?? capacityCheckEveryTransactions
-        capacityCheckIntervalSeconds = try c.decodeIfPresent(Int.self,forKey:.capacityCheckIntervalSeconds) ?? capacityCheckIntervalSeconds
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        maximumSQLiteBytes = try c.decodeIfPresent(Int64.self, forKey: .maximumSQLiteBytes) ?? maximumSQLiteBytes
+        minimumFreeDiskBytes = try c.decodeIfPresent(Int64.self, forKey: .minimumFreeDiskBytes) ?? minimumFreeDiskBytes
+        pruneAtPercent = try c.decodeIfPresent(Int.self, forKey: .pruneAtPercent) ?? pruneAtPercent
+        historyRetentionSeconds =
+            try c.decodeIfPresent(Int.self, forKey: .historyRetentionSeconds) ?? historyRetentionSeconds
+        snapshotEveryTransactions =
+            try c.decodeIfPresent(Int.self, forKey: .snapshotEveryTransactions) ?? snapshotEveryTransactions
+        capacityCheckEveryTransactions =
+            try c.decodeIfPresent(Int.self, forKey: .capacityCheckEveryTransactions) ?? capacityCheckEveryTransactions
+        capacityCheckIntervalSeconds =
+            try c.decodeIfPresent(Int.self, forKey: .capacityCheckIntervalSeconds) ?? capacityCheckIntervalSeconds
     }
     func validate() throws {
-        try require((8*1024*1024...1024*1024*1024).contains(maximumSQLiteBytes),"SQLite limit must be 8 MiB to 1 GiB")
-        try require((1*1024*1024...Int64.max/2).contains(minimumFreeDiskBytes),"invalid free-disk reserve")
-        try require((1...10000).contains(capacityCheckEveryTransactions) && (1...60).contains(capacityCheckIntervalSeconds),"invalid capacity inspection interval")
-        try require((50...90).contains(pruneAtPercent) && (1...31536000).contains(historyRetentionSeconds) && (1...10000).contains(snapshotEveryTransactions),"invalid retention/checkpoint policy")
+        try require(
+            (8 * 1024 * 1024...1024 * 1024 * 1024).contains(maximumSQLiteBytes), "SQLite limit must be 8 MiB to 1 GiB")
+        try require((1 * 1024 * 1024...Int64.max / 2).contains(minimumFreeDiskBytes), "invalid free-disk reserve")
+        try require(
+            (1...10000).contains(capacityCheckEveryTransactions) && (1...60).contains(capacityCheckIntervalSeconds),
+            "invalid capacity inspection interval")
+        try require(
+            (50...90).contains(pruneAtPercent) && (1...31_536_000).contains(historyRetentionSeconds)
+                && (1...10000).contains(snapshotEveryTransactions), "invalid retention/checkpoint policy")
     }
 }

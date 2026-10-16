@@ -50,7 +50,8 @@ final class QualificationReporter {
         guard let current = active.last, current.test.id == id else {
             throw LabError("qualification case completion out of order: \(id)")
         }
-        results[current.index]["seconds"] = Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
+        results[current.index]["seconds"] =
+            Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
         results[current.index]["status"] = "passed"
         try save()
         active.removeLast()
@@ -90,7 +91,8 @@ final class QualificationReporter {
         let detail = String(describing: error)
         let identified = active.last.map { LabError($0.test.description + ": " + detail) }
         for current in active.reversed() {
-            results[current.index]["seconds"] = Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
+            results[current.index]["seconds"] =
+                Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
             results[current.index]["status"] = "failed"
             results[current.index]["error"] = detail
             log("failed " + current.test.description + ": " + detail)

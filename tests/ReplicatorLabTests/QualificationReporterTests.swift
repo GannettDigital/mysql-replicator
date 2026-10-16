@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import ReplicatorLabCore
 
 final class QualificationReporterTests: XCTestCase {
@@ -17,7 +18,9 @@ final class QualificationReporterTests: XCTestCase {
         let reporter = QualificationReporter(output: output) { messages.append($0) }
         let test = QualificationCase("truncate", "TRUNCATE retains schema and removes rows")
         try reporter.run(test) {
-            let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("cases.json"))) as! [[String: Any]]
+            let saved =
+                try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("cases.json")))
+                as! [[String: Any]]
             XCTAssertEqual(saved[0]["status"] as? String, "running")
             XCTAssertFalse(messages.contains { $0.hasPrefix("passed") })
         }
@@ -43,10 +46,13 @@ final class QualificationReporterTests: XCTestCase {
             XCTAssertTrue(String(describing: failure).contains(child.description))
             XCTAssertTrue(String(describing: failure).contains("old table remains"))
         }
-        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("cases.json"))) as! [[String: Any]]
+        let saved =
+            try JSONSerialization.jsonObject(with: Data(contentsOf: output.appendingPathComponent("cases.json")))
+            as! [[String: Any]]
         XCTAssertEqual(saved.compactMap { $0["status"] as? String }, ["failed", "failed"])
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(saved[0]["seconds"] as? Double),
-                                    try XCTUnwrap(saved[1]["seconds"] as? Double))
+        XCTAssertGreaterThanOrEqual(
+            try XCTUnwrap(saved[0]["seconds"] as? Double),
+            try XCTUnwrap(saved[1]["seconds"] as? Double))
         XCTAssertEqual(saved[1]["parent_id"] as? String, "ddl")
         XCTAssertEqual(saved[1]["source_file"] as? String, child.file)
         XCTAssertEqual(saved[1]["source_line"] as? UInt, child.line)
@@ -59,12 +65,14 @@ final class QualificationReporterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: output) }
         let reporter = QualificationReporter(output: output) { _ in }
         try reporter.begin(QualificationCase("case", "Named assertion failure"))
-        XCTAssertThrowsError(try reporter.assertion("schema-effects", evidence: "assertions/schema.json") {
-            try require(false, "deliberately wrong expected schema")
-            return ["unused": true]
-        })
+        XCTAssertThrowsError(
+            try reporter.assertion("schema-effects", evidence: "assertions/schema.json") {
+                try require(false, "deliberately wrong expected schema")
+                return ["unused": true]
+            })
         let assertions = reporter.results[0]["assertions"] as! [[String: Any]]
         XCTAssertEqual(assertions[0]["status"] as? String, "failed")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: output.appendingPathComponent("assertions/schema.json").path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: output.appendingPathComponent("assertions/schema.json").path))
     }
 }

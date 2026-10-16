@@ -2,12 +2,13 @@ import Foundation
 import MySQLNIO
 import NIOCore
 import NIOSSL
+
 #if canImport(Musl)
-import Musl
+    import Musl
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #else
-import Darwin
+    import Darwin
 #endif
 
 /// Same bounded backoff policy as the source, with an independent retry budget.
@@ -33,8 +34,10 @@ func isTargetTransportFailure(_ error: Error) -> Bool {
         }
     }
     if let e = error as? IOError {
-        return [ECONNRESET, ECONNREFUSED, ECONNABORTED, EPIPE, ETIMEDOUT,
-                ENETUNREACH, EHOSTUNREACH, ENETDOWN, EHOSTDOWN].contains(e.errnoCode)
+        return [
+            ECONNRESET, ECONNREFUSED, ECONNABORTED, EPIPE, ETIMEDOUT,
+            ENETUNREACH, EHOSTUNREACH, ENETDOWN, EHOSTDOWN,
+        ].contains(e.errnoCode)
     }
     if let e = error as? SocketAddressError, case .unknown = e { return true }
     if let e = error as? NIOSSLError, case .uncleanShutdown = e { return true }

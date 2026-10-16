@@ -1,9 +1,27 @@
 import Foundation
 
 extension DMLCompatibilityCases {
-    static let textDefaults=Case(id:"textdefaults",definition:"id INT PRIMARY KEY,c CHAR(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '😀  ',v VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '😀  ',l VARCHAR(8) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT X'ff00',w CHAR(4) CHARACTER SET utf16 COLLATE utf16_bin DEFAULT X'4e2d',n CHAR(8) DEFAULT 1e2,q VARCHAR(8) DEFAULT '1e2',b CHAR(8) CHARACTER SET binary DEFAULT 1e2,d VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT 'e\u{0301}'",phases:[
-        .init(sql:"INSERT INTO poc.matrix_textdefaults(id) VALUES(1),(2)",check:"SELECT COUNT(*)=2 AND SUM(HEX(c)='F09F9880' AND HEX(v)='F09F98802020' AND HEX(l)='FF00' AND HEX(w)='4E2D' AND n='100' AND q='1e2' AND HEX(b)='3130300000000000' AND HEX(d)='65CC81')=2 FROM poc.matrix_textdefaults"),
-        .init(sql:"SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,PAD_CHAR_TO_FULL_LENGTH'; ALTER TABLE poc.matrix_textdefaults ALTER c SET DEFAULT '中  ',ALTER l SET DEFAULT X'e900',ADD extra VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '😀\\0'; UPDATE poc.matrix_textdefaults SET c=DEFAULT,l=DEFAULT WHERE id=1",check:"SELECT COUNT(*)=2 AND SUM(id=1 AND HEX(c)='E4B8AD' AND HEX(l)='E900')=1 AND SUM(HEX(extra)='F09F988000')=2 FROM poc.matrix_textdefaults"),
-        .init(sql:"ALTER TABLE poc.matrix_textdefaults MODIFY w VARCHAR(8) CHARACTER SET utf16 COLLATE utf16_bin DEFAULT X'20200020',ALTER q SET DEFAULT 1e3,ALTER v DROP DEFAULT; INSERT INTO poc.matrix_textdefaults(id,v) VALUES(3,NULL); DELETE FROM poc.matrix_textdefaults WHERE id=2",check:"SELECT COUNT(*)=2 AND SUM(id=3 AND HEX(w)='20200020' AND q='1000' AND v IS NULL)=1 FROM poc.matrix_textdefaults")
-    ])
+    static let textDefaults = Case(
+        id: "textdefaults",
+        definition:
+            "id INT PRIMARY KEY,c CHAR(4) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '😀  ',v VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '😀  ',l VARCHAR(8) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT X'ff00',w CHAR(4) CHARACTER SET utf16 COLLATE utf16_bin DEFAULT X'4e2d',n CHAR(8) DEFAULT 1e2,q VARCHAR(8) DEFAULT '1e2',b CHAR(8) CHARACTER SET binary DEFAULT 1e2,d VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT 'e\u{0301}'",
+        phases: [
+            .init(
+                sql: "INSERT INTO poc.matrix_textdefaults(id) VALUES(1),(2)",
+                check:
+                    "SELECT COUNT(*)=2 AND SUM(HEX(c)='F09F9880' AND HEX(v)='F09F98802020' AND HEX(l)='FF00' AND HEX(w)='4E2D' AND n='100' AND q='1e2' AND HEX(b)='3130300000000000' AND HEX(d)='65CC81')=2 FROM poc.matrix_textdefaults"
+            ),
+            .init(
+                sql:
+                    "SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,PAD_CHAR_TO_FULL_LENGTH'; ALTER TABLE poc.matrix_textdefaults ALTER c SET DEFAULT '中  ',ALTER l SET DEFAULT X'e900',ADD extra VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '😀\\0'; UPDATE poc.matrix_textdefaults SET c=DEFAULT,l=DEFAULT WHERE id=1",
+                check:
+                    "SELECT COUNT(*)=2 AND SUM(id=1 AND HEX(c)='E4B8AD' AND HEX(l)='E900')=1 AND SUM(HEX(extra)='F09F988000')=2 FROM poc.matrix_textdefaults"
+            ),
+            .init(
+                sql:
+                    "ALTER TABLE poc.matrix_textdefaults MODIFY w VARCHAR(8) CHARACTER SET utf16 COLLATE utf16_bin DEFAULT X'20200020',ALTER q SET DEFAULT 1e3,ALTER v DROP DEFAULT; INSERT INTO poc.matrix_textdefaults(id,v) VALUES(3,NULL); DELETE FROM poc.matrix_textdefaults WHERE id=2",
+                check:
+                    "SELECT COUNT(*)=2 AND SUM(id=3 AND HEX(w)='20200020' AND q='1000' AND v IS NULL)=1 FROM poc.matrix_textdefaults"
+            ),
+        ])
 }
