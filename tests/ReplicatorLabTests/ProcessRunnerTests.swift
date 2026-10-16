@@ -2,6 +2,13 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class ProcessRunnerTests: XCTestCase {
+    func testStandardInputPreservesUnicodeAndBinaryBytes() throws {
+        let runner=ProcessRunner(root:FileManager.default.temporaryDirectory)
+        let bytes=Data("éÿ😀e\u{0301}".utf8)+Data([0,255,10])
+        let result=try runner.run(["/bin/cat"],input:bytes)
+        XCTAssertEqual(result.stdout,bytes)
+    }
+
     func testLargeStdoutAndStderrDoNotDeadlock() throws {
         let runner = ProcessRunner(root: FileManager.default.temporaryDirectory)
         var streamedBytes = 0

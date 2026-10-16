@@ -172,15 +172,15 @@
         "ddl.encoding.charset-only",
         "ddl.reject.collation-0900",
         "ddl.reject.charset-default",
-        "ddl.reject.charset-latin1",
+        "ddl.encoding.latin1",
         "ddl.native.collate-only"
       ]
     },
     {
-      "id": "column.types",
-      "family": "C",
-      "name": "Column Types",
-      "grammar": "Reject unsupported DOUBLE(10,2) column before mutation",
+      "id": "table.engine-policy",
+      "family": "B",
+      "name": "Target Engine Policy",
+      "grammar": "Reject an explicit incompatible engine before mutation",
       "scenario_ids": [
         "ddl.reject.ddl-unsupported"
       ]
@@ -2045,22 +2045,22 @@
       ]
     },
     {
-      "id": "ddl.reject.charset-latin1",
-      "name": "Reject latin1 outside the current row encoding subset",
+      "id": "ddl.encoding.latin1",
+      "name": "Apply latin1 column data and defaults",
       "family": "E",
       "feature": "encoding.column-default",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
       "implementation": "implemented",
-      "intent": "reject",
+      "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "Reject latin1 outside the current row encoding subset"
+        "CREATE and ALTER latin1 columns; retain raw stored bytes."
       ],
       "following_workload": [
-        "A later event must remain unapplied."
+        "INSERT, UPDATE and DELETE preserve high bytes, NUL, keys and NULL."
       ],
       "upstream_refs": [
         {
@@ -2084,10 +2084,10 @@
             "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -2096,11 +2096,10 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "rejection",
-            "diagnostic": "unsupported discovered character set",
-            "reason": "unsupported discovered character set",
-            "warnings": "Capture diagnostics and warnings.",
-            "partial_effects": "Assert target effects and stopped boundary explicitly."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           }
         },
         {
@@ -2113,10 +2112,10 @@
             "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -2125,30 +2124,25 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "rejection",
-            "diagnostic": "unsupported discovered character set",
-            "reason": "unsupported discovered character set",
-            "warnings": "Capture diagnostics and warnings.",
-            "partial_effects": "Assert target effects and stopped boundary explicitly."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           }
         }
       ],
       "required_assertions": [
         {
-          "id": "diagnostic",
-          "description": "Assert the expected diagnostic/error category."
+          "id": "schema",
+          "description": "Compare charset, collation and defaults after CREATE and ALTER."
         },
         {
-          "id": "partial-effects",
-          "description": "Compare target data/schema and pending intents after rejection."
+          "id": "row-bytes",
+          "description": "Compare exact bytes after each DML phase."
         },
         {
-          "id": "stopped-boundary",
-          "description": "Ensure rejected work did not become a completed checkpoint."
-        },
-        {
-          "id": "following-event-blocked",
-          "description": "Verify a later source event remains unapplied."
+          "id": "restart",
+          "description": "Restore saved encoding metadata at a clean checkpoint."
         }
       ],
       "bindings": [
@@ -2156,26 +2150,28 @@
           "suite": "ddl-suite",
           "role": "swift_apply_with_native_reference",
           "case_ids": [
-            "charset_latin1"
+            "matrix-encodings"
           ],
           "profiles": [
             "swift.position.metadata-minimal",
             "swift.gtid.metadata-full"
           ],
           "assertion_ids": [],
-          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract."
+          "producers": [
+            "shared-correctness"
+          ],
+          "note": "Shared positive encoding case replaces the obsolete refusal. Aggregate passes do not qualify named assertions."
         }
       ],
       "gaps": [
-        "Native rejection equivalence is not established by a Swift unsupported-feature rejection.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification."
+        "Shared matrix-encodings and bootstrap-matrix-encodings replace the obsolete charset_latin1 refusal. Exact named assertion bindings remain open."
       ]
     },
     {
       "id": "ddl.reject.ddl-unsupported",
-      "name": "Reject unsupported DOUBLE(10,2) column before mutation",
-      "family": "C",
-      "feature": "column.types",
+      "name": "Reject an explicit incompatible engine before mutation",
+      "family": "B",
+      "feature": "table.engine-policy",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
       "implementation": "implemented",
@@ -2184,7 +2180,7 @@
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "Reject unsupported DOUBLE(10,2) column before mutation"
+        "Reject an explicit incompatible engine before mutation"
       ],
       "following_workload": [
         "A later event must remain unapplied."

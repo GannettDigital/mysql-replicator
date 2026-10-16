@@ -17,8 +17,9 @@ public struct DecoderError: Error, CustomStringConvertible {
     }
 }
 public enum ColumnInterpretation: String, Codable {
-    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64, json
-    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7; case .float32: return 8; case .float64: return 9; case .json: return 10 } }
+    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64, json, encodedText, encodedText16BE, encodedText16LE, encodedText32BE
+    public var isEncodedText: Bool { [.encodedText,.encodedText16BE,.encodedText16LE,.encodedText32BE].contains(self) }
+    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7; case .float32: return 8; case .float64: return 9; case .json: return 10; case .encodedText: return 11; case .encodedText16BE: return 12; case .encodedText16LE: return 13; case .encodedText32BE: return 14 } }
 }
 public struct TableSchema: Codable {
     public let offset: UInt64
@@ -148,7 +149,7 @@ public final class BinlogDecoder {
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
         self.maximumEventBytes=Int(maximumEventBytes)
         self.timings = timings
-        guard Codec.abiVersion == 10, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 12, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -314,7 +315,7 @@ public final class BinlogDecoder {
                     try (0..<info.column_count).map { index in
                         var c = rc_column()
                         guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
-                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal,8:.float32,9:.float64,10:.json][c.kind]
+                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal,8:.float32,9:.float64,10:.json,11:.encodedText,12:.encodedText16BE,13:.encodedText16LE,14:.encodedText32BE][c.kind]
                         let packedLabels = bytes(c.labels)
                         var labels: [Data] = [], labelOffset = 0
                         while labelOffset < packedLabels.count {

@@ -29,6 +29,21 @@ before metadata comparison. The actual servers, settings, image IDs,
 and applier binary hash are recorded. The native reference is a behavior/control
 comparison; its version matches the source. In the 5.7 → 5.7 profiles, all three servers use 5.7.
 
+Test SQL uses file-backed standard input. This preserves UTF-8 bytes on macOS,
+where process arguments can change composed Unicode characters. The mysql client
+uses one delimiter for each request, including stored routine bodies.
+
+The `matrix-exactchoices` and `matrix-choiceboundaries` cases check exact ENUM/SET
+labels, defaults and ordinal writes. The corresponding `bootstrap-matrix-*` cases
+check discovery from an existing schema. These replace the old non-BMP DDL refusal
+cases. They cover latin1, UTF16, UTF16LE, UTF32, GB18030 and supplementary UTF-8.
+
+The `binarychoices` live and bootstrap cases check raw binary ENUM labels, binary
+SET labels, hex/bit literals and defaults. The `legacybinaryset` cases add non-UTF-8
+SET bytes on the two 5.7-to-5.7 profiles. MySQL 8.4.8 rejects that SET definition
+with native error 3507. Binary choice schema comparisons read raw SHOW CREATE
+output through a separate test parser.
+
 ## List and run
 
 Build prerequisites are in [CONTRIBUTING](../CONTRIBUTING.md). From the checkout:
@@ -79,13 +94,31 @@ recovery inspection. It requires GTID mode. See [large-value limits and tests](L
 
 `matrix-bits` and `bootstrap-matrix-bits` use the same BIT workload for replicated
 CREATE and existing-table discovery. They check widths through 64 bits, defaults,
-primary-key changes, ADD/MODIFY, and DML. These new cases await integration
-qualification. See the [BIT increment](../PLAN/BIT_SUPPORT.md).
+primary-key changes, ADD/MODIFY, and DML. Full CI includes these cases; inspect
+the results for the exact commit. See [BIT support](../PLAN/BIT_SUPPORT.md).
 
 `matrix-floating` and `bootstrap-matrix-floating` add FLOAT/DOUBLE DML and DDL
-cases for all four profiles. The fixed-scale refusal cases are now
-`reject-float-fixed-scale` and `matrix-reject-float-fixed-scale`. These cases await
-integration qualification. See the [floating-point increment](../PLAN/FLOATING_POINT_SUPPORT.md).
+cases for all four profiles. `matrix-fixedfloating` and
+`bootstrap-matrix-fixedfloating` check fixed-scale forms, defaults, rounding and
+ALTER. They replace the fixed-scale refusal cases. Full CI includes these cases; inspect the results for the exact commit. See
+[FLOAT/DOUBLE support](../PLAN/FLOATING_POINT_SUPPORT.md).
+
+`matrix-decimaldefaults` and `bootstrap-matrix-decimaldefaults` check native
+DECIMAL default rounding, scientific notation, quoted constants, unsigned and
+ZEROFILL forms. They include CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
+
+`matrix-binarydefaults` and `bootstrap-matrix-binarydefaults` check exact binary
+default bytes, NUL, empty values, BINARY padding, CREATE and ALTER. The lab reads
+stored native defaults because displayed metadata can omit bytes.
+
+`matrix-textdefaults` and `bootstrap-matrix-textdefaults` check CHAR/VARCHAR
+defaults with supplementary characters, NUL, byte literals, numeric constants,
+legacy/wide encodings and CHAR padding modes. Metadata comparisons use stored
+defaults and preserve exact Unicode bytes.
+
+`matrix-zerowidth` and `bootstrap-matrix-zerowidth` check zero-width CHAR,
+VARCHAR, BINARY and VARBINARY columns. They distinguish empty values from NULL
+and exercise width changes before and after DML.
 
 `matrix-json` and `bootstrap-matrix-json` check ordinary JSON values.
 `matrix-typedjson` and `bootstrap-matrix-typedjson` check DECIMAL, temporal and
@@ -587,3 +620,37 @@ catalog results, expanded line coverage, and test-area cost comparisons.
 The same catalog drives PR smoke, full and expanded CI. Full and expanded plans
 retain release-binary checks. These measurements do not change the supported
 profiles or assertions.
+
+## Support requirements
+
+Use `make ddl-catalog-check` to validate the DDL and support inventories. Use
+`make ddl-catalog-report ARGS="--format json"` to inspect the `support` section.
+It lists known gaps, native restrictions and safety policies for the four profiles.
+The initial audit is partial. Candidate tests do not qualify a requirement.
+See [the catalog guide](../tests/DDLCoverage/README.md#beta6-support-audit).
+
+`matrix-enumzero` and `bootstrap-matrix-enumzero` distinguish ENUM ordinal zero
+from a declared empty-string label. They check multi-row INSERT, ordinal changes,
+NULL, primary-key changes, DELETE and schema restart on all four profiles. The
+former `matrix-reject-enum-error-value` case is removed. Ordered-label and
+missing-label refusal cases remain.
+
+`matrix-zerofill` and `bootstrap-matrix-zerofill` check integer display widths,
+implicit UNSIGNED, padded defaults, numeric boundaries, ALTER and DML. The
+included-DDL refusal case uses an explicit engine outside the selected profile.
+This keeps a real policy failure after ZEROFILL becomes supported.
+
+The `matrix-collations` and `bootstrap-matrix-collations` cases test all 63 native
+5.7 collations for utf8mb4, utf8mb3, latin1 and ASCII. They compare schema metadata
+and bytes after each phase. The case includes a collated key, defaults, NULL,
+INSERT, UPDATE, ALTER and DELETE. It does not test every language-specific sort rule.
+
+The `matrix-nativeencodings` and `bootstrap-matrix-nativeencodings` cases add the
+remaining 36 native 5.7 text encodings. They check raw CHAR/VARCHAR/TEXT bytes,
+encoding-specific CHAR padding, NUL, defaults, NULL and DML/DDL phases. A UTF16
+primary key checks binary parameter conversion in key predicates.
+
+The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
+The live and bootstrap cases run on both 5.7-to-5.7 profiles. The inventory gives
+native error 1063 as the exclusion reason for a profile with an 8.4 source or target.
+The common selection code and both execution paths use these profile exclusions.

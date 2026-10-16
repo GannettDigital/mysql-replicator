@@ -5,6 +5,7 @@ public enum DDLCoverage {
         let catalog: DDLCatalog
         let profiles: DDLProfiles
         let upstream: DDLUpstream
+        let support: SupportCatalog
     }
 
     static func safePath(_ path: String) throws {
@@ -33,7 +34,8 @@ public enum DDLCoverage {
     static func load(directory: URL, registry: [DDLCoverageCases.Entry] = DDLCoverageCases.registry) throws -> Inventory {
         let inventory = try Inventory(catalog: document("catalog", directory: directory, as: DDLCatalog.self),
                                       profiles: document("profiles", directory: directory, as: DDLProfiles.self),
-                                      upstream: document("upstream", directory: directory, as: DDLUpstream.self))
+                                      upstream: document("upstream", directory: directory, as: DDLUpstream.self),
+                                      support: document("support", directory: directory, as: SupportCatalog.self))
         try validate(inventory, registry: registry)
         return inventory
     }
@@ -58,6 +60,7 @@ public enum DDLCoverage {
     }
     static func validate(_ inventory: Inventory, registry: [DDLCoverageCases.Entry]) throws {
         let catalog = inventory.catalog
+        try inventory.support.validate(upstream:inventory.upstream)
         try require(catalog.schemaVersion == 1 && inventory.profiles.schemaVersion == 1 && inventory.upstream.schemaVersion == 1, "unsupported DDL catalog schema version")
         let families = try unique(catalog.families, { $0.id }, "family")
         let features = try unique(catalog.features, { $0.id }, "feature")
@@ -206,7 +209,7 @@ public enum DDLCoverage {
         }
         return ["schema_version": 1, "inventory_revision": catalog.inventoryRevision,
                 "evidence_status": "not_loaded", "qualification_note": "Offline inventory only. Assertion evidence and provenance verification are not implemented; no scenario is promoted from an aggregate suite pass.",
-                "families": families, "scenarios": rows,
+                "families": families, "scenarios": rows, "support": inventory.support.report(upstream:inventory.upstream),
                 "registered_cases": DDLCoverageCases.registry.sorted { $0.key < $1.key }.map { entry -> [String: Any] in
                     var fields = entry.test.fields; fields["suite"] = entry.suite; fields["profiles"] = entry.profiles; return fields
                 }, "non_catalog_cases": catalog.caseClassifications.map { ["suite": $0.suite, "case_id": $0.caseId, "reason": $0.reason] }]
@@ -238,7 +241,7 @@ public enum DDLCoverage {
             }
         }
         lines += ["", "See catalog.json for prerequisites, required assertions, references and outstanding gaps."]
-        return lines.joined(separator: "\n") + "\n"
+        return lines.joined(separator: "\n") + inventory.support.markdown + "\n"
     }
     public static func run(root: URL, arguments: [String]) throws {
         guard let command = arguments.first, ["check", "report", "scan", "upstream-check"].contains(command) else { throw LabError("ddl-catalog supports check, report, scan and upstream-check; evidence and verify remain planned") }
@@ -269,7 +272,7 @@ public enum DDLCoverage {
             // Exercise both deterministic renderers without creating artifacts.
             _ = markdown(inventory)
             _ = try JSONSerialization.data(withJSONObject: report(inventory), options: [.prettyPrinted, .sortedKeys])
-            print("PASS DDL catalog structure: \(inventory.catalog.scenarios.count) scenarios, \(DDLCoverageCases.registry.count) registered cases. No replication coverage qualified.")
+            print("PASS DDL catalog structure: \(inventory.catalog.scenarios.count) scenarios, \(DDLCoverageCases.registry.count) registered cases, \(inventory.support.requirements.count) support requirements. No replication coverage qualified.")
         } else {
             var bundles: [DDLCoverageEvidence.Bundle] = []
             if !evidencePaths.isEmpty {

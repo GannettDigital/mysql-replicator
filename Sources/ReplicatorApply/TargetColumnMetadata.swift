@@ -4,21 +4,14 @@ import Foundation
 /// 8.4 adds DEFAULT_GENERATED and lowercases CURRENT_TIMESTAMP in I_S; 5.7
 /// reports the same supported temporal defaults without that marker.
 enum TargetColumnMetadata {
-    static func defaultValue(_ value: String?, type: String, mysql84: Bool) throws -> String? {
-        if ["float","double","float unsigned","double unsigned"].contains(type) { return try normalizedDefault(value,type:DMLColumnType(type)) }
+    static func defaultValue(_ value: String?, type: String, mysql84 _: Bool) throws -> String? {
+        if type.hasSuffix(" zerofill") { return try normalizedDefault(value,type:DMLColumnType(type)) }
+        if type == "float" || type == "double" || type.hasPrefix("float ") || type.hasPrefix("double ") || type.hasPrefix("float(") || type.hasPrefix("double(") { return try normalizedDefault(value,type:DMLColumnType(type)) }
         if type == "bit" || type.hasPrefix("bit(") { return try normalizedDefault(value,type:DMLColumnType(type)) }
-        guard mysql84, let value, value.hasPrefix("0x"),
-              type.hasPrefix("binary(") || type.hasPrefix("varbinary(") else { return temporalDefault(value,type:type) }
-        // 8.4 I_S renders binary defaults as hex literals without BINARY padding.
-        let hex=Array(value.dropFirst(2).utf8)
-        try require(hex.count % 2 == 0,"invalid binary default metadata")
-        var bytes: [UInt8] = []
-        for i in stride(from:0,to:hex.count,by:2) {
-            guard let byte=UInt8(String(decoding:hex[i...i+1],as:UTF8.self),radix:16) else { throw ApplyError("invalid binary default metadata") }
-            bytes.append(byte)
+        if type.hasPrefix("binary(") || type.hasPrefix("varbinary(") {
+            try require(value == nil,"binary defaults require stored-value metadata")
         }
-        guard let literal=String(bytes:bytes,encoding:.utf8) else { throw ApplyError("binary default cannot be represented in supported DDL metadata") }
-        return try normalizedDefault(literal,type:DMLColumnType(type))
+        return temporalDefault(value,type:type)
     }
 
     static func temporalDefault(_ value: String?, type: String) -> String? {

@@ -42,7 +42,7 @@ extension SharedCorrectness.Run {
     }
 
     func bootstrapDML() throws {
-        let chosen=DMLCompatibilityCases.cases.filter { selects("bootstrap-matrix-"+$0.id) && ($0.source84OnlyReason == nil || f.profile.sourceVersion == .mysql84) }
+        let chosen=DMLCompatibilityCases.cases.filter { selects("bootstrap-matrix-"+$0.id) && $0.applies(to:f.profile) }
         guard !chosen.isEmpty else { return }
         try resetNativeEngine(); try f.awaitNative()
         let isolated=LabIsolatedApply(f)

@@ -3,9 +3,11 @@ import ReplicatorCodec
 
 /// Types qualified for prepared-table DML on MySQL 5.7. DDL has its own grammar.
 struct DMLColumnType {
+    let characterSet: String
     let base: String
     let arguments: [Int]
     let unsigned: Bool
+    let zerofill: Bool
     let integerBits: Int?
     let labels: [Data]
     static let spatialTypes = ["geometry","point","linestring","polygon","multipoint","multilinestring","multipolygon","geometrycollection"]
@@ -15,17 +17,26 @@ struct DMLColumnType {
     var bitWidth: Int? { base == "bit" ? (arguments.first ?? 1) : nil }
     var isChoice: Bool { base == "enum" || base == "set" }
     var isText: Bool { base == "char" || base == "varchar" || base.hasSuffix("text") || isChoice }
-    init(_ definition: String) throws {
+    init(_ column: ApplyColumn) throws {
+        try self.init(column.type,characterSet:column.characterSet ?? CharacterSetRegistry.columnCollation(named:column.collation ?? "")?.characterSet ?? "utf8mb4",choiceLabels:column.choiceLabels)
+    }
+    init(_ definition: String, characterSet: String = "utf8mb4", choiceLabels: [Data]? = nil) throws {
+        self.characterSet = CharacterSetRegistry.canonicalCharset(characterSet)
         if definition.hasPrefix("enum(") || definition.hasPrefix("set(") {
             base = definition.hasPrefix("enum(") ? "enum" : "set"
-            unsigned = false; integerBits = nil; arguments = []
-            labels = try Self.parseLabels(definition,base:base)
+            unsigned = false; zerofill = false; integerBits = nil; arguments = []
+            let displayed = try Self.parseLabels(definition,base:base)
+            try require(choiceLabels == nil || choiceLabels!.count == displayed.count,"ENUM/SET encoded label count differs")
+            labels = choiceLabels ?? displayed
             try require((1...(base == "enum" ? 65535 : 64)).contains(labels.count),"invalid ENUM/SET label count")
             return
         }
+        try require(choiceLabels == nil,"encoded labels on a non-ENUM/SET column")
         labels = []
-        unsigned = definition.hasSuffix(" unsigned")
-        let type = unsigned ? String(definition.dropLast(9)) : definition
+        zerofill = definition.hasSuffix(" zerofill")
+        let numeric = zerofill ? String(definition.dropLast(9)) : definition
+        unsigned = numeric.hasSuffix(" unsigned") || zerofill
+        let type = numeric.hasSuffix(" unsigned") ? String(numeric.dropLast(9)) : numeric
         let parts = type.split(separator:"(",omittingEmptySubsequences:false)
         base = String(parts[0])
         if parts.count == 2, parts[1].hasSuffix(")") {
@@ -36,14 +47,18 @@ struct DMLColumnType {
             }
         } else { try require(parts.count == 1,"invalid column type"); arguments=[] }
         integerBits = ["tinyint":8,"smallint":16,"mediumint":24,"int":32,"bigint":64][base]
-        if integerBits != nil { try require(arguments.isEmpty,"integer display width must be normalized"); return }
+        if integerBits != nil {
+            try require(arguments.isEmpty || (zerofill && arguments.count == 1 && (1...255).contains(arguments[0])),"integer display width must be normalized unless ZEROFILL needs it")
+            return
+        }
         try require(!unsigned || base == "decimal" || floatingWidth != nil,"unsupported unsigned column type")
         if isSpatial { try require(arguments.isEmpty,"spatial types have no type arguments"); return }
         switch base {
-        case "float","double": try require(arguments.isEmpty,"fixed-scale floating-point columns are unsupported")
+        case "float","double":
+            try require(arguments.isEmpty || (arguments.count == 2 && (1...255).contains(arguments[0]) && (0...30).contains(arguments[1]) && arguments[1] <= arguments[0]),"invalid floating-point width/scale")
         case "bit": try require(arguments.isEmpty || (arguments.count == 1 && (1...64).contains(arguments[0])),"invalid BIT width")
         case "char","binary": try require(arguments.count == 1 && (0...255).contains(arguments[0]),"unsupported fixed column width")
-        case "varchar","varbinary": try require(arguments.count == 1 && (1...16383).contains(arguments[0]),"unsupported declared column type")
+        case "varchar","varbinary": try require(arguments.count == 1 && (0...65535).contains(arguments[0]),"unsupported declared column type")
         case "tinytext","text","mediumtext","longtext","tinyblob","blob","mediumblob","longblob","date","year","json":
             try require(arguments.isEmpty,"unsupported column type arguments")
         case "decimal": try require(arguments.count == 2 && (1...65).contains(arguments[0]) && (0...min(30,arguments[0])).contains(arguments[1]),"unsupported DECIMAL precision/scale")
@@ -54,19 +69,30 @@ struct DMLColumnType {
     private static func parseLabels(_ definition: String, base: String) throws -> [Data] {
         let bytes=Array(definition.utf8); var index=base.utf8.count+1, result:[Data]=[]
         while index < bytes.count {
-            try require(bytes[index] == 39,"invalid ENUM/SET label")
-            index += 1; var value=Data(), closed=false
-            while index < bytes.count {
-                let byte=bytes[index]; index += 1
-                if byte == 39 {
-                    if index < bytes.count && bytes[index] == 39 { value.append(39); index += 1 }
-                    else { closed=true; break }
-                } else if byte == 92 {
-                    try require(index < bytes.count,"truncated ENUM/SET escape")
-                    let escaped=bytes[index]; index += 1
-                    guard let decoded:[UInt8] = [48:[0],110:[10],114:[13],92:[92]][escaped] else { throw ApplyError("unsupported ENUM/SET metadata escape") }
-                    value.append(contentsOf:decoded)
-                } else { value.append(byte) }
+            var value=Data(), closed=false
+            if bytes[index] == 88 || bytes[index] == 120 {
+                index += 1
+                try require(index < bytes.count && bytes[index] == 39,"invalid hexadecimal ENUM/SET label")
+                index += 1;let start=index
+                while index < bytes.count && bytes[index] != 39 { index += 1 }
+                try require(index < bytes.count,"unterminated hexadecimal ENUM/SET label")
+                value=try SQLByteLiteral.decode(String(decoding:bytes[start..<index],as:UTF8.self),radix:16,allowOdd:false)
+                index += 1;closed=true
+            } else {
+                try require(bytes[index] == 39,"invalid ENUM/SET label")
+                index += 1
+                while index < bytes.count {
+                    let byte=bytes[index]; index += 1
+                    if byte == 39 {
+                        if index < bytes.count && bytes[index] == 39 { value.append(39); index += 1 }
+                        else { closed=true; break }
+                    } else if byte == 92 {
+                        try require(index < bytes.count,"truncated ENUM/SET escape")
+                        let escaped=bytes[index]; index += 1
+                        guard let decoded:[UInt8] = [48:[0],110:[10],114:[13],92:[92]][escaped] else { throw ApplyError("unsupported ENUM/SET metadata escape") }
+                        value.append(contentsOf:decoded)
+                    } else { value.append(byte) }
+                }
             }
             try require(closed,"unterminated ENUM/SET label")
             result.append(value)
@@ -84,14 +110,20 @@ struct DMLColumnType {
         if isChoice || bitWidth != nil { return .unsigned }
         if integerBits != nil { return unsigned ? .unsigned : .signed }
         if base == "decimal" { return .decimal }
-        if base == "char" || base == "varchar" || base.hasSuffix("text") { return .utf8 }
+        if base == "char" || base == "varchar" || base.hasSuffix("text") { switch characterSet {
+            case "utf8mb3","utf8mb4": return .utf8
+            case "ucs2","utf16": return .encodedText16BE
+            case "utf16le": return .encodedText16LE
+            case "utf32": return .encodedText32BE
+            default: return .encodedText
+            } }
         if base == "binary" || base == "varbinary" || base.hasSuffix("blob") { return .binary }
         return .temporal
     }
     var maximumBytes: Int? {
         if isSpatial { return 4294967295 }
         switch base {
-        case "char","varchar": return arguments[0]*4
+        case "char","varchar": return arguments[0] * CharacterSetRegistry.maximumBytesPerCharacter(characterSet)
         case "binary","varbinary": return arguments[0]
         case "tinytext","tinyblob": return 255
         case "text","blob": return 65535
@@ -99,6 +131,27 @@ struct DMLColumnType {
         case "longtext","longblob": return 4294967295
         default: return nil
         }
+    }
+    func sqlValue(_ expression: String) -> String {
+        interpretation.isEncodedText ? "CONVERT(\(expression) USING \(characterSet))" : expression
+    }
+    func sqlKeyColumn(_ name: String) -> String {
+        // UPDATE/DELETE range analysis can discard a rounded FLOAT endpoint
+        // even when SELECT finds it. Compare the promoted stored value to the
+        // binary parameter. This may require a scan for fixed-scale FLOAT keys.
+        base == "float" && arguments.count == 2 ? "(\(name)+0e0)" : name
+    }
+    func sqlWriteValue(_ expression: String) -> String {
+        // FLOAT may round a legal decimal endpoint outward. A binary SQL
+        // parameter then fails strict range checks, although native row apply
+        // copies it. Bound only the SQL input; the target stores the same FLOAT
+        // bits. Predicates must still use the original stored key value.
+        if base == "float", arguments.count == 2, arguments[0]-arguments[1] <= 38 {
+            let whole=arguments[0]-arguments[1], scale=arguments[1]
+            let limit=(whole == 0 ? "0" : String(repeating:"9",count:whole)) + (scale == 0 ? "" : "."+String(repeating:"9",count:scale))
+            return "LEAST(GREATEST(\(expression),\(unsigned ? "0" : "-"+limit)),\(limit))"
+        }
+        return sqlValue(expression)
     }
     var fraction: Int { arguments.first ?? 0 }
     func matches(_ wire: WireColumn, legacyMetadata: Bool = false) -> Bool {
@@ -137,7 +190,7 @@ struct DMLColumnType {
         }
         if isChoice {
             guard case .unsigned(let n) = value else { throw ApplyError("ENUM/SET requires an ordinal or bitmask") }
-            try require(base == "enum" ? (n > 0 && n <= UInt64(labels.count)) : (labels.count == 64 || n < (UInt64(1) << labels.count)),"ENUM/SET value out of range")
+            try require(base == "enum" ? (n <= UInt64(labels.count)) : (labels.count == 64 || n < (UInt64(1) << labels.count)),"ENUM/SET value out of range")
             return
         }
         switch (interpretation,value) {
@@ -147,7 +200,13 @@ struct DMLColumnType {
             if bits < 64 { let half=Int64(1) << (bits-1); try require((-half..<half).contains(n),"signed value out of range") }
         case (.unsigned,.unsigned(let n)):
             if integerBits! < 64 { try require(n < UInt64(1) << integerBits!,"unsigned value out of range") }
+        case (.encodedText,.binary(let bytes)),(.encodedText16BE,.binary(let bytes)),(.encodedText16LE,.binary(let bytes)),(.encodedText32BE,.binary(let bytes)):
+            try require(bytes.count <= maximumBytes!,"text bytes exceed declared length")
+            let unit = interpretation == .encodedText32BE ? 4 : (interpretation == .encodedText16BE || interpretation == .encodedText16LE) ? 2 : 1
+            try require(bytes.count % unit == 0,"partial encoded character")
+            if characterSet == "ascii" { try require(bytes.allSatisfy { $0 < 128 },"non-ASCII text bytes") }
         case (.utf8,.text(let s)):
+            if characterSet == "utf8mb3" { try require(s.unicodeScalars.allSatisfy { $0.value <= 0xffff },"four-byte character in utf8mb3 column") }
             try require(s.utf8.count <= maximumBytes!,"text value exceeds declared length")
             if base == "varchar" || base == "char" { try require(s.unicodeScalars.count <= arguments[0],"varchar value exceeds declared length") }
         case (.binary,.binary(let data)): try require(base == "binary" ? data.count == maximumBytes! : data.count <= maximumBytes!,"binary value differs from declared length")
@@ -160,6 +219,10 @@ struct DMLColumnType {
         case (.float32,.float32(let bits)):
             let n=Float(bitPattern:bits)
             try require(n.isFinite && (!unsigned || n >= 0),"non-finite or negative unsigned FLOAT")
+            if arguments.count == 2 {
+                let limit=Float(pow(10.0,Double(arguments[0]-arguments[1]))-pow(10.0,-Double(arguments[1])))
+                try require(abs(n) <= limit,"FLOAT exceeds stored fixed-scale range")
+            }
         case (.float64,.float64(let bits)):
             let n=Double(bitPattern:bits)
             try require(n.isFinite && (!unsigned || n >= 0),"non-finite or negative unsigned DOUBLE")

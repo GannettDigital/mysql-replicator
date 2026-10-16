@@ -4,7 +4,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 10. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 12. Encoded text uses interpretations 11-14 and binary cell bytes.
+ * 11: single-byte space padding; 12: 16-bit BE; 13: 16-bit LE; 14: 32-bit BE.
+ * Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -32,7 +34,8 @@ typedef struct {
  * 8 FLOAT IEEE-754 binary32 bits, 9 DOUBLE IEEE-754 binary64 bits, 10 typed JSON document envelope, 11 JSON diff vector envelope.
  * Kinds 8/9 use unsigned_value, with zero high bits for kind 8. Non-finite values fail.
  * Text/binary are pointer+length, including embedded NUL.
- * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7/8/9/10, in column order.
+ * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7/8/9/10/11, in column order.
+ * Interpretation 11 is encoded text; result cells use kind 5, not JSON diff kind 11.
  * History is mandatory for rows, even if optional wire metadata happens to exist.
  */
 typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; rc_bytes bytes; } rc_value;

@@ -56,12 +56,12 @@ public final class NativeHarness {
                   "native_observed_outcome": "unknown", "swift_apply": "pending",
                   "native_engine": config.nativeEngine, "native_init_automatic": config.initAutomatic]
     }
-    func compose(_ args: [String], timeout: TimeInterval = 120, checked: Bool = true, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
+    func compose(_ args: [String], timeout: TimeInterval = 120, checked: Bool = true, input:Data? = nil, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
         try runner.run(["docker", "compose", "-f", root.appendingPathComponent("compose.yaml").path, "-p", project] + composeOverlays.flatMap { ["-f", $0] } + args,
                        environment: ["FIXTURE_SOURCE_GTID_MODE": "ON", "FIXTURE_SOURCE_GTID_CONSISTENCY": "ON",
                                      "FIXTURE_NATIVE_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_NATIVE_GTID_CONSISTENCY": "WARN",
                                      "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN"].merging(composeEnvironment) { _, new in new },
-                       timeout: timeout, checked: checked, onOutput: onOutput)
+                       input:input, timeout: timeout, checked: checked, onOutput: onOutput)
     }
     func sql(_ service: String, _ statement: String, headers: Bool = false, preserveWhitespace: Bool = false) throws -> String {
         let result = try sqlCommand(service, statement, headers: headers)
@@ -70,6 +70,9 @@ public final class NativeHarness {
             return output.hasSuffix("\n") ? String(output.dropLast()) : output
         }
         return result.text
+    }
+    func sqlBytes(_ service:String,_ statement:String) throws -> Data {
+        try sqlCommand(service,statement,headers:false).stdout
     }
     func sqlBatch(_ service: String, _ queries: [LabSQLBatch.Query]) throws -> [String: String] {
         guard !queries.isEmpty else { return [:] }
@@ -88,9 +91,18 @@ public final class NativeHarness {
             if !succeeded { sqlFailures += 1 }
         }
         let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
+        // Darwin Process arguments use filesystem encoding and can decompose
+        // Unicode. SQL is byte-sensitive. A file-backed stdin preserves it.
+        // One custom delimiter keeps routine bodies in the same server request.
+        let vertical=statement.hasSuffix("\\G")
+        let sql=vertical ? String(statement.dropLast(2)) : statement
+        let delimiter="_r_"+UUID().uuidString.replacingOccurrences(of:"-",with:"").prefix(10)
+        try require(!statement.contains(delimiter),"SQL contains its test-client delimiter")
         let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
-                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
-                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw", "--binary-mode",
+                            "--default-character-set=utf8mb4", "--delimiter="+delimiter,
+                            headers ? "--column-names" : "--skip-column-names"] + (vertical ? ["--vertical"] : []),
+                            input:Data((prefix+sql+"\n"+delimiter+"\n").utf8))
         succeeded = true
         return result
     }

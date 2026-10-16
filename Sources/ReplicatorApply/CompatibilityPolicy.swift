@@ -3,19 +3,18 @@ import Foundation
 /// Explicit comparison-semantics changes; never a character-set conversion.
 public struct CompatibilityPolicy: Codable, Equatable {
     public var collations: [String:String] = [:]
-    static let collationIDs: [String:UInt32] = [
-        "utf8mb4_general_ci":45, "utf8mb4_bin":46, "utf8mb4_unicode_ci":224,
-        "utf8mb4_0900_ai_ci":255
-    ]
+    // Adding a column encoding must not silently expand translation policy.
+    private static let translationTargets: Set<UInt32> = [45,46,224]
     func validate() throws {
         for (source,target) in collations {
-            try require(source == "utf8mb4_0900_ai_ci" && ["utf8mb4_unicode_ci","utf8mb4_general_ci","utf8mb4_bin"].contains(target),
+            let allowed = CharacterSetRegistry.columnCollation(named:target).map { Self.translationTargets.contains($0.id) } ?? false
+            try require(source == "utf8mb4_0900_ai_ci" && allowed,
                         "compatibility.collations supports utf8mb4_0900_ai_ci mapped to utf8mb4_unicode_ci, utf8mb4_general_ci or utf8mb4_bin only")
         }
     }
     func targetName(_ source: String) -> String { collations[source] ?? source }
     func targetID(_ source: UInt32) -> UInt32 {
-        guard source == 255, let name = collations["utf8mb4_0900_ai_ci"], let id = Self.collationIDs[name] else { return source }
+        guard source == 255, let name = collations["utf8mb4_0900_ai_ci"], let id = CharacterSetRegistry.columnCollation(named:name)?.id else { return source }
         return id
     }
     func mappedDefault(_ source: UInt32) -> String? {

@@ -44,7 +44,7 @@ extension ApplyTests {
         XCTAssertEqual(contract.gtidMode,"ON")
         XCTAssertEqual(contract.gtidConsistency,"ON")
         XCTAssertEqual(contract.ddlSQLMode(0x1003ff00),0x1003ff00)
-        XCTAssertEqual(try contract.columnDefault("0x6869",type:"varbinary(20)"),"0x6869")
+        XCTAssertThrowsError(try contract.columnDefault("0x6869",type:"varbinary(20)"))
         XCTAssertNil(contract.columnExtra("",defaultValue:nil,type:"int"))
         XCTAssertNoThrow(try config(profile:profile.rawValue).validate())
         XCTAssertThrowsError(try config(profile:profile.rawValue,mode:"file-position").validate())

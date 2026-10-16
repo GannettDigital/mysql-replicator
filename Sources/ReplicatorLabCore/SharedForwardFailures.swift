@@ -240,11 +240,11 @@ extension SharedCorrectness.Run {
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME IN ('\(label)','after_\(label)')")=="0","rejected or following DDL was applied")
                     try reporter.pass(label)
                 }
-                // A valid source DDL outside the grammar stops before mutation.
+                // An explicit engine outside the target contract stops before mutation.
                 let unsupported=try start(DDLCoverageCases.unsupported,configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
-                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DOUBLE(10,2) NULL")
-                _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
-                try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
+                _ = try h.sql("source","CREATE TABLE poc.unsupported(id INT PRIMARY KEY) ENGINE=InnoDB")
+                _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"outside the MyISAM DDL contract")
+                try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='unsupported'") == "0","unsupported DDL mutated target")
                 try require(state("ddl-unsupported","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","unsupported DDL advanced checkpoint")
                 try reporter.pass("ddl-unsupported")
                 // A target SQL error leaves a pending DDL intent, never applied.

@@ -306,7 +306,7 @@ fn check_column(table: &TableMapEvent<'_>, index: usize, kind: u32) -> Checked<C
         MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_LONG | MYSQL_TYPE_LONGLONG
         | MYSQL_TYPE_INT24 => kind == 2 || kind == 3,
         MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING | MYSQL_TYPE_STRING | MYSQL_TYPE_BLOB => {
-            kind == 4 || kind == 5
+            kind == 4 || kind == 5 || (11..=14).contains(&kind)
         }
         MYSQL_TYPE_ENUM | MYSQL_TYPE_SET | MYSQL_TYPE_BIT => kind == 3,
         MYSQL_TYPE_GEOMETRY => kind == 5,
@@ -491,7 +491,7 @@ fn image<'a>(
             BinlogValue::Value(Value::UInt(v)) if kind == 3 => Cell::Unsigned(v),
             // mysql_common emits INT24 UNSIGNED as nonnegative Value::Int.
             BinlogValue::Value(Value::Int(v)) if kind == 3 && v >= 0 => Cell::Unsigned(v as u64),
-            BinlogValue::Value(Value::Bytes(v)) if kind == 4 || kind == 5 => {
+            BinlogValue::Value(Value::Bytes(v)) if kind == 4 || kind == 5 || (11..=14).contains(&kind) => {
                 *budget += v.len();
                 ensure(
                     *budget <= maximum_output,
@@ -515,7 +515,16 @@ fn image<'a>(
                     Cell::Text(v)
                 } else {
                     let mut v = v;
-                    if ty == ColumnType::MYSQL_TYPE_STRING {
+                    if ty == ColumnType::MYSQL_TYPE_STRING && (11..=14).contains(&kind) {
+                        // Field_string::pack/lengthsp uses an encoded space,
+                        // not its last byte. U+2020 must not lose its low byte.
+                        let space: &[u8] = match kind {
+                            12 => &[0,32], 13 => &[32,0], 14 => &[0,0,0,32], _ => &[32],
+                        };
+                        ensure(v.len() % space.len() == 0, MALFORMED, "partial encoded character")?;
+                        while v.ends_with(space) { v.truncate(v.len()-space.len()); }
+                    }
+                    if ty == ColumnType::MYSQL_TYPE_STRING && kind == 5 {
                         // Field_string::pack can omit BINARY's trailing zero
                         // padding. Restore the declared width as MySQL unpack does.
                         let width =
@@ -955,7 +964,11 @@ impl Decoder {
                                 collation = parsed(charset)? as u32;
                                 kind = match collation {
                                     63 => 5,
-                                    45 | 46 | 224 | 255 => 4,
+                                    33 | 45 | 46 | 83 | 192..=215 | 223..=247 | 255 => 4,
+                                    35 | 54 | 55 | 90 | 101..=124 | 128..=151 | 159 => 12,
+                                    56 | 62 => 13,
+                                    60 | 61 | 160..=183 => 14,
+                                    1..=16 | 18..=75 | 77..=99 | 248..=250 => 11,
                                     _ => 0,
                                 };
                             }
@@ -1137,7 +1150,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    10
+    12
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {

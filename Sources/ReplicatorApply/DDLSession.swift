@@ -12,7 +12,8 @@ extension TargetSession {
         // ID 255 (8.x's utf8mb4 default) still means utf8mb4 bytes on 5.7, where
         // ID 45 identifies that encoding. This does not substitute the separate
         // connection collation used for expressions, checked below.
-        let clientEncodingID = context.clientCharset == 255 ? 45 : context.clientCharset
+        let clientEncodingID = CharacterSetRegistry.clientEncodingID(context.clientCharset,
+            target:contract.versionPrefix == "5.7." ? .mysql57 : .mysql84)
         let charset = try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",[.init(string:String(clientEncodingID))]).0.first
         guard let client = charset?.column("CHARACTER_SET_NAME")?.string else {throw ApplyError("unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")}
         _ = try query("SET SESSION character_set_client=?",[.init(string:client)])

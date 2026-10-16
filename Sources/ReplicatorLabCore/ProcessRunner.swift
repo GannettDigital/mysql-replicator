@@ -41,7 +41,7 @@ public final class ProcessRunner {
     public let root: URL
     public init(root: URL) { self.root = root }
 
-    public func run(_ arguments: [String], environment: [String: String] = [:],
+    public func run(_ arguments: [String], environment: [String: String] = [:], input: Data? = nil,
                     timeout: TimeInterval = 120, checked: Bool = true, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
         try require(!arguments.isEmpty, "empty command")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("replicator-command-" + UUID().uuidString)
@@ -58,7 +58,14 @@ public final class ProcessRunner {
         process.arguments = arguments
         process.currentDirectoryURL = root
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-        process.standardInput = FileHandle.nullDevice
+        let inputFile:FileHandle?
+        if let input {
+            let url=directory.appendingPathComponent("stdin")
+            try input.write(to:url)
+            inputFile=try FileHandle(forReadingFrom:url)
+        } else { inputFile=nil }
+        defer { try? inputFile?.close() }
+        process.standardInput = inputFile ?? FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = errors
         let completion = DispatchSemaphore(value: 0)

@@ -47,7 +47,7 @@ final class FloatingTypeTests: XCTestCase {
             XCTAssertFalse(plan.select.contains("CAST("))
             XCTAssertEqual(try JSONDecoder().decode(ApplyTable.self,from:JSONEncoder().encode(table)),table)
         }
-        for definition in ["FLOAT(54)","FLOAT(10,2)","DOUBLE(10,2)","DOUBLE(53)","FLOAT ZEROFILL","DOUBLE DEFAULT 1e309"] {
+        for definition in ["FLOAT(54)","FLOAT(1,2)","DOUBLE(256,2)","DOUBLE(10,31)","DOUBLE(53)","DOUBLE DEFAULT 1e309"] {
             XCTAssertThrowsError(try parse("CREATE TABLE f(id INT PRIMARY KEY,v "+definition+")"),definition)
         }
         let original="CREATE TABLE f(id INT PRIMARY KEY,v FLOAT DEFAULT 1.23456789)"
@@ -75,4 +75,41 @@ final class FloatingTypeTests: XCTestCase {
             }
         }
     }
+    func testFixedScaleDDLDefaultsAndRowBits() throws {
+        let sql="CREATE TABLE f(id FLOAT(10,2) PRIMARY KEY,a DOUBLE(20,6) DEFAULT -1.23456789,b FLOAT(30,20) DEFAULT 0.1,c DOUBLE(200,0) DEFAULT 1e199)"
+        guard case .create(let table,_) = try parse(sql) else { return XCTFail("not CREATE") }
+        try table.validate()
+        XCTAssertEqual(table.columns.map(\.type),["float(10,2)","double(20,6)","float(30,20)","double(200,0)"])
+        XCTAssertEqual(table.columns[1].defaultValue,"-1.234568")
+        XCTAssertEqual(table.columns[2].defaultValue,String(Double(Float(0.1))))
+        for mysql84 in [false,true] {
+            XCTAssertEqual(try TargetColumnMetadata.defaultValue("0.10000000149011612000",type:"float(30,20)",mysql84:mysql84),table.columns[2].defaultValue)
+            XCTAssertEqual(try TargetColumnMetadata.defaultValue("-1.234568",type:"double(20,6)",mysql84:mysql84),table.columns[1].defaultValue)
+        }
+        for name in ["float(10,2)","double(255,30)","float(10,2) unsigned"] {
+            let type=try DMLColumnType(name), single=type.base == "float"
+            let value:DecodedValue = single ? .float32(Float(1.23).bitPattern) : .float64(Double(1.23).bitPattern)
+            XCTAssertEqual(try FloatingPointSQL.read(FloatingPointSQL.bind(value),type:type),value)
+            let wire=WireColumn(interpretation:single ? .float32 : .float64,type:single ? 4 : 5,maximumBytes:0,nullable:true,collation:0,primaryKey:false,name:nil,metadata:Data([single ? 4 : 8]),isUnsigned:type.unsigned)
+            XCTAssertTrue(type.matches(wire))
+        }
+        for (value,expected) in [("1.235","1.24"),("-0.0001","0.0"),("1e10","99999999.99")] {
+            XCTAssertEqual(try normalizedDefault(value,type:DMLColumnType("double(10,2)")),expected)
+        }
+        XCTAssertEqual(try JSONDecoder().decode(ApplyTable.self,from:JSONEncoder().encode(table)),table)
+    }
+
+    func testFixedScaleEndpointWritesKeepStoredKeyPredicates() throws {
+        guard case .create(let table,_) = try parse("CREATE TABLE f(id FLOAT(8,2) PRIMARY KEY,v FLOAT(8,2) UNSIGNED)") else { return XCTFail("not CREATE") }
+        let plan=try DMLSQLPlan(table)
+        XCTAssertEqual(plan.insert,"INSERT INTO `poc`.`f` (`id`,`v`) VALUES (LEAST(GREATEST(?,-999999.99),999999.99),LEAST(GREATEST(?,0),999999.99))")
+        XCTAssertTrue(plan.update.hasSuffix("WHERE (`id`+0e0)=?"))
+        XCTAssertEqual(plan.delete,"DELETE FROM `poc`.`f` WHERE (`id`+0e0)=?")
+        XCTAssertEqual(plan.insertSQL(expressions:[["?","?"]]),plan.insert)
+        XCTAssertEqual(plan.updateSQL(expressions:["?","?"]),plan.update)
+        let type=try DMLColumnType("float(8,2)")
+        try type.validate(.float32(Float(1000000).bitPattern))
+        XCTAssertThrowsError(try type.validate(.float32(Float(1000001).bitPattern)))
+    }
+
 }

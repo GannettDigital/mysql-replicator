@@ -113,7 +113,8 @@ struct DMLExecution {
     static func canAutocommit(_ group: PreparedDMLGroup, maximumInsertRows: Int, maximumInsertBytes: Int) -> Bool {
         guard let first = group.mutations.first else { return false }
         if first.row.operation == "delete" { return group.mutations.count == 1 }
-        guard !first.table.columns.contains(where: { $0.isGenerated }) else { return false }
+        guard !first.table.columns.contains(where: { $0.isGenerated }),
+              !group.mutations.contains(where: { EnumZeroWrite.required(table:$0.table,after:$0.row.after) }) else { return false }
         if first.row.operation == "update" { return group.mutations.count == 1 }
         guard first.row.operation == "insert" else { return false }
         return insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in

@@ -1,0 +1,1994 @@
+{
+  "schema_version": 1,
+  "inventory_revision": "beta6-zero-width-columns",
+  "review_state": "partial",
+  "requirements": [
+    {
+      "id": "values.character-sets",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "CHAR/VARCHAR/TEXT use the native 5.7 charset and collation inventory. Non-UTF8 text retains raw bytes, with encoding-aware CHAR padding. ENUM/SET stores exact encoded labels. Non-UTF8 query text and remaining boundary qualification are open.",
+      "acceptance": "Preserve native bytes and metadata for each 5.7 charset; separate aliases by server version.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-encodings",
+        "bootstrap-matrix-encodings",
+        "matrix-composite",
+        "matrix-collations",
+        "bootstrap-matrix-collations",
+        "matrix-nativeencodings",
+        "bootstrap-matrix-nativeencodings"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift",
+        "Sources/ReplicatorApply/CompatibilityPolicy.swift",
+        "Sources/ReplicatorApply/CharacterSetRegistry.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.variable-width",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Native 5.7.42 and 8.4.8 accept the tested zero-width columns. Both InnoDB sources reject a VARCHAR(0) primary key with error 1167.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "VARCHAR and VARBINARY allow declared widths from zero through 65535. VARCHAR also enforces the charset byte width. Empty and NULL values remain distinct. Native row and engine limits still apply; full boundary qualification is open.",
+      "acceptance": "Accept native-valid byte and character widths; reject invalid event lengths.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-widestrings",
+        "bootstrap-matrix-widestrings",
+        "large-values",
+        "matrix-zerowidth",
+        "bootstrap-matrix-zerowidth"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.fixed-scale-float",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Fixed-scale FLOAT/DOUBLE and numeric ZEROFILL use native type metadata and binary numeric transport. Integer display widths are retained for ZEROFILL.",
+      "acceptance": "Match native rounding, stored bits, defaults, unsigned behavior and SQL-mode errors.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-fixedfloating",
+        "bootstrap-matrix-fixedfloating",
+        "matrix-floatbounds",
+        "bootstrap-matrix-floatbounds",
+        "matrix-zerofill",
+        "bootstrap-matrix-zerofill"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift",
+        "Sources/ReplicatorApply/FloatingPointSQL.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.decimal-defaults",
+      "stage": 2,
+      "family": "values",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Native 5.7 and 8.4 accept DECIMAL defaults that require rounding, including scientific notation.",
+      "native_behavior": "The native field resolves the default under the session SQL mode and declared precision and scale.",
+      "current_behavior": "DDL preparation uses a temporary native DECIMAL column and retains numeric versus quoted literal form. Saved schemas retain canonical decimal strings.",
+      "acceptance": "Match native rounded defaults for CREATE, ADD, MODIFY and ALTER DEFAULT; preserve exact values and defaults through discovery and restart.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-decimaldefaults",
+        "bootstrap-matrix-decimaldefaults"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/NativeDefaultMetadata.swift",
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/field.cc",
+          "symbol": "Field_new_decimal::store_value"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/field.cc",
+          "symbol": "Field_new_decimal::store_value"
+        }
+      ]
+    },
+    {
+      "id": "values.binary-defaults",
+      "stage": 2,
+      "family": "values",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Both native versions accept BINARY/VARBINARY defaults with non-UTF8 bytes, embedded NUL and empty values.",
+      "native_behavior": "Stored defaults retain exact bytes even when information_schema.COLUMNS truncates their display.",
+      "current_behavior": "DDL preparation uses native columns. Discovery reads DEFAULT(column) as bytes, including from an empty table. Saved schemas retain raw bytes when UTF-8 cannot represent them.",
+      "acceptance": "Match exact stored defaults, fixed padding and row bytes after CREATE, ALTER, discovery, recovery inspection and restart.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-binarydefaults",
+        "bootstrap-matrix-binarydefaults"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/BinaryDefaultMetadata.swift",
+        "Sources/ReplicatorApply/TargetSession.swift",
+        "Sources/ReplicatorApply/Configuration.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/item.cc",
+          "symbol": "Item_default_value::fix_fields"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_show.cc",
+          "symbol": "get_schema_column_record"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/dd/dd_table.cc",
+          "symbol": "prepare_default_value_string"
+        }
+      ]
+    },
+    {
+      "id": "values.text-defaults",
+      "stage": 2,
+      "family": "values",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Native CHAR/VARCHAR defaults include supplementary characters, numeric constants and charset-specific byte literals.",
+      "native_behavior": "Stored defaults retain characters that I_S can replace with question marks. CHAR reads depend on PAD_CHAR_TO_FULL_LENGTH; VARCHAR retains trailing spaces.",
+      "current_behavior": "DDL preparation delegates conversion to a native column. Discovery reads the stored default as UTF-8. Canonical CHAR defaults omit trailing U+0020; VARCHAR defaults preserve it.",
+      "acceptance": "Match stored characters, byte encodings, literal kind and defaults through DDL, discovery and restart. Preserve NUL and Unicode byte sequences.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-textdefaults",
+        "bootstrap-matrix-textdefaults"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/TextDefaultMetadata.swift",
+        "Sources/ReplicatorApply/NativeDefaultMetadata.swift",
+        "Sources/ReplicatorApply/TargetSession.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/item.cc",
+          "symbol": "Item_default_value::fix_fields"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_show.cc",
+          "symbol": "print_default_clause"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/dd/dd_table.cc",
+          "symbol": "prepare_default_value_string"
+        }
+      ]
+    },
+    {
+      "id": "values.enum-zero",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "ENUM ordinal zero uses a scoped non-strict write and complete after-image verification. InnoDB result checks remain inside an explicit transaction.",
+      "acceptance": "Preserve ordinal zero when the source SQL mode permits it.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-enumzero",
+        "bootstrap-matrix-enumzero"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.enum-labels",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required.",
+        "The target account needs CREATE TEMPORARY TABLES on each replicated database."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "MySQL CTAS temporary columns retain the native type library and default. Numeric ENUM ordinals and SET bits expose labels without INFORMATION_SCHEMA UTF-8 loss.",
+      "current_behavior": "Native temporary columns provide exact ordered labels and defaults, including binary bytes. DDL accepts quoted, hex and bit label literals. Binary choice defaults remain bytes. Full offline, failure and native-boundary qualification remains open.",
+      "acceptance": "Preserve label order, bytes and ordinals; distinguish absent 5.7 metadata from a mismatch.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-exactchoices",
+        "bootstrap-matrix-exactchoices",
+        "matrix-choiceboundaries",
+        "bootstrap-matrix-choiceboundaries",
+        "matrix-binarychoices",
+        "bootstrap-matrix-binarychoices",
+        "matrix-legacybinaryset",
+        "bootstrap-matrix-legacybinaryset"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift",
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/ChoiceMetadata.swift",
+        "Sources/ReplicatorApply/SQLByteLiteral.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.identifiers",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Identifiers and metadata use a restricted representation.",
+      "acceptance": "Quote native-valid identifiers without renaming; verify case rules and multibyte limits.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLTokens.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.json-opaque",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Some legacy opaque values have no exact SQL constructor.",
+      "acceptance": "Prove exact binary subtype transport or record the protocol limit.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-typedjson"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift",
+        "Sources/ReplicatorApply/JSONSQL.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.table-options",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Only selected table options are parsed.",
+      "acceptance": "Support each native-valid option with schema checks and following DML.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.fulltext",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "FULLTEXT indexes are rejected.",
+      "acceptance": "Apply native-valid FULLTEXT DDL and compare indexed schema and following DML.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.spatial-btree",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Spatial BTREE indexes are rejected.",
+      "acceptance": "Check prefix-index eligibility per engine; apply eligible forms without changing stored bytes.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-spatial"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.index-forms",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Functional, descending and invisible index forms are rejected.",
+      "acceptance": "Separate unavailable target syntax from eligible index forms.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.alter-conversions",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Cross-family column conversions and some ALTER forms are rejected.",
+      "acceptance": "Compare native metadata, converted rows, SQL-mode errors and following DML.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/SchemaChanges.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.generated-expressions",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Generated expressions use a limited deterministic grammar.",
+      "acceptance": "Apply native-valid expressions and verify source/target generated values.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLTokens.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.partition-operations",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Subpartitions and some partition forms are rejected.",
+      "acceptance": "Compare metadata and row effects for eligible engine/version combinations.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLPartitions.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.multi-drop",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Multi-table DROP is rejected.",
+      "acceptance": "Preserve object order, partial failure records, filters and saved-schema retirement.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.cross-schema-rename",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Cross-schema RENAME is rejected.",
+      "acceptance": "Preserve native ordering, FK dependencies, filters and saved schema names.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLRename.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "native.ctas57",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "native_restriction",
+      "eligibility": "excluded",
+      "implementation": "missing",
+      "profiles": [
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "5.7 rejects logged non-temporary CREATE TABLE SELECT with enforce_gtid_consistency=ON.",
+      "native_behavior": "No corresponding committed source group is available to replicate.",
+      "current_behavior": "No apply operation is needed for a statement the source rejects.",
+      "acceptance": "Keep a source-rejection test; do not count it as positive apply support.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        }
+      ]
+    },
+    {
+      "id": "ddl.ctas84",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "8.4 permits InnoDB atomic CREATE TABLE SELECT under GTID consistency.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "CREATE TABLE SELECT is rejected.",
+      "acceptance": "Inspect atomic-DDL binlog sequence and native MyISAM outcome before implementing eligible forms.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        }
+      ]
+    },
+    {
+      "id": "ddl.objects",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Views and routines use a restricted grammar; definer handling has limits.",
+      "acceptance": "Check native object metadata, logged session settings, conditional DDL and subsequent row effects.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLObjects.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.temporary-events",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "untested",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Temporary tables are not copied; logged DROP cleanup is skipped.",
+      "acceptance": "Separate unlogged source work from permanent row effects and supported cleanup.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        }
+      ]
+    },
+    {
+      "id": "ddl.check-version-semantics",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "CHECK syntax is rejected.",
+      "acceptance": "Do not equate ignored 5.7 CHECK syntax with enforced newer-server constraints.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "rows.unique-key",
+      "stage": 4,
+      "family": "rows",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Tables require a supported primary key.",
+      "acceptance": "Use eligible unique keys without ambiguous NULL or prefix comparisons.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLTablePlan.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "rows.keyless",
+      "stage": 4,
+      "family": "rows",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Tables without a supported primary key are rejected.",
+      "acceptance": "Preserve duplicate-row multiplicity; record recovery uncertainty for full-row matching.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLTablePlan.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "rows.myisam-groups",
+      "stage": 4,
+      "family": "rows",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "One statement on one included table is permitted.",
+      "acceptance": "Classify other native-valid groups before extending the profile.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "myisam-recovery"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "native.myisam-gtid",
+      "stage": 4,
+      "family": "rows",
+      "classification": "native_restriction",
+      "eligibility": "excluded",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "The source can commit a multistatement InnoDB transaction.",
+      "native_behavior": "The tested native MyISAM conversion rejects the multistatement GTID group with error 1837.",
+      "current_behavior": "Native multistatement fixture expects error 1837.",
+      "acceptance": "Retain the negative native test; extensions beyond native rules need a separate design.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorLabCore/NativeHarness.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_dml_gtid_compatible"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_dml_gtid_compatible"
+        }
+      ]
+    },
+    {
+      "id": "rows.foreign-keys",
+      "stage": 4,
+      "family": "rows",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "subset",
+      "profiles": [
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Self-references, cycles and some parent keys are rejected.",
+      "acceptance": "Preserve native-valid relationships, DDL dependencies, cascades and rollback.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "foreign-key-safety"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/ForeignKeys.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "rows.foreign-key-checks",
+      "stage": 4,
+      "family": "rows",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Source events with FK checks disabled are rejected.",
+      "acceptance": "Reproduce recorded source effects without duplicate target cascades.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "foreign-key-safety"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/ForeignKeys.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "policy.filter-relationships",
+      "stage": 4,
+      "family": "rows",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "ROW replication can apply included table changes only; application relationships can break.",
+      "current_behavior": "FK relationships across filters and mixed included/excluded DDL are rejected.",
+      "acceptance": "Keep explicit policy tests. Do not classify all cross-filter transactions as native rejection.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/ForeignKeys.swift",
+        "Sources/ReplicatorApply/TableFilter.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/log_event.cc",
+          "symbol": "check_table_map"
+        }
+      ]
+    },
+    {
+      "id": "policy.triggers",
+      "stage": 4,
+      "family": "ddl",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Source trigger DDL is skipped or rejected; target triggers are rejected.",
+      "acceptance": "Keep source row effects and verify that target triggers cannot apply effects twice.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLObjects.swift",
+        "Sources/ReplicatorApply/TargetSession.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "policy.events",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Event DDL is rejected.",
+      "acceptance": "Keep rejection tests; scheduled writes must not create an independent target writer.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLObjects.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "policy.explicit-engine",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required.",
+        "NO_ENGINE_SUBSTITUTION is enabled by the lab profiles."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Native executes the explicit engine clause. Disabled engines fail with NO_ENGINE_SUBSTITUTION; otherwise substitution can issue warnings.",
+      "current_behavior": "Explicit engine clauses must match the target profile.",
+      "acceptance": "Do not silently rewrite engines; record disabled-engine and substitution-mode outcomes.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "check_engine"
+        }
+      ]
+    },
+    {
+      "id": "events.row-images",
+      "stage": 5,
+      "family": "events",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "FULL row images are required.",
+      "acceptance": "Represent absent columns separately from NULL for MINIMAL and NOBLOB. Preserve replay and recovery.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "events.compression",
+      "stage": 5,
+      "family": "events",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Compressed transaction payloads are rejected.",
+      "acceptance": "Decode with bounded output and preserve GTID/group boundaries.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "events.tagged-gtids",
+      "stage": 5,
+      "family": "events",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Tagged GTIDs are rejected.",
+      "acceptance": "Preserve identity through capture, replay, stops, skips and saved-state restart.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "events.xa",
+      "stage": 5,
+      "family": "events",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "XA events are rejected.",
+      "acceptance": "Preserve prepare/commit/rollback across disconnects and archive files; qualify InnoDB first.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "events.checksum-modes",
+      "stage": 5,
+      "family": "events",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "CRC32 is required.",
+      "acceptance": "Classify native checksum modes and unknown/ignorable events without accepting unknown mutations.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "policy.gtid-position",
+      "stage": 1,
+      "family": "events",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "GTID-ON and consistency-ON are required even with file-position capture.",
+      "acceptance": "Assert that file-position capture cannot relax GTID transaction restrictions.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/binlog.cc",
+          "symbol": "THD::is_ddl_gtid_compatible"
+        }
+      ]
+    },
+    {
+      "id": "target.version-only-features",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "target_limit",
+      "eligibility": "excluded",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "5.7 cannot execute syntax that only newer servers implement.",
+      "current_behavior": "Newer-only type and column features are rejected on 5.7 targets.",
+      "acceptance": "Keep explicit target limits, including spatial SRID column attributes. Do not erase incompatible clauses.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "column_def"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "column_attribute"
+        }
+      ]
+    },
+    {
+      "id": "policy.resource-limits",
+      "stage": 1,
+      "family": "events",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Configured event/transaction budgets and max_allowed_packet limit values.",
+      "acceptance": "Keep bounded allocation and specific errors; valid large values within limits must pass.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "large-values"
+      ],
+      "code_references": [
+        "Sources/ReplicatorCapture/LiveInspection.swift",
+        "Sources/ReplicatorApply/DMLColumnType.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "recovery.uncertain-commit",
+      "stage": 6,
+      "family": "recovery",
+      "classification": "safety_policy",
+      "eligibility": "excluded",
+      "implementation": "subset",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Target commit and SQLite completion are not atomic.",
+      "acceptance": "Retain enough operations and keys for DBA review; do not claim automatic repair.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/StateStore.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "values.floating-auto-increment",
+      "stage": 2,
+      "family": "values",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "MySQL 5.7 accepts FLOAT and DOUBLE AUTO_INCREMENT, including fixed-scale and unsigned forms.",
+      "native_behavior": "Same-version native replication retains the source-generated keys.",
+      "current_behavior": "The applier sends explicit floating-point keys from row events; it does not generate replacement keys.",
+      "acceptance": "Match source/native keys, including zero, fractional values, explicit high keys and subsequent generated values.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "matrix-floatingautofloat",
+        "matrix-floatingautodouble",
+        "matrix-floatingautofixedfloat",
+        "matrix-floatingautounsigneddouble",
+        "bootstrap-matrix-floatingautofloat",
+        "bootstrap-matrix-floatingautodouble",
+        "bootstrap-matrix-floatingautofixedfloat",
+        "bootstrap-matrix-floatingautounsigneddouble"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorApply/DMLSQLPlan.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/field.cc",
+          "symbol": "Create_field::init"
+        }
+      ]
+    },
+    {
+      "id": "native.floating-auto-increment.source84",
+      "stage": 2,
+      "family": "values",
+      "classification": "native_restriction",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "MySQL 8.4 source CREATE rejects floating-point AUTO_INCREMENT with error 1063.",
+      "native_behavior": "MySQL 8.4 Create_field::init does not permit this attribute on FLOAT/DOUBLE.",
+      "current_behavior": "MySQL 8.4 source CREATE rejects floating-point AUTO_INCREMENT with error 1063.",
+      "acceptance": "Record native error 1063; do not count the restriction as positive support.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorApply/DMLSQLPlan.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql84",
+          "path": "sql/create_field.cc",
+          "symbol": "Create_field::init"
+        }
+      ]
+    },
+    {
+      "id": "native.floating-auto-increment.target84",
+      "stage": 2,
+      "family": "values",
+      "classification": "target_limit",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql57-to-mysql84-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "MySQL 5.7 accepts FLOAT and DOUBLE AUTO_INCREMENT, including fixed-scale and unsigned forms.",
+      "native_behavior": "MySQL 8.4 Create_field::init does not permit this attribute on FLOAT/DOUBLE.",
+      "current_behavior": "MySQL 8.4 target CREATE rejects floating-point AUTO_INCREMENT with error 1063.",
+      "acceptance": "Record native error 1063; do not count the restriction as positive support.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorApply/DMLSQLPlan.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql84",
+          "path": "sql/create_field.cc",
+          "symbol": "Create_field::init"
+        }
+      ]
+    },
+    {
+      "id": "native.binary-set.source84",
+      "stage": 2,
+      "family": "values",
+      "classification": "native_restriction",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required.",
+        "The target account needs CREATE TEMPORARY TABLES on each replicated database."
+      ],
+      "source_behavior": "5.7.42 accepts SET(X'ff',X'61') CHARACTER SET binary; 8.4.8 rejects it.",
+      "native_behavior": "Field_set::sql_type has no hex fallback for invalid UTF-8; the 8.4 dictionary rejects this displayed type.",
+      "current_behavior": "The source rejects the tested non-UTF8 binary SET definition with native error 3507.",
+      "acceptance": "Record native error 3507. Do not count this restriction as positive support.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift",
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/ChoiceMetadata.swift",
+        "Sources/ReplicatorApply/SQLByteLiteral.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql84",
+          "path": "sql/field.cc",
+          "symbol": "Field_set::sql_type"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/dd/dd_table.cc",
+          "symbol": "fill_dd_columns_from_create_fields"
+        }
+      ]
+    },
+    {
+      "id": "native.binary-set.target84",
+      "stage": 2,
+      "family": "values",
+      "classification": "target_limit",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql57-to-mysql84-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required.",
+        "The target account needs CREATE TEMPORARY TABLES on each replicated database."
+      ],
+      "source_behavior": "5.7.42 accepts SET(X'ff',X'61') CHARACTER SET binary; 8.4.8 rejects it.",
+      "native_behavior": "Field_set::sql_type has no hex fallback for invalid UTF-8; the 8.4 dictionary rejects this displayed type.",
+      "current_behavior": "The 8.4 target rejects the tested non-UTF8 binary SET definition with native error 3507; apply blocks with the DDL intent and checkpoint retained.",
+      "acceptance": "Record native error 3507. Do not count this restriction as positive support.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DMLColumnType.swift",
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/ChoiceMetadata.swift",
+        "Sources/ReplicatorApply/SQLByteLiteral.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql84",
+          "path": "sql/field.cc",
+          "symbol": "Field_set::sql_type"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/dd/dd_table.cc",
+          "symbol": "fill_dd_columns_from_create_fields"
+        }
+      ]
+    }
+  ]
+}

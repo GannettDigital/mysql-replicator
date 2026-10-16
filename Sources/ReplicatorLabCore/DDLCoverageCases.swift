@@ -30,7 +30,7 @@ enum DDLCoverageCases {
     static let positive = QualificationCase("positive", "Replicate INSERT, UPDATE and DELETE; compare rows, binlogs and SQLite checkpoints")
     static let group = QualificationCase("ddl", "Apply ordered DDL and DML; verify schema history, unchanged SQL and binlog order")
     static let missingTemplate = QualificationCase("ddl-like-missing-template", "Stop on a missing replica LIKE template before applying DDL or following events")
-    static let unsupported = QualificationCase("ddl-unsupported", "Reject unsupported DOUBLE(10,2) column before target mutation or checkpoint advance")
+    static let unsupported = QualificationCase("ddl-unsupported", "Reject an explicit incompatible engine before target mutation or checkpoint advance")
     static let denied = QualificationCase("ddl-denied", "Keep a pending DDL intent and stop when target CREATE permission is denied")
 
     static let changes: [DDLChange] = [
@@ -109,8 +109,7 @@ enum DDLCoverageCases {
     static let rejections: [(QualificationCase, String, String)] = [
         (QualificationCase("explicit_innodb", "Reject explicit InnoDB without engine rewriting or applying following DDL"),"CREATE TABLE poc.explicit_innodb(id INT PRIMARY KEY) ENGINE=InnoDB","no engine rewriting"),
         (QualificationCase("collation_0900", "Reject unsupported 0900 collation without substitution or applying following DDL"),"CREATE TABLE poc.collation_0900(id INT PRIMARY KEY,v VARCHAR(12) COLLATE utf8mb4_0900_ai_ci)","no substitution"),
-        (QualificationCase("charset_default", "Reject an incompatible charset default without applying following DDL"),"CREATE TABLE poc.charset_default(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET utf8mb4)","no collation substitution"),
-        (QualificationCase("charset_latin1", "Reject unsupported latin1 row encoding before applying DDL"),"CREATE TABLE poc.charset_latin1(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET latin1)","unsupported discovered character set")
+        (QualificationCase("charset_default", "Reject an incompatible charset default without applying following DDL"),"CREATE TABLE poc.charset_default(id INT PRIMARY KEY,v VARCHAR(12) CHARACTER SET utf8mb4)","no collation substitution")
     ]
     static let native: [(QualificationCase, String)] = [
         (QualificationCase("omitted", "CREATE without ENGINE uses local engine and database charset defaults"),"CREATE TABLE poc.omitted(id INT PRIMARY KEY,v VARCHAR(12))"),
@@ -163,6 +162,7 @@ enum DDLCoverageCases {
     static var registry: [Entry] {
         var top = [positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported, DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map{$0.test} + ModifyIndexCases.cases.map{$0.test} + ModifyIndexCases.failures.map{$0.test} + [ModifyIndexCases.timeout,ModifyIndexCases.resume,wildcardFilter,wildcardResume,wildcardRejection]
         top += DDLCompatibilityCases.declarations
+        top.append(QualificationCase("matrix-encodings","Apply latin1, ASCII and UTF-8 column data and metadata"))
         var entries = top.map { Entry(suite: "ddl-suite", test: $0, profiles: $0.id == "ddl-compat-types" ? ["swift.gtid.metadata-full"] : swiftProfiles, parent: nil, isGroup: $0.id == group.id) }
         entries += changes.map { Entry(suite: "ddl-suite", test: $0.test, profiles: swiftProfiles, parent: group.id, isGroup: false) }
         entries += NativeLifecycleQualification.cases.map { Entry(suite: "native-ddl-suite", test: $0.test, profiles: nativeProfiles, parent: nil, isGroup: false) }

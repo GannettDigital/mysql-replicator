@@ -114,7 +114,8 @@ without stopping the writer. Pause other source writes during comparison.
 
 Tables `reverse_poc.items` and `reverse_poc.aux` already exist on all servers.
 Supported CREATE/ALTER DDL also works in newly built reverse sessions. Use InnoDB
-for explicit engine clauses; foreign keys remain unsupported. This workbook's
+for explicit engine clauses. Foreign keys use the
+[supported InnoDB subset](MYSQL57_FOREIGN_KEYS.md). This workbook's
 comparison checks the two preloaded tables. See [shared correctness tests](../docs/REVERSE_REPLICATION.md#shared-correctness-suite)
 for broader schema/data coverage. Retained demos keep their original image and grants.
 

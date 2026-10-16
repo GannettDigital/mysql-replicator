@@ -2,6 +2,12 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class ReverseSchemaComparisonTests: XCTestCase {
+    func testCharsetAliasesDoNotRewriteLiteralDefaults() throws {
+        let old=["t","c","1","varchar(20)","YES","utf8","utf8_bin","utf8_general_ci","",""].joined(separator:"\t")
+        let expected=["t","c","1","varchar(20)","YES","utf8mb3","utf8mb3_bin","utf8_general_ci","",""].joined(separator:"\t")
+        XCTAssertEqual(try ReverseSchemaComparison.columns(old,mysql84:false),expected)
+        XCTAssertEqual(try ReverseSchemaComparison.columns(expected,mysql84:true),expected)
+    }
     func testPartitionIdentifierQuotingDoesNotChangeBounds() throws {
         XCTAssertEqual(try ReverseSchemaComparison.partitions("t\tp0\tHASH\t`id`\t"),"t\tp0\tHASH\tid\t")
         XCTAssertEqual(try ReverseSchemaComparison.partitions("t\tp0\tRANGE COLUMNS\t`day`, `id`\t'`literal`'"),"t\tp0\tRANGE COLUMNS\tday,id\t'`literal`'")
@@ -15,7 +21,11 @@ final class ReverseSchemaComparisonTests: XCTestCase {
         let labels=row("enum('int(11)','current_timestamp')","current_timestamp")
         XCTAssertEqual(try ReverseSchemaComparison.columns(labels,mysql84:true),labels)
         XCTAssertEqual(try ReverseSchemaComparison.columns(row("int(11)","7"),mysql84:false),row("int","7"))
-        XCTAssertEqual(try ReverseSchemaComparison.columns(row("binary(5)","0x6869"),mysql84:true),row("binary(5)","hi\0\0\0"))
+        for mysql84 in [false,true] {
+            let padded=row("int(8) unsigned zerofill","00000007")
+            XCTAssertEqual(try ReverseSchemaComparison.columns(padded,mysql84:mysql84),padded)
+        }
+        XCTAssertEqual(try ReverseSchemaComparison.columns(row("binary(5)","X'FF00010000'"),mysql84:true),row("binary(5)","X'FF00010000'"))
         XCTAssertEqual(try ReverseSchemaComparison.columns(row("timestamp","current_timestamp()","DEFAULT_GENERATED on update CURRENT_TIMESTAMP"),mysql84:true),row("timestamp","CURRENT_TIMESTAMP","on update CURRENT_TIMESTAMP"))
     }
 }

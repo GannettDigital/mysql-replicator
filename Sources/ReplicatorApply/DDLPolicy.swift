@@ -112,7 +112,7 @@ enum AlterAction: Equatable {
     case modify(String,ApplyColumn,ColumnPlacement?)
     case drop(String)
     case indexes(IndexChange)
-    case defaultValue(String,String?)
+    case defaultValue(String,String?,numeric:Bool = false,bytes:Data? = nil)
     case primaryKey([String]?)
     case partition(PartitionChange)
 }

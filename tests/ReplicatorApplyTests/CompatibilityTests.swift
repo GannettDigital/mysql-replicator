@@ -7,7 +7,7 @@ final class CompatibilityTests: XCTestCase {
     func testOrderedChoiceLabelsAreParsedWithoutSQLReinterpretation() throws {
         let type = try DMLColumnType(#"enum('','one','it''s','x,y','a\\b','\0\n\r','🙂')"#)
         XCTAssertEqual(type.labels,["","one","it's","x,y","a\\b","\0\n\r","🙂"].map { Data($0.utf8) })
-        XCTAssertThrowsError(try type.validate(.unsigned(0))); try type.validate(.unsigned(1)); try type.validate(.unsigned(7))
+        try type.validate(.unsigned(0)); try type.validate(.unsigned(1)); try type.validate(.unsigned(7))
         XCTAssertThrowsError(try type.validate(.unsigned(8)))
         XCTAssertThrowsError(try type.validate(.text("one")))
         XCTAssertThrowsError(try DMLColumnType("enum('a',)"))

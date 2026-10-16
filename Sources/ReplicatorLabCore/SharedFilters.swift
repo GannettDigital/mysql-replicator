@@ -121,8 +121,8 @@ extension SharedCorrectness.Run {
             let rejected=DDLCoverageCases.wildcardRejection
             try reporter.run(rejected) {
                 let before=try f.boundary(), config=configuration(rejected.id,before:before,count:2)
-                _ = try f.sql(.source,"CREATE TABLE poc.filter_included(id INT PRIMARY KEY,d DOUBLE(10,2)); INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
-                let result=try run(rejected,config:config,reason:"unsupported DDL column type")
+                _ = try f.sql(.source,"CREATE TABLE poc.filter_included(id INT PRIMARY KEY) ENGINE="+(f.profile.transactionalTarget ? "MyISAM" : "InnoDB")+"; INSERT INTO poc.items VALUES(92,'must-not-apply',1)")
+                let result=try run(rejected,config:config,reason:"outside the "+f.profile.targetEngine+" DDL contract")
                 try f.awaitNative()
                 try reporter.assertion("included-refusal",evidence:rejected.id+"-state.json") {
                     let saved=try state(rejected.id,"SELECT lifecycle||'|'||transactions_applied FROM state; SELECT COUNT(*) FROM ddl_intents")

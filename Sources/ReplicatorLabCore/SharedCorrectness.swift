@@ -186,7 +186,7 @@ public enum SharedCorrectness {
                 var snapshot = try f.h.sqlBatch(f.profile.service(role), [
                     .init(name: "database", sql: "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"),
                     .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME"),
-                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IFNULL(COLUMN_DEFAULT,'<NULL>'),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
+                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IF(COLUMN_TYPE LIKE 'binary(%' OR COLUMN_TYPE LIKE 'varbinary(%' OR COLUMN_TYPE LIKE 'char(%' OR COLUMN_TYPE LIKE 'varchar(%',IF(COLUMN_DEFAULT IS NULL,'<NULL>','<stored-default>'),IFNULL(COLUMN_DEFAULT,'<NULL>')),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
                     .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
                     .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX"),
                     .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
@@ -204,7 +204,31 @@ public enum SharedCorrectness {
                     }
                     return fields.joined(separator:"\t")
                 }.joined(separator:"\n")
-                let columns = snapshot["columns"]!
+                var columnFields=snapshot["columns"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
+                var binaryDefinitions:[String:Data]=[:]
+                for i in columnFields.indices {
+                    let fields=columnFields[i]
+                    if fields.count == 10 && fields[7] == "<stored-default>" {
+                        func quote(_ value:String) -> String { "`"+value.replacingOccurrences(of:"`",with:"``")+"`" }
+                        let stored="DEFAULT(t."+quote(fields[1])+")"
+                        let text=fields[3].hasPrefix("char(") || fields[3].hasPrefix("varchar(")
+                        let expression=text ? "CONVERT("+stored+" USING utf8mb4)" : stored
+                        let bytes=try sql("SELECT HEX("+expression+") FROM "+quote(database)+"."+quote(fields[0])+" AS t RIGHT JOIN (SELECT 1) AS p ON FALSE LIMIT 1",preserveWhitespace:true).trimmingCharacters(in:.newlines)
+                        try require(bytes.utf8.allSatisfy { (48...57).contains($0) || (65...70).contains($0) },"invalid native stored default bytes")
+                        columnFields[i][7]="X'"+bytes+"'"
+                    }
+                    guard fields.count == 10 && (fields[3].hasPrefix("enum(") || fields[3].hasPrefix("set(")) && (fields[5] == "binary" || fields[5].isEmpty) else { continue }
+                    let table=fields[0]
+                    if binaryDefinitions[table] == nil {
+                        func quote(_ value:String) -> String { "`"+value.replacingOccurrences(of:"`",with:"``")+"`" }
+                        binaryDefinitions[table]=try f.h.sqlBytes(f.profile.service(role),"SET NAMES binary; SHOW CREATE TABLE "+quote(database)+"."+quote(table))
+                    }
+                    let definition=try NativeChoiceDefinition.read(binaryDefinitions[table]!,column:fields[1])
+                    columnFields[i][3]=definition.type
+                    columnFields[i][5]="binary";columnFields[i][6]="binary"
+                    columnFields[i][7]=definition.defaultValue
+                }
+                let columns=columnFields.map { $0.joined(separator:"\t") }.joined(separator:"\n")
                 snapshot["columns"]=try ReverseSchemaComparison.columns(columns,mysql84:f.profile.version(role) == "8.4")
                 snapshot["partitions"]=try ReverseSchemaComparison.partitions(snapshot["partitions"]!)
                 let tables=snapshot["tables"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }.filter { $0.count >= 2 && $0[1] == "BASE TABLE" }.map { $0[0] }
@@ -346,7 +370,7 @@ public enum SharedCorrectness {
         func dml() throws {
             try resetNativeEngine()
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"poc")
-            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) && (test.source84OnlyReason == nil || f.profile.sourceVersion == .mysql84) {
+            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) && test.applies(to:f.profile) {
                 try reporter.run(QualificationCase("matrix-"+test.id,"Shared DML matrix: "+test.id)) {
                     if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
                     try step("CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",database:"poc")

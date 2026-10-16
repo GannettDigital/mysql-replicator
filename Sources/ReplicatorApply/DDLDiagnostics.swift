@@ -22,10 +22,10 @@ struct DDLQueryContextDiagnostic: Codable {
         defaultUTF8MB4CollationID = context.defaultUTF8MB4Collation
     }
 
-    // A diagnostic label for the common 8.x default, not a substitution map.
+    // Known native identities, not a substitution map.
     // Unknown IDs remain numeric rather than guessing their names.
     static func knownCollationName(_ id: UInt32) -> String? {
-        id == 255 ? "utf8mb4_0900_ai_ci" : nil
+        CharacterSetRegistry.collation(id:id)?.diagnosticName
     }
     static func collation(_ id: UInt32) -> String {
         "ID \(id)" + (knownCollationName(id).map { " (\($0))" } ?? "")

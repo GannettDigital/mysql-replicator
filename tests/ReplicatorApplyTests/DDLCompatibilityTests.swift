@@ -24,7 +24,7 @@ final class DDLCompatibilityTests: XCTestCase {
         XCTAssertEqual(engine,.myISAM)
         XCTAssertEqual(table.columns[0].extra,"auto_increment")
         XCTAssertEqual(table.columns[1].defaultValue,"-7")
-        XCTAssertEqual(table.columns[4].defaultValue,"1.250")
+        XCTAssertEqual(table.columns[4].defaultValue,"1.25")
         XCTAssertEqual(table.columns[10].type,"year")
         XCTAssertNil(table.columns[11].defaultValue)
         XCTAssertEqual(table.columns[13].defaultValue,"hello")
@@ -36,7 +36,7 @@ final class DDLCompatibilityTests: XCTestCase {
         guard case .alter(_,let actions) = try parse("ALTER TABLE t CHANGE COLUMN old newer DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER id, ADD COLUMN d DATE DEFAULT '2026-01-01', ALTER COLUMN v SET DEFAULT 'text', DROP INDEX old_index, ADD INDEX next_index(newer), ALGORITHM=COPY, LOCK=EXCLUSIVE") else { return XCTFail("not ALTER") }
         XCTAssertEqual(actions.count,5)
         guard case .modify(let old,let column,let position) = actions[0] else { return XCTFail("not CHANGE") }
-        XCTAssertEqual(old,"old"); XCTAssertEqual(column.name,"newer"); XCTAssertEqual(column.defaultValue,"0.00"); XCTAssertEqual(position,.after("id"))
+        XCTAssertEqual(old,"old"); XCTAssertEqual(column.name,"newer"); XCTAssertEqual(column.defaultValue,"0"); XCTAssertEqual(position,.after("id"))
         XCTAssertNoThrow(try parse("ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY(report_date,id)"))
         XCTAssertNoThrow(try parse("ALTER TABLE t ADD stamp DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"))
     }

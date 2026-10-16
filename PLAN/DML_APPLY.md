@@ -1,33 +1,29 @@
-# First serial DML applier
+# DML application
 
-This increment connects the existing live reader/decoder/transaction assembler to
-MySQL 5.7 MyISAM. It implements INSERT/UPDATE/DELETE for a declared narrow subset.
-The [native engine/charset DDL foundation](DDL_NATIVE_DEFAULTS.md) replaces the
-initial prototype rewrites. Broader coverage follows the [DDL completeness plan](DDL_COMPLETENESS.md).
-Cleanly stopped state can be resumed explicitly. `skip '<GTID-set>' --config APPLY.yaml`
-can exclude the single captured failed group before any target write intent;
-see [the workbook](DEMO_WORKBOOK.md#skip-the-rejected-ddl-and-resume).
-Source transport interruptions and safe target disconnects reconnect from the durable
-applied checkpoint; see [source reconnect](SOURCE_RECONNECT.md) and
-[target reconnect and drain](TARGET_RECONNECT.md). Recovery of interrupted
-processes or uncertain target writes remains unimplemented.
-Statistics will be read from SQLite; no embedded REST service is planned. The order remains DML correctness, then DDL correctness,
-then crash/reconnect recovery. Dump/load and target provisioning remain external.
+This guide describes row application and local state. The forward MyISAM profile
+was the first implementation. The [profile table](../README.md#tested-profiles)
+and [support summary](../docs/SUPPORT.md) describe the current four profiles.
+The MyISAM group restrictions below do not apply to InnoDB multi-statement
+transactions. Initial copying and target provisioning remain external tasks.
 
-The reviewed checkpoint is `d188f58`. The current increment replaces its manual
-schema lists with [automatic discovery and bounded state history](SCHEMA_DISCOVERY_AND_RETENTION.md).
-The usage below describes the current working implementation.
+Clean stops can resume from saved state. Source and safe target disconnects can
+reconnect. Uncertain writes stop for DBA review. InnoDB has explicit recovery
+inspection and resolution commands; automatic crash recovery is not implemented.
+See [offline replay and recovery](../docs/OFFLINE_REPLAY.md),
+[source reconnect](SOURCE_RECONNECT.md), and [target reconnect](TARGET_RECONNECT.md).
+Schema discovery and saved history replace manual table definitions.
 
 ## Run or review
 
-For the self-contained three-server test, use `make dml-suite`. It builds a static
-Ubuntu 16.04 x86_64 image tagged `mysql-replicator-packaging:dml`. To reuse an image
-built from the same code, use `make dml-suite ARGS=--skip-build`. The harness prints
-stage progress and streams Docker build/startup output to the terminal; the
-initial image compilation can take several minutes. Runtime certificates, configs
-and state live in a per-case Docker volume, avoiding Docker Desktop host bind
-mounts. Closed state is copied back for SQLite assertions; all evidence is copied
-back before cleanup removes that volume.
+Use the shared test harness from the repository root:
+
+```sh
+make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--family dml"
+```
+
+Use `PROFILE=all` for all four profiles. Add `--skip-build` to `ARGS` to reuse an
+image built from the same inputs. The harness saves SQL, logs, state, and results
+under `artifacts/lab/`. See [test selection and evidence](../docs/TEST_LAB.md).
 
 For a separately prepared target, start with the checked-in
 [configuration template](../examples/apply.example.yaml). **Replace its placeholders
@@ -57,7 +53,8 @@ stop, omit the flag:
 SQLite is authoritative on restart: use the saved fully applied position and GTID
 snapshot; when no group has been applied, use the recorded baseline instead.
 Configuration `source.start` cannot replace saved progress. `source.mode` selects
-GTID or file-position transport; positional mode requires a saved coordinate.
+GTID or file-position transport for the 8.4 source; 5.7 sources require GTID mode.
+Positional mode requires a saved coordinate.
 Counters and current schema history are restored, and relay bytes are appended.
 A process-lifetime local writer lock, target UUID/schema checks and native/writer
 exclusion prevent concurrent or mismatched startup. Existing version-4 clean-stop
@@ -91,14 +88,12 @@ discarded and read again from the saved applied boundary. A finite capture limit
 flushes buffered work before stopping.
 Passwords and row values are not printed in ordinary apply progress. Relay files do contain source row bytes.
 
-Capture, decoding and transaction assembly run on a dedicated producer loop.
-A bounded FIFO carries decoded events, complete-group notifications and source
-idle notifications to one ordered apply loop. The apply loop exclusively owns
-the target connection, schema cache, relay, SQLite, journal batches and progress
-output. Decoder row types come from each validated source table map; target
-compatibility and historical schema are checked when the apply loop reaches that
-map. DDL flushes preceding groups and changes target/schema state before following
-maps are validated. Decoder lookahead never advances the applied checkpoint.
+Download, decoding, preparation, and target SQL execution overlap. Decoded
+source events pass through a bounded FIFO. Preparation saves write intents before
+SQL execution. The execution queue preserves source order; preparing later work
+does not advance the applied checkpoint. DDL drains preceding work before it
+changes target and saved schema state. See the batch settings in the
+[configuration reference](../examples/apply.example.yaml).
 
 The FIFO normally allows at most 4,096 items, 64 complete groups and 64 MiB of
 retained-data accounting. An empty FIFO can accept one larger item within the
@@ -146,12 +141,16 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   than precision); DATE, YEAR, TIME/DATETIME/TIMESTAMP with fractional precision
   0–6; CHAR(n), BINARY(n), VARCHAR(n), VARBINARY(n), ENUM, SET, and
   TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
-  Text requires utf8mb4_bin, utf8mb4_unicode_ci or utf8mb4_general_ci, matching
-  source and target. A source 8.4-only collation fails unless covered by the explicit
+  Text requires matching source and target collations from the supported
+  utf8mb4, utf8mb3, latin1 or ASCII subset. See [character sets](CHARACTER_SETS.md). A source 8.4-only collation fails unless covered by the explicit
   [collation mapping policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
-  CHAR/BINARY lengths are 0–255; VARCHAR/VARBINARY lengths remain 1–16383.
-  ENUM/SET require FULL source metadata with exactly matching ordered labels.
-  ENUM error ordinal zero is rejected; a declared empty label is supported.
+  CHAR/BINARY lengths are 0–255. VARCHAR uses the declared charset byte width;
+  VARBINARY uses bytes. Both allow at most 65,535 declared bytes, subject to
+  native row and engine limits.
+  ENUM/SET require matching ordered labels. The 8.4 profile uses FULL source
+  metadata; 5.7 profiles use the matching baseline and saved schema for omitted fields.
+  ENUM ordinal zero uses a scoped non-strict write and full after-image checks.
+  It remains distinct from a declared empty label. See [ENUM zero](ENUM_ZERO.md).
   Configurable event/transaction limits and the target packet limit apply to
   TEXT/BLOB values. See [large-value limits](../docs/LARGE_VALUES.md).
   NULL is permitted only by compatible discovered metadata. Missing row-image fields are errors.
@@ -159,24 +158,25 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
 
 MySQL 5.7 is the target feature boundary, with a pinned 5.7.44 reference under
 `.upstream/mysql-server-5.7`; see [reference provenance](../tests/Upstream/README.md).
-BIT(1) through BIT(64) use unsigned values with exact width checks. This includes
-primary keys. The [BIT increment](BIT_SUPPORT.md) has unit tests; its shared
-integration cases have not yet run.
+BIT(1) through BIT(64) use unsigned values with exact width checks, including
+primary keys. See [BIT support and tests](BIT_SUPPORT.md).
 
 Finite FLOAT/DOUBLE values retain their exact IEEE bits through decoding, binary
-SQL parameters, target reads, and recovery. The [floating-point increment](FLOATING_POINT_SUPPORT.md)
-has unit tests; integration qualification is pending. Fixed-scale FLOAT/DOUBLE
+SQL parameters, target reads, and recovery. See [FLOAT/DOUBLE support and tests](FLOATING_POINT_SUPPORT.md).
+Fixed-scale FLOAT/DOUBLE
 forms, NaN, and infinity remain unsupported.
 
 The [JSON increment](JSON_SUPPORT.md) adds full documents, typed values and
-partial updates. Unit tests pass. Database qualification and some legacy opaque
-SQL constructors remain pending. Typed JSON can require `CREATE TEMPORARY TABLES`
-permission on the target. Spatial types remain unsupported. MyISAM profiles
+partial updates. Selected integration cases passed on the applicable profiles.
+Some legacy opaque types still lack an exact SQL constructor. Typed JSON can
+require `CREATE TEMPORARY TABLES` permission on the target.
+[Spatial types](SPATIAL_SUPPORT.md) retain SRID and WKB bytes and support SPATIAL
+indexes within the documented limits. MyISAM profiles
 still exclude multi-statement source transactions. The source DDL grammar now accepts these DML types,
 including ENUM/SET, together with bounded defaults and schema operations described
 in [DDL compatibility](DDL_COMPATIBILITY.md).
 
-The DML matrix (`make dml-suite ARGS="--slice matrix"`) checks multi-value INSERT,
+The DML matrix (`make correctness ARGS="--family dml"`) checks multi-value INSERT,
 multi-row UPDATE/DELETE, upsert, REPLACE, IGNORE, INSERT…SELECT, single-target
 joined UPDATE/DELETE and LOAD DATA as row events, within the supported group and
 schema restrictions. No-op SQL that emits no GTID requires no apply; a valid empty
@@ -212,14 +212,15 @@ mutation privileges. The fixture grants these explicitly.
 ## Apply and state ordering
 
 For an applier deployed on the MySQL 5.7 host, replace target `host` and `port`
-with `"unixSocket": "/var/run/mysqld/mysqld.sock"`. The path must be absolute,
+with `unixSocket: /var/run/mysqld/mysqld.sock`. The path must be absolute,
 without NUL, and at most 103 UTF-8 bytes. Socket errors fail the connection; there
 is no TCP fallback. TLS remains required by default, including CA/hostname
-verification. To use a plain local socket, explicitly set `"requireTLS": false`
-and omit target `serverHostname` and `caFile`. TCP always requires TLS. MySQL
+verification. Source TCP and target TCP or Unix sockets can use
+`requireTLS: false`. Remove the TLS-only fields for that connection. MySQL
 password authentication, target UUID checks and writer exclusion still apply.
 The local account must allow non-TLS socket authentication, and the deployment
-must protect access to the socket directory. Source transport remains verified TLS.
+must protect access to the socket directory. TLS is enabled by default. The
+target also supports CA-only verification. See [connection security](../docs/INSTALL.md#connection-security).
 
 Each apply session sets `GTID_NEXT=AUTOMATIC`, autocommit, strict SQL mode and utf8mb4.
 It also sets `time_zone='+00:00'`, including after DDL session resets. DECIMAL
@@ -263,19 +264,20 @@ require the destination key to be absent. Drift is an error, never an upsert.
 
 Raw live events, including required format/rotation/heartbeat context, go to
 `relay.frames`. Each record contains little-endian UInt32 metadata length and
-UInt32 event length, then UTF-8 JSON metadata (`kind`, `file`, `observedPosition`)
-and original event bytes. It is a version-1 private framed relay, not a physical
+UInt32 event length, then binary metadata (`kind`, `file`, `observedPosition`)
+and original event bytes. The reader also accepts legacy JSON metadata. This
+private framed relay is not a physical
 source binlog accepted directly by mysqlbinlog. Source event headers are unchanged.
 
 `state.sqlite` uses WAL/FULL and stores identities, schema/baseline metadata, group
 source boundaries and relay byte references, per-row event offset/row ordinal
 intents, completion, applied GTID/position, counts and diagnostics. Raw events and
-decoded rows are not copied into SQLite. DML collection defaults to 32 source
+decoded rows are not copied into SQLite. DML collection defaults to 8 source
 groups, 4,096 rows, 8 MiB of wire events or 25 ms, whichever boundary is reached
 first. Configure the optional `batch` object in the configuration template.
 Time is checked at capture callbacks, rather than by a background deadline.
-Idle capture, table/schema changes, DDL, filtered groups and finite stop boundaries
-flush the buffer. A source group exceeding a collection limit runs alone within
+Idle capture, DDL, filtered groups and finite stop boundaries flush the buffer.
+Table changes flush it only when `batch.flushOnTableChange` is enabled. A source group exceeding a collection limit runs alone within
 the decoder's existing limits; it is never split.
 
 Before any target mutation, one relay sync and one FULL SQLite transaction persist

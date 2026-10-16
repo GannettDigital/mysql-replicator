@@ -37,6 +37,21 @@ enum FloatingPointSQL {
         // Match Field_real::truncate for the predicted metadata. The original
         // DDL and logged SQL mode still go to MySQL; server errors remain errors.
         if type.unsigned && number < 0 { number=0 }
+        if type.arguments.count == 2 {
+            // Field_real::truncate rounds the fractional part with rint before
+            // clipping to the declared decimal range. Retain the original DDL.
+            let scale=pow(10.0,Double(type.arguments[1]))
+            number=floor(number)+((number-floor(number))*scale).rounded(.toNearestOrEven)/scale
+            let limit=pow(10.0,Double(type.arguments[0]-type.arguments[1]))-1/scale
+            number=min(max(number,-limit),limit)
+            if type.floatingWidth == 32 { number=Double(Float(number)) }
+            try require(number.isFinite,"non-finite fixed-scale floating-point default")
+            // MySQL's fixed-format default metadata represents this stored
+            // value. Compare its numeric presentation, not padding or row bits.
+            let displayed=String(format:"%.*f",type.arguments[1],number)
+            let canonical=Double(displayed)!
+            return canonical == 0 ? "0.0" : String(canonical)
+        }
         if type.floatingWidth == 32 {
             number=min(max(number,-Double(Float.greatestFiniteMagnitude)),Double(Float.greatestFiniteMagnitude))
             let value=Float(number)
