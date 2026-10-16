@@ -1,69 +1,52 @@
 # Release procedure
 
-The next release is `v0.1.0-beta.5` (Debian `0.1.0~beta.5-1`). Application versions
+The next release is `v0.1.0-beta.6` (Debian `0.1.0~beta.6-1`). Application versions
 follow [SemVer](https://semver.org/); Debian's `~` keeps a beta older than its final
 release. Config, state schema and codec ABI versions remain independent.
 Only Linux x86_64 binaries and Linux/amd64 containers are distributed.
 
-## Review and merge beta.5
+## Review and merge beta.6
 
-This stack starts at upstream `main` commit `f881d70`. Each PR targets the
-preceding branch. The feature commits remain unchanged.
+The stack starts at upstream `main` commit `957ba03`. It has ten review branches
+and a final release branch. Each PR targets the preceding branch; the first
+PR targets `main`. See [the branch table and source mapping](../PLAN/BETA6_RELEASE_STACK.md).
+Existing development branches remain local as a backup.
 
-| Order | Branch | Scope |
-| --- | --- | --- |
-| 1 | `beta/5/01-replay-operations` | Replay validation and support bundle diagnostics |
-| 2 | `beta/5/02-test-selection` | Changed-file test selection for local use and CI |
-| 3 | `beta/5/03-command-help` | Command-specific help with Swift Argument Parser |
-| 4 | `beta/5/04-column-type-audit` | Type audit, configurable event limits and large SQL packets |
-| 5 | `beta/5/05-bit-support` | BIT decoding, application and recovery |
-| 6 | `beta/5/06-floating-point-support` | FLOAT/DOUBLE binary transport and defaults |
-| 7 | `beta/5/07-json-support` | Typed JSON and partial row updates |
-| 8 | `beta/5/08-release` | Version, release notes and installation guide |
+The [release plan](releases/0.1.0-beta.6.plan.json) must list all eleven PR numbers.
+The list remains empty until GitHub assigns them. Release commands reject an
+empty list. Do not merge the release PR before the list is complete.
 
-The [release plan](releases/0.1.0-beta.5.plan.json) will list the required PRs.
-Its PR list is empty until GitHub assigns the numbers. Release commands reject
-an empty list. Do not merge the release PR with an empty plan.
-
-The first PR targets `main`. The local `artifacts/release-stack-beta5/` directory
-in the primary checkout contains the SHA manifest, PR descriptions and helpers:
+The primary checkout has local helper files in `artifacts/beta6-release-stack/`:
 
 ```sh
-bash artifacts/release-stack-beta5/push-branches.sh
-bash artifacts/release-stack-beta5/open-prs.sh
-bash artifacts/release-stack-beta5/push-branches.sh
+bash artifacts/beta6-release-stack/push-branches.sh
+python3 artifacts/beta6-release-stack/open-prs.py
 ```
 
-The maintainer runs these commands. The first command checks the recorded branch
-tips and pushes the stack without force. The second command creates draft PRs,
-registers the native GitHub stack, and adds `ci-full` to the final PR. It also
-records the assigned PR numbers in the release plan and commits that file on the
-local release branch. The last command pushes that plan commit. None of these
-commands pushes `main`, creates a tag, or publishes a release.
+The maintainer runs these commands after review. The push command uses no force
+option. The second command creates draft PRs against the recorded bases, sets
+`ci-full` on the release PR, and writes their numbers to the release worktree.
+It does not commit or push that update. Review the plan, commit it on
+`beta/6-stack/11-release`, then run the push command again.
 
-The helpers check branch tips and stop if the prepared stack has changed.
-Base branches alone do not register a native GitHub stack. No GitHub write occurs
-when the stack is prepared locally.
-
-Review and merge from the bottom using GitHub's stack controls, waiting for green
-checks. Merging an upper layer can also merge its unmerged predecessors. GitHub
-may rebase/retarget remaining layers; fetch and synchronize local branches after
-that operation before making more changes. The manifest checks deliberately
-reject stale pushes. Do not manually retarget registered stack members or push
-local `main` to bypass review. After all merges, update local `main` from upstream,
-preserving unrelated edits. Every PR needs its own CI; local final-tree tests do
-not replace checks on intermediate branches.
+Merge from bottom to top. Use merge commits while the stack is open. If a lower
+branch changes, merge it into each later branch in order. Rerun the affected PR
+checks. Do not retarget all branches to `main`, because their diffs would overlap.
+Each PR needs checks on its own commit. Local final-tree tests do not replace
+checks on intermediate branches. Keep unrelated local edits when updating main.
 
 ## Check the release candidate
 
-Run the full suite on the final PR with `ci-full`. This includes the new large
-value, BIT, FLOAT/DOUBLE and JSON cases on each applicable profile. Keep the
-release-binary tests as the acceptance checks. Expanded coverage remains optional.
+Run the full suite on the final PR with `ci-full`. This includes the new value,
+DDL, row-identity, FK, GTID and operational cases on each applicable profile.
+Keep tests of the release binary as the acceptance checks. Do not enable expanded
+coverage until its matrix is split: the current plan has 339 jobs, above GitHub's
+256-job matrix limit. Ordinary full CI has 176 shards.
 
 Start with the PR results. If a case fails, inspect its support bundle and saved
 logs before deciding whether to reproduce it locally. See [JSON support and
-remaining limits](../PLAN/JSON_SUPPORT.md). Do not describe the new type cases as
-qualified until their integration checks pass.
+remaining limits](JSON_SUPPORT.md). Report the cases and profiles that passed.
+Do not report passing checks before the corresponding results exist.
 
 ## Qualify the release
 
@@ -76,7 +59,7 @@ qualified until their integration checks pass.
    Periphery. Other PRs use [changed-file selection](PR_TEST_SELECTION.md).
    The labeled final PR and main use the same full suite; no additional qualification workflow is needed before tagging. CI packages the static binary once and
    checks integration uses those same bytes.
-2. Review `docs/releases/0.1.0-beta.5.md`, the install guide and dependency notices.
+2. Review `docs/releases/0.1.0-beta.6.md`, the install guide and dependency notices.
    The SDK SBOM is an inventory, not proof that all license obligations were reviewed.
 3. For a new deployment environment, qualify service/container start, acknowledged
    drain and clean resume on a representative host with persistent state and the
@@ -97,10 +80,10 @@ make release-image
 
 Assets in `artifacts/release/` include:
 
-- `mysql-replicator-0.1.0-beta.5-linux-x86_64.tar.gz`: standalone binary and notices.
-- `mysql-replicator_0.1.0~beta.5-1_amd64.deb`: Debian package and systemd service.
-- `mysql-replicator-0.1.0-beta.5-linux-x86_64-image.tar.gz`: tested `docker save`
-  image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.5`.
+- `mysql-replicator-0.1.0-beta.6-linux-x86_64.tar.gz`: standalone binary and notices.
+- `mysql-replicator_0.1.0~beta.6-1_amd64.deb`: Debian package and systemd service.
+- `mysql-replicator-0.1.0-beta.6-linux-x86_64-image.tar.gz`: tested `docker save`
+  image, loadable without a registry as `mysql-replicator-release:0.1.0-beta.6`.
 - `install.sh`, `apply.example.yaml`, `run.minimal.yaml`, `replay.minimal.yaml`,
   `LICENSE`, `NOTICE`, build evidence and
   `SHA256SUMS`, covering the build artifacts.
@@ -171,7 +154,7 @@ publish using that token.
 
 The publication job downloads the saved image from the release, verifies its
 checksum, architecture, version and exact source revision, then loads and pushes
-it to `ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.5`. It does not build
+it to `ghcr.io/gannettdigital/mysql-replicator:0.1.0-beta.6`. It does not build
 anything or publish `latest`. Existing image tags are not deliberately overwritten.
 A failed GHCR step does not undo the published binary downloads; fix permissions
 and rerun the failed job. If an image tag already exists, inspect it before retrying.

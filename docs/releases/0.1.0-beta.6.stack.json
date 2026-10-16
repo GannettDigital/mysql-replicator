@@ -1,0 +1,252 @@
+{
+  "version": "0.1.0-beta.6",
+  "repository": "GannettDigital/mysql-replicator",
+  "upstream_main": "957ba03f009e32f21b10bfd0d9060469688268eb",
+  "source_base": "0499da659b16d669e95a0607ec428e34714eaeb2",
+  "source_tip": "cef19ee870e1ce4797361745da277858288c7381",
+  "feature_branches": [
+    {
+      "order": 1,
+      "branch": "beta/6-stack/01-types-and-encodings",
+      "base": "main",
+      "title": "Preserve MySQL column values, encodings and defaults",
+      "scope": "Charset/collation registry; native text bytes; floating-point and numeric attributes; ENUM/SET metadata; exact defaults; zero-width columns.",
+      "source_start": "0499da659b16d669e95a0607ec428e34714eaeb2",
+      "source_end": "8983d81c0d0cf87c5acdb4262721e639843205a7",
+      "source_commits": [
+        "0bc46d2629df4def479ba94140ffbb61495bf6f5",
+        "9153e6d69a12c2637ccb2e2d31f155ae3bb6d1f3",
+        "52ceef76c4121a388abed86458a3bb44f434ae51",
+        "e92eb765be97c1a765fbb4bc7f615c6aa7c03be7",
+        "984382e814b4919064e3be7fb529e77dd49befb3",
+        "a2c57176dca1cd4b76a326f4e814d121f788dd71",
+        "c600fb7c215a0febedc168ecfe04366d66d58bac",
+        "58fdacd9911da2ac5679106c92cffe3d75c3ded4",
+        "a29c7de4dd3d6c97b7fc17a327d60ec097a2ddee",
+        "4cde341b0c56e5b63a1cefa8902ce16e4d0f1b27",
+        "ca273c901d1e31f23f404ac9de7897258eaac8b3",
+        "ff58b0281b2342516efe68d3ce6f0c353cebec8f",
+        "8b639b97ced6296846476430b3e82f9195c0abc1",
+        "e5bc7050aa653d2ebe3ee8a298f691ef5fa6bc23",
+        "8983d81c0d0cf87c5acdb4262721e639843205a7"
+      ],
+      "commits": [
+        "301685e478770b9180b899fd8f2594e350b80b21"
+      ],
+      "tip": "301685e478770b9180b899fd8f2594e350b80b21",
+      "tree": "68ad65dcf1028e95db432c5cb47342b9164c3321"
+    },
+    {
+      "order": 2,
+      "branch": "beta/6-stack/02-identifiers-and-query-text",
+      "base": "beta/6-stack/01-types-and-encodings",
+      "title": "Preserve identifier bytes and source SQL encodings",
+      "scope": "Exact schema/cache keys; native name comparison; Unicode identifiers; Query-event encodings; saved table-name case settings.",
+      "source_start": "8983d81c0d0cf87c5acdb4262721e639843205a7",
+      "source_end": "277caf541061d5f9f9a60bba8d79e0adadeb6ee6",
+      "source_commits": [
+        "2d2ce2bd586e422dfb2db074cc64abd1023a5c69",
+        "91c95f79deec7bddc3e2d1665bc9c5b3dab3e481",
+        "ff57883e4b358cffb149a7e996c134341f1663cf",
+        "6dd2f28144933f6977b0ff270648a945fe51708d",
+        "277caf541061d5f9f9a60bba8d79e0adadeb6ee6"
+      ],
+      "commits": [
+        "f08b4bba982071561f1e0bad0c2f04e9e58568e1"
+      ],
+      "tip": "f08b4bba982071561f1e0bad0c2f04e9e58568e1",
+      "tree": "9139d61c72e3d26d827cadd590bffd7cc3af695b"
+    },
+    {
+      "order": 3,
+      "branch": "beta/6-stack/03-json-and-table-options",
+      "base": "beta/6-stack/02-identifiers-and-query-text",
+      "title": "Extend JSON, index and table DDL support",
+      "scope": "JSON transport limits and YEAR translation; target-aware JSON defaults/indexes; FULLTEXT; table options; multi-table DROP and cross-schema RENAME.",
+      "source_start": "277caf541061d5f9f9a60bba8d79e0adadeb6ee6",
+      "source_end": "0c18cb5439af8affd30015bd38c74b376f64706f",
+      "source_commits": [
+        "cd7408b95738aa7eb7467c467ca5b6fb5a55ddc6",
+        "7e2d23d712ffa16d1ba64da60f7174ab12ec391d",
+        "589e6d3d0d017a3ff7db0f7e8de6434c50f0fb0e",
+        "1912a6be1d633671816a7b39762b64ef1006bb0c",
+        "18076143819c1db794402461c69b7643b6a8e3b7",
+        "d8ff061a7497cf82227d49c899b0a93ed2d29413",
+        "9ce2e017bb3bfece0ddeafb50a100a3d49f823a8",
+        "5930be4b87277e1d7f3e011b2a2909f8174ce46e",
+        "b3254cedba1f6d474c40e3faff57c39c36fd44df",
+        "0c18cb5439af8affd30015bd38c74b376f64706f"
+      ],
+      "commits": [
+        "b0a69e7908d9eabab819593c202cf9afcbac8edc"
+      ],
+      "tip": "b0a69e7908d9eabab819593c202cf9afcbac8edc",
+      "tree": "f44ff5eadc8f77ff309235619888de24c20cef9d"
+    },
+    {
+      "order": 4,
+      "branch": "beta/6-stack/04-syntax-and-partitions",
+      "base": "beta/6-stack/03-json-and-table-options",
+      "title": "Separate MySQL syntax parsing and extend partition DDL",
+      "scope": "MySQLSyntax target, unit tests and build layer; generated expressions; ALTER charset; spatial prefix indexes; CHECK compatibility; partition syntax, bounds and maintenance.",
+      "source_start": "0c18cb5439af8affd30015bd38c74b376f64706f",
+      "source_end": "97aa805ec6b13c53c51886822388e473337d2593",
+      "source_commits": [
+        "1621fcd9747e85ca59074cf4fa080c5aa52b4b3f",
+        "a4c26b156d4d6b236d5db4bbe8115454eceffed9",
+        "54263e5b8a01da1dacdf08ce1a4d232617afb09c",
+        "735d35bfc7c3ec063a031ace8a0266a6e666ed44",
+        "ebe9e9af909ae855e25acf6630626907591c84b5",
+        "d482990e46dd40e8c2575ed0616260a1ccebd2f8",
+        "3d19ae55ff8c079e5a20ab89670615b98faee8ee",
+        "e0c53a489ab945ff0fe434af6262a6ddb75ad2b2",
+        "02c8471382e8fc4f34f01dce38a2411f3b00673e",
+        "e4cb2d739a7725ca442b1346c5a442ef5dea7edd",
+        "a3003cbdd081bafd3243926835821bf70fe5e8e9",
+        "97aa805ec6b13c53c51886822388e473337d2593"
+      ],
+      "commits": [
+        "53cab5325003ed51566284d870f2b3cf136f7f7e"
+      ],
+      "tip": "53cab5325003ed51566284d870f2b3cf136f7f7e",
+      "tree": "68fcedcbeec77feb50b7f7b64788f2ecf3068118"
+    },
+    {
+      "order": 5,
+      "branch": "beta/6-stack/05-stored-object-lifecycle",
+      "base": "beta/6-stack/04-syntax-and-partitions",
+      "title": "Support stored-object and temporary-table workflows",
+      "scope": "Native CTAS and temporary-table restrictions; routine ALTER and conditional creation; multi-view DROP; journaled view/table renames.",
+      "source_start": "97aa805ec6b13c53c51886822388e473337d2593",
+      "source_end": "d571f2986c9760d6fd259e1fe1462367fd795c30",
+      "source_commits": [
+        "5ac06559938a4484b77cd8195d48b78e354a725d",
+        "9a9b677f5afa0fd336da6304d92bb4d36aca0aa4",
+        "150216e195921f42f78aae3987f3f638038180bc",
+        "d571f2986c9760d6fd259e1fe1462367fd795c30"
+      ],
+      "commits": [
+        "813ac59d59122eb00cc4704ffc8cf99635d944c4"
+      ],
+      "tip": "813ac59d59122eb00cc4704ffc8cf99635d944c4",
+      "tree": "dacaadf3e557c97db6f1f104495d9cc3b043936d"
+    },
+    {
+      "order": 6,
+      "branch": "beta/6-stack/06-row-identity-and-foreign-keys",
+      "base": "beta/6-stack/05-stored-object-lifecycle",
+      "title": "Extend row identity and InnoDB foreign-key support",
+      "scope": "Unique-key and full-row identity; keyless recovery records; FK cycles, disabled checks, missing parents, parent-key rules, generated columns and compound index changes.",
+      "source_start": "d571f2986c9760d6fd259e1fe1462367fd795c30",
+      "source_end": "c82e07fddf129b925762fd5830e140f2cfed910e",
+      "source_commits": [
+        "ba2143cd3334ad2056cd98b0c5a262586dbfce8a",
+        "9d41a3ad410b2d22c9db4ec4a82a5d69a11e1012",
+        "d35f32062f98f5e4f42ce1b1391c8e8c8e9c49fe",
+        "86d4dd48f811b3a59a592044aa866f0916c816b9",
+        "b68b9b96a50118d11c13f19641f7bf42935cbb71",
+        "eae898cd9f290966665b5aec96857d84ae92516c",
+        "ce6a31d62fadc6521704f1595422642ef4ef597f",
+        "0e4ce1798af31ec0169c68e94d24303d6e74a93c",
+        "d5dc697ef507fceeea39a56093b728ee352a9094",
+        "c82e07fddf129b925762fd5830e140f2cfed910e"
+      ],
+      "commits": [
+        "49ee71e8da8bfa8e06784684f0568e351a0060b7"
+      ],
+      "tip": "49ee71e8da8bfa8e06784684f0568e351a0060b7",
+      "tree": "fe3038e056a16690c92db98f343e9bf6e7f6aee3"
+    },
+    {
+      "order": 7,
+      "branch": "beta/6-stack/07-compound-ddl-and-comments",
+      "base": "beta/6-stack/06-row-identity-and-foreign-keys",
+      "title": "Complete compound DDL handling and executable comments",
+      "scope": "Column/index/default dependencies; grouped constraints; table/column/partition renames; index visibility and SRID; native executable version comments; support limits and catalog updates.",
+      "source_start": "c82e07fddf129b925762fd5830e140f2cfed910e",
+      "source_end": "a5eb81b37e58023f52c183d6100a1d5877dcf574",
+      "source_commits": [
+        "d2e3f3bba8d51100b25a5829054b710cdc8fdce4",
+        "0c002aaec087d2357003fa7728bd5c5fc3dccdc0",
+        "3ec6c9eb230d9a9f36b271cc5bfada50854b8f31",
+        "3ea08b8cc2f928dbd443649c67c0c79f5f3d22d1",
+        "4c2c5a720cee3a861c9b342d2df0e513ae4dcd80",
+        "75079584ca0e611c5859934e59087b15e2985f1a",
+        "897d23cdf38f658eb5088985c30d03166db2e57a",
+        "18e2ed41455187070c2f8eabc942a7f8d2be63a6",
+        "22da77ae5988b39b5199cdc3e544e8b83fcd6d07",
+        "5e5e1cdabeb7bcc4de235a0d7fe5329c730504f2",
+        "5def20a8bc55cf26ec8199b862f76ed0433f4b78",
+        "41be989bf1a3b49220a128db774d940318a62ff6",
+        "17e4e3c79fd849e25b183f1b55653b8cbb1bb7a3",
+        "8a988b7fead2f80b8cf67b7be6313d9e0f6d5cb3",
+        "a5eb81b37e58023f52c183d6100a1d5877dcf574"
+      ],
+      "commits": [
+        "c50b63a2d443697658946fd541f34dbb3e24ceac"
+      ],
+      "tip": "c50b63a2d443697658946fd541f34dbb3e24ceac",
+      "tree": "c6d6ae7d687ca17ba3d640c52bcb1ac72452a177"
+    },
+    {
+      "order": 8,
+      "branch": "beta/6-stack/08-source-gtids",
+      "base": "beta/6-stack/07-compound-ddl-and-comments",
+      "title": "Track tagged GTIDs and preserve source GTIDs on targets",
+      "scope": "Tagged capture, resume and replay; source GTID preservation; InnoDB/MyISAM execution; state migration, privilege checks and recovery limits.",
+      "source_start": "a5eb81b37e58023f52c183d6100a1d5877dcf574",
+      "source_end": "dd9dd1d865fec0b48056eb3099d2575466a53abe",
+      "source_commits": [
+        "dd9dd1d865fec0b48056eb3099d2575466a53abe"
+      ],
+      "commits": [
+        "4b53a7f1d871c35ecd72649162b457967f03eb66"
+      ],
+      "tip": "4b53a7f1d871c35ecd72649162b457967f03eb66",
+      "tree": "77b990c54bd692e363dc0549d0affa140cdfd3c3"
+    },
+    {
+      "order": 9,
+      "branch": "beta/6-stack/09-operations-and-progress",
+      "base": "beta/6-stack/08-source-gtids",
+      "title": "Add operational controls, counters and progress estimates",
+      "scope": "Small support bundles; shared TLS policy; native include-filter precedence; durable operation/byte counters; replay ETA and live polling; CLI configuration overrides.",
+      "source_start": "dd9dd1d865fec0b48056eb3099d2575466a53abe",
+      "source_end": "957a8c60438f828144802519bfd0577afeddddac",
+      "source_commits": [
+        "f70d64418c4f51c3dd314929f1068f1dd7468207",
+        "91c741795005ee771f3c16ff28dd507d60eb2feb",
+        "5338b9aca9f9416a494c97a2c96b0df6f621b44d",
+        "e3a55ff440d7e1a1040fa05772b60ac74004260b",
+        "2c281ebf69a32c09b77c0332f5e57368f6e42947",
+        "957a8c60438f828144802519bfd0577afeddddac"
+      ],
+      "commits": [
+        "03bc14e66591352bed2a5c7659e514a2b6780e85"
+      ],
+      "tip": "03bc14e66591352bed2a5c7659e514a2b6780e85",
+      "tree": "dad7627130cb3b3f442dcbe1a4116789c3b409f6"
+    },
+    {
+      "order": 10,
+      "branch": "beta/6-stack/10-style-and-boundary-checks",
+      "base": "beta/6-stack/09-operations-and-progress",
+      "title": "Add Swift format CI and verify operational boundary cases",
+      "scope": "Separate format pass and parallel lint check; exact UTF-8 filter identity; archive failure positions; complete source-map overrides. Retain the format pass and functional fixes as separate commits.",
+      "source_start": "957a8c60438f828144802519bfd0577afeddddac",
+      "source_end": "cef19ee870e1ce4797361745da277858288c7381",
+      "source_commits": [
+        "36a6b33cdca179749976c9df712ccef6594f1e0f",
+        "cef19ee870e1ce4797361745da277858288c7381"
+      ],
+      "commits": [
+        "20c475e22b97f28ae01a88ad493122fad4b2f1c0",
+        "d0fe17f671c5a0ac9c004eecca97dcea5599ee6c"
+      ],
+      "tip": "d0fe17f671c5a0ac9c004eecca97dcea5599ee6c",
+      "tree": "43029b2c21f1a5e24f4df7a115c3dcee620913d0"
+    }
+  ],
+  "release_branch": "beta/6-stack/11-release",
+  "release_base": "beta/6-stack/10-style-and-boundary-checks"
+}
