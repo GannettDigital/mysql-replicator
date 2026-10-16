@@ -69,3 +69,10 @@ needed for that correction.
 
 The 396 affected Swift unit tests, nine Rust tests, catalog validation, and
 17 CI matrix tests also passed. Full regression checks remain assigned to CI.
+
+## Beta.6 index extension
+
+The later [geometry prefix-index increment](SPATIAL_PREFIX_INDEXES.md) adds
+ordinary BTREE byte prefixes for MySQL 5.7 targets. It keeps MySQL 8.4's native
+rejection separate from missing implementation. Use that note for the current
+prefix-index status and evidence.

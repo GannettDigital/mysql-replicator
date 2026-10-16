@@ -65,9 +65,14 @@ automatic DDL replay or crash recovery.
 Generated expressions support arithmetic/comparison/boolean operators and a
 small explicit list of 5.7 built-ins in `DDLTokens.swift`. Arbitrary expressions,
 subqueries, stored-function calls and nondeterministic functions are not accepted.
-Subpartitions, arbitrary table options, multi-object DROP, cross-schema
-RENAME, CREATE TABLE SELECT, functional/descending/invisible indexes and 8.x-only
-types/options and cross-family column conversions remain outside this increment.
+The later beta.6 increments add selected table options, column-type conversions,
+multi-table DROP, cross-schema RENAME, functional indexes on 8.4 targets, and
+ALTER TABLE charset changes. DEFAULT CHARACTER SET changes the table default;
+CONVERT TO CHARACTER SET also converts text columns. Native field probes determine
+converted types and defaults before the application DDL is issued.
+Subpartitions, arbitrary table options, CREATE TABLE SELECT and invisible indexes
+remain open. MySQL 5.7 ignores descending index direction; 8.4 retains it.
+See [current support](../docs/SUPPORT.md) for target-version and engine limits.
 No engine rewriting is performed. Collation translation requires the explicit
 policy below; otherwise matching remains strict. In particular, explicit source
 ENGINE=InnoDB still fails the MyISAM

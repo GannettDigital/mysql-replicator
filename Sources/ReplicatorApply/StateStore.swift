@@ -544,6 +544,7 @@ final class StateStore {
         guard case .query(let source) = event.control else { throw ApplyError("DDL intent lacks source query") }
         var diagnostic = DDLQueryContextDiagnostic(query:source)
         diagnostic?.targetSQLBase64 = plan.rawSQL?.base64EncodedString()
+        diagnostic?.nativeCompatibilityRules = plan.compatibilityRules.isEmpty ? nil : plan.compatibilityRules
         let contextJSON = try diagnostic.map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
         let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,afterAlternatives:plan.afterAlternatives)] : [])
         let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)

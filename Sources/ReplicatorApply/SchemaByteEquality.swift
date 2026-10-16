@@ -10,10 +10,17 @@ extension ApplyIndex {
         SQLTextBytes.equal(a.name,b.name) && a.unique == b.unique && a.parts == b.parts && a.type == b.type && SQLTextBytes.equal(a.parser,b.parser) && a.implicitName == b.implicitName
     }
 }
+extension ApplySubpartition {
+    public static func == (a:Self,b:Self) -> Bool {
+        SQLTextBytes.equal(a.name,b.name) && a.method == b.method
+            && SQLTextBytes.equal(a.expression,b.expression) && a.keyAlgorithm == b.keyAlgorithm
+    }
+}
 extension ApplyPartition {
     public static func == (a:Self,b:Self) -> Bool {
         SQLTextBytes.equal(a.name,b.name) && a.method == b.method
             && SQLTextBytes.equal(a.expression,b.expression) && SQLTextBytes.equal(a.description,b.description)
+            && a.keyAlgorithm == b.keyAlgorithm && a.subpartitions == b.subpartitions
     }
 }
 extension ApplyForeignKey {

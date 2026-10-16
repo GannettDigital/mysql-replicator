@@ -92,6 +92,7 @@ public enum SharedCorrectness {
                     try jsonYearCompatibility()
                     try jsonTarget84Schema()
                     try jsonTarget57Limits()
+                    try checkTarget57Limits()
                     try filters()
                     try indexResume()
                     try forwardFailures()
@@ -161,14 +162,16 @@ public enum SharedCorrectness {
             try wait()
             var results: [[String:Any]]=[]
             for check in checks {
-                var values: [String:String]=[:]
+                var values: [String:String]=[:], expectedValues: [String:String]=[:]
                 for role in LabProfile.Role.allCases {
                     let service=role.rawValue
                     let value=try f.sql(role,"SET NAMES utf8mb4; SET SESSION time_zone='+00:00'; "+check.sql,preserveWhitespace:true)
                     values[service]=value
-                    try require(LabSQLName.equal(value,check.expected),"\(service) expectation: \(check.sql) got \(value), expected \(check.expected)")
+                    let expected=check.expected(engine:f.profile.engine(role))
+                    expectedValues[service]=expected
+                    try require(LabSQLName.equal(check.observation(value),expected),"\(service) expectation: \(check.sql) got \(value), expected \(expected)")
                 }
-                results.append(["query":check.sql,"expected":check.expected,"values":values])
+                results.append(["query":check.sql,"expected":check.expected,"expected_by_role":expectedValues,"fields":check.fields ?? [],"values":values])
             }
             let snapshots=try compare(database)
             let result: [String:Any] = ["sql":sql,"status":"passed","checks":results,"snapshots":snapshots,"warnings":warnings]
@@ -209,6 +212,18 @@ public enum SharedCorrectness {
                 }.joined(separator:"\n")
                 var columnFields=snapshot["columns"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 var binaryDefinitions:[Data:Data]=[:]
+                snapshot["partitions"]=try snapshot["partitions"]!.components(separatedBy:"\n").map { line in
+                    var fields=line.components(separatedBy:"\t")
+                    guard fields.count == 5,fields[2].hasSuffix("COLUMNS") else {return line}
+                    let column=fields[3].replacingOccurrences(of:"`",with:"")
+                    guard columnFields.contains(where:{$0.count == 10 && $0[0] == fields[0] && $0[1] == column && ($0[3].hasPrefix("binary(") || $0[3].hasPrefix("varbinary("))}) else {return line}
+                    let key=Data(fields[0].utf8)
+                    if binaryDefinitions[key] == nil {
+                        binaryDefinitions[key]=try f.h.sqlBytes(f.profile.service(role),"SET NAMES binary; SHOW CREATE TABLE "+LabSQLName.quote(database)+"."+LabSQLName.quote(fields[0]))
+                    }
+                    fields[4]=try NativeChoiceDefinition.partitionBounds(binaryDefinitions[key]!,partition:fields[1])
+                    return fields.joined(separator:"\t")
+                }.joined(separator:"\n")
                 for i in columnFields.indices {
                     let fields=columnFields[i]
                     if fields.count == 10 && fields[7] == "<stored-default>" {
@@ -373,6 +388,31 @@ public enum SharedCorrectness {
                     try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
                     let saved=try snapshot(test.test.id)
                     try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0","unfinished compatibility DDL")
+                    if test.test.id == "ddl-compat-ignored-checks" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE source_sql LIKE 'ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check%' AND target_sql='' AND before_schema_id=after_schema_id AND status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='source-before-8.0.16-ignores-checks'") == "1","ignored CHECK lost its durable source/rule record or changed the schema version")
+                        try replayDDLWorkflow("checks",stopAfter:3,from:begin,to:end)
+                        try require(f.sql(.target,"SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA='ddlcompat' AND CONSTRAINT_TYPE='CHECK'") == "0","replay created a CHECK constraint")
+                    }
+                    if test.test.id == "ddl-compat-subpartitions" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_array_length(schema_json,'$.partitions[0].subpartitions')=2") == "1","saved schema lost subpartitions")
+                        try replayDDLWorkflow("subpartitions",stopAfter:3,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-partition-column-bounds" {
+                        try replayDDLWorkflow("partition-column-bounds",stopAfter:3,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-partition-expressions" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_extract(schema_json,'$.partitions[0].description')='739982'") != "0","saved schema lost the evaluated partition bound")
+                        try replayDDLWorkflow("partition-expressions",stopAfter:3,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-partition-exchange-unchecked" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE status='DONE' AND source_sql LIKE '%EXCHANGE PARTITION%WITHOUT VALIDATION' AND target_sql=source_sql AND json_array_length(transitions_json)=2") == "3","EXCHANGE lost its SQL or one table transition")
+                        try replayDDLWorkflow("partition-exchange",stopAfter:5,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-partition-key-algorithm" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('t','copy') AND json_extract(schema_json,'$.partitions[0].keyAlgorithm')=1") == "2","saved schema lost the KEY algorithm")
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='sub' AND json_extract(schema_json,'$.partitions[0].subpartitions[0].keyAlgorithm')=1") == "1","saved schema lost the subpartition KEY algorithm")
+                        try replayDDLWorkflow("partition-key",stopAfter:3,from:begin,to:end)
+                    }
                     if test.test.id == "ddl-compat-database" {
                         try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left current schemas")
                     }

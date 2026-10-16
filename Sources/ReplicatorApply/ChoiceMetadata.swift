@@ -82,7 +82,7 @@ extension TargetSession {
         }
     }
 
-    private func readChoiceScratch(_ column:ApplyColumn,name:String) throws -> ApplyColumn {
+    func readChoiceScratch(_ column:ApplyColumn,name:String) throws -> ApplyColumn {
         let type=try DMLColumnType(column),count=type.labels.count
         // Bounded statements also cover the native ENUM limit of 65,535 labels.
         for start in stride(from:0,to:count,by:256) {

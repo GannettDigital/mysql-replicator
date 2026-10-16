@@ -9551,6 +9551,11 @@
     },
     {
       "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-maintenance",
+      "reason": "Native FORCE and ENABLE/DISABLE KEYS, disabled-index DML, compound ALTER and restart."
+    },
+    {
+      "suite": "ddl-suite",
       "case_id": "ddl-compat-table-options",
       "reason": "Comments, physical options, AUTO_INCREMENT, LIKE and restart. Other engine options need qualification."
     },
@@ -9561,6 +9566,36 @@
     },
     {
       "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-charset",
+      "reason": "Selected table-default workflow; full charset qualification remains open."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-charset-conversion",
+      "reason": "Selected charset-conversion workflow; full conversion qualification remains open."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-charset-defaults",
+      "reason": "MySQL 5.7 DEFAULT encoding forms use explicit equivalent encodings on the 8.4 target."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-compound-charset",
+      "reason": "Compound conversion and table-default clauses preserve independent collations, database inheritance and following columns."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-generated-expressions",
+      "reason": "Generated predicates, CASE, byte literals and built-in functions compare native metadata and row effects through restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-spatial-prefix-indexes",
+      "reason": "MySQL 5.7 geometry BTREE prefix indexes: metadata, spatial bytes, ALTER and restart. MySQL 8.4 is a native version exclusion."
+    },
+    {
+      "suite": "ddl-suite",
       "case_id": "ddl-compat-multi-table",
       "reason": "Ordered cross-schema moves, swaps, DROP lists, saved schema retirement and restart. Failure and filter boundaries also have unit checks."
     },
@@ -9568,6 +9603,46 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-cross-schema-relationships",
       "reason": "Cross-schema parent/child renames and multi-table DROP. InnoDB variants check foreign-key metadata and a cascade. MyISAM variants omit foreign keys."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-ignored-checks",
+      "reason": "Native ignored 5.7 CHECK syntax, durable no-op ALTER, compound changes and restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-subpartitions",
+      "reason": "Partition metadata, native row effects and saved-state restart; subpartitions also uses offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-hash-forms",
+      "reason": "Partition metadata, native row effects and saved-state restart; subpartitions also uses offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-key-algorithm",
+      "reason": "KEY algorithm 1 row placement, durable schema, CREATE LIKE, ALTER, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-maintenance",
+      "reason": "Logged native partition maintenance, result handling, unlogged CHECK and LOCAL operations, following DML and restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-expressions",
+      "reason": "Native bound evaluation, RANGE/LIST and COLUMNS metadata, DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-column-bounds",
+      "reason": "Native bound evaluation, RANGE/LIST and COLUMNS metadata, DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-exchange-unchecked",
+      "reason": "Unchecked exchange row placement, two-table journal, exchange back, DML and offline stop/resume."
     }
   ]
 }

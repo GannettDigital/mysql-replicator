@@ -11,6 +11,12 @@ test: codec
 	swift test
 
 .PHONY: coverage-unit coverage-report periphery
+.PHONY: syntax-test syntax-coverage
+syntax-test:
+	python3 tools/syntax_tests.py
+syntax-coverage:
+	python3 tools/syntax_tests.py --coverage
+
 coverage-unit:
 	python3 tools/code_coverage.py unit
 

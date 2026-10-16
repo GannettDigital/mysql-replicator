@@ -110,7 +110,8 @@ final class DDLCompatibilityTests: XCTestCase {
         XCTAssertEqual(plan.insert,"INSERT INTO `poc`.`t` (`id`,`n`) VALUES (?,?)")
         XCTAssertEqual(plan.update,"UPDATE `poc`.`t` SET `id`=?,`n`=? WHERE `id`=?")
         XCTAssertTrue(plan.select.contains("`doubled`")); XCTAssertTrue(plan.select.contains("`added`"))
-        XCTAssertThrowsError(try parse("CREATE TABLE t(id INT PRIMARY KEY,n INT AS (RAND()))"))
+        // Function eligibility belongs to the native target DDL validator.
+        XCTAssertNoThrow(try parse("CREATE TABLE t(id INT PRIMARY KEY,n INT AS (RAND()))"))
         XCTAssertEqual(try JSONDecoder().decode(ApplyTable.self,from:JSONEncoder().encode(table)),table)
     }
     func testQuotedEngineDoesNotRequireExpressionCollationOrConsumeTrailingLiteral() throws {
@@ -133,10 +134,10 @@ final class DDLCompatibilityTests: XCTestCase {
         XCTAssertThrowsError(try TableFilter(["otherdb.%"]).ignores(QueryControl(database:"poc",sql:Data(exchange.utf8),errorCode:0,statusVariables:Data())))
         XCTAssertEqual(try JSONDecoder().decode(ApplyTable.self,from:JSONEncoder().encode(table)),table)
     }
-    func testHashPartitionsAndNoSubpartitionFallback() throws {
+    func testHashPartitionsAndSubpartitionDefault() throws {
         guard case .create(let table,_) = try parse("CREATE TABLE t(id INT PRIMARY KEY) PARTITION BY HASH(id) PARTITIONS 4") else { return XCTFail("not CREATE") }
         XCTAssertEqual(table.partitions.map(\.name),["p0","p1","p2","p3"])
         XCTAssertEqual(try PartitionChange.coalesce(2).applying(to:table).partitions.count,2)
-        XCTAssertThrowsError(try parse("CREATE TABLE t(id INT PRIMARY KEY) PARTITION BY RANGE(id) SUBPARTITION BY HASH(id) (PARTITION p0 VALUES LESS THAN (10))"))
+        XCTAssertNoThrow(try parse("CREATE TABLE t(id INT PRIMARY KEY) PARTITION BY RANGE(id) SUBPARTITION BY HASH(id) (PARTITION p0 VALUES LESS THAN (10))"))
     }
 }

@@ -23,6 +23,27 @@ struct NativeChoiceDefinition:Equatable {
         }
         return .init(type:base+"("+labels.map(hex).joined(separator:",")+")",defaultValue:value)
     }
+    /// Single binary-column fixtures. Read bounds independently of the applier.
+    static func partitionBounds(_ data:Data,partition:String) throws -> String {
+        try require(partition.range(of:#"^[A-Za-z_][A-Za-z0-9_]*$"#,options:.regularExpression) != nil,"unsupported fixture partition name")
+        let prefix=Data(("PARTITION "+partition+" VALUES ").utf8)
+        guard let range=data.range(of:prefix) else {throw LabError("missing native partition bounds")}
+        var parser=Parser(bytes:Array(data[range.upperBound...]))
+        try require(parser.take("LESS THAN") || parser.take("IN"),"unexpected native bound syntax")
+        _ = parser.take(" ")
+        try require(parser.take("("),"missing native bound list")
+        var values:[String]=[]
+        repeat {
+            if parser.take("MAXVALUE") {values.append("MAXVALUE")}
+            else if parser.take("NULL") {values.append("NULL")}
+            else {
+                _ = parser.take("_binary ")
+                values.append(hex(try parser.literal()))
+            }
+        } while parser.take(",")
+        try require(parser.take(")"),"incomplete native partition bounds")
+        return values.joined(separator:",")
+    }
     private static func hex(_ bytes:Data) -> String { "X'"+bytes.map { String(format:"%02x",$0) }.joined()+"'" }
     private struct Parser {
         let bytes:[UInt8]

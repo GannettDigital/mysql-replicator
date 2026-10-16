@@ -35,6 +35,66 @@ scope. SELECT workloads and stored routine calls are not reconstructed from row
 binlogs. Their recorded row effects are in scope. Automatic repair of uncertain
 writes and new target engines are separate projects.
 
+## Beta.6 assessment after the syntax extraction
+
+The original plan in the beta.5 worktree remains the scope baseline. This copy
+tracks beta.6 work. The support audit has 51 requirements. Most are broad groups,
+not individual assertions. None is release-qualified yet. Do not use the branch
+count or unit line coverage as a completeness measure.
+
+| Area | Implemented work | Work still needed |
+| --- | --- | --- |
+| Values and names | Charset registry and byte transport, numeric defaults and attributes, ENUM zero and labels, native identifier comparison, non-UTF-8 query decoding, table-name case settings, JSON YEAR translation. | Complete the boundary, replay and failure matrix. Keep binary values inside JSON as a documented transport gap. |
+| Table DDL | FULLTEXT subset, JSON generated indexes, table options, selected conversions, multi-table DROP and RENAME, subpartition metadata/lifecycle operations, KEY algorithms, partition maintenance, evaluated bounds and unchecked exchange. | The selected charset, expression and geometry-prefix cases pass. Complete remaining index and partition operations, ALTER forms, CHECK qualification, CTAS and stored-object behavior. FULLTEXT replacement after deletes still needs its native document-ID investigation. |
+| Parser | Independent lexer and typed expression target, isolated unit coverage and Docker build stage. | Move additional grammar into typed syntax nodes. Expand expressions with native metadata comparison tests. Do not import the unfinished string-producing parser as a second grammar. |
+| Row identity and relationships | Primary-key DML, selected InnoDB FKs and recovery records. | Unique-key fallback, duplicate/keyless matching, FK cycles and source foreign_key_checks behavior. Define durable recovery records before changing row identity. |
+| Binlog events | Existing FULL row-image and ordinary GTID paths. | MINIMAL/NOBLOB images, compression, tagged GTIDs, XA and checksum modes. Each requires live, replay and restart checks. |
+| Qualification | Shared four-profile harness, native comparisons and support bundles. | Bind catalog assertions to exact builds. Run full release checks and representative performance checks after the remaining implementation work. |
+
+Current execution order:
+
+1. Completed: confirm the combined charset ALTER, generated-expression and
+   geometry-prefix increments with fixed inputs on all applicable profiles.
+   Run `20261015T073916Z-20bde8e4` passed 21 applicable cases.
+2. Move the remaining DDL statement grammar into typed syntax nodes. Complete
+   the remaining ALTER, index and partition forms, including subpartitions.
+   FORCE and ENABLE/DISABLE KEYS now pass on all four profiles. See
+   [maintenance checks](TABLE_MAINTENANCE.md). Branch 37 adds subpartition
+   metadata and selected lifecycle operations, with passing tests on all four
+   profiles. Branch 38 adds KEY algorithm metadata and partition maintenance.
+   Branch 39 adds native bound evaluation and EXCHANGE WITHOUT VALIDATION.
+   Branch 40 adds exact binary/charset COLUMNS bounds and native conversion
+   checks. It records the tested native restrictions on misplaced-row DML.
+   See [partition work](PARTITION_SUPPORT.md)
+   for implementation, tests and the remaining forms.
+3. Classify CHECK and CTAS by source version and target engine. The native
+   [5.7 to 8.0 CHECK rule](CHECK_CONSTRAINTS.md) is implemented in branch 36;
+   selected live and offline checks passed on all three 5.7-source profiles. Implement the
+   eligible forms. Audit views, routines, definers and temporary cleanup.
+4. Add unique-key and keyless row identity. Define durable recovery records
+   before changing the DML selection path. Then extend FK relationships and
+   source foreign_key_checks behavior.
+5. Add row-image and event variants. XA and tagged GTIDs need durable-state and
+   archive designs, not decoder changes alone.
+6. Run qualification and publish native limits separately from tool gaps.
+
+The catalog still marks nine tool-gap groups as missing: CTAS,
+unique-key identity, keyless identity, disabled FK checks, MINIMAL/NOBLOB images,
+transaction compression, tagged GTIDs, XA and checksum modes other than CRC32.
+The remaining `subset` entries also need work. Those include expression and
+partition forms, FK relationships, replay/failure coverage and value boundaries.
+This list is not a claim that the partial inventory contains every missing form.
+
+Four other entries marked `missing` describe native restrictions, a target
+limit, or the existing scheduled-event rejection policy. Do not report these as
+four missing replication features. Their evidence or catalog status needs review.
+In particular, event rejection already exists in `DDLPolicy` and the shared
+`ddl-compat-reject-event` case. Qualification remains separate from implementation.
+
+Branches 29 and 30 remain experiment records. Branches 32 and 33 replace their
+implementation work. Keep their saved failure bundles. Keep all beta.6 branches
+local until the user approves publication of the complete stack.
+
 ## 1. Establish the support catalog
 
 Extend the existing DDL catalog and shared lab inventory instead of creating a
@@ -117,8 +177,8 @@ that bypasses filters, schema tracking, or recovery records.
 2. Add cross-family column conversions and remaining ALTER operations. Let the
    target execute the source SQL under compatible logged session settings.
    Increment 27 adds parsed table options and native cross-family conversions.
-   Its selected cases include exact defaults, row changes and restart. Other
-   ALTER forms, charset conversion and the full conversion matrix remain open.
+   Its selected cases include exact defaults, row changes and restart. Increment 32 adds table-default changes, native charset conversion and equivalent legacy DEFAULT syntax.
+   Other ALTER forms and the full conversion matrix remain open.
    Verify resulting metadata and subsequent row effects. Do not predict a lossy
    conversion as exact when native behavior depends on SQL mode or table data.
 3. Complete generated-expression coverage and partition operations, including

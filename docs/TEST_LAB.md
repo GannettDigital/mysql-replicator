@@ -171,7 +171,11 @@ parser. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md).
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
-after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.
+after the changes on all profiles.
+`ddl-compat-ignored-checks` checks ignored 5.7 CHECK clauses, compound DDL,
+violating rows, the durable no-op ALTER record, restart and offline replay.
+`check-target57-limits` checks that an enforced 8.4 constraint stops before
+target DDL. See [native compatibility rules](NATIVE_COMPATIBILITY.md).
 InnoDB profiles support foreign keys with the limits below.
 
 The `foreign-keys` family applies to both InnoDB target profiles. It compares
@@ -714,3 +718,32 @@ Both cases include saved-state restart.
 ```sh
 make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-multi-table --case ddl-compat-cross-schema-relationships"
 ```
+
+### Partition cases
+
+Select `ddl-compat-subpartitions` for subpartition metadata and data-changing
+DDL on all four profiles. It also tests restart and offline replay through a
+TRUNCATE boundary. Select `ddl-compat-partition-hash-forms` for named HASH/KEY
+partitions, ADD counts and implicit KEY columns. Existing `ddl-compat-partitions`
+and `ddl-compat-hash-list` cover the earlier partition operations. See
+[partition scope](../PLAN/PARTITION_SUPPORT.md) for limits and native references.
+
+Select `ddl-compat-partition-key-algorithm` to check KEY algorithm 1 row
+placement, ALTER, CREATE LIKE, saved schemas and offline stop/resume. Select
+`ddl-compat-partition-maintenance` to check logged partition administration,
+unlogged CHECK and LOCAL operations, and DML after restart. All four profiles
+use an InnoDB native reference for these partition cases. The external target
+uses the profile engine.
+
+Select `ddl-compat-partition-expressions` for computed partition bounds and
+native metadata comparison. Select `ddl-compat-partition-exchange-unchecked`
+for unchecked exchange, misplaced rows, the two-table journal and following
+DML. Both cases restart the applier and use offline stop/resume. The unchecked
+exchange case stops replay while the row is still in the wrong partition.
+
+`ddl-compat-partition-column-bounds` checks binary RANGE and latin1 LIST
+bounds, REORGANIZE, partition routing, DATE spelling, connection-charset
+literals, explicit charset introducers, escaped and empty bytes, restart, and
+offline replay. For single
+binary-column fixtures, the harness reads raw SHOW CREATE bounds with its
+own parser. It does not rely on the truncated I_S values that 5.7 can return.

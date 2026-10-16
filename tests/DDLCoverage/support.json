@@ -511,7 +511,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Parses table/column COMMENT, ROW_FORMAT, AUTO_INCREMENT, selected physical/statistics options and same-engine rebuilds. Original SQL is journaled. Physical options are not row-schema metadata. Other options remain open.",
+      "current_behavior": "Parses table/column COMMENT, ROW_FORMAT, AUTO_INCREMENT, selected physical/statistics options and same-engine rebuilds. Original SQL is journaled. Physical options are not row-schema metadata. Other options remain open. FORCE and ENABLE/DISABLE KEYS use the normal DDL journal and target engine behavior.",
       "acceptance": "Support each native-valid option with schema checks and following DML.",
       "assertions": [
         "source_outcome",
@@ -521,7 +521,8 @@
         "failure_state"
       ],
       "candidate_cases": [
-        "ddl-compat-table-options"
+        "ddl-compat-table-options",
+        "ddl-compat-table-maintenance"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift"
@@ -587,11 +588,9 @@
       "stage": 3,
       "family": "ddl",
       "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "eligibility": "eligible",
+      "implementation": "subset",
       "profiles": [
-        "mysql84-to-mysql57-myisam",
-        "mysql57-to-mysql84-innodb",
         "mysql57-to-mysql57-myisam",
         "mysql57-to-mysql57-innodb"
       ],
@@ -602,9 +601,9 @@
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Spatial BTREE indexes are rejected.",
+      "source_behavior": "MySQL 5.7.42 accepts ordinary geometry BTREE byte prefixes. MySQL 8.4.8 rejects them with error 1089.",
+      "native_behavior": "5.7 InnoDB and MyISAM accept and maintain a geometry prefix, including a compound index. 8.4 sql_table.cc rejects prefix length for MYSQL_TYPE_GEOMETRY.",
+      "current_behavior": "Accept geometry BTREE prefixes on 5.7 targets. Reject the form on 8.4 targets with a specific version error. Broad index-form qualification remains open.",
       "acceptance": "Check prefix-index eligibility per engine; apply eligible forms without changing stored bytes.",
       "assertions": [
         "source_outcome",
@@ -614,12 +613,25 @@
         "failure_state"
       ],
       "candidate_cases": [
-        "matrix-spatial"
+        "matrix-spatial",
+        "ddl-compat-spatial-prefix-indexes"
       ],
       "code_references": [
-        "Sources/ReplicatorApply/DDLParser.swift"
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorApply/DDLExpressionMetadata.swift"
       ],
-      "native_references": []
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_prepare_create_table"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_table.cc",
+          "symbol": "prepare_key_column"
+        }
+      ]
     },
     {
       "id": "ddl.index-forms",
@@ -680,7 +692,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Cross-family MODIFY and CHANGE use target-native conversion under logged session settings. Selected conversions have shared cases. Other ALTER operations and version-specific conversion differences remain open.",
+      "current_behavior": "MODIFY and CHANGE permit native cross-family conversions. Table-default charset changes and CONVERT TO CHARACTER SET use native field metadata before execution. Selected cases cover TEXT widening, binary columns, exact defaults, ENUM/SET, following DML and restart; full conversion and failure qualification remains open.",
       "acceptance": "Compare native metadata, converted rows, SQL-mode errors and following DML.",
       "assertions": [
         "source_outcome",
@@ -690,11 +702,14 @@
         "failure_state"
       ],
       "candidate_cases": [
-        "ddl-compat-alter-conversions"
+        "ddl-compat-alter-conversions",
+        "ddl-compat-table-charset",
+        "ddl-compat-charset-conversion"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift",
-        "Sources/ReplicatorApply/SchemaChanges.swift"
+        "Sources/ReplicatorApply/SchemaChanges.swift",
+        "Sources/ReplicatorApply/DDLTableEncoding.swift"
       ],
       "native_references": []
     },
@@ -720,7 +735,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Generated expressions include JSON extraction and CAST. Indexed VIRTUAL columns require InnoDB; indexed STORED columns also work on MyISAM. Functional indexes and JSON expression defaults are accepted on 8.4 targets. The expression grammar remains limited.",
+      "current_behavior": "Independent typed syntax covers selected CASE, predicate, bit, interval, byte and native function forms. Metadata comparison preserves generated-value checks; full grammar remains open.",
       "acceptance": "Apply native-valid expressions and verify source/target generated values.",
       "assertions": [
         "source_outcome",
@@ -731,10 +746,12 @@
       ],
       "candidate_cases": [
         "ddl-compat-json-indexes",
-        "json-target84-schema"
+        "json-target84-schema",
+        "ddl-compat-generated-expressions"
       ],
       "code_references": [
-        "Sources/ReplicatorApply/DDLTokens.swift"
+        "Sources/ReplicatorApply/DDLTokens.swift",
+        "Sources/MySQLSyntax/SQLExpressionParser.swift"
       ],
       "native_references": []
     },
@@ -760,7 +777,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Subpartitions and some partition forms are rejected.",
+      "current_behavior": "Typed partition syntax and saved metadata support RANGE/LIST subpartitions by HASH/KEY, KEY algorithms, native names and selected lifecycle operations. Constant numeric/date bounds use native evaluation before journaling. COLUMNS bounds retain binary and charset values, including raw SHOW CREATE metadata. EXCHANGE accepts WITHOUT VALIDATION and journals both tables. Native probes reject the tested misplaced-row UPDATE/DELETE operations. Partition maintenance checks native results. Remaining expression forms, the complete conversion matrix, tablespace operations and full failure qualification remain open.",
       "acceptance": "Compare metadata and row effects for eligible engine/version combinations.",
       "assertions": [
         "source_outcome",
@@ -769,11 +786,72 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
-      "code_references": [
-        "Sources/ReplicatorApply/DDLPartitions.swift"
+      "candidate_cases": [
+        "ddl-compat-subpartitions",
+        "ddl-compat-partition-hash-forms",
+        "ddl-compat-partition-key-algorithm",
+        "ddl-compat-partition-maintenance",
+        "ddl-compat-partition-expressions",
+        "ddl-compat-partition-exchange-unchecked",
+        "ddl-compat-partition-column-bounds"
       ],
-      "native_references": []
+      "code_references": [
+        "Sources/MySQLSyntax/SQLPartitionClause.swift",
+        "Sources/ReplicatorApply/DDLPartitions.swift",
+        "Sources/ReplicatorApply/DDLPolicy.swift",
+        "Sources/MySQLSyntax/SQLPartitionMaintenance.swift",
+        "Sources/ReplicatorApply/PartitionKeyMetadata.swift",
+        "Sources/ReplicatorApply/SchemaByteEquality.swift",
+        "Sources/ReplicatorApply/PartitionBounds.swift",
+        "Sources/ReplicatorApply/ColumnPartitionBounds.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "opt_sub_part"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/partition_info.cc",
+          "symbol": "create_default_subpartition_name"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/partition_info.cc",
+          "symbol": "create_default_subpartition_name"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_admin.cc",
+          "symbol": "Sql_cmd_analyze_table::execute"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/partitioning/partition_handler.cc",
+          "symbol": "Partition_helper::ph_calculate_key_hash_value"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/partition_info.cc",
+          "symbol": "add_column_list_value"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_partition_admin.cc",
+          "symbol": "exchange_partition"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/partition_info.cc",
+          "symbol": "fix_column_value_functions"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_show.cc",
+          "symbol": "get_partition_column_description"
+        }
+      ]
     },
     {
       "id": "ddl.multi-drop",
@@ -1044,10 +1122,9 @@
       "stage": 3,
       "family": "ddl",
       "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "eligibility": "eligible",
+      "implementation": "subset",
       "profiles": [
-        "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
         "mysql57-to-mysql57-myisam",
         "mysql57-to-mysql57-innodb"
@@ -1059,10 +1136,10 @@
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "CHECK syntax is rejected.",
-      "acceptance": "Do not equate ignored 5.7 CHECK syntax with enforced newer-server constraints.",
+      "source_behavior": "MySQL 5.7 parses CHECK clauses and records the SQL but creates no constraint object.",
+      "native_behavior": "5.7 ignores CHECK clauses. Native 8.0 SQL workers discard their specifications for an original source older than 8.0.16. 5.7 targets cannot preserve enforced 8.4 checks.",
+      "current_behavior": "A shared version rule discards 5.7 CHECK definitions. A check-only ALTER retains its source SQL, rule ID and checkpoint in the DDL journal without target DDL. Enforced-source checks fail before SQL on 5.7.",
+      "acceptance": "Match the ignored source semantics without adding target constraints; retain durable DDL completion and test restart/replay.",
       "assertions": [
         "source_outcome",
         "native_outcome",
@@ -1070,11 +1147,77 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
-      "code_references": [
-        "Sources/ReplicatorApply/DDLParser.swift"
+      "candidate_cases": [
+        "ddl-compat-ignored-checks"
       ],
-      "native_references": []
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/NativeReplicationRules.swift",
+        "Sources/ReplicatorApply/DDLCheckCompatibility.swift",
+        "Sources/MySQLSyntax/SQLCheckClause.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "check_constraint"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_check_constraint.cc",
+          "symbol": "is_slave_with_master_without_check_constraints_support"
+        }
+      ]
+    },
+    {
+      "id": "native.check.target57",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "target_limit",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "8.4 accepts and enforces CHECK constraints.",
+      "native_behavior": "5.7 parses CHECK syntax but cannot store or enforce the source constraint.",
+      "current_behavior": "Reject before target DDL with a version-specific error. Do not discard a CHECK from an enforced-source version.",
+      "acceptance": "Retain the pending source SQL and diagnostic; do not create the target table.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "check-target57-limits"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/NativeReplicationRules.swift",
+        "Sources/ReplicatorApply/DDLCheckCompatibility.swift",
+        "Sources/MySQLSyntax/SQLCheckClause.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "check_constraint"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_check_constraint.cc",
+          "symbol": "is_slave_with_master_without_check_constraints_support"
+        }
+      ]
     },
     {
       "id": "rows.unique-key",
@@ -2045,6 +2188,98 @@
           "repository": "mysql84",
           "path": "sql/dd/dd_table.cc",
           "symbol": "fill_dd_columns_from_create_fields"
+        }
+      ]
+    },
+    {
+      "id": "native.spatial-prefix.source84",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "native_restriction",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql84-to-mysql57-myisam"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "MySQL 5.7.42 accepts ordinary geometry BTREE byte prefixes. MySQL 8.4.8 rejects them with error 1089.",
+      "native_behavior": "5.7 InnoDB and MyISAM accept and maintain a geometry prefix, including a compound index. 8.4 sql_table.cc rejects prefix length for MYSQL_TYPE_GEOMETRY.",
+      "current_behavior": "MySQL 8.4 rejects a geometry key-part prefix with error 1089. The applier reports the target version limit before DDL execution.",
+      "acceptance": "Record native error 1089 separately from eligible 5.7 prefix indexes. Do not remove or substitute the index.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorApply/DDLExpressionMetadata.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_prepare_create_table"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_table.cc",
+          "symbol": "prepare_key_column"
+        }
+      ]
+    },
+    {
+      "id": "native.spatial-prefix.target84",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "target_limit",
+      "eligibility": "excluded",
+      "implementation": "not_applicable",
+      "profiles": [
+        "mysql57-to-mysql84-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "MySQL 5.7.42 accepts ordinary geometry BTREE byte prefixes. MySQL 8.4.8 rejects them with error 1089.",
+      "native_behavior": "5.7 InnoDB and MyISAM accept and maintain a geometry prefix, including a compound index. 8.4 sql_table.cc rejects prefix length for MYSQL_TYPE_GEOMETRY.",
+      "current_behavior": "MySQL 8.4 rejects a geometry key-part prefix with error 1089. The applier reports the target version limit before DDL execution.",
+      "acceptance": "Record native error 1089 separately from eligible 5.7 prefix indexes. Do not remove or substitute the index.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorApply/DDLExpressionMetadata.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_prepare_create_table"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_table.cc",
+          "symbol": "prepare_key_column"
         }
       ]
     }

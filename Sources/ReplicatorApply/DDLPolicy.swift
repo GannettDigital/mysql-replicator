@@ -1,4 +1,5 @@
 import Foundation
+import MySQLSyntax
 import ReplicatorCodec
 
 enum ProhibitedDDL: Error, CustomStringConvertible {
@@ -75,15 +76,34 @@ struct SkippedDDL {
     var tokens: [DDLToken]? = nil
 }
 
+public struct ApplySubpartition: Codable, Equatable {
+    public let name: String
+    public let method: String
+    public let expression: String
+    /// Nil is the native default (algorithm 2); only algorithm 1 is stored.
+    public var keyAlgorithm: Int? = nil
+}
+
 public struct ApplyPartition: Codable, Equatable {
     public let name: String
     public let method: String
     public let expression: String
-    public let description: String?
+    public var description: String?
+    public var keyAlgorithm: Int? = nil
+    public var subpartitions: [ApplySubpartition]? = nil
     func validate() throws {
         _ = try quoted(name)
         try require(["RANGE","RANGE COLUMNS","LIST","LIST COLUMNS","HASH","LINEAR HASH","KEY","LINEAR KEY"].contains(method),"unsupported partition method")
-        try require(!expression.isEmpty,"missing partition expression")
+        try require(!expression.isEmpty || method.contains("KEY"),"missing partition expression")
+        try require(keyAlgorithm == nil || (keyAlgorithm == 1 && method.contains("KEY")),"invalid partition KEY algorithm")
+        if let children=subpartitions {
+            try require(!children.isEmpty && (method.hasPrefix("RANGE") || method.hasPrefix("LIST")),"invalid subpartition manifest")
+            for child in children {
+                _ = try quoted(child.name)
+                try require(child.keyAlgorithm == nil || (child.keyAlgorithm == 1 && child.method.contains("KEY")),"invalid subpartition KEY algorithm")
+                try require(["HASH","LINEAR HASH","KEY","LINEAR KEY"].contains(child.method) && !child.expression.isEmpty,"invalid subpartition method or expression")
+            }
+        }
     }
 }
 
@@ -96,6 +116,8 @@ struct SchemaTransition: Codable {
 enum PartitionChange: Equatable {
     case replace([ApplyPartition])
     case add([ApplyPartition])
+    case addHash(Int)
+    case maintenance(SQLPartitionMaintenance)
     case drop([String])
     case truncate([String])
     case reorganize([String],[ApplyPartition])
@@ -105,7 +127,10 @@ enum PartitionChange: Equatable {
 }
 
 enum AlterAction: Equatable {
+    case ignoredCheck
+    case encoding(DDLTableEncoding)
     case tableOption(DDLTableOption)
+    case maintenance(SQLAlterMaintenance)
     case addForeignKey(ApplyForeignKey,String?)
     case dropForeignKey(String)
     case add(ApplyColumn,ColumnPlacement)

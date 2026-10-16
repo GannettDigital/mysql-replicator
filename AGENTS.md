@@ -42,3 +42,9 @@ support bundle to debug replication errors. Do not repeatedly poll full logs.
 Use [docs/CI_MEASUREMENTS.md](docs/CI_MEASUREMENTS.md) for measurement scope and
 test-area comparison rules. Do not remove a test because its line coverage overlaps
 another test. Check its profile, catalog obligations and assertions first.
+
+# Select syntax tests
+
+Run `tools/syntax_tests.py` when `Sources/MySQLSyntax`, its tests, or its build
+and coverage setup changes. Do not run this separate suite for unrelated code
+changes. Select the affected apply or lab tests for those changes.

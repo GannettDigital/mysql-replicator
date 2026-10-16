@@ -131,13 +131,34 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
   filter boundaries are rejected. Source DDL events with a nonzero error code
   still stop replication. This includes a 5.7 DROP that partially succeeds on
   the source and records an error. Reproducing that result is not implemented.
-- No CHECK constraints, subpartitions or CREATE TABLE SELECT.
+- MySQL 5.7 CHECK clauses are ignored, as in native replication. Compound DDL
+  retains its other operations. A check-only ALTER advances the checkpoint
+  without target DDL. Enforced 8.4 checks cannot be preserved on a 5.7 target.
+  See [native compatibility rules](NATIVE_COMPATIBILITY.md).
+- RANGE/LIST subpartitions support HASH/KEY methods, explicit and generated
+  names, and selected lifecycle operations. Named HASH/KEY partitions and
+  implicit KEY columns are supported. See [partition scope and tests](../PLAN/PARTITION_SUPPORT.md).
+  KEY ALGORITHM=1 and 2 are tracked in the saved schema. REBUILD, ANALYZE,
+  OPTIMIZE and REPAIR PARTITION use the normal DDL journal. CHECK PARTITION
+  does not enter the source binlog. Some partition expressions and tablespace
+  operations remain outside the current implementation.
+  Selected constant partition bounds use native evaluation. COLUMNS bounds
+  support byte literals and charset introducers. Binary bounds retain exact
+  bytes in saved state. Native type and conversion checks remain active.
+  EXCHANGE supports WITHOUT VALIDATION. This can keep rows outside their partition bounds, as in
+  MySQL. Queries can then miss those rows. Native UPDATE and DELETE can fail
+  with error 1863. The tests exchange the rows back before DML. An uncertain exchange requires manual resolution; it is not retried.
+  CREATE TABLE SELECT remains unsupported.
+  FORCE and ENABLE/DISABLE KEYS use the target engine behavior.
   Table and column COMMENT, ROW_FORMAT, AUTO_INCREMENT,
   selected physical/statistics options, and same-engine rebuilds are parsed.
   The original SQL is saved and sent to the target. Comments and physical
   options are not part of the saved row schema. The target checks engine limits.
-  MODIFY and CHANGE permit cross-family conversions. The target converts the
-  data under the recorded SQL mode. Version-specific conversion differences
+  MODIFY and CHANGE permit cross-family conversions. ALTER TABLE can change
+  its default charset or convert text columns with CONVERT TO CHARACTER SET.
+  Native field probes determine converted types, labels and defaults before
+  application SQL is issued. Binary columns retain their bytes and types.
+  The target converts the data under the recorded SQL mode. Version-specific conversion differences
   still need qualification. Arbitrary table options remain unsupported.
 - Generated columns use a limited deterministic expression grammar, including
   JSON extraction. Indexes on VIRTUAL generated columns require InnoDB. Indexes
@@ -151,7 +172,9 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
 - MySQL 5.7 targets reject expression defaults and functional indexes. MySQL 8.4
   targets accept functional indexes and JSON expression defaults, including
   discovery of existing tables. Spatial defaults are not qualified. Spatial
-  BTREE indexes and MySQL 8.4 column SRID attributes remain unsupported. Stored
+  BTREE byte-prefix indexes are supported on 5.7 targets; MySQL 8.4 rejects
+  them with native error 1089. See [the version limits](../PLAN/SPATIAL_PREFIX_INDEXES.md).
+  MySQL 8.4 column SRID attributes remain unsupported. Stored
   spatial bytes can have different function semantics across server versions.
 - InnoDB foreign keys use the [documented subset](../PLAN/MYSQL57_FOREIGN_KEYS.md).
   Self-references, cycles, incomplete or nonunique parent keys, generated FK
@@ -174,3 +197,13 @@ The remaining JSON opaque subtype and range limits are documented in the
 row replication can store binary JSON values that ordinary client SQL cannot
 recreate with the same type. The applier retains the source bytes and stops
 before a write when its constructor cannot preserve the value.
+
+### Database defaults in legacy ALTER syntax
+
+MySQL 5.7 charset and collation names of `DEFAULT` are resolved before execution.
+The applier uses explicit names on the target. A table-default change inherits
+from the table database. A conversion uses the logged session database collation
+or the selected database default. When neither is in the Query event, source and
+target `@@GLOBAL.collation_database` values must match. This value is separate
+from `collation_server`. The binlog does not record an unmodified initial session
+value. See [the native behavior and tests](../PLAN/ALTER_CHARSET.md).

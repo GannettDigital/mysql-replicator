@@ -13,6 +13,7 @@ struct DDLQueryContextDiagnostic: Codable {
 
     var sourceSQLBase64: String? = nil
     var targetSQLBase64: String? = nil
+    var nativeCompatibilityRules: [String]? = nil
 
     init?(query: QueryControl) {
         guard let context = try? QuerySessionContext(query: query) else { return nil }
