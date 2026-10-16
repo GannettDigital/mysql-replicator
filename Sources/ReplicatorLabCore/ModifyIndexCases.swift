@@ -397,7 +397,7 @@ enum ModifyIndexCases {
                 .replacingOccurrences(of: "utf8mb4_bin", with: "utf8mb4_unicode_ci")
             _ = try h.sql("native", "STOP REPLICA")
             for service in h.services {
-                _ = try h.sql(
+                _ = try h.sqlScript(
                     service,
                     seed + "; CREATE INDEX ix ON demo.mi(name); INSERT INTO demo.mi VALUES(2,'SEED-two',NULL,NULL)")
             }
