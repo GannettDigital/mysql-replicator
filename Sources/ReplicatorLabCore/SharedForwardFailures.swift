@@ -117,7 +117,7 @@ extension SharedCorrectness.Run {
                 let client = try start(test, configuration(test.id, at: before, count: 8))
                 try waitForReader(client)
                 _ = try h.sql("native", "START REPLICA")
-                _ = try h.sql(
+                _ = try h.sqlScript(
                     "source",
                     session
                         + "\nDELIMITER $$\nCREATE DEFINER=CURRENT_USER TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW BEGIN SET NEW.n=NEW.n+10; SET NEW.n=NEW.n+1; END$$\nDELIMITER ;"
