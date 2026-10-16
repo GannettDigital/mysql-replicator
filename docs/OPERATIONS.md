@@ -4,6 +4,9 @@ Run `mysql-replicator ctl status --config apply.yaml` to read a running process.
 The `progress` object includes the lifecycle, applied GTID set, applied file and
 position, pending GTID, and durable totals. Status reads a published snapshot.
 It does not query the target or wait for the current SQL statement.
+When available, `sourceFailurePosition` gives the file and byte offset of an
+archive or transaction assembly error. Support bundles use this position to
+select the relevant binlog bytes.
 
 `transactionsApplied` counts completed source groups. It includes filtered and
 skipped groups. It is not a count of successful target commits. `rowsApplied`

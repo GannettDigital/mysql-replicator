@@ -272,8 +272,37 @@ public enum SupportBundle {
             if let name = q[0][2], let offset = UInt64(q[0][4] ?? ""), archiveRanges[name] == nil {
                 archiveRanges[name] = [offset..<offset]
             }
+            var sourceFailure: [String] = []
+            var failureFile: String?
+            var failureOffset: UInt64?
+            if let failureDiagnostic,
+                let failure = try? JSONSerialization.jsonObject(with: failureDiagnostic) as? [String: Any],
+                let progress = failure["progress"] as? [String: Any],
+                let position = progress["sourceFailurePosition"] as? [String: String]
+            {
+                failureFile = position["file"]
+                failureOffset = position["position"].flatMap(UInt64.init)
+            }
+            if failureFile == nil,
+                try !statements.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_failure'")
+                    .isEmpty
+            {
+                let saved = try statements.query(
+                    "SELECT f.source_file,f.source_position FROM source_failure f JOIN state s ON f.reason=s.diagnostic WHERE s.id=1 AND s.lifecycle='BLOCKED'"
+                )
+                if let row = saved.first {
+                    failureFile = row[0]
+                    failureOffset = row[1].flatMap(UInt64.init)
+                }
+            }
+            if let name = failureFile, let offset = failureOffset {
+                sourceFailure = [name]
+                archiveRanges[name, default: []].insert(offset..<offset, at: 0)
+            }
             let selected = Set(names)
-            let preferred = (pending + (q[0][2].map { [$0] } ?? [])).filter { selected.contains($0) } + names.reversed()
+            let preferred =
+                (sourceFailure + pending + (q[0][2].map { [$0] } ?? [])).filter { selected.contains($0) }
+                + names.reversed()
             var seen = Set<String>()
             for name in preferred where name != "manifest.json" && seen.insert(name).inserted {
                 do {

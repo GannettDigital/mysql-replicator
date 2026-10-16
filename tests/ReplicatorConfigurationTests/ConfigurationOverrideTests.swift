@@ -29,6 +29,12 @@ final class ConfigurationOverrideTests: XCTestCase {
             to: Data(helper.example().replacingOccurrences(of: "port: 3306", with: "port: 4400").utf8))
         XCTAssertEqual(try ConfigurationFile.decode(ApplyConfiguration.self, from: reloaded).source.port, 3307)
     }
+    func testStandaloneSourceMapOverride() throws {
+        struct Source: Decodable { let port: Int }
+        let c = try ConfigurationOverrides(arguments: ["blackhole", "--config", "x.yaml", "--source", "{port: 3307}"])
+        let decoded = try ConfigurationFile.decode(Source.self, from: c.applying(to: Data("port: 3306".utf8)))
+        XCTAssertEqual(decoded.port, 3307)
+    }
     func testNullsAndStandaloneSourceMapping() throws {
         struct Source: Decodable {
             let port: Int

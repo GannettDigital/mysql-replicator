@@ -1,7 +1,7 @@
 # Beta.6 operational additions
 
-Status: implementation and focused checks are complete. Selected container checks
-are in progress. Keep these branches local until the user requests publication.
+Status: implementation, unit checks and selected container checks are complete.
+Keep these branches local until the user requests publication.
 The parent is `beta/6/70-tagged-gtids` (`dd9dd1d`).
 
 | Branch | Change | Focused checks |
@@ -13,14 +13,29 @@ The parent is `beta/6/70-tagged-gtids` (`dd9dd1d`).
 | `beta/6/75-progress-estimates` | Offline replay estimates and separate live metadata polling | 78 estimate, GTID, archive, configuration and restart checks passed |
 | `beta/6/76-cli-configuration-overrides` | Dotted CLI settings; CLI over YAML; reload retains overrides | 34 CLI, configuration and bundle checks passed |
 | `beta/6/77-swift-format-check` | Separate format pass and parallel CI check | All 781 Swift unit tests, 49 standalone syntax tests and lint passed |
+| `beta/6/78-operational-boundaries` | Exact UTF-8 filter identity; saved archive failure offsets; source-map CLI override | 82 focused checks passed |
 
 These test selections overlap. Python tooling checks passed 157 tests with two
 skips. The updated required-check gate passed eight tests. Periphery found no
-unused code. These results do not replace release checks on all supported cases.
+unused code. Lint passed with Swift 6.2.1 on macOS and in the pinned Linux image.
+
+The selected container run passed all 16 cases: four cases on each of the four
+profiles. The cases were `wild-ignore`, `wild-ignore-resume`,
+`wild-ignore-included-rejection`, and `ddl-compat-source-gtid-preservation`.
+They checked include/ignore rules, restart, replay and source GTID preservation.
+The run also produced durable counters and live source observations. Evidence:
+`artifacts/lab/20261016T221908Z-4698eed5/result.json`.
+
+The container run used branch 77. Branch 78 then corrected three boundary cases
+and passed the focused unit checks. Its filter checks distinguish UTF-8 spellings
+that Swift treats as canonically equivalent. Its archive checks retain the failed
+event position before capture creates a pending group. Its CLI check covers a
+complete source-map override. These results do not replace release checks on all
+supported cases.
 
 ## Design rules
 
-- Bundles retain a file prefix and bytes around a pending group or checkpoint.
+- Bundles retain a file prefix and bytes around a failed event, pending group or checkpoint.
   A byte excerpt is diagnostic data, not a standalone replay file. The JSON index
   identifies original offsets and incomplete groups. Relay frames retain decoded
   transaction context. Keep original archives for further investigation.

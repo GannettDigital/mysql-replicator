@@ -127,6 +127,12 @@ public enum ArchiveIO {
 
 /// Physical-file validation is independent of supported row types. Fetch can
 /// preserve events which the semantic decoder/applier will subsequently reject.
+public struct ArchiveReadError: Error, CustomStringConvertible {
+    public let coordinate: BinlogCoordinate
+    public let reason: String
+    public var description: String { reason }
+}
+
 struct ArchiveFileReader {
     let file: URL
     let maximumEventBytes: UInt32
@@ -134,43 +140,47 @@ struct ArchiveFileReader {
         _ = try ArchiveIO.regularFile(file)
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
+        var offset: UInt64 = 0
+        func failure(_ reason: String) -> ArchiveReadError {
+            ArchiveReadError(coordinate: .init(file: file.lastPathComponent, position: offset), reason: reason)
+        }
         func read(_ count: Int, eof: Bool = false) throws -> Data {
             var data = Data()
             while data.count < count {
                 let block = try handle.read(upToCount: count - data.count) ?? Data()
                 if block.isEmpty {
                     if eof && data.isEmpty { return data }
-                    throw CaptureError("truncated archive: \(file.lastPathComponent)")
+                    throw failure("truncated archive: \(file.lastPathComponent)")
                 }
                 data.append(block)
             }
             return data
         }
         let magic = try read(4)
-        guard magic == Data([0xfe, 0x62, 0x69, 0x6e]) else { throw CaptureError("invalid binlog magic") }
-        var offset: UInt64 = 4
+        guard magic == Data([0xfe, 0x62, 0x69, 0x6e]) else { throw failure("invalid binlog magic") }
+        offset = 4
         while true {
             let header = try read(19, eof: true)
             if header.isEmpty { break }
             let length = ArchiveIO.read(header, at: 9, as: UInt32.self)
             guard (23...maximumEventBytes).contains(length) else {
-                throw CaptureError("invalid archive event length at \(file.lastPathComponent):\(offset)")
+                throw failure("invalid archive event length at \(file.lastPathComponent):\(offset)")
             }
             let frame = try header + read(Int(length) - 19)
             guard UInt64(ArchiveIO.read(frame, at: 13, as: UInt32.self)) == offset + UInt64(length),
                 ArchiveIO.read(frame, at: 17, as: UInt16.self) & 0x20 == 0
-            else { throw CaptureError("nonphysical archive event at \(file.lastPathComponent):\(offset)") }
+            else { throw failure("nonphysical archive event at \(file.lastPathComponent):\(offset)") }
             guard
                 ArchiveIO.crc32(Data(frame.dropLast(4)), format: frame[4] == 15)
                     == ArchiveIO.read(frame, at: frame.count - 4, as: UInt32.self)
-            else { throw CaptureError("archive CRC mismatch at \(file.lastPathComponent):\(offset)") }
+            else { throw failure("archive CRC mismatch at \(file.lastPathComponent):\(offset)") }
             guard (offset == 4) == (frame[4] == 15) else {
-                throw CaptureError("archive requires exactly one initial format event")
+                throw failure("archive requires exactly one initial format event")
             }
             try emit(frame, offset)
             offset += UInt64(length)
         }
-        guard offset > 4 else { throw CaptureError("empty binlog archive file") }
+        guard offset > 4 else { throw failure("empty binlog archive file") }
     }
 }
 

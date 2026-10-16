@@ -1350,7 +1350,7 @@ this limit is not caused by GTID preservation. Split the expanded plan across
 multiple matrix jobs, or collect coverage in separate runs. Do not remove release
 assertions to fit this limit. No expanded coverage run was started locally.
 
-## Increments 71 through 77: operational additions
+## Increments 71 through 78: operational additions
 
 See [the additions and validation record](Beta.6.additions.md). These branches
 add smaller support bundles, include filters, shared TLS policy, durable

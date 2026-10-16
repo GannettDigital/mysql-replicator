@@ -37,8 +37,9 @@ final class RecoveryStore {
                 "cannot open recovery state")
             sql = SQLiteStatementCache(db: db!, timings: .init(), profiling: false)
             if try exists("replication_filters") {
+                let saved = try q("SELECT policy FROM replication_filters WHERE id=1")
                 try require(
-                    try q("SELECT policy FROM replication_filters WHERE id=1") == [[configuration.filterIdentity()]],
+                    saved.count == 1 && SQLTextBytes.equal(saved[0][0], configuration.filterIdentity()),
                     "table filters differ from saved state")
             } else {
                 try require(

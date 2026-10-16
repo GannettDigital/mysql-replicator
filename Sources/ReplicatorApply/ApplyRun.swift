@@ -25,6 +25,7 @@ public struct ApplySummary: Encodable {
     public var stopReason: String? = nil
     public var activeBatchTransactions: Int = 0
     public var skippedTransactionsByCode: [String: Int] = [:]
+    public var sourceFailurePosition: BinlogCoordinate? = nil
     public var estimate: ProgressEstimate? = nil
     public var counters: ApplyCounters? = nil
     public var applyQueue: ApplyQueueSnapshot? = nil
@@ -73,6 +74,7 @@ public enum ApplyRun {
         var reconnectReason: String?
         var targetRetry = SourceRetryState(policy: configuration.targetReconnectPolicy)
         var targetReason: String?
+        var sourceFailurePosition: BinlogCoordinate?
         var targetFailure: TargetFailureDiagnostic?
         var consumerPending = false
         var limits = try StopConditions(
@@ -137,7 +139,8 @@ public enum ApplyRun {
                 targetReconnectAttempts: targetRetry.attempts,
                 targetReconnectReason: targetReason, targetFailure: targetFailure, drainRequested: drain.isCancelled,
                 stopReason: stopReason, activeBatchTransactions: activeBatchTransactions,
-                skippedTransactionsByCode: state.skippedTransactionsByCode, estimate: estimate(lifecycle),
+                skippedTransactionsByCode: state.skippedTransactionsByCode,
+                sourceFailurePosition: sourceFailurePosition, estimate: estimate(lifecycle),
                 counters: state.counters, applyQueue: executionQueue?.snapshot)
         }
         func report(_ value: ApplySummary) throws {
@@ -691,8 +694,10 @@ public enum ApplyRun {
             } else {
                 reason = String(describing: error)
             }
+            sourceFailurePosition = (error as? ArchiveReadError)?.coordinate ?? (error as? TransactionError)?.coordinate
             // A rejected resume/preflight must not rewrite the saved checkpoint.
             if !initialize && !started { throw ApplyRunError(reason: reason, progress: summary("STOPPED"), code: code) }
+            if let sourceFailurePosition { try? state.recordSourceFailure(reason, at: sourceFailurePosition) }
             do { try state.block(reason) } catch {
                 throw ApplyRunError(
                     reason: reason + "; additionally failed to persist BLOCKED diagnostic",

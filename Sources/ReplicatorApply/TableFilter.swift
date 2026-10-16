@@ -244,7 +244,8 @@ extension ApplyConfiguration {
     func filterIdentity() throws -> String {
         String(
             decoding: try JSONEncoder().encode([
-                Array(Set(replicateWildDoTable ?? [])).sorted(), Array(Set(replicateWildIgnoreTable ?? [])).sorted(),
+                (replicateWildDoTable ?? []).sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) },
+                (replicateWildIgnoreTable ?? []).sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) },
             ]), as: UTF8.self)
     }
 }

@@ -6,6 +6,44 @@ import XCTest
 @testable import ReplicatorApply
 
 final class SupportBundleTests: XCTestCase {
+    func testManualBundleUsesSavedReadFailureAheadOfCheckpoint() throws {
+        #if os(Linux)
+            let helper = ApplyTests(name: "fixtures", testClosure: { _ in })
+        #else
+            let helper = ApplyTests()
+        #endif
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let archive = root.appendingPathComponent("archive")
+        let state = root.appendingPathComponent("state")
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        try Data(repeating: 65, count: 2 * 1024 * 1024).write(to: archive.appendingPathComponent("binlog.000003"))
+        do {
+            let store = try StateStore(configuration: helper.config(state.path))
+            try store.recordSourceFailure("corrupt archive", at: .init(file: "binlog.000003", position: 1_500_000))
+            try store.block("corrupt archive")
+        }
+        let c = try ConfigurationFile.decode(
+            SupportBundleConfiguration.self,
+            from: Data(
+                """
+                stateDirectory: \(state.path)
+                archive:
+                  directory: \(archive.path)
+                supportBundle:
+                  format: directory
+                  maximumBytes: 1048576
+                  binlogContextBytes: 4096
+                """.utf8))
+        let result = try SupportBundle.run(configuration: c, redactedConfiguration: Data("{}".utf8), version: "test")
+        let index = try JSONDecoder().decode(
+            BinlogExcerpt.Index.self,
+            from: Data(contentsOf: URL(fileURLWithPath: result.output).appendingPathComponent("archive/binlog-0.json")))
+        XCTAssertEqual(index.focusStart, 1_500_000)
+        XCTAssertTrue(index.focusComplete)
+        XCTAssertTrue(index.ranges.contains { $0.start < 1_500_000 && $0.end > 1_500_000 })
+    }
     func testBundleRequiresStoppedWriterAndPreservesDiagnosticStateWithoutSecrets() throws {
         #if os(Linux)
             let helper = ApplyTests(name: "fixtures", testClosure: { _ in })

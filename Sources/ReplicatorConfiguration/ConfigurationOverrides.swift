@@ -106,7 +106,14 @@ public struct ConfigurationOverrides {
                 parsed = try ConfigurationFile.decode(DiagnosticValue.self, from: Data(text.utf8)).value
             }
             let parts = path.split(separator: ".").map(String.init)
-            try set(sourceOnly ? parts.dropFirst() : parts[...], value: parsed, in: &root)
+            if sourceOnly && parts == ["source"] {
+                guard let replacement = parsed as? [String: Any] else {
+                    throw ConfigurationError("source override must be a map")
+                }
+                root = replacement
+            } else {
+                try set(sourceOnly ? parts.dropFirst() : parts[...], value: parsed, in: &root)
+            }
         }
         let result = try JSONSerialization.data(withJSONObject: root, options: .sortedKeys)
         guard result.count <= ConfigurationFile.maximumBytes else {

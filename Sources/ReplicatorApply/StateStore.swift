@@ -240,8 +240,9 @@ final class StateStore {
         let policy = try c.filterIdentity()
         let exists = try !query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='replication_filters'").isEmpty
         if exists {
+            let saved = try query("SELECT policy FROM replication_filters WHERE id=1")
             try require(
-                try query("SELECT policy FROM replication_filters WHERE id=1") == [[policy]],
+                saved.count == 1 && SQLTextBytes.equal(saved[0][0], policy),
                 "table filters differ from saved state; use the original filters or prepare a new baseline")
         } else {
             try require(
@@ -265,6 +266,17 @@ final class StateStore {
         sqlite3_busy_timeout(db, 1000)
         let version = try number("PRAGMA user_version")
         try require([4, 5, 6, 7, 8, 9, 10, 11, 12, 13].contains(version), "unsupported saved state version")
+        if version >= 13 {
+            let saved = try query("SELECT policy FROM replication_filters WHERE id=1")
+            try require(
+                saved.count == 1 && SQLTextBytes.equal(saved[0][0], c.filterIdentity()),
+                "table filters differ from saved state")
+        } else {
+            try require(
+                (c.replicateWildDoTable ?? []).isEmpty,
+                "legacy state has no include filters; prepare a new baseline to enable them")
+        }
+
         if version >= 12 {
             try require(
                 try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(c.target.preserveSourceGTIDs)]],
@@ -1352,6 +1364,14 @@ final class StateStore {
         )
         try execute(
             "INSERT OR REPLACE INTO target_failure VALUES(1,?,?)", [String(decoding: data, as: UTF8.self), timestamp()])
+    }
+    func recordSourceFailure(_ reason: String, at position: BinlogCoordinate) throws {
+        try execute(
+            "CREATE TABLE IF NOT EXISTS source_failure(id INTEGER PRIMARY KEY CHECK(id=1),source_file TEXT NOT NULL,source_position TEXT NOT NULL,reason TEXT NOT NULL)"
+        )
+        try execute(
+            "INSERT OR REPLACE INTO source_failure VALUES(1,?,?,?)",
+            [position.file, String(position.position), String(reason.prefix(1024))])
     }
     func block(_ reason: String) throws {
         try timings.measure("relay.sync") { try relay!.synchronize() }

@@ -26,6 +26,28 @@ final class ArchiveTests: XCTestCase {
             ArchiveConfiguration.self, from: JSONSerialization.data(withJSONObject: ["directory": dir.path]))
         try body(dir, source, archive)
     }
+    func testCorruptFrameReportsOriginalCoordinate() throws {
+        try fixture { dir, _, _ in
+            let file = dir.appendingPathComponent("binlog.000003")
+            var bytes = try Data(contentsOf: file)
+            var offset = 4
+            var last = 4
+            while offset < bytes.count {
+                last = offset
+                offset += Int(ArchiveIO.read(bytes, at: offset + 9, as: UInt32.self))
+            }
+            bytes[bytes.count - 1] ^= 1
+            try bytes.write(to: file)
+            XCTAssertThrowsError(
+                try ArchiveFileReader(file: file, maximumEventBytes: 64 * 1024 * 1024).scan { _, _ in }
+            ) {
+                guard let error = $0 as? ArchiveReadError else { return XCTFail("missing typed archive coordinate") }
+                XCTAssertEqual(error.coordinate.file, "binlog.000003")
+                XCTAssertEqual(error.coordinate.position, UInt64(last))
+                XCTAssertTrue(error.reason.contains("CRC"))
+            }
+        }
+    }
     func testArchiveCaseSettingMustMatchConfiguredSource() throws {
         try fixture { dir, source, config in
             var folded = source

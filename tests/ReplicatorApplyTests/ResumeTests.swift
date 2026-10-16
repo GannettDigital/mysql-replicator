@@ -92,6 +92,18 @@ final class ResumeTests: XCTestCase {
         let resumed = try StateStore(configuration: c, initialize: false)
         XCTAssertEqual(resumed.counters, expected)
     }
+    func testSavedFiltersUseExactUTF8Spelling() throws {
+        let path = try directory()
+        var c = try config(path.path)
+        c.replicateWildDoTable = ["poc.\u{e9}"]
+        try seed(c)
+        c.replicateWildDoTable = ["poc.e\u{301}"]
+        XCTAssertThrowsError(try StateStore(configuration: c, initialize: false))
+        c.replicateWildDoTable = ["poc.\u{e9}", "poc.e\u{301}"]
+        let both = try c.filterIdentity()
+        c.replicateWildDoTable = ["poc.\u{e9}"]
+        XCTAssertNotEqual(Data(both.utf8), Data(try c.filterIdentity().utf8))
+    }
     func testIncludeFiltersArePinnedAcrossRestart() throws {
         let path = try directory()
         var c = try config(path.path)
