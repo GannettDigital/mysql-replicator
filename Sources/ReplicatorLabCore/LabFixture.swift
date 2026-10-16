@@ -97,6 +97,9 @@ final class LabFixture {
     func sql(_ role: LabProfile.Role, _ statement: String, preserveWhitespace: Bool = false) throws -> String {
         try h.sql(profile.service(role),statement,preserveWhitespace:preserveWhitespace)
     }
+    func sqlScript(_ role: LabProfile.Role, _ script: String) throws -> String {
+        try h.sqlScript(profile.service(role), script)
+    }
     func boundary(_ role: LabProfile.Role = .source) throws -> Boundary {
         try h.boundary(profile.service(role),statusCommand:profile.version(role) == "5.7" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS")
     }

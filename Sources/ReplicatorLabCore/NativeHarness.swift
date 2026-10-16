@@ -71,6 +71,10 @@ public final class NativeHarness {
         }
         return result.text
     }
+    /// Execute a mysql client script, including DELIMITER commands.
+    func sqlScript(_ service: String, _ script: String) throws -> String {
+        try sqlCommand(service, script, headers: false, script: true).text
+    }
     func sqlBytes(_ service:String,_ statement:String) throws -> Data {
         try sqlCommand(service,statement,headers:false).stdout
     }
@@ -82,7 +86,7 @@ public final class NativeHarness {
         let result = try sqlCommand(service, batch.statement, headers: false)
         return try batch.decode(String(decoding: result.stdout, as: UTF8.self))
     }
-    private func sqlCommand(_ service: String, _ statement: String, headers: Bool) throws -> CommandResult {
+    private func sqlCommand(_ service: String, _ statement: String, headers: Bool, script: Bool = false) throws -> CommandResult {
         let started = ProcessInfo.processInfo.systemUptime
         sqlCalls += 1
         var succeeded = false
@@ -90,19 +94,12 @@ public final class NativeHarness {
             sqlSeconds += ProcessInfo.processInfo.systemUptime - started
             if !succeeded { sqlFailures += 1 }
         }
-        let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
-        // Darwin Process arguments use filesystem encoding and can decompose
-        // Unicode. SQL is byte-sensitive. A file-backed stdin preserves it.
-        // One custom delimiter keeps routine bodies in the same server request.
-        let vertical=statement.hasSuffix("\\G")
-        let sql=vertical ? String(statement.dropLast(2)) : statement
-        let delimiter="_r_"+UUID().uuidString.replacingOccurrences(of:"-",with:"").prefix(10)
-        try require(!statement.contains(delimiter),"SQL contains its test-client delimiter")
+        let input = try LabSQLInput(statement, resetGTID: service != "source", script: script)
         let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
                             "mysql", "--no-defaults", "-uroot", "--batch", "--raw", "--binary-mode",
-                            "--default-character-set=utf8mb4", "--delimiter="+delimiter,
-                            headers ? "--column-names" : "--skip-column-names"] + (vertical ? ["--vertical"] : []),
-                            input:Data((prefix+sql+"\n"+delimiter+"\n").utf8))
+                            "--default-character-set=utf8mb4",
+                            headers ? "--column-names" : "--skip-column-names"] + input.arguments,
+                            input: input.bytes)
         succeeded = true
         return result
     }
