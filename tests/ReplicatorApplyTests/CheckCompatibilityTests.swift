@@ -44,6 +44,16 @@ final class CheckCompatibilityTests:XCTestCase {
             XCTAssertThrowsError(try rewrite(bad),bad)
         }
     }
+    func testGroupedChecksRetainColumnsAndCommas() throws {
+        for (sql,expected) in [
+            ("ALTER TABLE t ADD (a INT,CHECK(a>0))","ALTER TABLE t ADD (a INT)"),
+            ("ALTER TABLE t ADD (CONSTRAINT c CHECK(a>0),a INT,CHECK(a<0),b INT)","ALTER TABLE t ADD (a INT,b INT)"),
+            ("ALTER TABLE t ADD (CHECK(a>0)),ADD a INT","ALTER TABLE t ADD a INT"),
+            ("ALTER TABLE t ADD (a INT CHECK(a>0),CONSTRAINT c CHECK(a<0)),ADD (CHECK(a=0))","ALTER TABLE t ADD (a INT )")
+        ] {XCTAssertEqual(try rewrite(sql).1,expected)}
+        XCTAssertTrue(try rewrite("ALTER TABLE t ADD (CHECK(a>0),CONSTRAINT c CHECK(a<0))").0.ignoredChecksOnly)
+        XCTAssertThrowsError(try rewrite("ALTER TABLE t ADD (a INT,CHECK(a>0))",profile:.mysql84To57MyISAM))
+    }
     func testNewSourceChecksAreNeverSilentlyDropped() {
         for sql in ["CREATE TABLE t(id INT PRIMARY KEY CHECK(id>0))", "CREATE TABLE t(id INT PRIMARY KEY,CONSTRAINT c CHECK(id>0))", "ALTER TABLE t ADD CHECK(id>0)"] {
             XCTAssertThrowsError(try rewrite(sql,profile:.mysql84To57MyISAM)) { error in

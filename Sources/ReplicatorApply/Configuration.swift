@@ -27,6 +27,7 @@ public struct ApplyColumn: Codable, Equatable {
     public var type: String
     public var nullable: Bool
     public var collation: String?
+    public var spatialReferenceID: UInt32? = nil
     public var characterSet: String? = nil
     public var defaultValue: String? = nil
     public var extra: String? = nil
@@ -55,6 +56,7 @@ public struct ApplyColumn: Codable, Equatable {
         }
         return same(lhs.name,rhs.name) && same(lhs.type,rhs.type)
             && lhs.nullable == rhs.nullable && lhs.collation == rhs.collation
+            && lhs.spatialReferenceID == rhs.spatialReferenceID
             && lhs.characterSet == rhs.characterSet && same(lhs.defaultValue,rhs.defaultValue)
             && same(lhs.defaultExpression,rhs.defaultExpression)
             && lhs.extra == rhs.extra && same(lhs.generationExpression,rhs.generationExpression)
@@ -74,6 +76,7 @@ public struct ApplyColumn: Codable, Equatable {
     func validate() throws {
         _ = try quoted(name)
         let parsed = try DMLColumnType(self)
+        try require(spatialReferenceID == nil || parsed.isSpatial,"SRID requires a spatial column")
         if let expression = generationExpression {
             try require(["VIRTUAL GENERATED","STORED GENERATED"].contains(extra ?? "") && !hasDefaultValue,"invalid generated column metadata")
             _ = try DDLExpression.canonical(expression)
@@ -127,22 +130,32 @@ public struct ApplyIndex: Codable, Equatable {
     public let parts: [ApplyIndexPart]
     public var type: String = "BTREE"
     public var parser: String? = nil
+    public var visible: Bool? = nil
     /// Parser-only; resolved against the table's existing index names.
     var implicitName: Bool? = nil
-    func resolvingName(among indexes:[ApplyIndex]) -> ApplyIndex {
+    var implicitNameByteLimit: Int? = nil
+    func resolvingName(among indexes:[ApplyIndex]) throws -> ApplyIndex {
         guard implicitName == true else { return self }
-        var candidate=name,suffix=2
-        while indexes.contains(where:{SQLIdentifier.equal($0.name,candidate)}) {
-            candidate=name+"_"+String(suffix);suffix += 1
+        var candidate=name
+        if SQLIdentifier.equal(candidate,"PRIMARY") || indexes.contains(where:{SQLIdentifier.equal($0.name,candidate)}) {
+            let bytes=Data(name.utf8.prefix(implicitNameByteLimit ?? 30))
+            guard let base=String(data:bytes,encoding:.utf8) else {throw ApplyError("native target index-name truncation splits a UTF-8 character; use an explicit index name")}
+            candidate="not_specified"
+            for suffix in 2..<100 {
+                let attempt=base+"_"+String(suffix)
+                if !indexes.contains(where:{SQLIdentifier.equal($0.name,attempt)}) {candidate=attempt;break}
+            }
         }
-        return ApplyIndex(name:candidate,unique:unique,parts:parts,type:type,parser:parser)
+        return ApplyIndex(name:candidate,unique:unique,parts:parts,type:type,parser:parser,visible:visible)
     }
+
 }
 public struct ApplyTable: Codable, Equatable {
     public let database: String
     public let table: String
     public let columns: [ApplyColumn]
     public let primaryKeyColumns: [String]
+    public var primaryKeyParts: [ApplyIndexPart]? = nil
     /// Legacy single-key convenience for callers constructing a one-column schema.
     public var primaryKey: String { primaryKeyColumns[0] }
     public var defaultCharacterSet: String? = nil
@@ -160,9 +173,10 @@ public struct ApplyTable: Codable, Equatable {
         self.init(database:database,table:table,columns:columns,primaryKeyColumns:[primaryKey],
                   defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions,foreignKeys:foreignKeys)
     }
-    init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String],
+    init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String], primaryKeyParts: [ApplyIndexPart]? = nil,
          defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
         self.database=database; self.table=table; self.identity = .table(database,table); self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
+        self.primaryKeyParts=primaryKeyParts
         self.defaultCharacterSet=defaultCharacterSet; self.defaultCollation=defaultCollation; self.secondaryIndexes=secondaryIndexes
         self.partitions=partitions; self.foreignKeys=foreignKeys
     }
@@ -219,16 +233,12 @@ public struct ApplyTable: Codable, Equatable {
         }
         try require((0...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,"invalid primary-key columns")
         try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy { column in SQLIdentifier.contains(primaryKeyColumns,column.name) || secondaryIndexes.contains { $0.parts.contains { SQLIdentifier.equal($0.column ?? "",column.name) } } },"auto-increment requires an indexed column")
-        for name in primaryKeyColumns {
-            guard let key = columns.first(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("missing primary key column") }
-            let type = try DMLColumnType(key)
-            try require(!key.nullable && !key.isGenerated && !type.isSpatial && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob") && type.base != "json","primary key requires full nonnullable supported base scalar columns")
-        }
+        try validatePrimaryKeyParts()
         if requireRowIdentity { try validateRowIdentity() }
     }
 }
 extension ApplyTable {
-    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,rowIdentity,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions,foreignKeys }
+    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,primaryKeyParts,rowIdentity,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions,foreignKeys }
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
@@ -238,6 +248,7 @@ extension ApplyTable {
             try require(!c.contains(.primaryKey),"ambiguous primary-key schema")
             primaryKeyColumns=names
         } else { primaryKeyColumns=[try c.decode(String.self,forKey:.primaryKey)] }
+        primaryKeyParts=try c.decodeIfPresent([ApplyIndexPart].self,forKey:.primaryKeyParts)
         defaultCharacterSet=try c.decodeIfPresent(String.self,forKey:.defaultCharacterSet)
         defaultCollation=try c.decodeIfPresent(String.self,forKey:.defaultCollation)
         secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
@@ -251,6 +262,7 @@ extension ApplyTable {
         try c.encode(database,forKey:.database); try c.encode(table,forKey:.table); try c.encode(columns,forKey:.columns)
         if primaryKeyColumns.count == 1 { try c.encode(primaryKey,forKey:.primaryKey) }
         else { try c.encode(primaryKeyColumns,forKey:.primaryKeyColumns) }
+        try c.encodeIfPresent(primaryKeyParts,forKey:.primaryKeyParts)
         if primaryKeyColumns.isEmpty { try c.encodeIfPresent(rowIdentity,forKey:.rowIdentity) }
         try c.encodeIfPresent(defaultCharacterSet,forKey:.defaultCharacterSet)
         try c.encodeIfPresent(defaultCollation,forKey:.defaultCollation)
@@ -258,8 +270,8 @@ extension ApplyTable {
         try c.encode(partitions,forKey:.partitions)
         if !foreignKeys.isEmpty { try c.encode(foreignKeys,forKey:.foreignKeys) }
     }
-    func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil, partitions: [ApplyPartition]? = nil) -> ApplyTable {
-        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKey ?? primaryKeyColumns,
+    func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil, primaryKeyParts: [ApplyIndexPart]? = nil, partitions: [ApplyPartition]? = nil) -> ApplyTable {
+        ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKey ?? primaryKeyColumns,primaryKeyParts:primaryKeyParts ?? (primaryKey == nil ? self.primaryKeyParts : nil),
             defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
             secondaryIndexes:(indexes ?? secondaryIndexes).sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)},partitions:partitions ?? self.partitions,foreignKeys:foreignKeys)
     }

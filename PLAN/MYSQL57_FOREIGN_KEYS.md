@@ -1,7 +1,8 @@
 # MySQL 5.7 foreign keys and reverse replication
 
-Status: implemented for the qualified subset in `mysql57-to-mysql84-innodb`
-and `mysql57-to-mysql57-innodb`.
+Status: implemented for the stated rules in `mysql57-to-mysql84-innodb`
+and `mysql57-to-mysql57-innodb`. Selected tests pass. The complete relationship
+and failure matrix is not release-qualified. See [status definitions](../docs/SUPPORT.md#support-status).
 Validation results are recorded below.
 
 ## Scope and current behavior
@@ -74,7 +75,8 @@ target 8.4. The suite covers:
 - Self-references and cycles use the `ddl-compat-foreign-key-controls` workflow.
   Graph unit tests cover filter splits, nonunique/partial keys and saved schemas.
 - Constraint add/drop, supporting indexes, table rename, and saved-schema restart.
-- Rejection of incompatible target constraints and unsupported legacy references.
+- Rejection of incompatible target constraints. Nonunique, leading composite
+  and extended parent keys use the implemented native parent-key rules.
 - Target-side constraint failure with complete transaction rollback; recovery
   inspection that exposes possible cascade effects after an uncertain commit.
 - Source check settings, including changes within a transaction and offline replay.

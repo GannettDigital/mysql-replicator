@@ -412,3 +412,11 @@ The checks are saved in
 The final Periphery check passed. Three support-catalog tests also passed.
 These selected results do not replace full release qualification. Remaining
 partition forms and the broader failure matrix stay open in the catalog.
+
+## Column renames with repartitioning
+
+Branch 67 supports a rename when the same ALTER replaces or removes partitioning.
+It also accepts the native trailing PARTITION BY/REMOVE PARTITIONING syntax.
+An unchanged partition or subpartition expression still blocks a dependent
+rename or drop. Implicit KEY() follows the primary key. See
+[the implementation and tests](PARTITION_COLUMN_RENAMES.md).

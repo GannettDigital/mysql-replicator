@@ -91,12 +91,14 @@ final class TargetSession {
         try require(rows.allSatisfy { $0.column("SERVICE_STATE")?.string == "OFF" },"native replication worker/receiver is active or indeterminate")
     }
 
+    private(set) var serverVersionID: Int?
     private(set) var targetUUID: String?
     func preflight() throws {
         try require(try query("SELECT @@lower_case_table_names AS n").0.first?.column("n")?.string == String(config.source.tableNameCaseSetting),
                     "target lower_case_table_names differs from source.lowerCaseTableNames=\(config.source.tableNameCaseSetting)")
         let r = try query("SELECT VERSION() AS version,@@server_uuid AS uuid,@@GLOBAL.gtid_mode AS mode,@@GLOBAL.enforce_gtid_consistency AS consistency,@@GLOBAL.log_bin AS log_bin,@@SESSION.sql_log_bin AS session_binlog,@@SESSION.binlog_format AS format,@@SESSION.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum").0.first
         try require(r?.column("version")?.string?.hasPrefix(contract.versionPrefix) == true,"wrong target version for replication profile")
+        serverVersionID = try LoggedDDL.versionID(r!.column("version")!.string!)
         guard let uuid=r?.column("uuid")?.string?.lowercased(),UUID(uuidString:uuid) != nil else {throw ApplyError("invalid discovered target UUID")}
         try require(uuid != config.source.sourceUUID.lowercased(),"source and target UUID must differ")
         targetUUID=uuid
@@ -160,16 +162,18 @@ final class TargetSession {
     func readSchema(database: String,name: String,validateRelationships: Bool = true) throws -> ApplyTable {
         try profile("target.read_schema") {
             let binds = [MySQLData(string:database),MySQLData(string:name)]
-            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
-            let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
+            let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+            let keys = try query("SELECT COLUMN_NAME,SUB_PART,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
             try require(!columns.isEmpty,"discovered target table is absent")
             try require(keys.count <= 16,"discovered target primary key exceeds 16 columns")
             var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
                 try readColumn(row,table:TableName(database:database,table:name))
             },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
+            let parts=keys.map { ApplyIndexPart(column:$0.column("COLUMN_NAME")?.string,prefix:$0.column("SUB_PART")?.int,direction:NativeReplicationRules(profile:config.replicationProfile).indexDirection($0.column("COLLATION")?.string,type:"BTREE")) }
+            table.primaryKeyParts=parts.contains{$0.prefix != nil || $0.direction != "A"} ? parts : nil
             let encoding=try tableEncoding(TableName(database:database,table:name))
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
-            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKeyColumns)
+            table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.effectivePrimaryKeyParts)
             table.partitions=try readPartitions(database:database,name:name,columns:table.columns)
             if contract.transactional && validateRelationships { table.foreignKeys = try readForeignKeys(TableName(database:database,table:name)) }
             try table.validate()
@@ -187,6 +191,10 @@ final class TargetSession {
     private func readColumn(_ row:MySQLRow,table:TableName) throws -> ApplyColumn {
         guard let name=row.column("COLUMN_NAME")?.string,let type=row.column("COLUMN_TYPE")?.string else { throw ApplyError("incomplete target metadata") }
         var column=ApplyColumn(name:name,type:normalizeType(type),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+        if let srid=row.column("SRS_ID")?.string {
+            guard let value=UInt32(srid) else {throw ApplyError("invalid target SRID metadata")}
+            column.spatialReferenceID=value
+        }
         column.characterSet=row.column("CHARACTER_SET_NAME")?.string
         let binary=type.hasPrefix("binary(") || type.hasPrefix("varbinary(")
         let expressionDefault = contract.versionPrefix == "8.4." && row.column("EXTRA")?.string == "DEFAULT_GENERATED" && !(type.hasPrefix("timestamp") || type.hasPrefix("datetime"))
@@ -217,18 +225,21 @@ final class TargetSession {
         if type.hasSuffix(" zerofill") { return type }
         return type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
-    func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
-        let expressionColumn=contract.versionPrefix == "8.4." ? ",EXPRESSION" : ""
+    func readIndexes(database:String,name:String,primaryKey:[ApplyIndexPart]) throws -> [ApplyIndex] {
+        let expressionColumn=contract.versionPrefix == "8.4." ? ",EXPRESSION,IS_VISIBLE" : ""
         let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION\(expressionColumn) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
         var indexes:[ApplyIndex]=[], primary=0
         for row in rows {
             guard let name=row.column("INDEX_NAME")?.string,
                   let unique=row.column("NON_UNIQUE")?.int, [0,1].contains(unique), let ordinal=row.column("SEQ_IN_INDEX")?.int,
                   let type=row.column("INDEX_TYPE")?.string,let directionValue=row.column("COLLATION") else {throw ApplyError("incomplete index metadata")}
+            let visibility=row.column("IS_VISIBLE")?.string
+            try require(contract.versionPrefix != "8.4." || visibility == "YES" || visibility == "NO","invalid index visibility metadata")
+            let visible:Bool?=visibility == "NO" ? false : nil
             let column=row.column("COLUMN_NAME")?.string
             let expression=try row.column("EXPRESSION")?.string.map { try DDLExpressionMetadata.canonical($0,mysql84:true) }
             try require((column == nil) != (expression == nil),"index part must have a column or expression")
-            let direction=directionValue.string
+            let direction=NativeReplicationRules(profile:config.replicationProfile).indexDirection(directionValue.string,type:type)
             try require(type == "FULLTEXT" ? direction == nil : direction != nil,"invalid index direction metadata")
             var prefix=row.column("SUB_PART")?.int
             if type == "SPATIAL" {
@@ -238,15 +249,15 @@ final class TargetSession {
             }
             if name == "PRIMARY" {
                 primary += 1
-                try require(primary <= primaryKey.count && SQLIdentifier.equal(column ?? "",primaryKey[primary-1]) && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
+                try require(primary <= primaryKey.count && ApplyIndexPart(column:column,prefix:prefix,direction:direction,expression:expression) == primaryKey[primary-1] && ordinal == primary && unique == 0 && type == "BTREE","unsupported primary-key index")
             } else {
                 let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction,expression:expression)
                 if let previous=indexes.last, SQLTextBytes.equal(previous.name,name) {
-                    try require(ordinal == previous.parts.count+1 && previous.unique == (unique == 0) && previous.type == type,"inconsistent index metadata")
-                    indexes[indexes.count-1]=ApplyIndex(name:name,unique:previous.unique,parts:previous.parts+[part],type:type)
+                    try require(ordinal == previous.parts.count+1 && previous.unique == (unique == 0) && previous.type == type && previous.visible == visible,"inconsistent index metadata")
+                    indexes[indexes.count-1]=ApplyIndex(name:name,unique:previous.unique,parts:previous.parts+[part],type:type,visible:visible)
                 } else {
                     try require(ordinal == 1 && indexes.count < 63,"invalid index ordinal/count")
-                    indexes.append(ApplyIndex(name:name,unique:unique == 0,parts:[part],type:type))
+                    indexes.append(ApplyIndex(name:name,unique:unique == 0,parts:[part],type:type,visible:visible))
                 }
             }
         }
@@ -279,12 +290,12 @@ final class TargetSession {
         // A collation uniquely determines its charset; discovery/DDL resolution
         // already validates that mapping when constructing the ApplyTable.
         try require(metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,"target table defaults differ from historical schema")
-        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
+        let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
             try require(try readColumn(r,table:TableName(database:t.database,table:t.table)) == c,"target schema differs from historical manifest")
         }
-        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
+        try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.effectivePrimaryKeyParts) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
         try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
         try require(try readPartitions(database:t.database,name:t.table,columns:t.columns) == t.partitions,"target partition layout differs from historical schema")

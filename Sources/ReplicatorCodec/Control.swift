@@ -27,6 +27,9 @@ public struct QueryControl: Equatable, Encodable {
     public let errorCode: UInt32
     /// Byte-exact status; typed context is available through the Rust adapter.
     public let statusVariables: Data
+    public func replacingSQL(_ bytes:Data) -> Self {
+        .init(database:database,sql:bytes,errorCode:errorCode,statusVariables:statusVariables)
+    }
 }
 
 public enum BinlogControl: Equatable, Encodable {
@@ -59,6 +62,8 @@ public enum BinlogControl: Equatable, Encodable {
 }
 
 public struct QuerySessionContext {
+    public let autoIncrementIncrement: UInt32
+    public let autoIncrementOffset: UInt32
     public let foreignKeyChecks: Bool
     public let sqlMode: UInt64
     public let clientCharset: UInt32
@@ -78,6 +83,8 @@ public struct QuerySessionContext {
         guard status==0, value.present & required == required else {
             throw NSError(domain:"QuerySessionContext",code:Int(status),userInfo:[NSLocalizedDescriptionKey:"missing, unknown or malformed DDL query context"])
         }
+        autoIncrementIncrement = value.present & (1<<3) != 0 ? value.auto_increment_increment : 1
+        autoIncrementOffset = value.present & (1<<3) != 0 ? value.auto_increment_offset : 1
         foreignKeyChecks = value.flags2 & (1 << 26) == 0
         sqlMode=value.sql_mode;clientCharset=value.charset_client
         connectionCollation=value.collation_connection;serverCollation=value.collation_server

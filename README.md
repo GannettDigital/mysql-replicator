@@ -242,7 +242,9 @@ Text supports the [character sets and collations](docs/SUPPORT.md) listed in the
 support summary. Fixed-scale FLOAT/DOUBLE and selected FULLTEXT operations are
 implemented. Some MySQL features remain unsupported. See the
 [support summary](docs/SUPPORT.md) for the remaining restrictions.
-Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
+[Support status](docs/SUPPORT.md#support-status) separates tool gaps, target
+incompatibilities, native restrictions, policies and incomplete tests. Untested
+behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
 [DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),
 and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
 

@@ -39,7 +39,10 @@ struct SupportCatalog: Decodable {
             if ["native_restriction","target_limit","safety_policy"].contains(item.classification) {
                 try require(item.eligibility == "excluded", context + "restriction/policy cannot count as positive support")
             } else {
-                try require(item.eligibility != "excluded", context + "tool gaps cannot be hidden as exclusions")
+                try require(item.eligibility != "excluded", context + "positive-support work cannot be hidden as exclusions")
+            }
+            if item.classification == "tool_gap" {
+                try require(["missing","subset"].contains(item.implementation),context + "tool gap needs a missing or subset implementation")
             }
             if item.classification == "native_restriction" || item.classification == "target_limit" {
                 try require(!item.nativeReferences.isEmpty, context + "native/target restriction needs a pinned source reference")
@@ -72,6 +75,8 @@ struct SupportCatalog: Decodable {
                 "upstream_repositories":upstream.repositories.map { ["id":$0.id,"url":$0.url,"revision":$0.revision] },
                 "qualification_note":"Candidate cases are not assertion evidence. No requirement is qualified by this inventory or by DDL evidence import.",
                 "summary":["requirements":requirements.count,
+                           "confirmed_tool_gaps":requirements.filter { $0.classification == "tool_gap" }.count,
+                           "qualification_gaps":requirements.filter { $0.classification == "untested" }.count,
                            "eligible":requirements.filter { $0.eligibility == "eligible" }.count,
                            "needs_native_review":requirements.filter { $0.eligibility == "needs_native_review" }.count,
                            "excluded":requirements.filter { $0.eligibility == "excluded" }.count,
@@ -80,6 +85,9 @@ struct SupportCatalog: Decodable {
 
     var markdown: String {
         var lines = ["", "## Support requirements", "", "Partial inventory. All requirements are unverified. Candidate cases are not qualification evidence.", "",
+                     "`tool_gap` identifies a specific unsupported path. `untested` identifies incomplete tests; selected cases can already pass.", "",
+                     "`target_limit` and `native_restriction` identify incompatibilities. `safety_policy` identifies a deliberate exclusion.", "",
+                     "Implementation and qualification are separate. These counts are inventory groups, not feature-support percentages.", "",
                      "| Requirement | Stage | Classification | Positive support | Implementation |", "| --- | ---: | --- | --- | --- |"]
         for item in requirements.sorted(by: { $0.id < $1.id }) {
             lines.append("| \(item.id) | \(item.stage) | \(item.classification) | \(item.eligibility) | \(item.implementation) |")

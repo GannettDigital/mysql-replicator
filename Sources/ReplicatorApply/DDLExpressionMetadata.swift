@@ -25,10 +25,15 @@ enum DDLExpressionMetadata {
 
 extension TargetContract {
     func validateSchemaFeatures(_ table:ApplyTable) throws {
+        try require(versionPrefix != "5.7." || table.effectivePrimaryKeyParts.allSatisfy{$0.direction == "A"},"target MySQL 5.7 cannot preserve descending primary-key metadata")
+        for column in table.columns where column.spatialReferenceID != nil {
+            try require(versionPrefix != "5.7.","target MySQL 5.7 does not support column SRID constraints: \(column.name)")
+        }
         for column in table.columns where column.defaultExpression != nil {
             try require(versionPrefix != "5.7.","target MySQL 5.7 does not support expression defaults: column \(column.name) (requires MySQL 8.0.13 or later)")
         }
         for index in table.secondaryIndexes {
+            try require(versionPrefix != "5.7." || index.visible != false,"target MySQL 5.7 does not support invisible index \(index.name)")
             for part in index.parts {
                 if index.type == "BTREE",let name=part.column,
                    let column=table.columns.first(where:{SQLIdentifier.equal($0.name,name)}),try DMLColumnType(column).isSpatial {

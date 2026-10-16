@@ -11,6 +11,12 @@ and advances the GTID only after the operation succeeds. Disconnects or errors
 after submission can leave an uncertain result and block. This does not add
 automatic DDL replay or crash recovery.
 
+Executable version comments stay in target SQL. The target evaluates each version
+gate. Metadata prediction uses that same target version. A fully inactive statement
+is journaled and sent to MySQL before checkpoint advancement. Existing configured
+compatibility translations still apply to active SQL. See
+[comment semantics and tests](EXECUTABLE_COMMENTS.md).
+
 ## Supported additions
 
 - CREATE/ADD/MODIFY/CHANGE definitions for the existing DML types: integer
@@ -25,8 +31,9 @@ automatic DDL replay or crash recovery.
 - Literal and NULL defaults, CURRENT_TIMESTAMP defaults/ON UPDATE, integer
   AUTO_INCREMENT, inline secondary BTREE, SPATIAL and FULLTEXT indexes, ALTER SET/DROP DEFAULT,
   common comma-separated column/index operations, and replacement primary keys.
-  Tables must retain a supported nonnullable primary key. ADD NOT NULL requires
-  an explicit default or generated expression. Column removal updates the
+  Tables can use a primary key, an eligible unique key or full-row matching.
+  Inline primary keys and ADD NOT NULL without a default use native ALTER rules.
+  See [column keys and rebuild limits](ALTER_COLUMN_KEYS.md). Column removal updates the
   surviving index parts. Supported ALGORITHM/LOCK clauses are passed through;
   5.7 decides whether the requested execution method is possible.
 - FULLTEXT CREATE/ADD/DROP/RENAME, parser metadata and CREATE TABLE LIKE.
@@ -37,9 +44,8 @@ automatic DDL replay or crash recovery.
   SQLite transaction as checkpoint advancement. It does not issue USE against
   a nonexistent database. Partial database exclusions block DROP rather than
   deleting excluded tables.
-- STORED and VIRTUAL generated columns with a bounded deterministic expression
-  grammar. The manifest retains expression/kind; DML validates the full source
-  image but binds only base columns. UPDATE/DELETE before-image checks still
+- STORED and VIRTUAL generated columns with typed expression parsing.
+  The manifest retains expression/kind; DML validates the full source image but binds only base columns. UPDATE/DELETE before-image checks still
   read the generated columns. Expressions are canonicalized structurally,
   preserving operator grouping, for schema prediction and drift checks.
   INSERT/UPDATE additionally compare computed generated fields with the source
@@ -59,19 +65,25 @@ automatic DDL replay or crash recovery.
   SECURITY. The target connection does not negotiate CLIENT_MULTI_STATEMENTS:
   compound routine bodies are a single CREATE, not a stream of commands.
   Creating a routine does not execute its body. Loadable UDF/SONAME syntax is
-  not accepted. Routine execution effects retain the existing single-statement,
-  single-included-table DML restriction.
+  not accepted. Routine execution effects follow the profile transaction limits.
+  The single-statement, single-included-table limit applies to MyISAM targets.
 
-Generated expressions support arithmetic/comparison/boolean operators and a
-small explicit list of 5.7 built-ins in `DDLTokens.swift`. Arbitrary expressions,
-subqueries, stored-function calls and nondeterministic functions are not accepted.
+Generated expressions use MySQLSyntax typed nodes for operators, ordinary
+function calls and supported special SQL forms. The target checks function
+eligibility. A function is not refused only because it lacks a named test.
+Full expression grammar and cross-version value behavior are not qualified.
+Native generated-column restrictions still apply.
 The later beta.6 increments add selected table options, column-type conversions,
 multi-table DROP, cross-schema RENAME, functional indexes on 8.4 targets, and
 ALTER TABLE charset changes. DEFAULT CHARACTER SET changes the table default;
 CONVERT TO CHARACTER SET also converts text columns. Native field probes determine
 converted types and defaults before the application DDL is issued.
-Subpartitions, arbitrary table options, CREATE TABLE SELECT and invisible indexes
-remain open. MySQL 5.7 ignores descending index direction; 8.4 retains it.
+Subpartitions, partition-column renames, column-name swaps and selected physical
+options are implemented. Index visibility is retained on an 8.4 target; 5.7
+cannot retain it. Permanent CREATE TABLE SELECT has the documented native source
+or target restrictions. MySQL 5.7 ignores descending index direction; 8.4 retains
+it. The remaining expression, conversion and failure combinations need tests.
+See [status definitions](../docs/SUPPORT.md#support-status).
 See [current support](../docs/SUPPORT.md) for target-version and engine limits.
 No engine rewriting is performed. Collation translation requires the explicit
 policy below; otherwise matching remains strict. In particular, explicit source
@@ -108,7 +120,9 @@ unsupported explicit collations inside their bodies remain target errors.
 Inherited defaults come from the target database/table, and row-event metadata
 must match either its original compatible collation or the configured mapping.
 Externally copied baseline schemas must use the same target collation mapping.
-Other 8.x collations and character-set conversions remain unsupported.
+Other 8.x-only collations have no configured translation. Native ALTER charset
+conversion is implemented for target-supported encodings. The full cross-version
+conversion matrix is not qualified.
 
 Ordinary table replacement is supported without application SQL changes:
 

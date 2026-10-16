@@ -154,3 +154,10 @@ completion and reopened state. MySQLSyntax did not change.
 
 These checks cover the selected cases. They do not replace full release
 qualification or qualify all stored-program bodies and privilege variants.
+
+## Absent-definer audit
+
+Branch 65 adds a shared absent-definer case. Native creation can succeed with
+note 1449. Definer execution then fails with error 1449; invoker execution can
+succeed. Required target privileges and partial-source limits are recorded in
+[the DDL audit](DDL_NATIVE_AUDIT.md). Do not replace missing definers automatically.

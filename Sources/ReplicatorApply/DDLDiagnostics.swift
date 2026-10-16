@@ -12,6 +12,8 @@ struct DDLQueryContextDiagnostic: Codable {
     let defaultUTF8MB4CollationID: UInt32
 
     var foreignKeyChecks: Bool? = nil
+    var autoIncrementIncrement: UInt32? = nil
+    var autoIncrementOffset: UInt32? = nil
     var sourceSQLBase64: String? = nil
     var targetSQLBase64: String? = nil
     var nativeCompatibilityRules: [String]? = nil
@@ -19,6 +21,8 @@ struct DDLQueryContextDiagnostic: Codable {
 
     init?(query: QueryControl) {
         guard let context = try? QuerySessionContext(query: query) else { return nil }
+        autoIncrementIncrement = context.autoIncrementIncrement
+        autoIncrementOffset = context.autoIncrementOffset
         foreignKeyChecks = context.foreignKeyChecks
         database = query.database
         sourceSQLBase64 = query.sql.base64EncodedString()

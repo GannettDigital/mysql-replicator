@@ -41,11 +41,11 @@ final class ReverseSchemaComparisonTests: XCTestCase {
     }
     func testKnownGeneratedMetadataSpellingsDoNotRewriteOtherExpressions() throws {
         func row(_ expression:String) -> String { ["t","v","1","int","YES","","","<NULL>","STORED GENERATED",expression].joined(separator:"\t") }
-        for (source,target) in [("(`n` is null)","isnull(`n`)"),("trim(both _utf8mb4\\'x\\' from `v`)","trim(both 'x' from `v`)")] {
+        for (source,target) in [("(`n` is null)","isnull(`n`)"),("_utf8mb4\\'`a`\\'","'`a`'"),("trim(both _utf8mb4\\'x\\' from `v`)","trim(both 'x' from `v`)")] {
             XCTAssertEqual(try ReverseSchemaComparison.columns(row(source),mysql84:true),row(target))
             XCTAssertEqual(try ReverseSchemaComparison.columns(row(source),mysql84:false),row(source))
         }
-        for expression in ["'(`n` is null)'","trim(both _utf8mb4\\'y\\' from `v`)","(`other` is null)"] {
+        for expression in ["_utf8mb4\\'`b`\\'","'(`n` is null)'","trim(both _utf8mb4\\'y\\' from `v`)","(`other` is null)"] {
             XCTAssertEqual(try ReverseSchemaComparison.columns(row(expression),mysql84:true),row(expression))
         }
     }

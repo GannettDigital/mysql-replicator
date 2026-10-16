@@ -153,3 +153,11 @@ SELECT WORD,DOC_ID FROM information_schema.INNODB_FT_INDEX_TABLE
 The index entries can move from INDEX_CACHE to INDEX_TABLE. Inspect both.
 The FT inspection variable requires administrative access. Reset it to its
 previous value after the probe.
+
+## Replacement-state review
+
+Branch 65 repeats the native reproduction and reviews the replacement code.
+The common deletion state survives a same-ALTER replacement. The probe again
+finds new document ID 6 in the deleted list, while ID 7 matches. See
+[the code-path review](DDL_NATIVE_AUDIT.md#fulltext). The exact allocator cause
+still requires an instrumented native server. No replicator workaround is added.

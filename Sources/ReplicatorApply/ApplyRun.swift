@@ -232,17 +232,20 @@ public enum ApplyRun {
                     try target.unlock()
                     try require(group.events.count == 2, "invalid standalone DDL group")
                     guard case .query(let query)=group.events[1].control else {throw ApplyError("missing DDL query")}
-                    let ddlTokens = try target.ddlTokens(query)
-                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile,tokens:ddlTokens) {
+                    guard let version=target.serverVersionID else {throw ApplyError("target version is unavailable")}
+                    let view = try LoggedDDL.parsingView(query,targetVersion:version)
+                    let ddlTokens = try target.ddlTokens(view)
+                    if let skipped = try (configuration.ddlPolicy ?? DDLPolicy()).skippedQuery(query,profile:profile,tokens:ddlTokens,targetVersion:version) {
                         try state.complete(group,rowCount:0,filtered:true,skippedDDL:skipped)
                         try progress(); return
                     }
-                    if try filter.ignores(query,tokens:ddlTokens) {
+                    if try filter.ignores(view,tokens:ddlTokens) {
                         try state.complete(group,rowCount:0,filtered:true)
                         try progress(); return
                     }
-                    let statement=try DDLStatement.from(group,profile:profile,tokens:ddlTokens,lowerCaseTableNames:configuration.source.tableNameCaseSetting)
+                    let statement=try DDLStatement.from(group,profile:profile,tokens:ddlTokens,lowerCaseTableNames:configuration.source.tableNameCaseSetting,targetVersion:version)
                     var plan=try target.prepareDDL(statement,query:query,timestamp:UInt64(group.events[1].timestamp),tokens:ddlTokens)
+                    if view.sql != query.sql {plan.compatibilityRules.append(LoggedDDL.commentRule)}
                     try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
                     hasDDLIntent = true
                     try require(!cancellation.isCancelled,"apply cancelled")

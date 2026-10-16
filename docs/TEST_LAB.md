@@ -144,6 +144,12 @@ restart, indexed queries, and offline replay. The source and native reference
 are 5.7; their tables have the same visible columns, without the 8.4-only index
 and default definitions. Target-side queries verify these extra definitions.
 
+`expression-target84-dependencies` uses the same target-baseline method. It
+checks column renames and drops with dependent index/default removal, both clause
+orders, index replacement, later DML, restart and offline replay. It also checks
+that unchanged dependencies stop apply without a target change or checkpoint advance.
+Run it with `--profile mysql57-to-mysql84-innodb --suite correctness --case expression-target84-dependencies`.
+
 ```sh
 make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-json-indexes --case json-target84-schema"
 ```
@@ -201,6 +207,14 @@ with source checks disabled, surviving relationships, parent recreation, restart
 and replay while the parent database is absent. It compares both databases.
 `ddl-compat-foreign-key-generated` checks stored generated parent and child columns,
 cascades, native virtual/action rejection, restart and replay.
+`ddl-compat-generated-dependencies` checks compound generated-column changes,
+stored/ordinary conversion, text literals, later DML, restart and offline replay
+on all four profiles. Native 5.7 DROP restrictions remain.
+
+`ddl-compat-alter-column-keys` checks inline primary keys, implicit values,
+AUTO_INCREMENT session settings, later DML, restart and offline replay on all
+four profiles. Native rebuild order remains a cross-engine limit.
+
 `ddl-compat-foreign-key-compound-indexes` checks multiple FK additions mixed with
 index and column changes. It checks the index-choice journal, actual saved schema,
 restart and replay.
@@ -684,8 +698,14 @@ profiles or assertions.
 
 Use `make ddl-catalog-check` to validate the DDL and support inventories. Use
 `make ddl-catalog-report ARGS="--format json"` to inspect the `support` section.
-It lists known gaps, native restrictions and safety policies for the four profiles.
-The initial audit is partial. Candidate tests do not qualify a requirement.
+It separates specific tool gaps, target limits, native restrictions, policies and
+incomplete tests for the four profiles. `untested` means not fully tested; selected
+cases can already pass. The summary counts confirmed tool gaps and incomplete
+test groups separately. These are inventory counts, not a support percentage.
+Code coverage measures executed code, not MySQL feature support.
+The audit is partial. Candidate tests do not qualify a requirement. Implementation
+status and exact-build qualification are separate. See
+[status definitions](SUPPORT.md#support-status).
 See [the catalog guide](../tests/DDLCoverage/README.md#beta6-support-audit).
 
 `matrix-enumzero` and `bootstrap-matrix-enumzero` distinguish ENUM ordinal zero
@@ -768,3 +788,64 @@ literals, explicit charset introducers, escaped and empty bytes, restart, and
 offline replay. For single
 binary-column fixtures, the harness reads raw SHOW CREATE bounds with its
 own parser. It does not rely on the truncated I_S values that 5.7 can return.
+
+`ddl-compat-column-index-syntax` runs on all four profiles. It checks inline keys,
+grouped ADD, native index names, serial columns, index/execution options, following
+row changes, saved-state restart and offline replay. Select it with
+`--suite correctness --case ddl-compat-column-index-syntax`.
+
+`ddl-compat-alter-table-rename` runs on all four profiles. It checks standalone
+and compound ALTER renames, column changes, final-name selection, cross-schema
+moves, restart and replay. InnoDB variants also check FK metadata and cascades.
+
+`alter-rename-target84-refusal` runs on the 5.7 to 8.4 profile. It checks that
+the native parent-rename defect stops before target SQL. It also checks the
+saved checkpoint and unchanged target. This case runs after the normal writer
+stops, so its intentional failure does not enter another case.
+
+`ddl-compat-grouped-constraints` tests grouped FK and ignored CHECK clauses on
+the three 5.7-source profiles. It also checks reserved index names, later rows,
+restart and replay.
+
+`ddl-compat-primary-key-parts` checks primary-key prefixes, updates within a
+prefix, key replacement, column rename, CREATE LIKE, restart and replay.
+
+The selected cases `ddl-compat-column-renames` and `ddl-compat-alter-options`
+check translated column renames, ORDER BY and validation clauses. They include
+later DML, saved-state restart and offline stop/resume. Column renames require
+a MySQL 8.4 source.
+
+`target84-index-spatial-metadata` checks an existing 8.4 target with invisible
+indexes and SRID constraints. `ddl-compat-absent-definers` checks invoker results
+and native error 1449. Both include restart and offline replay.
+
+### Simultaneous column renames
+
+Select `ddl-compat-column-swaps` to test CHANGE swaps and rename chains on any
+profile. The case checks key identities, FIRST/AFTER placement, new columns,
+generated expressions and following DML. `ddl-compat-column-renames` also tests
+a RENAME COLUMN swap from MySQL 8.4.
+
+Select `ddl-compat-foreign-key-column-swaps` on an InnoDB target to test parent,
+child and self-reference swaps. The case checks cascades and FKs added during
+the swap. These cases include saved-state restart and offline replay with an
+unreachable source. See [scope and limits](../PLAN/SIMULTANEOUS_COLUMN_RENAMES.md).
+
+### Partition-column renames
+
+Select `ddl-compat-partition-column-renames` on any profile. The case checks
+CHANGE with replacement/removal of partitioning, subpartitions, swaps, implicit
+KEY(), row movement and later DML. Select `ddl-compat-partition-rename-syntax`
+on the forward profile to check RENAME COLUMN translation. Both cases include
+saved-state restart and offline replay. See
+[scope and results](../PLAN/PARTITION_COLUMN_RENAMES.md).
+
+### Executable comment cases
+
+Select `ddl-compat-executable-comments` for active comments, literal preservation,
+DML, restart and replay on all four profiles. Add
+`ddl-compat-executable-comments-target-gate` for a whole statement ignored by the
+5.7 target, and `ddl-compat-executable-comments-source-gate` for comments disabled
+by a 5.7 source. The latter includes the 8.4 target. The tests compare the saved
+source and target SQL and check native gate outcomes. See
+[the implementation contract](../PLAN/EXECUTABLE_COMMENTS.md).

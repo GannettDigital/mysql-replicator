@@ -161,7 +161,7 @@ public final class BinlogDecoder {
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
         self.maximumEventBytes=Int(maximumEventBytes)
         self.timings = timings
-        guard Codec.abiVersion == 12, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 13, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }

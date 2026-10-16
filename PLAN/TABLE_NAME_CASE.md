@@ -13,7 +13,8 @@ reconnect, offline replay and recovery. The setting does not rename tables.
 - Mode 1 uses MySQL's native lowercase mapping for database and table references.
   Column names retain their native spelling. Stored routine names are not folded
   as table names. Table filters use the same case rule.
-- Mode 2 is not qualified. It preserves some stored names while comparing names
+- Mode 2 cannot be enabled by the current configuration. It is an unsupported
+  mode, not only a missing test. It preserves some stored names while comparing names
   without case. It requires a case-insensitive filesystem. Linux Docker volumes
   in this lab do not provide that environment.
 

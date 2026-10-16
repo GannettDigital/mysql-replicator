@@ -70,7 +70,7 @@ enum ForeignKeyGraph {
 
 extension ApplyTable {
     func hasForeignKeyIndex(_ names: [String]) -> Bool {
-        SQLIdentifier.equal(Array(primaryKeyColumns.prefix(names.count)),names) || secondaryIndexes.contains {
+        primaryKeyCovers(names) || secondaryIndexes.contains {
             $0.type == "BTREE" && SQLIdentifier.equal(Array($0.parts.prefix(names.count)).map { $0.column ?? "" },names) && $0.parts.prefix(names.count).allSatisfy { $0.prefix == nil }
         }
     }

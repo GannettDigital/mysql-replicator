@@ -4,7 +4,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 12. Encoded text uses interpretations 11-14 and binary cell bytes.
+/* ABI 13. Query context includes AUTO_INCREMENT session settings.
+ * Encoded text uses interpretations 11-14 and binary cell bytes.
  * 11: single-byte space padding; 12: 16-bit BE; 13: 16-bit LE; 14: 32-bit BE.
  * Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
@@ -57,6 +58,7 @@ typedef struct {
         collation_database, default_collation_utf8mb4;
     uint32_t microseconds, explicit_defaults_timestamp, time_zone_length;
     uint8_t time_zone[64];
+    uint32_t auto_increment_increment, auto_increment_offset;
 } rc_query_context;
 int32_t rc_query_context_decode(const uint8_t *bytes, uint64_t length, rc_query_context *out);
 uint32_t replicator_codec_abi_version(void);

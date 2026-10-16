@@ -21,7 +21,7 @@ let package = Package(
         .testTarget(name: "MySQLSyntaxTests", dependencies: ["MySQLSyntax"], path: "tests/MySQLSyntaxTests"),
         .systemLibrary(name: "CReplicatorCodec"),
         .systemLibrary(name: "CSQLite"),
-        .target(name: "ReplicatorCodec", dependencies: ["CReplicatorCodec"],
+        .target(name: "ReplicatorCodec", dependencies: ["CReplicatorCodec", "MySQLSyntax"],
             linkerSettings: [.unsafeFlags(["-L", codecLibraryPath]),
                 .linkedLibrary("pthread", .when(platforms: [.linux])),
                 .linkedLibrary("dl", .when(platforms: [.linux])),

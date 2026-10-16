@@ -37,6 +37,9 @@ only the exact IS NULL and TRIM spellings observed for this fixture. It retains
 raw metadata snapshots. It compares generated row values after INSERT, UPDATE,
 DELETE, ALTER, CREATE LIKE and restart.
 
+Branch 56 adds [generated-column dependency changes](GENERATED_COLUMN_DEPENDENCIES.md),
+including compound renames and stored/ordinary column conversion.
+
 ## Checks and remaining work
 
 The isolated syntax suite has 21 tests and 99.50% executable line coverage

@@ -4,6 +4,38 @@ import Foundation
 @testable import ReplicatorCodec
 
 extension DDLTests {
+    func testColumnSwapIntentRetainsBothLayoutsAcrossCheckpointFailure() throws {
+        #if os(Linux)
+        let f=ResumeTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let f=ResumeTests()
+        #endif
+        let path=try f.directory(),config=try f.config(path.path),db=path.appendingPathComponent("state.sqlite")
+        guard case .create(let before,_)=try parse("CREATE TABLE t(a INT,b INT,PRIMARY KEY(a,b),KEY ka(a))") else {return XCTFail("missing table")}
+        let sql="ALTER TABLE t CHANGE a b INT,CHANGE b a INT"
+        let statement=try parse(sql)
+        guard case .alter(_,let actions)=statement else {return XCTFail("missing ALTER")}
+        let after=try AlterColumnLayout.applying(to:before,actions:actions)
+        let group=ddlGroup(try f.helper.groups()[0],sql:sql)
+        let plan=PreparedDDL(statement:statement,before:before,after:after,sql:sql)
+        do {
+            let state=try StateStore(configuration:config)
+            try state.bindTargetIdentity(f.target);try state.begin(group)
+            try state.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+            try f.write(path,"CREATE TRIGGER fail_checkpoint BEFORE UPDATE ON state BEGIN SELECT RAISE(ABORT,'fixture'); END")
+            XCTAssertThrowsError(try state.complete(group,rowCount:0,ddl:plan))
+            XCTAssertEqual(state.currentSchemas,[before])
+            XCTAssertEqual(try f.helper.sqlite(db,"SELECT status FROM ddl_intents"),[["PENDING"]])
+            XCTAssertEqual(try f.helper.sqlite(db,"SELECT json_extract(transitions_json,'$[0].before.columns[0].name'),json_extract(transitions_json,'$[0].after.columns[0].name') FROM ddl_details"),[["a","b"]])
+            XCTAssertEqual(try f.helper.sqlite(db,"SELECT transactions_applied FROM state"),[["0"]])
+            try f.write(path,"DROP TRIGGER fail_checkpoint")
+            try state.complete(group,rowCount:0,ddl:plan);try state.stopped()
+        }
+        let reopened=try StateStore(configuration:config,initialize:false)
+        XCTAssertEqual(reopened.currentSchemas,[after])
+        XCTAssertEqual(try f.helper.sqlite(db,"SELECT target_sql,status FROM ddl_intents"),[[sql,"DONE"]])
+    }
+
     func testViewRenameIntentRetainsMetadataAcrossCheckpointFailure() throws {
         #if os(Linux)
         let f=ResumeTests(name:"fixtures",testClosure:{_ in})

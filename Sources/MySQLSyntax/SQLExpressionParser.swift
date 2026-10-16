@@ -39,7 +39,7 @@ struct ExpressionParser {
       let level = token.keyword == "NOT" && sqlMode & (1 << 29) == 0 ? 4 : 13
       lhs = .prefix(token.keyword.lowercased(), try expression(level))
       lhsDepth = resultDepth + 1
-    } else if token.keyword == "INTERVAL" {
+    } else if token.keyword == "INTERVAL" && !intervalFunctionAhead() {
       let value = try expression(10)
       lhs = .interval(value, try intervalUnit())
       lhsDepth = value.treeDepth + 1
@@ -87,7 +87,7 @@ struct ExpressionParser {
         try syntaxRequire(
           [
             "char", "binary", "signed", "unsigned", "decimal", "date", "datetime", "time", "json",
-            "float", "double", "real",
+            "float", "double", "real", "year",
           ].contains(type), "unsupported CAST type")
         if ["signed", "unsigned"].contains(type), i < tokens.count, tokens[i].keyword == "INTEGER" {
           i += 1
@@ -179,6 +179,17 @@ struct ExpressionParser {
     }
     resultDepth = lhsDepth
     return lhs
+  }
+  // INTERVAL(n, a, b) is a function. INTERVAL (n + 1) DAY is a duration.
+  func intervalFunctionAhead() -> Bool {
+    guard i < tokens.count, tokens[i].keyword == "(" else { return false }
+    var nesting = 0
+    for token in tokens[i...] {
+      if token.keyword == "(" { nesting += 1 }
+      if token.keyword == ")" { nesting -= 1; if nesting == 0 { return false } }
+      if token.keyword == "," && nesting == 1 { return true }
+    }
+    return false
   }
   mutating func close() throws {
     try syntaxRequire(i < tokens.count && tokens[i].keyword == ")", "unbalanced expression")

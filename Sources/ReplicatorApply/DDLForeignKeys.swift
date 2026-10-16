@@ -45,10 +45,10 @@ extension DDLParser {
 }
 
 extension ApplyForeignKey {
-    func renamingColumn(in table:SQLNameKey,from old:String,to new:String) -> ApplyForeignKey {
+    func renamingColumns(in table:SQLNameKey,using names:ColumnNameChanges) -> ApplyForeignKey {
         var result = self
-        if child == table { result.columns = columns.map { SQLIdentifier.equal($0,old) ? new : $0 } }
-        if parent == table { result.referencedColumns = referencedColumns.map { SQLIdentifier.equal($0,old) ? new : $0 } }
+        if child == table { result.columns = columns.map(names.name) }
+        if parent == table { result.referencedColumns = referencedColumns.map(names.name) }
         return result
     }
 
@@ -103,6 +103,12 @@ extension TargetSession {
         }
         var relationships: [SQLNameKey:ApplyForeignKey] = [:]
         for table in initial.values { for key in table.foreignKeys { relationships[key.identity] = key } }
+        // Original relationships are mapped once. Definitions below already
+        // contain final child columns and newly added FKs; do not map them again.
+        if case .alter(let table,let actions)=plan.statement {
+            let names=try ColumnNameChanges(actions)
+            relationships=relationships.mapValues{$0.renamingColumns(in:table.identity,using:names)}
+        }
         let renames: [TableRename]
         switch plan.statement {
         case .rename(let from,let to): renames = [TableRename(from:from,to:to)]
@@ -124,13 +130,6 @@ extension TargetSession {
                 relationships = next
             }
         }
-        if case .alter(let table,let actions) = plan.statement {
-            for action in actions {
-                if case .modify(let old,let column,_) = action {
-                    relationships = relationships.mapValues { $0.renamingColumn(in:table.identity,from:old,to:column.name) }
-                }
-            }
-        }
         var final = initial
         for change in changes { if let before = change.before { final.removeValue(forKey:before.identity) } }
         for (id,table) in definitions { final[id] = table }
@@ -145,7 +144,7 @@ extension TargetSession {
         plan.additional = Set(initial.keys).union(final.keys).sorted().filter { $0 != primaryBefore && $0 != primaryAfter }.compactMap { id in
             // DROP DATABASE must also record surviving children whose FK
             // still points to the now-absent parent. Their schema can be unchanged.
-            guard plan.database != nil || initial[id] != final[id] || changes.contains(where: { $0.before?.identity == id || $0.after?.identity == id }) else { return nil }
+            guard plan.statement.alterRenameDestination != nil || plan.database != nil || initial[id] != final[id] || changes.contains(where: { $0.before?.identity == id || $0.after?.identity == id }) else { return nil }
             return SchemaTransition(before:initial[id],after:final[id])
         }
         let indexActions: [AlterAction]
@@ -158,7 +157,7 @@ extension TargetSession {
             let actions = indexActions
             let replacements = ForeignKeyGraph.indexReplacements(after:after,actions:actions)
             if !replacements.isEmpty { plan.supportingIndexReplacements = replacements }
-            let removable = ForeignKeyGraph.removableIndexes(before:before,after:after,actions:actions)
+            let removable = try ForeignKeyGraph.removableIndexes(before:before,after:after,actions:actions)
             if !removable.isEmpty { plan.removableSupportingIndexes = removable }
         }
         return plan

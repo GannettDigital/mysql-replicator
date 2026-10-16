@@ -158,8 +158,17 @@ final class TransactionTests: XCTestCase, BinlogFixtures {
             transactionFailure(.poisoned) { try assembler.finish() }
         }
     }
+    func testExecutableCommentDDLRetainsOriginalQuery() throws {
+        for sql in ["/*!50700 CREATE TABLE t(id INT) */","/* prefix */ /*!80400 ALTER TABLE t ADD n INT */"] {
+            let groups=try assemble(synthetic([(33,gtid()),(2,query(sql))]))
+            XCTAssertEqual(groups.count,1)
+            XCTAssertEqual(groups[0].outcome,.statement)
+            guard case .query(let captured)=groups[0].events.last?.control else {return XCTFail("missing query")}
+            XCTAssertEqual(captured.sql,Data(sql.utf8))
+        }
+    }
     func testUnsupportedQueriesNeverBecomeFalseCommits() throws {
-        for sql in ["ROLLBACK TO SAVEPOINT x", "XA START 'x'", "COMMIT AND CHAIN", "BEGIN;", "begin", "/* x */ COMMIT", ""] {
+        for sql in ["ROLLBACK TO SAVEPOINT x", "XA START 'x'", "COMMIT AND CHAIN", "BEGIN;", "begin", "/* x */ COMMIT", "/*!50700 COMMIT */", "/*!80400 START TRANSACTION */", ""] {
             transactionFailure(.unsupported) { _ = try assemble(synthetic([(33,gtid()), (2,query(sql))])) }
         }
         transactionFailure(.unsupported) { _ = try assemble(synthetic([(2,query("BEGIN")), (2,query("ALTER TABLE t ADD x INT"))])) }

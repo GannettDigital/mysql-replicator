@@ -29,12 +29,14 @@ public struct DDLPolicy: Decodable {
         try require(["skip","reject"].contains(triggers), "ddlPolicy.triggers must be skip or reject: ordinary target SQL fires triggers")
         try require(events == "reject", "ddlPolicy.events must be reject: scheduled target writes are unsupported")
     }
-    func skippedQuery(_ query: QueryControl, profile: ReplicationProfile,tokens:[DDLToken]? = nil) throws -> SkippedDDL? {
+    func skippedQuery(_ query: QueryControl, profile: ReplicationProfile,tokens:[DDLToken]? = nil,targetVersion:Int? = nil) throws -> SkippedDDL? {
         // Reject prohibited object classes even when their session metadata is
         // outside the executable DDL subset. The skip policy still validates
         // trigger headers using their recorded SQL mode below.
-        do { try Self.rejectProhibited(query) }
+        let expanded=try LoggedDDL.parsingView(query,targetVersion:targetVersion ?? (profile.targetContract.versionPrefix == "5.7." ? 50700 : 80400))
+        do { try Self.rejectProhibited(expanded) }
         catch ProhibitedDDL.trigger where triggers == "skip" { }
+        let tokens=try tokens ?? DDLParser(query:expanded).tokens
         if let trigger = try skippedTrigger(query,tokens:tokens) { return trigger }
         guard profile.sourceContract.requiresHistoricalSchema else { return nil }
         var parser = try DDLParser(query:query,tokens:tokens)
@@ -140,9 +142,12 @@ enum AlterAction: Equatable {
     case modify(String,ApplyColumn,ColumnPlacement?)
     case drop(String)
     case indexes(IndexChange)
+    case renameTable(TableName)
+    case renameColumn(String,String)
     case defaultExpression(String,String)
     case defaultValue(String,String?,numeric:Bool = false,bytes:Data? = nil,literalBytes:Data? = nil)
     case primaryKey([String]?)
+    case primaryKeyParts([ApplyIndexPart])
     case partition(PartitionChange)
 }
 

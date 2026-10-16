@@ -7,7 +7,9 @@ integration qualification. The limits below describe that baseline. The subseque
 and adds tests. The subsequent [BIT increment](BIT_SUPPORT.md) adds BIT support
 and unit tests. [FLOAT/DOUBLE support](FLOATING_POINT_SUPPORT.md) is also
 implemented with unit tests. Integration qualification for these increments
-is pending. Other type gaps in this audit remain open.
+was pending at that stage. This is a historical audit, not the current gap list.
+Later beta.6 branches implement many items below. Use
+[current support and status](../docs/SUPPORT.md#support-status) for present limits.
 
 ## Findings
 
