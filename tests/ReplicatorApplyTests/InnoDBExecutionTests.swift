@@ -240,7 +240,7 @@ extension ResumeTests {
         XCTAssertThrowsError(try StateStore(configuration:helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue),initialize:false))
         XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["8"]])
         do { let store = try StateStore(configuration:c,initialize:false); XCTAssertEqual(store.transactions,1) }
-        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["12"]])
+        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["13"]])
         XCTAssertEqual(try helper.sqlite(db,"SELECT * FROM state"),before)
         XCTAssertEqual(try helper.sqlite(db,"SELECT profile FROM replication_profile"),[[ReplicationProfile.mysql84To57MyISAM.rawValue]])
     }

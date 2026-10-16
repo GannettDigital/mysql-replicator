@@ -53,7 +53,7 @@ final class SourceGTIDExecutionTests:XCTestCase {
             XCTAssertTrue(String(describing:$0).contains("legacy state did not preserve source GTIDs"))
         }
         XCTAssertNoThrow(try StateStore(configuration:local,initialize:false))
-        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["12"]])
+        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["13"]])
     }
 }
 

@@ -269,3 +269,9 @@ older forward-profile state is migrated on resume; beta.1 cannot read the upgrad
 state. A version rollback therefore needs a coordinated state/target recovery,
 not just switching the binary or restoring an old checkpoint after target writes.
 Changing profiles requires a separately prepared baseline and new state directory.
+
+Source and target connections accept the same TLS settings. `requireTLS: true`
+is the default. `tlsVerification: verify-identity` checks the CA chain and
+`serverHostname`. `tlsVerification: verify-ca` checks the CA chain with the
+explicit `caFile`; `serverHostname` is optional. Set `requireTLS: false` to use
+plaintext and remove the other TLS settings. These rules also apply after reconnect.

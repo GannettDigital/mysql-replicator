@@ -323,3 +323,18 @@ Compound ALTER statements can swap column names or rename a chain of columns.
 Existing keys and FK relationships follow the original columns. New constraints
 use the final names. Expression and target-engine restrictions still apply.
 See [column rename behavior and tests](../PLAN/SIMULTANEOUS_COLUMN_RENAMES.md).
+
+### Include and ignore filters
+
+`replicateWildDoTable` and `replicateWildIgnoreTable` match `database.table`.
+Both accept `%`, `_`, and backslash escapes. Name comparison uses the configured
+`lowerCaseTableNames`. The same decision applies during live capture and replay.
+A matching include wins. Otherwise a matching ignore excludes the table. If
+neither matches, a nonempty include list excludes it; an empty include list
+includes it. For example, include `app.%` wins over ignore `app.audit`.
+Use explicit include patterns when you need only a subset of tables.
+Database DDL matches `database.`; `app.%` includes database DDL, while `app.t`
+does not. Partial database DROP, mixed-scope DDL, and foreign keys across filter
+boundaries still stop apply. State format 13 records both filter lists. Older binaries reject this format. Resuming with
+different filters requires a new baseline. Older state can adopt its configured
+ignore list but cannot introduce an include list without a new baseline.

@@ -89,7 +89,7 @@ final class SupportBundleTests:XCTestCase {
         """.utf8))
         let result=try SupportBundle.run(configuration:config,redactedConfiguration:Data("{}".utf8),version:"test")
         XCTAssertTrue(result.output.hasPrefix(root.appendingPathComponent("support-bundles").path+"/"))
-        XCTAssertTrue(result.omitted.contains { $0.contains("archive/binlog.000003: size limit") })
+        XCTAssertTrue(result.omitted.contains { $0.contains("archive/binlog.000003: partial file") })
         let inventory=URL(fileURLWithPath:result.output).appendingPathComponent("archive/inventory.json")
         let text=String(decoding:try Data(contentsOf:inventory),as:UTF8.self)
         XCTAssertTrue(text.contains("previousGTIDs"));XCTAssertTrue(text.contains(":1-5"))

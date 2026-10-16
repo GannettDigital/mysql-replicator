@@ -16,6 +16,7 @@ public final class ArchiveReplay {
     }
     private let progress: (Progress) -> Void
     private var validation: (identities:[ArchiveFileIdentity], previous:GTIDSet, available:GTIDSet)?
+    public var availableGTIDs: String? { validation?.available.canonical }
     private let directory: URL
     private let maximumEventBytes: UInt32
     public init(configuration: ArchiveConfiguration, source: CaptureConfiguration, contract: SourceContract,

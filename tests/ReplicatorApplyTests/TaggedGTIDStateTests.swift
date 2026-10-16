@@ -33,7 +33,7 @@ final class TaggedGTIDStateTests:XCTestCase {
         XCTAssertThrowsError(try store!.begin(blue))
         try store!.stopped();store=nil
         let db=URL(fileURLWithPath:config.stateDirectory).appendingPathComponent("state.sqlite")
-        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["12"]])
+        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["13"]])
         store=try StateStore(configuration:config,initialize:false)
         XCTAssertEqual(store!.gtids,expected)
         XCTAssertEqual(store!.transactions,3)
@@ -54,6 +54,6 @@ final class TaggedGTIDStateTests:XCTestCase {
         let db=URL(fileURLWithPath:config.stateDirectory).appendingPathComponent("state.sqlite")
         try writeGTIDTestState(db,"PRAGMA user_version=10")
         do {let store=try StateStore(configuration:config,initialize:false);XCTAssertEqual(store.gtids,helper.sid+":1-10")}
-        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["12"]])
+        XCTAssertEqual(try helper.sqlite(db,"PRAGMA user_version"),[["13"]])
     }
 }

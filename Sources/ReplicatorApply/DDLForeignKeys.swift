@@ -137,7 +137,7 @@ extension TargetSession {
         let missing = foreignKeyChecks
             ? Set(initial.values.flatMap(\.foreignKeys).map(\.parent)).intersection(absent)
             : Set(keys.map(\.parent)).subtracting(final.keys)
-        try ForeignKeyGraph.validate(keys,tables:final,filter:TableFilter(config.replicateWildIgnoreTable ?? [],lowerCaseTableNames:config.source.tableNameCaseSetting),missingParents:missing,parentKeys:NativeReplicationRules(profile:config.replicationProfile).foreignKeyParentKeys)
+        try ForeignKeyGraph.validate(keys,tables:final,filter:TableFilter(config.replicateWildIgnoreTable ?? [],including:config.replicateWildDoTable ?? [],lowerCaseTableNames:config.source.tableNameCaseSetting),missingParents:missing,parentKeys:NativeReplicationRules(profile:config.replicationProfile).foreignKeyParentKeys)
         for id in final.keys { final[id]!.foreignKeys = ForeignKeyGraph.component(id,in:keys) }
         if let after = plan.after { plan.after = final[after.identity] }
         let primaryBefore = plan.before?.identity, primaryAfter = plan.after?.identity

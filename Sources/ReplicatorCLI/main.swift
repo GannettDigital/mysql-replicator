@@ -13,10 +13,10 @@ import Darwin
 #endif
 
 // Argument parsing is separate from file, socket, and database operations.
-func execute(_ request: CLIRequest) throws {
+func execute(_ request: CLIRequest, overrides:ConfigurationOverrides) throws {
     switch request {
     case .help(let text):
-        print(text)
+        print(text+"\n"+ConfigurationOptions.help)
     case .version:
         print("mysql-replicator \(ReleaseVersion.current) (codec ABI \(Codec.abiVersion), capabilities \(Codec.capabilities))")
     case let .inspectRelay(path, includeRaw):
@@ -26,7 +26,7 @@ func execute(_ request: CLIRequest) throws {
         }
         return
     case .blackhole(let path):
-        let config=try ConfigurationFile.load(CaptureConfiguration.self,from:URL(fileURLWithPath:path))
+        let config=try overrides.load(CaptureConfiguration.self,from:URL(fileURLWithPath:path))
         let password=try PasswordConfiguration.resolve(password:config.password,environmentVariable:config.passwordEnvironment,endpoint:"source")
         let cancellation=CaptureCancellation()
         signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN)
@@ -40,18 +40,18 @@ func execute(_ request: CLIRequest) throws {
         try FileHandle.standardOutput.write(contentsOf:encoder.encode(result)+Data([10]))
         return
     case .recoveryInspect(let path):
-        try recover(path: path)
+        try recover(path: path, overrides:overrides)
     case let .recoveryResolve(path, action, gtids, reason):
-        try recover(path: path, action: action, gtids: gtids, reason: reason)
+        try recover(path: path, overrides:overrides, action: action, gtids: gtids, reason: reason)
     case let .skip(path, gtids):
-        let config = try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:path))
+        let config = try overrides.load(ApplyConfiguration.self,from:URL(fileURLWithPath:path))
         let summary = try ApplySkip.run(configuration:config,gtidSet:gtids)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
         try FileHandle.standardOutput.write(contentsOf:encoder.encode(summary) + Data([10]))
         return
     case let .control(path, action, timeout):
         struct Config:Decodable { let stateDirectory:String }
-        let config=try ConfigurationFile.load(Config.self,from:URL(fileURLWithPath:path))
+        let config=try overrides.load(Config.self,from:URL(fileURLWithPath:path))
         let response=try ControlClient.request(.init(command:action,timeoutSeconds:timeout),stateDirectory:config.stateDirectory)
         try FileHandle.standardOutput.write(contentsOf:response)
         if (try JSONSerialization.jsonObject(with:response) as? [String:Any])?["ok"] as? Bool != true { throw ApplyError("control request was not acknowledged successfully; see response") }
@@ -61,29 +61,29 @@ func execute(_ request: CLIRequest) throws {
         let data:Data
         if case .fetch = request {
             struct Config:Decodable { let source:CaptureConfiguration;let profile:ReplicationProfile?;let archive:ArchiveConfiguration }
-            let c=try ConfigurationFile.load(Config.self,from:file)
+            let c=try overrides.load(Config.self,from:file)
             let password=try PasswordConfiguration.resolve(password:c.source.password,environmentVariable:c.source.passwordEnvironment,endpoint:"source")
             let contract:SourceContract = (c.profile ?? .mysql84To57MyISAM).sourceContract
             data=try encoder.encode(ArchiveFetch.run(source:c.source,password:password,archive:c.archive,contract:contract))
         } else {
-            let c=try ConfigurationFile.load(SupportBundleConfiguration.self,from:file)
-            data=try encoder.encode(SupportBundle.run(configuration:c,redactedConfiguration:ConfigurationFile.diagnosticJSON(from:file),version:ReleaseVersion.current))
+            let c=try overrides.load(SupportBundleConfiguration.self,from:file)
+            data=try encoder.encode(SupportBundle.run(configuration:c,redactedConfiguration:ConfigurationFile.diagnosticJSON(from:overrides.read(from:file)),version:ReleaseVersion.current))
         }
         try FileHandle.standardOutput.write(contentsOf:data+Data([10]));return
     case let .apply(path, initialize, offline):
         let configFile=URL(fileURLWithPath:path).standardizedFileURL
-        let configData=try ConfigurationFile.read(from:configFile)
+        let configData=try overrides.read(from:configFile)
         let config = try ConfigurationFile.decode(ApplyConfiguration.self,from:configData)
         let reloadIdentity=try ConfigurationFile.reloadIdentity(from:configData)
         struct ArchiveOptions:Decodable { let archive:ArchiveConfiguration }
-        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:(config.profile ?? .mysql84To57MyISAM).sourceContract,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty,progress: { progress in
+        let archive=try offline ? ArchiveReplay(configuration:ConfigurationFile.decode(ArchiveOptions.self,from:configData).archive,source:config.source,contract:(config.profile ?? .mysql84To57MyISAM).sourceContract,filtered:!(config.replicateWildIgnoreTable ?? []).isEmpty || !(config.replicateWildDoTable ?? []).isEmpty,progress: { progress in
             if let data=try? JSONEncoder().encode(progress) { try? FileHandle.standardError.write(contentsOf:data+Data([10])) }
         }) : nil
         let sourcePassword=try offline ? "" : PasswordConfiguration.resolve(password:config.source.password,environmentVariable:config.source.passwordEnvironment,endpoint:"source")
         let targetPassword=try PasswordConfiguration.resolve(password:config.target.password,environmentVariable:config.target.passwordEnvironment,endpoint:"target")
         let cancellation = CaptureCancellation(), drain = CaptureCancellation()
         let control=RunControl(limits:try StopConditions(transactions:config.source.stopAfterTransactions,gtids:config.source.stopAfterGTIDs),drain:drain) {
-            let data=try ConfigurationFile.read(from:configFile)
+            let data=try overrides.read(from:configFile)
             guard try ConfigurationFile.reloadIdentity(from:data) == reloadIdentity else { throw ApplyError("reload may change only source.stopAfterTransactions and source.stopAfterGTIDs; other settings require restart, and saved identity/checkpoint restrictions still apply") }
             let candidate=try ConfigurationFile.decode(ApplyConfiguration.self,from:data)
             try candidate.validate(offline:offline)
@@ -117,7 +117,7 @@ func execute(_ request: CLIRequest) throws {
         return
     case let .inspectSource(path, transactions, includeRaw):
         let source = URL(fileURLWithPath: path)
-        let config = try ConfigurationFile.load(CaptureConfiguration.self, from: source)
+        let config = try overrides.load(CaptureConfiguration.self, from: source)
         let password=try PasswordConfiguration.resolve(password:config.password,environmentVariable:config.passwordEnvironment,endpoint:"source")
         let cancellation = CaptureCancellation()
         signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
@@ -156,8 +156,8 @@ func execute(_ request: CLIRequest) throws {
     }
 }
 
-func recover(path: String, action: String? = nil, gtids: String? = nil, reason: String? = nil) throws {
-    let config=try ConfigurationFile.load(ApplyConfiguration.self,from:URL(fileURLWithPath:path))
+func recover(path: String, overrides:ConfigurationOverrides, action: String? = nil, gtids: String? = nil, reason: String? = nil) throws {
+    let config=try overrides.load(ApplyConfiguration.self,from:URL(fileURLWithPath:path))
     let encoder=JSONEncoder(); encoder.outputFormatting=[.sortedKeys,.withoutEscapingSlashes]
     let output: Data
     if let action {
@@ -188,10 +188,11 @@ func argumentFailure(_ error: CLIParseError, arguments: [String]) -> Error {
 
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
+    let overrides=try ConfigurationOverrides(arguments:arguments)
     let request: CLIRequest
-    do { request = try ReplicatorCommandLine.parse(arguments) }
+    do { request = try ReplicatorCommandLine.parse(overrides.arguments) }
     catch let error as CLIParseError { throw argumentFailure(error, arguments: arguments) }
-    try execute(request)
+    try execute(request,overrides:overrides)
 }
 catch {
     var diagnostic: [String: Any]

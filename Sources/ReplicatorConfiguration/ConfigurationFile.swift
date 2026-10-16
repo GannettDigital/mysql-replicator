@@ -77,7 +77,7 @@ public enum ConfigurationFile {
     }
 }
 
-private indirect enum DiagnosticValue: Decodable {
+indirect enum DiagnosticValue: Decodable {
     case scalar(Any), array([DiagnosticValue]), object([String:DiagnosticValue])
     init(from decoder:Decoder) throws {
         let c=try decoder.singleValueContainer()

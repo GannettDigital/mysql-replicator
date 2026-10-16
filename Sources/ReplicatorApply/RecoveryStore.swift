@@ -31,9 +31,12 @@ final class RecoveryStore {
             let flags = (writable ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READONLY) | SQLITE_OPEN_FULLMUTEX
             try require(sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,flags,nil) == SQLITE_OK,"cannot open recovery state")
             sql = SQLiteStatementCache(db:db!,timings:.init(),profiling:false)
+            if try exists("replication_filters") {
+                try require(try q("SELECT policy FROM replication_filters WHERE id=1") == [[configuration.filterIdentity()]],"table filters differ from saved state")
+            } else { try require((configuration.replicateWildDoTable ?? []).isEmpty,"legacy recovery state has no include filters") }
             let version=try q("PRAGMA user_version")
-            try require(version == [["9"]] || version == [["10"]] || version == [["11"]] || version == [["12"]],"recovery requires state format 9, 10, 11 or 12")
-            if version == [["12"]] {
+            try require(version == [["9"]] || version == [["10"]] || version == [["11"]] || version == [["12"]] || version == [["13"]],"recovery requires state format 9 through 13")
+            if version == [["12"]] || version == [["13"]] {
                 try require(try q("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(configuration.target.preserveSourceGTIDs)]],"target.preserveSourceGTIDs differs from saved state")
             } else {try require(!configuration.target.preserveSourceGTIDs,"legacy recovery requires target.preserveSourceGTIDs: false")}
             if version != [["9"]] {

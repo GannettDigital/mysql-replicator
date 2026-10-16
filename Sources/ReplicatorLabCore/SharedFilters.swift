@@ -10,9 +10,11 @@ extension SharedCorrectness.Run {
         let stop=f.profile.nativeVersion.stopReplica
         let start=f.profile.nativeVersion.startReplica
         let patterns=["temp.%","poc.ignore\\_%","scratch_.%"]
+        let includes=["poc.items","poc.ignoreXtable","poc.filter_included"]
+        let nativeIncludes=includes.map { "'"+$0+"'" }.joined(separator:",")
         let nativePatterns=patterns.map { "'"+$0.replacingOccurrences(of:"\\",with:"\\\\")+"'" }.joined(separator:",")
         try f.awaitNative()
-        _ = try f.sql(.native,stop+"; CHANGE REPLICATION FILTER REPLICATE_WILD_IGNORE_TABLE=(\(nativePatterns))")
+        _ = try f.sql(.native,stop+"; CHANGE REPLICATION FILTER REPLICATE_WILD_IGNORE_TABLE=(\(nativePatterns)), REPLICATE_WILD_DO_TABLE=(\(nativeIncludes))")
         for role in LabProfile.Role.allCases {
             _ = try f.sql(role,"SET sql_log_bin=0; CREATE DATABASE IF NOT EXISTS poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; DROP TABLE IF EXISTS poc.items; CREATE TABLE poc.items(id INT PRIMARY KEY,value VARCHAR(100) NOT NULL,quantity BIGINT UNSIGNED NOT NULL) ENGINE=\(f.profile.engine(role)); INSERT INTO poc.items VALUES(1,'updated',1),(3,'final-three',18446744073709551615)")
         }
@@ -22,6 +24,7 @@ extension SharedCorrectness.Run {
             source["stopAfterTransactions"]=count; config["source"]=source
             config["stateDirectory"]="/evidence/"+label
             config["replicateWildIgnoreTable"]=patterns
+            config["replicateWildDoTable"]=includes
             return config
         }
         func run(_ test: QualificationCase, config: [String:Any], initialize: Bool = true, reason: String? = nil) throws -> [String:Any] {
@@ -116,7 +119,7 @@ extension SharedCorrectness.Run {
             }
         }
         // As in native replication, filters must not waive errors on included DDL.
-        _ = try f.sql(.native,"CHANGE REPLICATION FILTER REPLICATE_WILD_IGNORE_TABLE=(); "+start)
+        _ = try f.sql(.native,"CHANGE REPLICATION FILTER REPLICATE_WILD_IGNORE_TABLE=(), REPLICATE_WILD_DO_TABLE=(); "+start)
         if selects(DDLCoverageCases.wildcardRejection.id) {
             let rejected=DDLCoverageCases.wildcardRejection
             try reporter.run(rejected) {

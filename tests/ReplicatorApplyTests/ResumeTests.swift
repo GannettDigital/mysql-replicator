@@ -47,6 +47,31 @@ final class ResumeTests: XCTestCase {
         for (index,row) in plan.enumerated() {try store.intent(index,row);try store.rowDone(index)}
         try store.complete(group,rowCount:plan.count)
     }
+    func testOperationCountersSurviveRestart() throws {
+        let path=try directory(),c=try config(path.path)
+        var expected:ApplyCounters?
+        do {
+            let store=try StateStore(configuration:c)
+            try store.bindTargetIdentity(target);try store.running()
+            let groups=try helper.groups()
+            for group in groups { try apply(group,to:store) }
+            expected=store.counters
+            XCTAssertGreaterThan(store.counters.processedBinlogBytes,0)
+            XCTAssertEqual(store.counters.insertRows+store.counters.updateRows+store.counters.deleteRows,Int64(store.rows))
+            XCTAssertEqual(store.counters.dmlTransactions,Int64(groups.count))
+            try store.stopped()
+        }
+        let resumed=try StateStore(configuration:c,initialize:false)
+        XCTAssertEqual(resumed.counters,expected)
+    }
+    func testIncludeFiltersArePinnedAcrossRestart() throws {
+        let path=try directory()
+        var c=try config(path.path);c.replicateWildDoTable=["poc.%"]
+        try seed(c)
+        do { _ = try StateStore(configuration:c,initialize:false) }
+        c.replicateWildDoTable=["other.%"]
+        XCTAssertThrowsError(try StateStore(configuration:c,initialize:false)) { XCTAssertTrue(String(describing:$0).contains("filters differ")) }
+    }
     func testResumeUsesSavedGTIDOnlyBaselineEvenIfConfigStartChanges() throws {
         let path=try directory(), original=try helper.config(path.path)
         try seed(original)

@@ -85,3 +85,34 @@ Invalid options and missing values fail before setup. Test selection and
 benchmark limits use the existing validation code. Lab errors remain plain
 text on stderr, with exit status 2. Help uses stdout and exit status 0.
 See [the test lab guide](TEST_LAB.md) for commands and expected results.
+
+See [status and statistics](OPERATIONS.md) for counter definitions.
+
+## Configuration overrides
+
+Configuration commands accept dotted option names from `apply.example.yaml`:
+
+```sh
+mysql-replicator run --config apply.yaml --source.port 3307 --target.preserveSourceGTIDs false
+mysql-replicator replay --config replay.yaml --source.stopAfterGTIDs 'UUID:1-1000'
+```
+
+Precedence is defaults, then YAML, then CLI. Supply a value for booleans.
+Use YAML flow syntax for arrays or maps: `--replicateWildDoTable '["app.%"]'`.
+An array replaces the YAML array; `[]` clears it. `null` clears an optional value.
+Use `--config.version` for the configuration version; `--version` shows the
+program version. Duplicate options and parent/child overrides are errors.
+The configuration file is still required. `--help` lists configuration options.
+
+`ctl reload` reads the file again and reapplies the original CLI overrides.
+It still permits only the two source stop limits to change. Thus, a stop limit
+set on the run/replay command line takes precedence over edits to that limit in
+the file. Other setting changes require restart. Support bundles show the
+redacted effective configuration. Password arguments can appear in the operating
+system process list; a password environment variable avoids this exposure.
+
+For `blackhole` and source inspection, use `--source.port` and other `source.*`
+overrides even though their YAML file contains source settings at the root.
+Fetch accepts source, archive and profile overrides. Support-bundle accepts
+stateDirectory, archive and supportBundle overrides. Control commands accept only
+`--stateDirectory` to locate the running process.
