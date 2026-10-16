@@ -64,7 +64,7 @@ struct TableFilter {
             } && !ignores(database:database)
             try require(!partial,"DROP DATABASE crosses included and excluded tables; explicit resolution required")
         }
-        try require(query.errorCode == 0, "filtered DDL source query reported an error")
+        try require(query.errorCode == 0, "filtered DDL source query reported an error: source error code \(query.errorCode); partial source DDL is not supported")
         var scope = try FilterSQL(query,tokens:tokens)
         guard let targets = try scope.targets() else { return false }
         let decisions = targets.map { target in

@@ -20,7 +20,7 @@ final class SchemaChangeTests: XCTestCase {
         XCTAssertEqual(result.columns.map(\.name),["name","id"])
         XCTAssertTrue(result.columns[0].nullable);XCTAssertEqual(result.columns[0].collation,"utf8mb4_unicode_ci")
         XCTAssertThrowsError(try table.modifying(replacement,placement:.after("name")))
-        XCTAssertThrowsError(try table.modifying(ApplyColumn(name:"name",type:"int",nullable:true,collation:nil),placement:nil))
+        XCTAssertEqual(try table.modifying(ApplyColumn(name:"name",type:"int",nullable:true,collation:nil),placement:nil).columns[1].type,"int")
     }
     func testIndexAliasesReplacementAndQuotedIdentifiers() throws {
         let key=ApplyIndex(name:"ix",unique:true,parts:[ApplyIndexPart(column:"name",prefix:8),ApplyIndexPart(column:"id",prefix:nil)])
@@ -31,7 +31,7 @@ final class SchemaChangeTests: XCTestCase {
         XCTAssertEqual(try parse("ALTER TABLE t RENAME KEY ix TO other"),.indexes(TableName(database:"poc",table:"t"),.rename("ix","other")))
     }
     func testUnsupportedOptionsCannotFallThroughToSQL() throws {
-        for sql in ["CREATE INDEX ix ON t(name DESC)","CREATE FULLTEXT INDEX ix ON t(name)","CREATE INDEX ix ON t((id+1))","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))"] {XCTAssertThrowsError(try parse(sql),sql)}
+        for sql in ["CREATE INDEX ix ON t((id+1))","ALTER TABLE t MODIFY name VARCHAR(120) ALGORITHM=COPY","CREATE INDEX ix ON t(name) INVISIBLE","CREATE INDEX ix USING HASH ON t(name)","CREATE INDEX ix ON t(name(0))"] {XCTAssertThrowsError(try parse(sql),sql)}
     }
     func testUniqueConstraintNamesMatchMySQLIndexNames() throws {
         let aux=TableName(database:"poc",table:"aux")

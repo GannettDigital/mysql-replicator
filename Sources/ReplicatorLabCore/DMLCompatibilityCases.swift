@@ -18,6 +18,11 @@ enum DMLCompatibilityCases {
         }
     }
     static let cases: [Case] = [
+        // Distinct ngram tokens avoid engine-specific stopword matches.
+        .init(id:"fulltext",definition:"id INT PRIMARY KEY,body TEXT,FULLTEXT KEY ft(body) WITH PARSER ngram",phases:[
+            .init(sql:"INSERT INTO poc.matrix_fulltext VALUES(1,'xyzzy'),(2,'qqvvq')",check:"SELECT COUNT(*)=1 AND MIN(id)=1 FROM poc.matrix_fulltext WHERE MATCH(body) AGAINST('xyzzy' IN BOOLEAN MODE)"),
+            .init(sql:"UPDATE poc.matrix_fulltext SET body='rrwwr' WHERE id=1",check:"SELECT COUNT(*)=0 FROM poc.matrix_fulltext WHERE MATCH(body) AGAINST('xyzzy' IN BOOLEAN MODE)"),
+            .init(sql:"DELETE FROM poc.matrix_fulltext WHERE id=2",check:"SELECT COUNT(*)=0 FROM poc.matrix_fulltext WHERE MATCH(body) AGAINST('qqvvq' IN BOOLEAN MODE)")]),
         characterCollations,
         nativeEncodings,
         exactChoices,

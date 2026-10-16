@@ -48,6 +48,7 @@ public enum Recovery {
     public struct Report: Encodable {
         public let kind = "recovery_inspection"
         let profile: String
+        let compatibility: CompatibilityPolicy
         let lifecycle: String
         let sourceUUID: String
         let targetUUID: String
@@ -60,7 +61,7 @@ public enum Recovery {
         let targetFailure: TargetFailureDiagnostic?
         var pending: [Group]
         let audit: [Audit]
-        let interpretation = "Offline evidence only. Expectations fold exact encoded keys within each transaction; Missing initial/final images mean absent rows. Collation-equivalent keys and later pending transactions can make matches ambiguous. Reconcile the entire pending batch before retry; no target state or commit outcome is inferred. foreignKeyRelationships identifies the connected tables that may require reconciliation; implicit cascade row images are not present in this evidence."
+        let interpretation = "Offline evidence only. Row images and expectations retain source JSON types. Apply the recorded compatibility rules when comparing with the target. Expectations fold exact encoded keys within each transaction; Missing initial/final images mean absent rows. Collation-equivalent keys and later pending transactions can make matches ambiguous. Reconcile the entire pending batch before retry; no target state or commit outcome is inferred. foreignKeyRelationships identifies the connected tables that may require reconciliation; implicit cascade row images are not present in this evidence."
     }
     public struct Resolution: Encodable {
         public let kind = "recovery_resolution"

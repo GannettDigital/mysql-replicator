@@ -232,13 +232,14 @@ This is a test summary, not a claim of complete MySQL compatibility. MyISAM
 profiles accept one DML statement per source transaction, affecting one table
 that is not excluded by the table filters. Tables need primary keys that meet
 the [DML requirements](PLAN/DML_APPLY.md). See the type-specific limits for
-[JSON](PLAN/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md),
+[JSON](docs/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md),
 [FLOAT/DOUBLE](PLAN/FLOATING_POINT_SUPPORT.md), and
-[spatial columns](PLAN/SPATIAL_SUPPORT.md). JSON has some legacy opaque-value
-transport gaps. Spatial values retain their stored SRID and coordinate bytes;
+[spatial columns](PLAN/SPATIAL_SUPPORT.md). Some MySQL-specific values inside JSON cannot be recreated
+exactly through SQL. Spatial values retain their stored SRID and coordinate bytes;
 this does not make spatial function behavior equal across MySQL versions.
-Text supports selected utf8mb4, utf8mb3, latin1 and ASCII collations. Fixed-scale FLOAT/DOUBLE,
-FULLTEXT indexes, and some other MySQL features remain unsupported. See the
+Text supports the [character sets and collations](docs/SUPPORT.md) listed in the
+support summary. Fixed-scale FLOAT/DOUBLE and selected FULLTEXT operations are
+implemented. Some MySQL features remain unsupported. See the
 [support summary](docs/SUPPORT.md) for the remaining restrictions.
 Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
 [DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),

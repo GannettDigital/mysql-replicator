@@ -16,12 +16,15 @@ profile: mysql84-to-mysql57-myisam   # Select a source version and target versio
 stateDirectory: ./replica-state     # Required for run/replay/support-bundle/ctl; new with --initialize.
                                     # Reuse after a clean stop; saved progress wins over source.start.
 
-# Optional comparison-semantics translation; default is no mappings.
-# Forward profile only. Enable BEFORE initializing state and use the same mapping
-# for snapshot schemas. UTF-8 bytes stay the same; sorting/equality/unique keys may differ.
+# Optional compatibility rules. Enable BEFORE initializing state.
+# Collation mappings apply to the forward profile. Use the same mapping for snapshot
+# schemas. UTF-8 bytes stay the same; sorting/equality/unique keys may differ.
 # compatibility:                  # Optional rules for differences between source and target.
 #   collations:                    # Map source collation names to supported target names.
 #     utf8mb4_0900_ai_ci: utf8mb4_unicode_ci  # Example; also allows utf8mb4_general_ci or utf8mb4_bin.
+#   jsonYearToInteger: false       # Only mysql57-to-mysql84-innodb. Convert YEAR inside JSON to UNSIGNED INTEGER.
+#                                  # Default false preserves the source type. True changes JSON_TYPE and comparisons.
+#                                  # Use the same conversion for baseline JSON values. Normal YEAR columns are unchanged.
 
 # Source connection and binary log settings.
 source:

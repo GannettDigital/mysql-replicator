@@ -2,12 +2,12 @@ import Foundation
 
 extension ApplyIndexPart {
     public static func == (a:Self,b:Self) -> Bool {
-        SQLIdentifier.equal(a.column,b.column) && a.prefix == b.prefix && a.direction == b.direction
+        a.column.map(SQLIdentifier.key) == b.column.map(SQLIdentifier.key) && SQLTextBytes.equal(a.expression,b.expression) && a.prefix == b.prefix && a.direction == b.direction
     }
 }
 extension ApplyIndex {
     public static func == (a:Self,b:Self) -> Bool {
-        SQLTextBytes.equal(a.name,b.name) && a.unique == b.unique && a.parts == b.parts && a.type == b.type
+        SQLTextBytes.equal(a.name,b.name) && a.unique == b.unique && a.parts == b.parts && a.type == b.type && SQLTextBytes.equal(a.parser,b.parser) && a.implicitName == b.implicitName
     }
 }
 extension ApplyPartition {

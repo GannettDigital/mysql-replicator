@@ -89,6 +89,9 @@ public enum SharedCorrectness {
                     try dmlRefusals()
                     try orderedDDL()
                     try collationWorkflows()
+                    try jsonYearCompatibility()
+                    try jsonTarget84Schema()
+                    try jsonTarget57Limits()
                     try filters()
                     try indexResume()
                     try forwardFailures()
@@ -213,7 +216,15 @@ public enum SharedCorrectness {
                         let stored="DEFAULT(t."+quote(fields[1])+")"
                         let text=fields[3].hasPrefix("char(") || fields[3].hasPrefix("varchar(")
                         let expression=text ? "CONVERT("+stored+" USING utf8mb4)" : stored
-                        let bytes=try sql("SELECT HEX("+expression+") FROM "+quote(database)+"."+quote(fields[0])+" AS t RIGHT JOIN (SELECT 1) AS p ON FALSE LIMIT 1",preserveWhitespace:true).trimmingCharacters(in:.newlines)
+                        let query:String
+                        if fields[4] == "NO" {
+                            // DEFAULT on a null-complemented NOT NULL field is
+                            // NULL. Copy the native definition, not its rows.
+                            let temporary=quote(database)+"."+quote("_lab_default_"+UUID().uuidString.replacingOccurrences(of:"-",with:""))
+                            let value=text ? "CONVERT(v USING utf8mb4)" : "v"
+                            query="SET sql_log_bin=0; CREATE TEMPORARY TABLE "+temporary+" ENGINE=InnoDB AS SELECT "+quote(fields[1])+" AS v FROM "+quote(database)+"."+quote(fields[0])+" LIMIT 0; INSERT INTO "+temporary+" VALUES(DEFAULT); SELECT HEX("+value+") FROM "+temporary+"; DROP TEMPORARY TABLE "+temporary
+                        } else { query="SELECT HEX("+expression+") FROM "+quote(database)+"."+quote(fields[0])+" AS t RIGHT JOIN (SELECT 1) AS p ON FALSE LIMIT 1" }
+                        let bytes=try sql(query,preserveWhitespace:true).trimmingCharacters(in:.newlines)
                         try require(bytes.utf8.allSatisfy { (48...57).contains($0) || (65...70).contains($0) },"invalid native stored default bytes")
                         columnFields[i][7]="X'"+bytes+"'"
                     }
@@ -365,6 +376,13 @@ public enum SharedCorrectness {
                     if test.test.id == "ddl-compat-database" {
                         try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left current schemas")
                     }
+                    if test.test.id == "ddl-compat-multi-table" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='otherdb' AND json_extract(schema_json,'$.table') IN ('moved','copy')") == "0","multi-table DROP left current schemas")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE target_sql LIKE 'DROP TABLE %' AND source_sql=target_sql AND status='DONE' AND json_array_length(transitions_json)=3") == "1","multi-table DROP lost its complete transition record")
+                    }
+                    if test.test.id == "ddl-compat-cross-schema-relationships" {
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database') IN ('ddlcompat','otherdb')") == "0","relationship DROP left current schemas")
+                    }
                     try applier.start(initialize:false); try wait()
                 }
             }
@@ -391,9 +409,8 @@ public enum SharedCorrectness {
             for test in ModifyIndexCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
                     try step("CREATE DATABASE IF NOT EXISTS demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",database:"demo")
-                    // Seed only on the source, through replication. Split the
-                    // fixed fixture preamble so multi-table DROP stays outside
-                    // the current DDL grammar while testing each actual DROP.
+                    // Seed only on the source, through replication. Keep these
+                    // single-table DROP checks separate from the multi-table case.
                     for name in ["mi_clone","mi_renamed","mi","explicit_default_engine"] { try step("DROP TABLE IF EXISTS demo.\(name)",database:"demo") }
                     let parts=test.seed.components(separatedBy:"; ").filter { !$0.hasPrefix("SET SESSION") && !$0.hasPrefix("CREATE DATABASE") && !$0.hasPrefix("DROP TABLE") && !$0.isEmpty }
                     for sql in parts { try step(sql,database:"demo") }

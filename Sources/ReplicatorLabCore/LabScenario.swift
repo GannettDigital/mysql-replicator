@@ -51,6 +51,9 @@ struct LabScenario {
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,profileExclusions:$0.profileExclusions,smoke:$0.id == "composite") }
+        cases.append(.init(test:.init("json-target57-limits","Native 5.7 version and MyISAM engine limits stop JSON DDL before target SQL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source to emit expression defaults and functional indexes.",intent:"reject before target SQL"))
+        cases.append(.init(test:.init("json-target84-schema","Existing 8.4 JSON defaults and functional indexes survive DML, restart and replay"),family:"bootstrap",profileExclusions:[.forward:"Requires an 8.4 target.",.mysql57MyISAM:"Requires an 8.4 target.",.mysql57InnoDB:"Requires an 8.4 target."]))
+        cases.append(.init(test:.init("json-year-compatibility","Explicit JSON YEAR conversion, strict refusal, restart and offline replay"),family:"dml",profileExclusions:[.forward:"Requires the 5.7 to 8.4 JSON YEAR conversion policy.",.mysql57MyISAM:"5.7 targets retain JSON YEAR without conversion.",.mysql57InnoDB:"5.7 targets retain JSON YEAR without conversion."]))
         cases.append(.init(test:.init("large-values","Large TEXT/BLOB writes, packet fragmentation, restart, replay and recovery"),family:"dml"))
         cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
         cases.append(.init(test:.init("foreign-key-safety","Foreign-key exclusions, rollback and recovery evidence"),family:"foreign-keys",requiresTransactionalTarget:true,intent:"reject unsafe relationships; retain rollback and cascade evidence"))
@@ -60,8 +63,8 @@ struct LabScenario {
         cases.append(.init(test:.init("live-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"policy",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
         cases.append(.init(test:.init("runtime-control","Exact GTID limits, reload, status, and graceful stop"),family:"offline"))
         cases.append(.init(test:DDLCompatibilityCases.skipTrigger,family:"policy",intent:"skip definitions; apply row effects",smoke:true))
-        cases += ["engine","foreign-key","event","trigger","fulltext"].map {
-            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "fulltext")
+        cases += ["engine","foreign-key","event","trigger"].map {
+            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "engine")
         }
         cases += [
             .init(test:DDLCoverageCases.wildcardFilter,family:"filters",intent:"skip excluded events; apply included rows",smoke:true),

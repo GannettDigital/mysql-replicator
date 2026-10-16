@@ -82,8 +82,7 @@ final class DDLTests: XCTestCase {
             "CREATE TABLE t(k INT PRIMARY KEY,INDEX(k)) ENGINE=InnoDB",
             "ALTER TABLE t ADD n INT NOT NULL",
             "ALTER TABLE t ADD n INT PRIMARY KEY", "ALTER TABLE t ADD n INT /*!80000 INVISIBLE */",
-            "DROP TABLE IF NOT EXISTS t", "CREATE TABLE IF EXISTS t(id INT PRIMARY KEY)", "CREATE TABLE t LIKE x; DROP TABLE x", "CREATE TABLE t LIKE x ENGINE=MyISAM", "DROP TABLE t,other", "DROP TABLE t; DROP DATABASE poc",
-            "RENAME TABLE t TO otherdb.t",
+            "DROP TABLE IF NOT EXISTS t", "CREATE TABLE IF EXISTS t(id INT PRIMARY KEY)", "CREATE TABLE t LIKE x; DROP TABLE x", "CREATE TABLE t LIKE x ENGINE=MyISAM", "DROP TABLE t; DROP DATABASE poc",
             "ALTER TABLE t ADD n INT DEFAULT (1+1)", "DROP TABLE \"t\""
         ] {XCTAssertThrowsError(try parse(sql),sql)}
         XCTAssertThrowsError(try parse("DROP TABLE t",database:nil))

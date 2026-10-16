@@ -8,8 +8,7 @@ extension SharedCorrectness.Run {
             ("engine","CREATE TABLE rejected.bad(id INT PRIMARY KEY) ENGINE="+(f.profile.transactionalTarget ? "MyISAM" : "InnoDB"),"outside the "+f.profile.targetEngine+" DDL contract"),
             ("foreign-key","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n INT,FOREIGN KEY(n) REFERENCES rejected."+(f.profile.transactionalTarget ? "bad" : "parent")+"(id)) ENGINE=InnoDB","unsupported"),
             ("event","CREATE EVENT rejected.e ON SCHEDULE EVERY 1 DAY DISABLE DO INSERT INTO rejected.parent VALUES(99,99)","DDL policy rejects events"),
-            ("trigger","CREATE TRIGGER rejected.tr BEFORE INSERT ON rejected.parent FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers"),
-            ("fulltext","CREATE TABLE rejected.bad(id INT PRIMARY KEY,n TEXT,FULLTEXT INDEX ft(n))","unsupported")
+            ("trigger","CREATE TRIGGER rejected.tr BEFORE INSERT ON rejected.parent FOR EACH ROW SET NEW.n=7","DDL policy rejects triggers")
         ]
         let original=f.config
         defer { f.config=original }

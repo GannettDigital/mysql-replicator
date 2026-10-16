@@ -2,6 +2,19 @@ import Foundation
 
 extension TargetSession {
     func readStoredDefaultBytes(_ column:ApplyColumn,table:TableName,utf8:Bool) throws -> Data {
+        // A NOT NULL field on the missing side of an outer join reads as NULL,
+        // including DEFAULT(field). Clone only the native field, with no rows,
+        // then let MySQL evaluate its exact default in the private table.
+        // This uses the same native metadata path as ENUM/SET discovery.
+        if !column.nullable {
+            return try withMetadataScratch(database:table.database) { name in
+                _ = try query("CREATE TEMPORARY TABLE "+name+" ENGINE=InnoDB AS SELECT "+quoted(column.name)+" AS v FROM "+table.sql+" LIMIT 0",textProtocol:true)
+                _ = try query("INSERT INTO "+name+" VALUES(DEFAULT)",textProtocol:true)
+                let expression=utf8 ? "CONVERT(v USING utf8mb4)" : "CAST(v AS BINARY)"
+                guard let value=try query("SELECT "+expression+" AS v FROM "+name).0.first?.column("v")?.buffer else { throw ApplyError("missing cloned column default") }
+                return Data(value.readableBytesView)
+            }
+        }
         // I_S can lose bytes. DEFAULT reads the native field's stored default.
         // The false outer join returns a result even when the table is empty.
         let projection=try "DEFAULT(t."+quoted(column.name)+")"

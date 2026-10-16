@@ -43,15 +43,15 @@ extension TargetSession {
         try setDDLSession(context,source:source)
         return plan
     }
-    func applyRenames(_ plan: PreparedDDL) throws {
-        // One server-side statement, never split into separately visible renames.
+    func applyTableTransitions(_ plan: PreparedDDL) throws {
+        // One server-side statement. The journal retains every table if SQL fails.
         _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
         try resetDMLSession()
         for change in plan.additional {
             if let after = change.after {
-                try require(try readSchema(database:after.database,name:after.table) == after,"DDL RENAME target after-schema mismatch")
+                try require(try readSchema(database:after.database,name:after.table) == after,"multi-table DDL target after-schema mismatch")
             } else if let before = change.before {
-                try require(!(try tableExists(TableName(database:before.database,table:before.table))),"DDL RENAME source remains")
+                try require(!(try tableExists(TableName(database:before.database,table:before.table))),"multi-table DDL source remains")
             }
         }
         for change in plan.additional { if let before = change.before { discovered.removeValue(forKey:before.identity) } }

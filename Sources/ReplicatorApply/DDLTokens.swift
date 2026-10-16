@@ -25,7 +25,7 @@ enum DDLTokens {
         }
         return false
     }
-    static func lex(_ data: Data, sqlMode: UInt64 = 0, characterSet: String = "utf8mb4",
+    static func lex(_ data: Data, sqlMode: UInt64 = 0, characterSet: String = "utf8mb4", nativeMetadata:Bool = false,
                     decode: ((Data,Bool) throws -> DDLDecodedText)? = nil) throws -> [DDLToken] {
         try require(data.count <= 65536, "DDL statement exceeds 64 KiB")
         if decode == nil { try require(String(data:data,encoding:.utf8) != nil,"invalid DDL UTF-8") }
@@ -40,10 +40,20 @@ enum DDLTokens {
             let c = b[i]
             if [9,10,13,32].contains(c) { i += 1; continue }
             if c == 47 && i+1 < b.count && b[i+1] == 42 {
-                try require(i+2 < b.count && b[i+2] != 33, "executable DDL comments are unsupported")
-                i += 2
+                let executable=i+2 < b.count && b[i+2] == 33
+                try require(!executable || nativeMetadata,"executable DDL comments are unsupported")
+                i += 2;var content=i
+                if executable {
+                    content += 1
+                    while content < b.count && (48...57).contains(b[content]) { content += 1 }
+                }
                 while i+1 < b.count && !(b[i] == 42 && b[i+1] == 47) { i += 1 }
-                try require(i+1 < b.count, "unterminated DDL comment"); i += 2; continue
+                try require(i+1 < b.count,"unterminated DDL comment")
+                // Only SHOW CREATE metadata opts in. Source SQL keeps its strict
+                // version-comment gate; metadata tokens are never executed.
+                if executable { result += try lex(Data(b[content..<i]),sqlMode:sqlMode) }
+                try require(result.count <= 16384,"DDL token limit exceeded")
+                i += 2;continue
             }
             if c == 35 || (c == 45 && i+2 < b.count && b[i+1] == 45 && b[i+2] <= 32) {
                 while i < b.count && b[i] != 10 { i += 1 }; continue
@@ -77,8 +87,9 @@ enum DDLTokens {
             } else {
                 try require(c < 128 && "(),.;=+-*/%@<>!|&^~:?".utf8.contains(c), "unsupported DDL token")
                 var text = String(UnicodeScalar(c)); i += 1
-                if i < b.count && ["<=",">=","!=","<>","<<",">>","||","&&",":="].contains(text+String(UnicodeScalar(b[i]))) {
+                if i < b.count && ["<=",">=","!=","<>","<<",">>","||","&&",":=","->"].contains(text+String(UnicodeScalar(b[i]))) {
                     text += String(UnicodeScalar(b[i])); i += 1
+                    if text == "->" && i < b.count && b[i] == 62 { text += ">";i += 1 }
                 }
                 result.append(DDLToken(text:text))
             }
@@ -92,9 +103,12 @@ enum DDLTokens {
     }
 }
 
-/// A deliberately deterministic, target-5.7 expression subset. Canonical AST
+/// Canonical expressions for schema comparison; SQL still runs on the target. Canonical AST
 /// spelling equates MySQL's added parentheses/backticks without losing grouping.
 enum DDLExpression {
+    static func references(_ name:String,in expression:String) throws -> Bool {
+        try DDLTokens.lex(Data(expression.utf8),sqlMode:1 << 20).contains { $0.identifier && SQLIdentifier.equal($0.text,name) }
+    }
     static func canonical(_ sql: String) throws -> String {
         try canonical(DDLTokens.lex(Data(sql.utf8),sqlMode:1 << 20))
     }
@@ -108,7 +122,7 @@ enum DDLExpression {
 private struct ExpressionParser {
     let tokens: [DDLToken]
     var i = 0
-    let precedence = ["OR":1,"AND":2,"=":3,"!=":3,"<>":3,"<":3,">":3,"<=":3,">=":3,"+":4,"-":4,"*":5,"/":5,"DIV":5,"%":5,"MOD":5]
+    let precedence = ["OR":1,"AND":2,"=":3,"!=":3,"<>":3,"<":3,">":3,"<=":3,">=":3,"+":4,"-":4,"*":5,"/":5,"DIV":5,"%":5,"MOD":5,"->":7,"->>":7,"COLLATE":8]
     mutating func expression(_ minimum: Int = 0) throws -> String {
         try require(i < tokens.count,"missing generated/partition expression")
         let token = tokens[i]; i += 1
@@ -117,6 +131,11 @@ private struct ExpressionParser {
             lhs = try expression(); try close()
         } else if ["+","-","NOT","~"].contains(token.keyword) {
             lhs = "("+token.keyword.lowercased()+" "+(try expression(6))+")"
+        } else if token.keyword.hasPrefix("_"), i < tokens.count, tokens[i].literal != nil {
+            let literal=try expression(8)
+            // The lexer already stores UTF-8 text. MySQL 8.4 adds this introducer
+            // when it prints the same UTF-8 literal from a 5.7 expression.
+            lhs = token.keyword == "_UTF8MB4" ? literal : token.keyword.lowercased()+literal
         } else if let literal = token.literal {
             lhs = "'"+literal.replacingOccurrences(of:"'",with:"''")+"'"
         } else if token.text.utf8.allSatisfy({(48...57).contains($0)}) && !token.identifier {
@@ -126,13 +145,42 @@ private struct ExpressionParser {
             }
         } else if i < tokens.count && tokens[i].keyword == "(" {
             let function = token.keyword.lowercased()
-            try require(["abs","ceil","ceiling","floor","round","mod","if","ifnull","nullif","coalesce","concat","concat_ws","lower","upper","length","char_length","character_length","year","month","day","dayofmonth","to_days","to_seconds","datediff","date","hour","minute","second"].contains(function),"unsupported generated/partition function: "+token.text)
-            i += 1; var arguments: [String] = []
-            repeat {
-                arguments.append(try expression())
-                if i < tokens.count && tokens[i].keyword == "," { i += 1 } else { break }
-            } while true
-            try close(); lhs = function+"("+arguments.joined(separator:",")+")"
+            if function == "cast" {
+                i += 1
+                let value=try expression()
+                try require(i < tokens.count && tokens[i].keyword == "AS","missing CAST type");i += 1
+                try require(i < tokens.count,"missing CAST type")
+                var type=tokens[i].keyword.lowercased();i += 1
+                try require(["char","binary","signed","unsigned","decimal","date","datetime","time","json","float","double","real"].contains(type),"unsupported CAST type")
+                if ["signed","unsigned"].contains(type), i < tokens.count, tokens[i].keyword == "INTEGER" { i += 1 }
+                if i < tokens.count && tokens[i].keyword == "(" {
+                    i += 1;var sizes:[String]=[]
+                    repeat {
+                        try require(i < tokens.count && !tokens[i].text.isEmpty && tokens[i].text.utf8.allSatisfy { (48...57).contains($0) },"invalid CAST width")
+                        sizes.append(tokens[i].text);i += 1
+                        if i < tokens.count && tokens[i].keyword == "," { i += 1 } else { break }
+                    } while true
+                    try close();type += "("+sizes.joined(separator:",")+")"
+                }
+                if i < tokens.count && ["CHARSET","CHARACTER"].contains(tokens[i].keyword) {
+                    let long=tokens[i].keyword == "CHARACTER";i += 1
+                    if long { try require(i < tokens.count && tokens[i].keyword == "SET","missing CAST CHARACTER SET");i += 1 }
+                    try require(i < tokens.count && tokens[i].text.utf8.allSatisfy(DDLTokens.word),"missing CAST charset")
+                    let charset=tokens[i].text.lowercased();i += 1
+                    if charset != "utf8mb4" { type += " charset "+charset }
+                }
+                try close();lhs="cast("+value+" as "+type+")"
+            } else {
+                try require(["abs","ceil","ceiling","floor","round","mod","if","ifnull","nullif","coalesce","concat","concat_ws","lower","upper","length","char_length","character_length","year","month","day","dayofmonth","to_days","to_seconds","datediff","date","hour","minute","second","json_extract","json_unquote","json_quote","json_object","json_array","json_length","json_type","json_valid","json_contains","json_contains_path","json_keys","json_depth","json_set","json_insert","json_replace","json_remove","json_merge_preserve","json_merge_patch","json_array_append","json_array_insert"].contains(function),"unsupported generated/partition function: "+token.text)
+                i += 1; var arguments: [String] = []
+                while i < tokens.count && tokens[i].keyword != ")" {
+                    arguments.append(try expression())
+                    if i < tokens.count && tokens[i].keyword == "," {
+                        i += 1;try require(i < tokens.count && tokens[i].keyword != ")","missing function argument")
+                    } else { break }
+                }
+                try close(); lhs = function+"("+arguments.joined(separator:",")+")"
+            }
         } else if ["NULL","TRUE","FALSE"].contains(token.keyword) { lhs = token.keyword.lowercased() }
         else {
             try require(token.identifier || token.text.utf8.allSatisfy(DDLTokens.word),"unsupported expression operand")
@@ -140,7 +188,15 @@ private struct ExpressionParser {
         }
         while i < tokens.count, let level = precedence[tokens[i].keyword], level >= minimum {
             let op = tokens[i].keyword.lowercased(); i += 1
-            lhs = "("+lhs+" "+op+" "+(try expression(level+1))+")"
+            if op == "collate" {
+                try require(i < tokens.count && tokens[i].literal == nil && tokens[i].text.utf8.allSatisfy(DDLTokens.word),"missing expression collation")
+                lhs="("+lhs+" collate "+tokens[i].text.lowercased()+")";i += 1;continue
+            }
+            let rhs=try expression(level+1)
+            if op == "->" || op == "->>" {
+                lhs="json_extract("+lhs+","+rhs+")"
+                if op == "->>" { lhs="json_unquote("+lhs+")" }
+            } else { lhs = "("+lhs+" "+op+" "+rhs+")" }
         }
         return lhs
     }

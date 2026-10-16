@@ -129,7 +129,7 @@ final class RecoveryStore {
         if try exists("recovery_audit") {
             audit = try q("SELECT id,action,gtids,reason,created_at FROM recovery_audit ORDER BY rowid").map { .init(id:$0[0]!,action:$0[1]!,gtids:$0[2]!,reason:$0[3]!,createdAt:$0[4]!) }
         }
-        return .init(profile:configuration.replicationProfile.rawValue,lifecycle:s[0]!,sourceUUID:s[1]!,targetUUID:s[2]!,appliedGTIDSet:covered.canonical,appliedFile:s[3],appliedPosition:s[4],durableRelayLength:durable,unjournaledTailBytes:actual-durable,diagnostic:s[11],targetFailure:failure,pending:pending,audit:audit)
+        return .init(profile:configuration.replicationProfile.rawValue,compatibility:configuration.compatibilityPolicy,lifecycle:s[0]!,sourceUUID:s[1]!,targetUUID:s[2]!,appliedGTIDSet:covered.canonical,appliedFile:s[3],appliedPosition:s[4],durableRelayLength:durable,unjournaledTailBytes:actual-durable,diagnostic:s[11],targetFailure:failure,pending:pending,audit:audit)
     }
     func resolve(action: Recovery.Action, gtids: String, reason: String) throws -> Recovery.Resolution {
         try require(writable,"recovery store is read-only")

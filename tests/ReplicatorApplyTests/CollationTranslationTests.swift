@@ -102,7 +102,7 @@ extension DDLTests {
         XCTAssertEqual(changes[1].after,first.renamed(to:b))
         XCTAssertThrowsError(try TableRename.transitions([.init(from:a,to:b)],schemas:[a.identity:first,b.identity:second]))
         XCTAssertThrowsError(try TableRename.transitions(renames,schemas:[a.identity:first]))
-        XCTAssertThrowsError(try parse("RENAME TABLE a TO x, otherdb.b TO otherdb.y"))
+        XCTAssertNoThrow(try parse("RENAME TABLE a TO x, otherdb.b TO otherdb.y"))
         let group = ddlGroup(try f.helper.groups()[0],sql:sql)
         let plan = PreparedDDL(statement:.renameMany(renames),before:nil,after:nil,sql:sql,additional:changes)
         let db = path.appendingPathComponent("state.sqlite")

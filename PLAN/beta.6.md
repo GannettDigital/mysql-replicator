@@ -40,6 +40,12 @@ beta.6. Do not assume a squash merge preserves the old stack ancestry.
 | `beta/6/18-unicode-identifiers` | `beta/6/17-native-name-comparison` |
 | `beta/6/19-query-encodings` | `beta/6/18-unicode-identifiers` |
 | `beta/6/20-table-name-case` | `beta/6/19-query-encodings` |
+| `beta/6/21-json-transport-review` | `beta/6/20-table-name-case` |
+| `beta/6/22-fulltext-indexes` | `beta/6/21-json-transport-review` |
+| `beta/6/23-json-load-data-review` | `beta/6/22-fulltext-indexes` |
+| `beta/6/24-json-year-compatibility` | `beta/6/23-json-load-data-review` |
+| `beta/6/25-json-year-translation` | `beta/6/24-json-year-compatibility` |
+| `beta/6/26-json-generated-indexes` | `beta/6/25-json-year-translation` |
 
 These are the existing local branches. They are not the complete beta.6
 branch set. Later branches will contain the remaining feature groups below.
@@ -94,7 +100,11 @@ Do not open empty PRs for all planned work.
 - The full suite remains a CI task. This increment does not qualify every charset,
   width boundary, replay scenario or crash outcome.
 
-## Remaining scope audit
+## Historical scope audit
+
+This audit records the state before the later increments below. Some entries
+are now implemented. Use docs/SUPPORT.md and the latest increment notes for
+current limits.
 
 The original complete-support plan and this worktree's copy have the same scope.
 Only the status and link to this beta.6 work changed. Charset branches do not
@@ -614,3 +624,240 @@ three MySQL servers with mode 1. Selected live and offline results are recorded
 in [TABLE_NAME_CASE.md](TABLE_NAME_CASE.md). Mode 2 and cross-setting replication
 remain unqualified. The encoded-SQL case now restarts before latin1 and Shift-JIS
 ALTER statements.
+
+## Increment 21: remaining JSON transport review
+
+Branch: `beta/6/21-json-transport-review`.
+
+The pinned native source and disposable 5.7.42/8.4.8 probes confirm that ordinary
+JSON parameters do not expose binary JSON field storage. YEAR becomes an integer
+on 8.4. Binary CAST changes opaque subtype 253 to 15. An 8.4 wide-character
+constructor can produce subtype 253, but it can change payload bytes. It is not
+a general solution.
+
+[JSON_TRANSPORT_INVESTIGATION.md](JSON_TRANSPORT_INVESTIGATION.md) records the
+results, reproduction SQL, remaining range limits, and possible separate write
+paths. No lossy conversion was added. Full support still has this explicit gap.
+
+The requested stage-2 implementation/investigation increments are complete,
+with the stated limits and selected test evidence. This is not full stage-2
+catalog qualification. Continue with FULLTEXT and the remaining DDL families.
+Keep keyless recovery and XA in separate designs.
+
+## Increment 22: FULLTEXT index metadata and apply
+
+Branch: `beta/6/22-fulltext-indexes`.
+
+FULLTEXT definitions now use the shared schema, DDL and row-apply paths. Native
+NULL direction and ignored prefixes are retained. Parser-plugin metadata comes
+from SHOW CREATE and is checked on DDL and restart. Schema changes retain that
+attribute. No new row transport or recovery state store is introduced.
+
+The shared cases cover default-parser and ngram indexes, CREATE/ADD/DROP/RENAME,
+CREATE TABLE LIKE, following row changes, initial discovery and saved-state
+restart. The old FULLTEXT refusal selection becomes the existing engine-policy
+refusal. [FULLTEXT_SUPPORT.md](FULLTEXT_SUPPORT.md) records test results, native
+restrictions, a native search observation and remaining qualification.
+
+All four profiles passed the 23 selected FULLTEXT steps with one input digest.
+All 401 selected apply/lab unit tests passed; the final fixture changes passed
+96 lab tests. The 17 CI-matrix tests passed. Native search differences found
+during fixture review remain documented; they are not hidden as passed coverage.
+
+Other DDL groups remain open. Keyless recovery and XA are still separate designs.
+
+## Increment 23: JSON LOAD DATA review
+
+Branch: `beta/6/23-json-load-data-review`.
+
+The linked MySQL example imports JSON text. Native source inspection and direct
+5.7.42/8.4.8 probes confirm that LOAD DATA uses the JSON text parser. Opaque-value
+text becomes a string. Internal binary JSON fails with error 3140; the binary
+character set fails with error 3144. LOCAL changes the file transfer, not JSON
+storage conversion. No alternate applier write path was added.
+
+[JSON_TRANSPORT_INVESTIGATION.md](JSON_TRANSPORT_INVESTIGATION.md) records the
+article, native code path and probe results. The remaining exact-value transport
+gaps stay open. The beta.6 branch set is still incomplete and remains local.
+
+## Increment 24: YEAR inside JSON compatibility issue
+
+Branch: `beta/6/24-json-year-compatibility`.
+
+[JSON_YEAR_COMPATIBILITY.md](JSON_YEAR_COMPATIBILITY.md) separates the 5.7 to 8.4
+YEAR constructor difference from binary-value gaps. It describes the current
+strict behavior and the scope of a possible explicit YEAR-to-unsigned-integer
+rule. This is a documentation change. No conversion is implemented or enabled.
+Binary-value gaps remain open. Runtime tests were not repeated for this change.
+
+## Increment 25: explicit JSON YEAR conversion
+
+Branch: `beta/6/25-json-year-translation`.
+
+Add `compatibility.jsonYearToInteger`, disabled by default and restricted to
+5.7 to 8.4. Convert only opaque YEAR values to unsigned JSON integers. Use the
+same target representation for writes and before-image checks. Retain source
+bytes in relay/recovery records and include the policy in recovery reports.
+Pin the policy in SQLite across restart, replay and recovery. Add a selected
+correctness case for strict refusal, native constructor checks and replay.
+
+See [JSON_YEAR_COMPATIBILITY.md](JSON_YEAR_COMPATIBILITY.md). Binary-value gaps
+remain open. The branch remains local.
+
+Validation: 491 selected unit tests passed. The final lab assertion changes
+passed 96 lab unit tests. The selected reverse-profile correctness case passed
+with live restart and offline replay. Evidence is under
+`artifacts/lab/20261014T222611Z-d0b6ff01`. Full release qualification was not run.
+
+
+## Increment 26: target-specific JSON DDL
+
+Branch: `beta/6/26-json-generated-indexes`.
+
+Add JSON extraction and CAST to schema expressions. Select functional-index,
+expression-default, and indexed VIRTUAL-column support from the target version
+and engine. Decode the outer escaping in 8.4 information_schema expressions.
+Keep expression defaults and functional index parts in saved schema metadata.
+Old saved schemas still decode without these optional fields.
+
+The shared `ddl-compat-json-indexes` case covers four profiles. The reverse-only
+`json-target84-schema` case covers an existing 8.4 table with functional indexes
+and a JSON expression default, including restart and offline replay. This is
+not an 8.4-to-8.4 replication qualification. See
+[the JSON support guide](../docs/JSON_SUPPORT.md).
+
+The broader generated-expression and DDL work remains open. Native references:
+5.7 `sql/sql_table.cc` virtual-index engine checks and
+`mysql-test/suite/gcol/t/rpl_gcol.test`; 8.4 `sql/dd/dd_table.cc`,
+`sql/item.cc:convert_and_print`, and `sql-common/sql_string.cc:String::print`.
+
+Validation for the initial implementation: 411 apply and lab unit checks passed.
+The generated JSON index case passed on all four profiles. Each run also
+reopened saved schema state. Evidence under `artifacts/lab/`:
+
+| Profile | Run |
+| --- | --- |
+| 8.4 to 5.7 MyISAM | `20261014T225440Z-645ee541` |
+| 5.7 to 8.4 InnoDB | `20261014T225442Z-3e269b8d` |
+| 5.7 to 5.7 MyISAM | `20261014T225624Z-3ba752d6` |
+| 5.7 to 5.7 InnoDB | `20261014T225629Z-058ed67c` |
+
+The 8.4 target run also passed functional-index and JSON-default discovery,
+row changes, restart, and offline replay. Follow-up checks add explicit
+functional-index collation, automatic-name collisions, and
+`json-target57-limits`. The last case checks native version and engine errors
+before target SQL, with no target table and no checkpoint advance.
+
+The final checks passed:
+
+- `20261014T230517Z-664cc9a0`: all three native-limit refusals reported
+  `statement.phase: notIssued`. No target table was created. Each saved state
+  remained `BLOCKED` with zero applied transactions.
+- `20261014T230516Z-06eaeead`: the 8.4 functional index with explicit
+  `COLLATE utf8mb4_bin` passed discovery, indexed queries, row changes, restart,
+  and offline replay. The target also evaluated its JSON expression default.
+
+The final apply/lab unit run passed 411 checks. No full correctness sweep was
+run for this increment. The selected tests cover the changed paths.
+
+
+## Increment 27: table options and column conversions
+
+Branch: `beta/6/27-table-options-alter`.
+
+Parse table and column comments, physical/statistics options, AUTO_INCREMENT,
+and same-engine rebuilds. Send the original SQL through the DDL journal.
+Comments and physical options are not part of the row schema. They remain
+in the recorded SQL. Uncertain DDL still requires DBA review.
+
+Remove the blanket type-family check for MODIFY and CHANGE. MySQL performs
+the conversion under the logged session settings. Keep schema validation,
+primary-key requirements, FK validation and the DDL barrier. Native reference:
+5.7 `sql/sql_table.cc:copy_data_between_tables` uses `Copy_field` to convert
+stored values. Its row-format handling retains the old format when omitted.
+
+Selected tests: `ddl-compat-table-options` and `ddl-compat-alter-conversions`.
+These tests do not qualify every physical option or cross-version conversion.
+Validation results will be recorded after the runs.
+
+Native multi-table DROP review for the next increment:
+
+- MySQL 5.7.42 with InnoDB: `DROP TABLE a,missing,b` reports error 1051,
+  but removes both existing tables.
+- MySQL 8.4.8 with InnoDB: the same statement reports error 1051 and keeps
+  both existing tables.
+- Probe logs: `/tmp/beta6-native-drop57.log` and
+  `/tmp/beta6-native-drop84.log`. The tables were in the disposable
+  `beta6_multi` database. Separate `SHOW TABLES` queries checked the result.
+- The 5.7 source is `sql/sql_table.cc:mysql_rm_table_no_locks`. It continues
+  through the list and records missing-table and foreign-key errors.
+- Save all affected table schemas before target SQL. On an error, keep the
+  DDL pending. Do not infer rollback from the target error.
+
+The first conversion runs found an existing default-discovery defect. The
+false outer join in `readStoredDefaultBytes` returned NULL for a NOT NULL
+column, even when the stored default was non-NULL. Native 5.7 and 8.4 probes
+confirmed this. See 5.7 `sql/field.h:Field::is_null`: a nonnullable field uses
+`TABLE::has_null_row()` for this check.
+
+For a NOT NULL default, clone only the field into a private temporary table,
+with `CREATE TEMPORARY TABLE ... AS SELECT column ... LIMIT 0`. Insert DEFAULT
+there and read the exact bytes. The existing ENUM/SET metadata path uses the
+same native field-copy method. Do not copy or write application rows.
+The selected tests also check empty tables with NOT NULL text and binary
+columns. Original failed runs and their support bundles remain under
+`artifacts/lab/20261014T231950Z-f08c5802` and
+`artifacts/lab/20261014T231953Z-fd59d9da`.
+
+Increment 27 selected validation: 413 apply/lab unit checks passed. The table
+options and conversion cases passed on the two cross-version profiles:
+`20261014T232832Z-06f39b32` (8.4 to 5.7 MyISAM) and
+`20261014T232832Z-31fa9c3c` (5.7 to 8.4 InnoDB). The next increment will also
+run these cases on the two same-version profiles. No full suite was run.
+
+
+## Increment 28: multi-table DROP and cross-schema RENAME
+
+Branch: `beta/6/28-multi-table-ddl`.
+
+Parse up to 64 DROP names and preserve their SQL order. Save all existing
+affected table schemas and affected FK peers in one DDL record before execution.
+Send the original statement once. Retire schemas only with the completed GTID.
+An execution or checkpoint error leaves the complete record pending.
+
+Allow single and ordered multi-table RENAME across schemas. Retain table
+encoding, update FK components, and use the existing atomic namespace update
+in SQLite. Keep the filter boundary policy. Native 5.7 `sql/sql_rename.cc`
+passes both database names to `mysql_rename_table`; views and triggers have
+additional native limits. This increment does not expand view or trigger policy.
+
+Selected cases: `ddl-compat-multi-table` and
+`ddl-compat-cross-schema-relationships`. The latter uses FK cascades only on
+InnoDB targets. Unit checks cover filtering, mode-1 names, ordered parsing,
+complete pending records, checkpoint failure, schema retirement and reopen.
+
+MySQL writes a generated DROP statement into the binlog. The test checks that
+the applier retains that recorded statement, not the original client spelling.
+A source 5.7 DROP can also log a partial result with a nonzero query error code.
+The current source-error guard still rejects that event. Reproducing failed
+source DDL across version/engine boundaries remains a separate support gap.
+
+Selected integration checks passed on all four profiles. The table-option and
+conversion cases also passed on the two same-version profiles. Evidence:
+
+| Profile | Options and conversions | Multi-table DDL and relationships |
+| --- | --- | --- |
+| 8.4 to 5.7 MyISAM | `20261014T232832Z-06f39b32` | `20261015T010659Z-3e418c78` |
+| 5.7 to 8.4 InnoDB | `20261014T232832Z-31fa9c3c` | `20261015T010700Z-9b4285ea` |
+| 5.7 to 5.7 MyISAM | `20261015T011451Z-c5ee93bb` | Same run |
+| 5.7 to 5.7 InnoDB | `20261015T011501Z-175e62ee` | Same run |
+
+All run-level results, including cleanup, report `passed`. These are selected
+cases, not a full release qualification. The unit run passed 416 checks.
+
+Final cleanup removed an unused stored table-option value and an unused
+string-array comparison helper. The SQL validation and execution paths are
+unchanged. The final source passed all 416 apply/lab unit checks and strict
+Periphery analysis against the updated Swift index. Periphery reported no
+unused code. The integration results above precede this unused-code cleanup;
+no broad integration sweep was repeated after it. Both branches remain local.

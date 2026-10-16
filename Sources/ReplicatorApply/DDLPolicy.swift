@@ -105,12 +105,14 @@ enum PartitionChange: Equatable {
 }
 
 enum AlterAction: Equatable {
+    case tableOption(DDLTableOption)
     case addForeignKey(ApplyForeignKey,String?)
     case dropForeignKey(String)
     case add(ApplyColumn,ColumnPlacement)
     case modify(String,ApplyColumn,ColumnPlacement?)
     case drop(String)
     case indexes(IndexChange)
+    case defaultExpression(String,String)
     case defaultValue(String,String?,numeric:Bool = false,bytes:Data? = nil,literalBytes:Data? = nil)
     case primaryKey([String]?)
     case partition(PartitionChange)
