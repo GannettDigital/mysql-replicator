@@ -35,6 +35,20 @@ extension SharedCorrectness.Run {
         _ = try f.docker(["cp",f.helper+":/evidence/state",directory.path])
         return directory.appendingPathComponent("state.sqlite")
     }
+    /// SQL literals for this case's DDL GTIDs. Let MySQL interpret GTID sets,
+    /// including intervals and tags, instead of duplicating that parser here.
+    func ddlGTIDs(_ saved: URL, from start: Boundary, to end: Boundary) throws -> String {
+        let candidates = try state(saved,"SELECT gtid FROM ddl_intents ORDER BY rowid").split(separator:"\n").map(String.init)
+        func quoted(_ value: String) -> String { "'"+value.replacingOccurrences(of:"'",with:"''")+"'" }
+        let delta = try f.sql(.source,"SELECT GTID_SUBTRACT(\(quoted(end.gtids)),\(quoted(start.gtids)))")
+        try require(!candidates.isEmpty,"case has no saved DDL GTIDs")
+        let checks = candidates.map { "GTID_SUBSET(\(quoted($0)),\(quoted(delta)))" }.joined(separator:",")
+        let flags = try f.sql(.source,"SELECT "+checks).split(separator:"\t")
+        try require(flags.count == candidates.count,"DDL GTID membership result differs")
+        let selected = zip(candidates,flags).filter { $0.1 == "1" }.map { quoted($0.0) }
+        try require(!selected.isEmpty,"case has no DDL GTIDs in its source interval")
+        return selected.joined(separator:",")
+    }
     func state(_ file: URL, _ sql: String) throws -> String {
         try f.runner.run(["sqlite3",file.path,sql]).text
     }
