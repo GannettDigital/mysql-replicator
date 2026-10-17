@@ -1,6 +1,14 @@
 # Replication status and statistics
 
 Run `mysql-replicator ctl status --config apply.yaml` to read a running process.
+Control replies (`status`, `stop`, and `reload`) use indented JSON with sorted
+keys on stdout. Diagnostics use stderr. You can pipe the reply to `jq`:
+
+```sh
+mysql-replicator ctl status --config apply.yaml | jq '.progress'
+mysql-replicator ctl stop --config apply.yaml | jq '.'
+```
+
 The `progress` object includes the lifecycle, applied GTID set, applied file and
 position, pending GTID, and durable totals. Status reads a published snapshot.
 It does not query the target or wait for the current SQL statement.

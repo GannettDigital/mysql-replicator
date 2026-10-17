@@ -103,17 +103,26 @@ Each shard now selects 11 named cases from the full catalog. The two cross-versi
 full-CI coverage supplements use the same cases. The `ddl-dml-policy-replay` job
 area and step summary identify the selection. Its artifact IDs retain the
 `-smoke` suffix so the same-run coverage baseline remains identifiable.
-The current full plan has 108 shards and 203 expanded shards. Both full plans own
-718 catalog obligations. There are 23 full-plan coverage collections and 118
-expanded collections. Normal full CI instruments 9 of 108 jobs. Expanded CI
-instruments 104 of 203 jobs. The other 99 jobs check the release binary.
-The generated matrix is the authority if the catalog grows.
+The earlier suite had 108 normal full shards and 203 expanded shards for 718
+catalog obligations. These are historical counts. The beta.6 catalog now has
+2,085 obligations. After the DML split below, normal full CI has 226 jobs.
+The generated matrix is the authority when the catalog changes.
+
+Expanded coverage currently exceeds GitHub's 256-job matrix limit. This was also
+true before the DML split. It needs separate matrix groups before it can run with
+the current catalog. Normal full CI remains within the limit.
 
 DDL and bootstrap now use two groups per profile and variant. The group
 boundaries use the [PR #41 timings](../PLAN/PR41_TEST_SUITE_RESULTS.md).
 This removes repeated fixture setup without removing cases. Expect fewer
 coverage collections because fewer fixtures run. Check line sets and catalog
 results separately; the collection count is not a coverage percentage.
+
+DML uses groups of at most eight cases. In the beta.6 stack, a single DML job
+contained 44–48 cases and reached the 45-minute timeout while cases were still
+passing. The split retains the same case inventory and dependencies. Check the
+next CI timings before changing the timeout or selecting fewer cases. See the
+[beta.6 failure report](../PLAN/BETA6_CI_FAILURES.md).
 
 Native-reference and specialized recovery adapters do not export line coverage.
 Their existing tests remain required. Demo collections remain instrumented.

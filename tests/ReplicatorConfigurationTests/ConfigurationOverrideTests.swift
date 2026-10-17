@@ -5,6 +5,19 @@ import XCTest
 @testable import ReplicatorApply
 
 final class ConfigurationOverrideTests: XCTestCase {
+    func testHelpDistinguishesSectionsFromValues() {
+        let help = ConfigurationOptions.help
+        for section in ["source", "target", "source.start", "batch", "supportBundle"] {
+            XCTAssertTrue(help.contains(section + ": (section)"))
+            XCTAssertFalse(help.contains("--" + section + " VALUE"))
+        }
+        for option in ["source.host", "source.start.executedGTIDs", "stateDirectory", "compatibility.collations"] {
+            XCTAssertTrue(help.contains("--" + option + " VALUE"))
+        }
+        XCTAssertTrue(help.contains("--SECTION YAML_MAP"))
+        XCTAssertTrue(help.contains("--config.version VALUE"))
+    }
+
     func testTypedOverridesWinAndArraysReplace() throws {
         let options = try ConfigurationOverrides(arguments: [
             "run", "--config", "x.yaml", "--source.port=3307", "--target.preserveSourceGTIDs", "false",

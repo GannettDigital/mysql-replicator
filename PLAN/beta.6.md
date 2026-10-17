@@ -1,6 +1,9 @@
 # Beta.6 support work
 
-Status: work started. This is not a release qualification claim.
+Status: the implementation history is grouped into ten review branches and one
+release branch. See [the current release stack](BETA6_RELEASE_STACK.md).
+The entries below are historical; their publication status and branch counts
+do not describe the new stack. Full release checks remain pending.
 See the [current assessment](COMPLETE_MYSQL_SUPPORT.md#current-beta6-assessment)
 for specific limits and incomplete tests. The entries below retain branch history.
 

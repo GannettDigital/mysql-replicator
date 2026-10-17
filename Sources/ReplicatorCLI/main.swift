@@ -64,8 +64,11 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         let config = try overrides.load(Config.self, from: URL(fileURLWithPath: path))
         let response = try ControlClient.request(
             .init(command: action, timeoutSeconds: timeout), stateDirectory: config.stateDirectory)
-        try FileHandle.standardOutput.write(contentsOf: response)
-        if (try JSONSerialization.jsonObject(with: response) as? [String: Any])?["ok"] as? Bool != true {
+        let object = try JSONSerialization.jsonObject(with: response)
+        let output = try JSONSerialization.data(
+            withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try FileHandle.standardOutput.write(contentsOf: output + Data([10]))
+        if (object as? [String: Any])?["ok"] as? Bool != true {
             throw ApplyError("control request was not acknowledged successfully; see response")
         }
         return
