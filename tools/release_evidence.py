@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-REQUIRED_JOBS = {'lab-tools', 'unit-tests', 'packaging-and-smoke', 'combined-coverage', 'periphery', 'measurements'}
+REQUIRED_JOBS = {'lab-tools', 'unit-tests', 'packaging-and-smoke', 'combined-coverage', 'periphery', 'swift-lint', 'measurements'}
 
 
 def require(condition, reason):

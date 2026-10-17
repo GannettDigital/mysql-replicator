@@ -12,6 +12,23 @@ from ci_reruns import api_pages, build_identity, job_history, validate_results, 
 from ci_measurements import record_shard, summarize
 
 
+class WorkflowDependencyTests(unittest.TestCase):
+    def test_report_and_release_dependencies_match_the_workflow(self):
+        import re
+        from release_evidence import REQUIRED_JOBS
+
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
+        for job, expected in [('measurements', REQUIRED_DEPENDENCIES),
+                              ('release-evidence', REQUIRED_JOBS)]:
+            with self.subTest(job=job):
+                block = re.search(rf'^  {job}:\n(.*?)(?=^  [a-z][\w-]*:|\Z)',
+                                  workflow, re.MULTILINE | re.DOTALL)
+                self.assertIsNotNone(block, f'missing workflow job: {job}')
+                needs = re.search(r'^    needs: \[(.+)\]$', block.group(1), re.MULTILINE)
+                self.assertIsNotNone(needs, f'expected explicit needs list: {job}')
+                self.assertEqual({item.strip() for item in needs.group(1).split(',')}, expected)
+
+
 class RetryTests(unittest.TestCase):
     def test_transient_failure_discards_partial_pages_and_retries(self):
         results = [subprocess.CompletedProcess([], 1, '[{"partial":true}]', 'gh: Server Error (HTTP 502)'),
