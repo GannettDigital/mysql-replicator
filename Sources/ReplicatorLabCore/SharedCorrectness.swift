@@ -201,7 +201,6 @@ public enum SharedCorrectness {
                     .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY TABLE_NAME,BINARY INDEX_NAME,SEQ_IN_INDEX"),
                     .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
                 ])
-<<<<<<< HEAD
                 // InnoDB treats NO ACTION and RESTRICT as immediate checks.
                 // 5.7 reports an omitted action as RESTRICT; 8.4 uses NO ACTION.
                 // Normalize only the two action fields, never object names.
@@ -214,7 +213,6 @@ public enum SharedCorrectness {
                         return fields.joined(separator:"\t")
                     }.joined(separator:"\n")
                 }
-=======
                 // Read PARTITIONS directly. Joining the two information_schema
                 // views can duplicate rows on 8.4 with lower_case_table_names=1.
                 // Exclude views by exact table-name bytes; retain duplicate partition
@@ -226,7 +224,6 @@ public enum SharedCorrectness {
                 snapshot["partitions"]=snapshot["partitions"]!.components(separatedBy:"\n").filter { line in
                     baseTables.contains(Data(line.components(separatedBy:"\t")[0].utf8))
                 }.joined(separator:"\n")
->>>>>>> beta/6-stack/05-stored-object-lifecycle
                 let actualTables=snapshot["tables"]!
                 rawTables[service]=actualTables
                 try actualTables.write(to:f.output.appendingPathComponent("tables-"+service+".tsv"),atomically:true,encoding:.utf8)
