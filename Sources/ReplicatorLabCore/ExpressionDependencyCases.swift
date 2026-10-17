@@ -75,6 +75,7 @@ extension SharedCorrectness.Run {
             }
             _ = try invoke("expression-fetch","fetch")
             _ = try f.sql(.target,base+enhanced)
+            try isolated.resetTargetGTIDs(at:start)
             f.config["stateDirectory"]="/evidence/expression-replay"
             source["host"]="127.0.0.1";source["port"]=1;source.removeValue(forKey:"passwordEnvironment");source.removeValue(forKey:"password")
             source["stopAfterTransactions"]=2;f.config["source"]=source

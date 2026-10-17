@@ -6,6 +6,13 @@ final class LabIsolatedApply {
     let f: LabFixture
     let base: [String:Any]
     init(_ fixture: LabFixture) { f=fixture; base=fixture.config }
+    /// Use only after restoring target data for a fresh experiment. Never use
+    /// this on a saved-state resume or on the source/native reference servers.
+    func resetTargetGTIDs(at boundary: Boundary) throws {
+        let target=base["target"] as! [String:Any]
+        guard target["preserveSourceGTIDs"] as? Bool ?? true else { return }
+        _ = try f.sql(.target,f.profile.targetVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(boundary.gtids)'")
+    }
     func configuration(_ label: String, at boundary: Boundary, count: Int) -> [String:Any] {
         var config=base, source=config["source"] as! [String:Any]
         source["start"]=f.variant.start(boundary); source["stopAfterTransactions"]=count

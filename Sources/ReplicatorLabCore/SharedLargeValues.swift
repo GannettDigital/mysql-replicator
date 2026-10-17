@@ -66,6 +66,7 @@ extension SharedCorrectness.Run {
             }
             _ = try invoke("large-fetch","fetch")
             _ = try f.sql(.target,"SET sql_log_bin=0; DROP DATABASE large_poc")
+            try isolated.resetTargetGTIDs(at:start)
             f.config["stateDirectory"]="/evidence/large-replay"
             sourceConfig["host"]="127.0.0.1"; sourceConfig["port"]=1
             sourceConfig.removeValue(forKey:"passwordEnvironment"); sourceConfig.removeValue(forKey:"password")
