@@ -529,7 +529,8 @@ public enum SharedCorrectness {
                         try replayDDLWorkflow("foreign-key-parent-keys",stopAfter:6,from:begin,to:end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-missing-parent" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL") == "1","missing-parent relationship was not journaled")
+                        let ids=try ddlGTIDs(saved,from:begin,to:end)
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE ddl_details.gtid IN (\(ids)) AND json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL") == "1","missing-parent relationship was not journaled")
                         try replayDDLWorkflow("foreign-key-missing-parent",stopAfter:2,from:begin,to:end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-controls" {
@@ -659,10 +660,18 @@ public enum SharedCorrectness {
                         let quoted=test.sql.replacingOccurrences(of:"'",with:"''")
                         let intent=try state(saved,"SELECT status||'|'||target_sql FROM ddl_intents ORDER BY rowid DESC LIMIT 1")
                         try require(intent == "DONE|"+test.sql,"DDL rewritten or incomplete")
-                        let references=try state(saved,"SELECT COUNT(*) FROM row_intents r JOIN schemas s ON s.id=r.schema_id WHERE s.current=1 AND r.status='DONE' AND r.schema_id=(SELECT after_schema_id FROM ddl_intents WHERE target_sql='\(quoted)' ORDER BY rowid DESC LIMIT 1)")
+                        // RENAME records several transitions and has no single after_schema_id.
+                        // Check the published table against its journaled after-image.
+                        let table=test.table.replacingOccurrences(of:"'",with:"''")
+                        let published="SELECT id FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='demo' AND json_extract(schema_json,'$.table')='\(table)'"
+                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE id IN (\(published))") == "1","published index-test schema is missing or ambiguous")
+                        let references=try state(saved,"SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND schema_id IN (\(published))")
                         try require(references == String(test.workload.reduce(0,{$0+$1.affectedRows})),"following rows did not use published schema")
-                        let history=try state(saved,"SELECT schema_json FROM schemas WHERE id=(SELECT after_schema_id FROM ddl_intents ORDER BY rowid DESC LIMIT 1)")
+                        let history=try state(saved,"SELECT json_extract(value,'$.after') FROM ddl_details,json_each(transitions_json) WHERE gtid=(SELECT gtid FROM ddl_intents WHERE target_sql='\(quoted)' ORDER BY rowid DESC LIMIT 1) AND json_extract(value,'$.after.database')='demo' AND json_extract(value,'$.after.table')='\(table)'")
                         let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
+                        let current=try state(saved,"SELECT schema_json FROM schemas WHERE id IN (\(published))")
+                        let currentSchema=try JSONSerialization.jsonObject(with:Data(current.utf8)) as? [String:Any]
+                        try require(NSDictionary(dictionary:schema ?? [:]).isEqual(to:currentSchema ?? [:]),"published schema differs from the DDL transition")
                         try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
                         try require(state(saved,"PRAGMA user_version") == "10","state version gate differs")
                         return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
