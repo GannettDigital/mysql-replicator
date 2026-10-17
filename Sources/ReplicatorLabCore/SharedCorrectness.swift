@@ -196,8 +196,19 @@ public enum SharedCorrectness {
                     .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IF(COLUMN_TYPE LIKE 'binary(%' OR COLUMN_TYPE LIKE 'varbinary(%' OR COLUMN_TYPE LIKE 'char(%' OR COLUMN_TYPE LIKE 'varchar(%',IF(COLUMN_DEFAULT IS NULL,'<NULL>','<stored-default>'),IFNULL(COLUMN_DEFAULT,'<NULL>')),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY BINARY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
                     .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
                     .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY TABLE_NAME,BINARY INDEX_NAME,SEQ_IN_INDEX"),
-                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
+                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
                 ])
+                // Read PARTITIONS directly. Joining the two information_schema
+                // views can duplicate rows on 8.4 with lower_case_table_names=1.
+                // Exclude views by exact table-name bytes; retain duplicate partition
+                // rows so the comparison still detects unexpected metadata.
+                let baseTables=Set(snapshot["tables"]!.components(separatedBy:"\n").compactMap { line -> Data? in
+                    let fields=line.components(separatedBy:"\t")
+                    return fields.count >= 2 && fields[1] == "BASE TABLE" ? Data(fields[0].utf8) : nil
+                })
+                snapshot["partitions"]=snapshot["partitions"]!.components(separatedBy:"\n").filter { line in
+                    baseTables.contains(Data(line.components(separatedBy:"\t")[0].utf8))
+                }.joined(separator:"\n")
                 let actualTables=snapshot["tables"]!
                 rawTables[service]=actualTables
                 try actualTables.write(to:f.output.appendingPathComponent("tables-"+service+".tsv"),atomically:true,encoding:.utf8)
@@ -362,6 +373,13 @@ public enum SharedCorrectness {
                 nativeInnoDB=test.nativeInnoDB
                 try setNativeEngine(nativeInnoDB ? "InnoDB" : "MyISAM")
                 try reporter.run(test.test) {
+                    if f.profile.hasOptionalMetadata {
+                        // These DDL workloads write ENUM/SET values. Their label
+                        // validation requires FULL metadata even with position capture.
+                        let fullMetadataCases: Set<String> = ["ddl-compat-types", "ddl-compat-query-encodings", "ddl-compat-charset-conversion"]
+                        let metadata=fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
+                        _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+metadata)
+                    }
                     try step("DROP DATABASE IF EXISTS ddlcompat",database:"ddlcompat")
                     try step("CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"ddlcompat")
                     if test.test.id == "ddl-compat-temporary" {
