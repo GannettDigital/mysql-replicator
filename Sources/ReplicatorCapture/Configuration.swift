@@ -21,6 +21,9 @@ public struct CaptureConfiguration: Decodable {
     public let requireTLS: Bool
     public let serverHostname: String?
     public let caFile: String?
+    /// Must match both servers. Mode 2 needs a case-insensitive filesystem.
+    public var lowerCaseTableNames: Int? = nil
+    public var tableNameCaseSetting: Int { lowerCaseTableNames ?? 0 }
     public let serverID: UInt32
     public let sourceUUID: String
     public let mode: String
@@ -49,7 +52,7 @@ public struct CaptureConfiguration: Decodable {
     public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil) -> CaptureConfiguration {
         CaptureConfiguration(version:version,host:host,port:port,username:username,
             passwordEnvironment:passwordEnvironment,password:password,requireTLS:requireTLS,serverHostname:serverHostname,caFile:caFile,
-            serverID:serverID,sourceUUID:sourceUUID,mode:mode,
+            lowerCaseTableNames:lowerCaseTableNames,serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
             stopAfterGTIDs:stopAfterGTIDs,
@@ -57,6 +60,7 @@ public struct CaptureConfiguration: Decodable {
     }
 
     public func validate(connection: Bool = true) throws -> DumpStart {
+        guard [0,1].contains(tableNameCaseSetting) else { throw CaptureError("source.lowerCaseTableNames must be 0 or 1; mode 2 is not qualified") }
         _ = try StopConditions(transactions:stopAfterTransactions,gtids:stopAfterGTIDs)
         if connection { try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source") }
         if requireTLS {
@@ -91,7 +95,7 @@ public struct CaptureConfiguration: Decodable {
 extension CaptureConfiguration {
     enum CodingKeys: String, CodingKey {
         case version, host, port, username, passwordEnvironment, password, requireTLS, serverHostname, caFile
-        case serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions, stopAfterGTIDs
+        case lowerCaseTableNames, serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions, stopAfterGTIDs
         case idleTimeoutSeconds, maximumEventBytes, maximumTransactionBytes, decoderProfiling, downloadCacheBytes
     }
 
@@ -106,6 +110,7 @@ extension CaptureConfiguration {
         requireTLS = try c.decodeIfPresent(Bool.self, forKey: .requireTLS) ?? true
         serverHostname = try c.decodeIfPresent(String.self, forKey: .serverHostname)
         caFile = try c.decodeIfPresent(String.self, forKey: .caFile)
+        lowerCaseTableNames = try c.decodeIfPresent(Int.self,forKey:.lowerCaseTableNames)
         serverID = try c.decode(UInt32.self, forKey: .serverID)
         sourceUUID = try c.decode(String.self, forKey: .sourceUUID)
         mode = try c.decode(String.self, forKey: .mode)

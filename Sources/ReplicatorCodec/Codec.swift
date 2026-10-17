@@ -96,6 +96,18 @@ public struct WireColumn: Codable, Equatable {
     public var isUnsigned: Bool? = nil
     public var labels: [Data]? = nil
     public var geometryType: UInt32? = nil
+    public static func == (a:Self,b:Self) -> Bool {
+        let sameName:Bool
+        switch (a.name,b.name) {
+        case (nil,nil): sameName=true
+        case (.some(let a),.some(let b)): sameName=a.utf8.elementsEqual(b.utf8)
+        default: sameName=false
+        }
+        return sameName && a.interpretation == b.interpretation && a.type == b.type
+            && a.maximumBytes == b.maximumBytes && a.nullable == b.nullable && a.collation == b.collation
+            && a.primaryKey == b.primaryKey && a.metadata == b.metadata && a.isUnsigned == b.isUnsigned
+            && a.labels == b.labels && a.geometryType == b.geometryType
+    }
 }
 public struct DecodedEvent: Equatable, Encodable {
     public let schemaVersion = 4
@@ -234,7 +246,7 @@ public final class BinlogDecoder {
                 HexEncoding.lowercase(UnsafeBufferPointer(start:info.fingerprint.data,count:Int(info.fingerprint.length)))
             }
             if let schema {
-                guard schema.eventSHA256 == digest, schema.tableID == String(info.table_id), schema.database == database, schema.table == table else {
+                guard let database,let table,schema.eventSHA256 == digest, schema.tableID == String(info.table_id), schema.database.utf8.elementsEqual(database.utf8), schema.table.utf8.elementsEqual(table.utf8) else {
                     throw DecoderError(code: 7, offset: offset, eventType: type, reason: "schema history fingerprint or table identity differs")
                 }
             }

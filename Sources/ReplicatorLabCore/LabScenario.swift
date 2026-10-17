@@ -13,6 +13,8 @@ struct LabScenario {
     var smoke = false
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
+        if id == "ddl-compat-table-name-case" && variant != .lowercaseTables { return "Requires --variant lowercase-tables (lower_case_table_names=1)." }
+        if id == "ddl-compat-unicode-names" && variant == .lowercaseTables { return "This case checks distinct case-sensitive table names; use mode 0." }
         if let reason=variant.reason(profile) { return reason }
         if let reason=profileExclusions[profile] { return reason }
         if ["offline-replay","offline-skip-errors","runtime-control","large-values"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }

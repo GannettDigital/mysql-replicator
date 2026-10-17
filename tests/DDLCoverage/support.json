@@ -25,7 +25,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "CHAR/VARCHAR/TEXT use the native 5.7 charset and collation inventory. Non-UTF8 text retains raw bytes, with encoding-aware CHAR padding. ENUM/SET stores exact encoded labels. Non-UTF8 query text and remaining boundary qualification are open.",
+      "current_behavior": "CHAR/VARCHAR/TEXT use the native 5.7 charset and collation inventory. Non-UTF8 text and ENUM/SET retain exact bytes. Query parsing uses logged client/connection encodings and sends original SQL bytes. Selected latin1 and Shift-JIS DDL tests pass; full charset, literal and boundary qualification remains open.",
       "acceptance": "Preserve native bytes and metadata for each 5.7 charset; separate aliases by server version.",
       "assertions": [
         "source_outcome",
@@ -41,12 +41,14 @@
         "matrix-collations",
         "bootstrap-matrix-collations",
         "matrix-nativeencodings",
-        "bootstrap-matrix-nativeencodings"
+        "bootstrap-matrix-nativeencodings",
+        "ddl-compat-query-encodings"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DMLColumnType.swift",
         "Sources/ReplicatorApply/CompatibilityPolicy.swift",
-        "Sources/ReplicatorApply/CharacterSetRegistry.swift"
+        "Sources/ReplicatorApply/CharacterSetRegistry.swift",
+        "Sources/ReplicatorApply/DDLClientEncoding.swift"
       ],
       "native_references": []
     },
@@ -402,7 +404,7 @@
       "family": "values",
       "classification": "tool_gap",
       "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -410,7 +412,8 @@
         "mysql57-to-mysql57-innodb"
       ],
       "variants": [
-        "default"
+        "default",
+        "lowercase-tables"
       ],
       "conditions": [
         "GTID restrictions apply with GTID and file-position capture.",
@@ -418,7 +421,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Identifiers and metadata use a restricted representation.",
+      "current_behavior": "Query events support native system-charset names, exact cache keys and scalar name lengths. Native supplementary names resolve to the stored question mark. Table-name modes 0 and 1 require matching source/target settings and are pinned in state. Mode 2 and cross-setting replication remain unqualified.",
       "acceptance": "Quote native-valid identifiers without renaming; verify case rules and multibyte limits.",
       "assertions": [
         "source_outcome",
@@ -427,9 +430,21 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "matrix-identifiercase",
+        "bootstrap-matrix-identifiercase",
+        "matrix-unicodeidentifiers",
+        "bootstrap-matrix-unicodeidentifiers",
+        "ddl-compat-unicode-names",
+        "ddl-compat-query-encodings",
+        "ddl-compat-table-name-case"
+      ],
       "code_references": [
-        "Sources/ReplicatorApply/DDLTokens.swift"
+        "Sources/ReplicatorApply/SQLNameKey.swift",
+        "Sources/ReplicatorApply/SQLIdentifier.swift",
+        "Sources/ReplicatorApply/DDLTokens.swift",
+        "Sources/ReplicatorLabCore/UnicodeIdentifierCases.swift",
+        "Sources/ReplicatorLabCore/TableNameCaseCases.swift"
       ],
       "native_references": []
     },

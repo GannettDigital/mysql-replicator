@@ -7,12 +7,18 @@ extension CaptureTests {
     private var cachedColumns: [ColumnInterpretation] { [.signed,.utf8,.unsigned] }
 
     // Replay real, checksummed row events at a new physical position/GTID.
-    private func feedCachedGroup(_ p: StreamProcessor, sequence: UInt64) throws {
+    private func feedCachedGroup(_ p: StreamProcessor, sequence: UInt64,tableName:String? = nil) throws {
         for (_, original) in try recorded() where original[4] != 4 {
             // Only the first complete INSERT transaction is needed here.
             let oldNext=readNext(original)
             guard oldNext > 1589 && oldNext <= 1885 else { continue }
             var event=original
+            if event[4] == 19,let tableName {
+                XCTAssertEqual(String(decoding:event[33..<38],as:UTF8.self),"items")
+                event.replaceSubrange(33..<38,with:Data(tableName.utf8))
+                event[32]=UInt8(tableName.utf8.count)
+                event.replaceSubrange(9..<13,with:le(UInt32(event.count)))
+            }
             if event[4] == 33 { event.replaceSubrange(36..<44,with:le(sequence)) }
             event.replaceSubrange(13..<17,with:le(UInt32(p.cursor!.position)+UInt32(event.count)))
             try p.consume(seal(event))
@@ -20,6 +26,22 @@ extension CaptureTests {
     }
     private func readNext(_ event: Data) -> UInt32 {
         (0..<4).reduce(0) { $0 | UInt32(event[13+$1]) << (8*$1) }
+    }
+
+    func testHistoricalSchemaCacheDoesNotMergeUnicodeNames() throws {
+        var names:[Data]=[]
+        let timings=StageTimings()
+        let p=try StreamProcessor(config:config(version:2),includeRaw:false,emitEvent:{ _ in },emitTransaction:{ _ in },resolveSchema:{ event,_ in
+            names.append(Data(event.table!.utf8)); return self.cachedColumns
+        },timings:timings)
+        try begin(p)
+        try feedCachedGroup(p,sequence:11,tableName:"é")
+        try feedCachedGroup(p,sequence:12,tableName:"e\u{0301}")
+        try feedCachedGroup(p,sequence:13,tableName:"é")
+        try p.finish()
+        XCTAssertEqual(names,[Data("é".utf8),Data("e\u{0301}".utf8)])
+        XCTAssertEqual(p.transactionCount,3)
+        XCTAssertEqual(timings.snapshot["capture.schema_cache.hit"]?.count,1)
     }
 
     func testHistoricalSchemaCacheReusesChangingTableIDsButRechecksWireShape() throws {

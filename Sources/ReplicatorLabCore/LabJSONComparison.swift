@@ -42,7 +42,7 @@ enum LabJSONComparison {
 }
 
 extension LabFixture {
-    func comparisonRows(_ role:LabProfile.Role,table:String,columns:[String],jsonColumns:Set<String>,orderBy:String) throws -> String {
+    func comparisonRows(_ role:LabProfile.Role,table:String,columns:[String],jsonColumns:[String],orderBy:String) throws -> String {
         let expressions=columns.map { "IFNULL(HEX(CAST(`"+$0.replacingOccurrences(of:"`",with:"``")+"` AS BINARY)),'<NULL>')" }.joined(separator:",")
         let from=" FROM "+table+" ORDER BY "+orderBy
         let raw=try sql(role,"SET NAMES utf8mb4; SET time_zone='+00:00'; SELECT "+expressions+from,preserveWhitespace:true)
@@ -50,7 +50,7 @@ extension LabFixture {
         return try raw.components(separatedBy:"\n").enumerated().map { row,line in
             var values=line.components(separatedBy:"\t")
             try require(values.count == columns.count,"JSON comparison row width differs")
-            for (index,column) in columns.enumerated() where jsonColumns.contains(column) && values[index] != "<NULL>" {
+            for (index,column) in columns.enumerated() where jsonColumns.contains(where: { LabSQLName.equal($0,column) }) && values[index] != "<NULL>" {
                 let paths=try LabJSONComparison.paths(LabJSONComparison.decode(values[index]))
                 var nodes:[[String]]=[]
                 for start in stride(from:0,to:paths.count,by:32) {

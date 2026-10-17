@@ -69,7 +69,7 @@ private struct Test: LabRequestCommand {
     @Option(help: "full or smoke. Prefer --case to select named cases. Default: full.") var tier: String?
     @Option(help: "Select one test family. Use --list to inspect the inventory.") var family: String?
     @Option(name: .customLong("case"), help: "Select a case ID. Repeat this option to select more cases.") var cases: [String] = []
-    @Option(help: "default, position-minimal, gtid-full, or all. Default: default.") var variant: String?
+    @Option(help: "default, position-minimal, gtid-full, lowercase-tables, or all. Default: default.") var variant: String?
     @Flag(name: .customLong("list"), help: "Print the JSON inventory without running tests.") var list = false
     @Flag(name: .customLong("skip-build"), help: "Reuse the existing lab image.") var skipBuild = false
     @Flag(name: .customLong("coverage"), help: "Collect runtime code coverage.") var coverage = false

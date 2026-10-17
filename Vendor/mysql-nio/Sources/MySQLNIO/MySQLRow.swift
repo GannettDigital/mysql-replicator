@@ -6,16 +6,17 @@ public struct MySQLRow: CustomStringConvertible, Sendable {
     public let values: [ByteBuffer?]
     
     public var description: String {
-        var desc = [String: MySQLData]()
+        var desc: [String] = []
         for (column, value) in zip(self.columnDefinitions, self.values) {
-            desc[column.name] = .init(
+            let data = MySQLData(
                 type: column.columnType,
                 format: self.format,
                 buffer: value,
                 isUnsigned: column.flags.contains(.COLUMN_UNSIGNED)
             )
+            desc.append(column.name.debugDescription+": "+data.description)
         }
-        return desc.description
+        return "["+desc.joined(separator:", ")+"]"
     }
     
     public init(
@@ -30,7 +31,7 @@ public struct MySQLRow: CustomStringConvertible, Sendable {
     
     public func column(_ name: String, table: String? = nil) -> MySQLData? {
         for (column, value) in zip(self.columnDefinitions, self.values) {
-            if column.name == name && (table == nil || column.table == table) {
+            if column.name.utf8.elementsEqual(name.utf8) && (table.map { column.table.utf8.elementsEqual($0.utf8) } ?? true) {
                 return .init(
                     type: column.columnType,
                     format: self.format,

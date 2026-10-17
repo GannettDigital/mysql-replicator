@@ -44,21 +44,23 @@ final class TargetSession {
     }
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
-    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false) throws -> ([MySQLRow],UInt64?) {
+    func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false, rawSQL: Data? = nil) throws -> ([MySQLRow],UInt64?) {
+        try require(rawSQL == nil || (textProtocol && binds.isEmpty),"raw SQL requires the text protocol without bindings")
         try checkConnection()
-        let requestBytes = max(sql.utf8.count+1, textProtocol ? 0 : MySQLProtocol.COM_STMT_EXECUTE.payloadSize(values:binds))
+        let requestBytes = max((rawSQL?.count ?? sql.utf8.count)+1, textProtocol ? 0 : MySQLProtocol.COM_STMT_EXECUTE.payloadSize(values:binds))
         if requestBytes > packetByteLimit {
-            if mutation { statementTrace = TargetStatementTrace(phase:.notIssued,sql:sql) }
+            if mutation { statementTrace = TargetStatementTrace(phase:.notIssued,sql:sql,sqlBase64:rawSQL?.base64EncodedString()) }
             throw ApplyError("target request is \(requestBytes) bytes; max_allowed_packet permits \(packetByteLimit) bytes; increase the target setting and reconnect")
         }
         let timer = connection.eventLoop.scheduleTask(in:.seconds(Int64(timeoutSeconds))) { _ = self.connection.close() }
         defer { timer.cancel() }
         var affected: UInt64?
-        if mutation { statementTrace = TargetStatementTrace(phase:.possiblyExecuted,sql:sql) }
+        if mutation { statementTrace = TargetStatementTrace(phase:.possiblyExecuted,sql:sql,sqlBase64:rawSQL?.base64EncodedString()) }
         do {
             let rows = try timings.measure("target.sql") {
                 try profile(textProtocol ? "sql.text" : "sql.prepared") {
-                    try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
+                    if let rawSQL { return try connection.simpleQueryBytes(Array(rawSQL)).wait() }
+                    return try textProtocol ? connection.simpleQuery(sql).wait() : connection.cachedQuery(sql,binds,onMetadata:{ affected = $0.affectedRows }).wait()
                 }
             }
             if mutation { statementTrace.phase = .acknowledged }
@@ -85,6 +87,8 @@ final class TargetSession {
 
     private(set) var targetUUID: String?
     func preflight() throws {
+        try require(try query("SELECT @@lower_case_table_names AS n").0.first?.column("n")?.string == String(config.source.tableNameCaseSetting),
+                    "target lower_case_table_names differs from source.lowerCaseTableNames=\(config.source.tableNameCaseSetting)")
         let r = try query("SELECT VERSION() AS version,@@server_uuid AS uuid,@@GLOBAL.gtid_mode AS mode,@@GLOBAL.enforce_gtid_consistency AS consistency,@@GLOBAL.log_bin AS log_bin,@@SESSION.sql_log_bin AS session_binlog,@@SESSION.binlog_format AS format,@@SESSION.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum").0.first
         try require(r?.column("version")?.string?.hasPrefix(contract.versionPrefix) == true,"wrong target version for replication profile")
         guard let uuid=r?.column("uuid")?.string?.lowercased(),UUID(uuidString:uuid) != nil else {throw ApplyError("invalid discovered target UUID")}
@@ -117,15 +121,15 @@ final class TargetSession {
         _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
     }
     private(set) var insertByteLimit = 1024*1024
-    var discovered: [String:ApplyTable] = [:]
+    var discovered: [SQLNameKey:ApplyTable] = [:]
     // Dedicated replica: target-local schema/grant/channel changes during a run
     // are outside the contract. Keep validated plans across bounded lock epochs.
     // A new connection starts empty; ordered DDL clears these before and after.
-    private var validatedPlans: [String:DMLSQLPlan] = [:]
+    private var validatedPlans: [SQLNameKey:DMLSQLPlan] = [:]
     func discover(_ event: DecodedEvent) throws -> ApplyTable {
         try profile("target.discover") {
             guard let database = event.database, let name = event.table, event.wireColumns != nil else {throw ApplyError("missing table-map metadata")}
-            let identity = database + "\0" + name
+            let identity = SQLNameKey.table(database,name)
             let table: ApplyTable
             if let cached = discovered[identity] { table = cached }
             else {
@@ -201,7 +205,7 @@ final class TargetSession {
         return type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
     func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
-        let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
+        let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
         var indexes:[ApplyIndex]=[], primary=0
         for row in rows {
             guard let name=row.column("INDEX_NAME")?.string, let column=row.column("COLUMN_NAME")?.string,
@@ -215,10 +219,10 @@ final class TargetSession {
             }
             if name == "PRIMARY" {
                 primary += 1
-                try require(primary <= primaryKey.count && column == primaryKey[primary-1] && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
+                try require(primary <= primaryKey.count && SQLIdentifier.equal(column,primaryKey[primary-1]) && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
             } else {
                 let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction)
-                if let previous=indexes.last, previous.name == name {
+                if let previous=indexes.last, SQLTextBytes.equal(previous.name,name) {
                     try require(ordinal == previous.parts.count+1 && previous.unique == (unique == 0) && previous.type == type,"inconsistent index metadata")
                     indexes[indexes.count-1]=ApplyIndex(name:name,unique:previous.unique,parts:previous.parts+[part],type:type)
                 } else {
@@ -228,7 +232,7 @@ final class TargetSession {
             }
         }
         try require(primary == primaryKey.count,"missing primary-key index")
-        return indexes.sorted{$0.name.lowercased() < $1.name.lowercased()}
+        return indexes.sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)}
     }
     func verifySchema(_ t: ApplyTable) throws {
         validatedPlans.removeValue(forKey:t.identity)
@@ -275,7 +279,7 @@ final class TargetSession {
         // DDL clears plans for every table. An InnoDB group can revisit several
         // already-discovered tables; restore their plans before BEGIN, without
         // LOCK TABLES (which would implicitly commit the transaction).
-        var seen = Set<String>()
+        var seen = Set<SQLNameKey>()
         for mutation in group.mutations where seen.insert(mutation.table.identity).inserted {
             let table = mutation.table
             if validatedPlans[table.identity]?.table != table { try verifySchema(table) }

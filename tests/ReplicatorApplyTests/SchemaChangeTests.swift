@@ -115,7 +115,7 @@ final class SchemaChangeTests: XCTestCase {
         let groups=try f.helper.sqlite(db,"SELECT * FROM groups")
         let intents=try f.helper.sqlite(db,"SELECT * FROM row_intents")
         do {let state=try StateStore(configuration:c,initialize:false);XCTAssertEqual(state.transactions,1)}
-        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["9"]])
+        XCTAssertEqual(try f.helper.sqlite(db,"PRAGMA user_version"),[["10"]])
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM state"),before)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM schemas"),history)
         XCTAssertEqual(try f.helper.sqlite(db,"SELECT * FROM groups"),groups)

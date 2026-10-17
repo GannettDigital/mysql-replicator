@@ -78,10 +78,10 @@ extension SharedCorrectness.Run {
                         for role in LabProfile.Role.allCases {
                             try require(f.sql(role,f.profile.session(role)+"USE poc; "+phase.check) == "1","independent bootstrap expectation failed: "+role.rawValue)
                             let metadata=try f.sql(role,"SELECT COLUMN_NAME,DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_\(test.id)' ORDER BY ORDINAL_POSITION").components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
-                            observed[role.rawValue]=try f.comparisonRows(role,table:table,columns:metadata.map{$0[0]},jsonColumns:Set(metadata.filter{$0[1] == "json"}.map{$0[0]}),orderBy:test.orderBy)
+                            observed[role.rawValue]=try f.comparisonRows(role,table:table,columns:metadata.map{$0[0]},jsonColumns:metadata.filter{$0[1] == "json"}.map{$0[0]},orderBy:test.orderBy)
                         }
                         try writeJSON(["sql":sql,"check":phase.check,"observations":observed,"source_before":before.json,"source_after":end.json,"gtid_count":count],to:f.output.appendingPathComponent(label+"-comparison.json"))
-                        try require(Set(observed.values).count == 1,"bootstrap row values or JSON types differ")
+                        try require(Set(observed.values.map { Data($0.utf8) }).count == 1,"bootstrap row values or JSON types differ")
                     }
                 }
             }

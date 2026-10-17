@@ -19,7 +19,7 @@ extension DDLParser {
         try require(take("BEFORE") || take("AFTER"),"invalid trigger timing")
         try require(take("INSERT") || take("UPDATE") || take("DELETE"),"invalid trigger event")
         try expect("ON"); let table = try name()
-        try require(trigger.database == table.database,"trigger and table databases differ")
+        try require(SQLTextBytes.equal(trigger.database,table.database),"trigger and table databases differ")
         try expect("FOR"); try expect("EACH"); try expect("ROW")
         if take("FOLLOWS") || take("PRECEDES") { _ = try identifier() }
         try require(index < tokens.count && tokens[index].keyword != ";","missing trigger body")
@@ -51,7 +51,7 @@ extension DDLParser {
         try require(!replace || (verb == "CREATE" && kind == .view),"OR REPLACE is supported only for views")
         var conditional = false
         if verb == "DROP" && take("IF") { try expect("EXISTS"); conditional = true }
-        let name = try name()
+        let name = try name(foldTable:kind == .view)
         let operation: ObjectDDL.Operation = verb == "DROP" ? .drop : verb == "ALTER" ? .alter : replace ? .replace : .create
         if operation == .drop {
             if kind == .view { _ = take("RESTRICT") || take("CASCADE") }; try end()

@@ -36,7 +36,7 @@ struct DMLTablePlan {
             if type.isText && !(legacyMetadata && w.collation == 0) {
                 try require(compatibility.targetID(w.collation) == (type.isChoice && c.collation == "binary" ? 63 : CharacterSetRegistry.columnCollation(named:c.collation ?? "")?.id),"source collation ID \(w.collation) does not match target \(c.collation ?? "missing") under configured compatibility.collations")
             }
-            if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == table.primaryKeyColumns.contains(c.name),"source/target column name or primary key differs") }
+            if let sourceName = w.name { try require(SQLTextBytes.equal(sourceName,c.name) && w.primaryKey == SQLIdentifier.contains(table.primaryKeyColumns,c.name),"source/target column name or primary key differs") }
         }
     }
 }
@@ -44,12 +44,12 @@ struct DMLTablePlan {
 /// Owned solely by the preparation loop. The target worker has its own SQL
 /// plans; ordered DDL replaces this cache after the worker has drained.
 struct DMLPlanningCache {
-    private(set) var tables: [String:DMLTablePlan] = [:]
-    private var validatedWire: [String:[WireColumn]] = [:]
+    private(set) var tables: [SQLNameKey:DMLTablePlan] = [:]
+    private var validatedWire: [SQLNameKey:[WireColumn]] = [:]
 
     let compatibility: CompatibilityPolicy
     let legacyMetadata: Bool
-    init(_ schemas: [String:ApplyTable] = [:],compatibility: CompatibilityPolicy = .init(), legacyMetadata: Bool = false) throws {
+    init(_ schemas: [SQLNameKey:ApplyTable] = [:],compatibility: CompatibilityPolicy = .init(), legacyMetadata: Bool = false) throws {
         self.compatibility = compatibility
         self.legacyMetadata = legacyMetadata
         for table in schemas.values { try insert(table) }
@@ -61,7 +61,7 @@ struct DMLPlanningCache {
     }
     mutating func validate(_ event: DecodedEvent) throws -> ApplyTable {
         guard let database = event.database, let name = event.table, let wire = event.wireColumns,
-              let plan = tables[database + "\0" + name] else { throw ApplyError("missing table-map metadata or schema") }
+              let plan = tables[.table(database,name)] else { throw ApplyError("missing table-map metadata or schema") }
         let identity = plan.table.identity
         if validatedWire[identity] != wire {
             try plan.validate(wire:wire,legacyMetadata:legacyMetadata)

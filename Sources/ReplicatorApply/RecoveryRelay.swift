@@ -38,7 +38,7 @@ enum RecoveryRelay {
                 let probe = try BinlogDecoder(maximumEventBytes:BinlogLimits.maximumEventBytes)
                 _ = try probe.decode(format,at:4)
                 let identity = try probe.decode(raw,at:4+UInt64(format.count),filterTable:true)
-                let candidates = schemas[(identity.database ?? "")+"\0"+(identity.table ?? "")] ?? []
+                let candidates = schemas[.table(identity.database ?? "",identity.table ?? "")] ?? []
                 // Relationship/index changes do not change row decoding. Refuse
                 // ambiguous column history rather than use today's layout.
                 if let table = candidates.first, candidates.allSatisfy({$0.columns == table.columns && $0.primaryKeyColumns == table.primaryKeyColumns}) {
@@ -47,7 +47,7 @@ enum RecoveryRelay {
             }
             let event = try decoder.decode(raw,at:offset,schema:schema,filterTable:filtered)
             offset += UInt64(raw.count)
-            if let schema, let wire=event.wireColumns, let table=schemas[schema.database+"\0"+schema.table]?.first {
+            if let schema, let wire=event.wireColumns, let table=schemas[.table(schema.database,schema.table)]?.first {
                 try DMLTablePlan(table).validate(wire:wire,legacyMetadata:true)
             }
             guard let group else { return }
@@ -65,7 +65,7 @@ enum RecoveryRelay {
             let sourceOffset = String(event.nextPosition-event.eventSize)
             for intent in byEvent["\(group):\(sourceOffset)"] ?? [] {
                 let key = "\(group):\(intent.ordinal)"
-                try require(!found.contains(key) && intent.row < event.rows.count && event.database == intent.table.database && event.table == intent.table.table,"row evidence does not match intent")
+                try require(!found.contains(key) && intent.row < event.rows.count && SQLTextBytes.equal(event.database,intent.table.database) && SQLTextBytes.equal(event.table,intent.table.table),"row evidence does not match intent")
                 let row = event.rows[intent.row], plan = try DMLTablePlan(intent.table)
                 if let before=row.before { try plan.validate(before) }
                 if let after=row.after { try plan.validate(after) }
@@ -79,7 +79,7 @@ enum RecoveryRelay {
             try require(decodedRows[i] == groups[i].rows.count,"pending journal does not cover every source row")
             groups[i].rows.sort { $0.ordinal < $1.ordinal }
             groups[i].expectations = try Recovery.fold(groups[i].rows)
-            var relationships: [String:ApplyForeignKey] = [:]
+            var relationships: [SQLNameKey:ApplyForeignKey] = [:]
             for row in groups[i].rows { for key in row.schema.foreignKeys { relationships[key.identity] = key } }
             groups[i].foreignKeyRelationships = ForeignKeyGraph.sorted(Array(relationships.values))
         }

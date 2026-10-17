@@ -147,12 +147,13 @@ unreferenced tail archive; preserve it with the rest of the state directory.
 `transactionsApplied` counts processed groups, including explicitly skipped ones;
 skips add no applied rows. The audit distinguishes skipped groups from accepted
 commits. Audit history is not automatically pruned; include it in storage planning.
-Recovery currently accepts format-9 reverse-profile DML only. DDL reconciliation,
+Recovery currently accepts format-9 or format-10 InnoDB-profile DML only. DDL reconciliation,
 MyISAM recovery and automatic repair remain outside this command's scope.
 
-SQLite state format 9 pins the profile. Cleanly stopped older MyISAM state can
-upgrade in place; older state cannot be adopted as an InnoDB checkpoint. Older
-runtimes reject format 9. Back up the stopped state before upgrading.
+SQLite state format 10 pins the profile and table-name case setting. Older state
+can upgrade with `source.lowerCaseTableNames: 0`. It cannot adopt mode 1 or a
+different replication profile. Older runtimes reject format 10. Back up the
+stopped state before upgrading.
 
 ## Demo
 

@@ -28,6 +28,8 @@ enum DMLCompatibilityCases {
         binaryDefaults,
         textDefaults,
         zeroWidth,
+        identifierCase,
+        unicodeIdentifiers,
         Case(id:"encodings",definition:"id VARCHAR(12) CHARACTER SET latin1 COLLATE latin1_swedish_ci PRIMARY KEY,c CHAR(4) CHARACTER SET latin1 COLLATE latin1_bin,v VARCHAR(20) CHARACTER SET latin1 COLLATE latin1_bin,t TEXT CHARACTER SET latin1 COLLATE latin1_bin,a VARCHAR(20) CHARACTER SET ascii COLLATE ascii_general_ci,u VARCHAR(20) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT '中',b CHAR(4) CHARACTER SET binary,doc JSON",phases:[
             .init(sql:"INSERT INTO poc.matrix_encodings VALUES(CONVERT(0xE9 USING latin1),CONVERT(0xE92020 USING latin1),CONVERT(0x0080FF20 USING latin1),CONVERT(0xE980FF00 USING latin1),CONVERT(0x410020 USING ascii),DEFAULT,0xFF20,JSON_OBJECT('n',CAST('1.25' AS DECIMAL(3,2)))),('second',NULL,'',NULL,'','',NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_encodings WHERE id=CONVERT(0xC9 USING latin1) AND HEX(c)='E9' AND HEX(v)='0080FF20' AND HEX(t)='E980FF00' AND HEX(a)='410020' AND HEX(u)='E4B8AD' AND HEX(b)='FF200000' AND JSON_TYPE(JSON_EXTRACT(doc,'$.n'))='DECIMAL'"),
             .init(sql:"UPDATE poc.matrix_encodings SET id=CONVERT(0xC958 USING latin1),v=CONVERT(0xFF00E9 USING latin1),a='Next',u=CONVERT(0xC3A9 USING utf8),doc=JSON_OBJECT('n',CAST('2.50' AS DECIMAL(3,2))) WHERE id=CONVERT(0xC9 USING latin1)",check:"SELECT COUNT(*)=1 FROM poc.matrix_encodings WHERE id=CONVERT(0xE978 USING latin1) AND HEX(id)='C958' AND HEX(v)='FF00E9' AND a='next' AND HEX(u)='C3A9' AND JSON_TYPE(JSON_EXTRACT(doc,'$.n'))='DECIMAL'"),

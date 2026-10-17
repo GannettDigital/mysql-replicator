@@ -168,9 +168,9 @@ public enum LiveInspection {
                   row.column("version")?.string?.hasPrefix(sourceContract.rawValue) == true else {
                 throw CaptureError("source identity/settings differ from the qualified MySQL \(sourceContract.rawValue) GTID-ON contract")
             }
-            if ignoreTable != nil {
-                let casing = try query("SELECT @@lower_case_table_names AS n")
-                guard casing.first?.column("n")?.string == "0" else { throw CaptureError("wildcard filtering requires source lower_case_table_names=0") }
+            let casing = try query("SELECT @@lower_case_table_names AS n")
+            guard casing.first?.column("n")?.string == String(config.tableNameCaseSetting) else {
+                throw CaptureError("source lower_case_table_names differs from source.lowerCaseTableNames=\(config.tableNameCaseSetting)")
             }
             let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
             let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty

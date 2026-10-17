@@ -66,17 +66,17 @@
     {
       "path": "Sources/MySQLNIO/MySQLQueryCommand.swift",
       "upstream_sha256": "3472ff936789fe9d3f070ed019947bec3337a429c054d17f28c948af10c862c1",
-      "vendored_sha256": "a955f7ce3648da422fd2ea1043cb7dcd79b58d8196cf23973490b795cd1fac3a"
+      "vendored_sha256": "fc52fa4c0c0be1a11465f845f4b39d825b7ef998ee2c3e9528345fac9fb144c0"
     },
     {
       "path": "Sources/MySQLNIO/MySQLRow.swift",
       "upstream_sha256": "b70bfcc7f92be4c9382a1ffbb3fe09914c9700870bad9f3cc6500cc278a80177",
-      "vendored_sha256": "b70bfcc7f92be4c9382a1ffbb3fe09914c9700870bad9f3cc6500cc278a80177"
+      "vendored_sha256": "5ac965010d17ebfef3ebf85bead2937a57d61670437a0b916d13e4f3b1aba649"
     },
     {
       "path": "Sources/MySQLNIO/MySQLSimpleQueryCommand.swift",
       "upstream_sha256": "196c3c722e2ee41a6f67209129bcbd0265c64354860ca93b3ee9216827758a63",
-      "vendored_sha256": "196c3c722e2ee41a6f67209129bcbd0265c64354860ca93b3ee9216827758a63"
+      "vendored_sha256": "d6e6dadfa03a68c35af86e6af4c8f97eb1beb8fa122313468af8ee2f14a7fdd5"
     },
     {
       "path": "Sources/MySQLNIO/MySQLTime.swift",

@@ -28,16 +28,15 @@ public struct DDLPolicy: Decodable {
         try require(["skip","reject"].contains(triggers), "ddlPolicy.triggers must be skip or reject: ordinary target SQL fires triggers")
         try require(events == "reject", "ddlPolicy.events must be reject: scheduled target writes are unsupported")
     }
-    func skippedQuery(_ query: QueryControl, profile: ReplicationProfile) throws -> SkippedDDL? {
+    func skippedQuery(_ query: QueryControl, profile: ReplicationProfile,tokens:[DDLToken]? = nil) throws -> SkippedDDL? {
         // Reject prohibited object classes even when their session metadata is
         // outside the executable DDL subset. The skip policy still validates
         // trigger headers using their recorded SQL mode below.
         do { try Self.rejectProhibited(query) }
         catch ProhibitedDDL.trigger where triggers == "skip" { }
-        if let trigger = try skippedTrigger(query) { return trigger }
+        if let trigger = try skippedTrigger(query,tokens:tokens) { return trigger }
         guard profile.sourceContract.requiresHistoricalSchema else { return nil }
-        let mode = try query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode
-        var parser = try DDLParser(query.sql,database:query.database,sqlMode:mode)
+        var parser = try DDLParser(query:query,tokens:tokens)
         guard parser.take("DROP"), parser.take("TEMPORARY") else { return nil }
         // 5.7 sql_base.cc::close_temporary_tables and sql_table.cc emit
         // conditional cleanup even for ROW streams. No temporary objects are
@@ -47,15 +46,14 @@ public struct DDLPolicy: Decodable {
         while parser.take(",") { _ = try parser.name() }
         try parser.end()
         try require(query.errorCode == 0,"cannot skip failed temporary cleanup")
-        return SkippedDDL(name:first,sql:String(decoding:query.sql,as:UTF8.self),reason:"row replication temporary-table cleanup")
+        return SkippedDDL(name:first,sql:String(decoding:query.sql,as:UTF8.self),reason:"row replication temporary-table cleanup",tokens:tokens)
     }
-    func skippedTrigger(_ query: QueryControl) throws -> SkippedDDL? {
+    func skippedTrigger(_ query: QueryControl,tokens:[DDLToken]? = nil) throws -> SkippedDDL? {
         guard triggers == "skip" else { return nil }
-        let mode = try query.statusVariables.isEmpty ? 0 : QuerySessionContext(query:query).sqlMode
-        var parser = try DDLParser(query.sql,database:query.database,sqlMode:mode)
+        var parser = try DDLParser(query:query,tokens:tokens)
         guard let name = try parser.triggerToSkip() else { return nil }
         try require(query.errorCode == 0,"cannot skip failed source trigger DDL")
-        return SkippedDDL(name:name,sql:String(decoding:query.sql,as:UTF8.self),reason:"ddlPolicy.triggers=skip")
+        return SkippedDDL(name:name,sql:String(decoding:query.sql,as:UTF8.self),reason:"ddlPolicy.triggers=skip",tokens:tokens)
     }
     /// Rejection does not require executing SQL or accepting its session
     /// metadata. In particular, trigger Query events may carry context outside
@@ -74,6 +72,7 @@ struct SkippedDDL {
     let name: TableName
     let sql: String
     let reason: String
+    var tokens: [DDLToken]? = nil
 }
 
 public struct ApplyPartition: Codable, Equatable {
@@ -112,7 +111,7 @@ enum AlterAction: Equatable {
     case modify(String,ApplyColumn,ColumnPlacement?)
     case drop(String)
     case indexes(IndexChange)
-    case defaultValue(String,String?,numeric:Bool = false,bytes:Data? = nil)
+    case defaultValue(String,String?,numeric:Bool = false,bytes:Data? = nil,literalBytes:Data? = nil)
     case primaryKey([String]?)
     case partition(PartitionChange)
 }

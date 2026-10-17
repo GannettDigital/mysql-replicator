@@ -23,7 +23,7 @@ final class LabFixture {
         self.image=image
         h.composeOverlays=[root.appendingPathComponent(profile.composeOverlay).path]
         h.serverVersions=Dictionary(uniqueKeysWithValues:LabProfile.Role.allCases.map { (profile.service($0),$0 == .target ? profile.targetVersion : profile.sourceVersion) })
-        h.composeEnvironment=[profile.evidenceVariable:volume]
+        h.composeEnvironment=[profile.evidenceVariable:volume,"REPLICATOR_LOWER_CASE_TABLE_NAMES":String(variant.lowerCaseTableNames)]
     }
     func stage(_ message: String) { FileHandle.standardError.write(Data((profile.rawValue + ": " + message + "\n").utf8)) }
     func docker(_ args: [String], checked: Bool = true) throws -> CommandResult { try runner.run(["docker"]+args,checked:checked) }
@@ -89,7 +89,7 @@ final class LabFixture {
         versions["source_version"] = try sql(.source,"SELECT VERSION()")
         versions["target_version"] = try sql(.target,"SELECT VERSION()")
         config = ["applierProfiling":true,"version":2,"profile":profile.rawValue,"stateDirectory":"/evidence/state",
-            "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","serverID":9101,"sourceUUID":uuid,"mode":variant.mode,"start":variant.start(baseline),"stopAfterTransactions":2],
+            "source":["version":2,"host":profile.service(.source),"port":3306,"username":"capture_fixture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":profile.service(.source),"caFile":"/evidence/tls/ca.pem","lowerCaseTableNames":variant.lowerCaseTableNames,"serverID":9101,"sourceUUID":uuid,"mode":variant.mode,"start":variant.start(baseline),"stopAfterTransactions":2],
             "target":["host":profile.service(.target),"port":3306,"username":"apply_fixture","passwordEnvironment":"TARGET_PASSWORD","serverHostname":profile.service(.target),"caFile":"/evidence/tls/ca.pem","nativeAutoStartDisabled":true],
             "batch":["maximumTransactions":8],"storage":["minimumFreeDiskBytes":16*1024*1024],
             "supportBundle":["onBlocked":true,"directory":"/evidence/support-bundles","format":"directory","maximumBytes":64*1024*1024]]
@@ -145,7 +145,7 @@ final class LabFixture {
         for role in LabProfile.Role.allCases {
             let id=try h.compose(["ps","-q",profile.service(role)]).text
             let image=try docker(["inspect",id,"--format","{{.Image}}"] ).text
-            let settings=try sql(role,"SHOW VARIABLES WHERE Variable_name IN ('gtid_mode','enforce_gtid_consistency','binlog_format','binlog_row_image','binlog_row_metadata','default_storage_engine','sql_mode','character_set_server','collation_server','sync_binlog','innodb_flush_log_at_trx_commit','log_slave_updates','log_replica_updates','slave_parallel_workers','replica_parallel_workers')")
+            let settings=try sql(role,"SHOW VARIABLES WHERE Variable_name IN ('lower_case_table_names','gtid_mode','enforce_gtid_consistency','binlog_format','binlog_row_image','binlog_row_metadata','default_storage_engine','sql_mode','character_set_server','collation_server','sync_binlog','innodb_flush_log_at_trx_commit','log_slave_updates','log_replica_updates','slave_parallel_workers','replica_parallel_workers')")
             let version=try sql(role,"SELECT VERSION()")
             try require(version.hasPrefix(profile.version(role)+"."),"unexpected server version for "+role.rawValue+": "+version)
             if role == .source {

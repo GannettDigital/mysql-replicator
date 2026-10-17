@@ -42,7 +42,8 @@ extension MySQLDatabase {
 // new SQL uses the ordinary prepare/execute/close path; it cannot grow unbounded.
 final class MySQLPreparedStatementCache: @unchecked Sendable {
     struct Entry { let id: UInt32; let parameters: Int }
-    var entries: [String: Entry] = [:]
+    // Swift String hashing merges Unicode normalization forms. SQL does not.
+    var entries: [[UInt8]: Entry] = [:]
     let capacity = 128
 }
 
@@ -97,6 +98,7 @@ private final class MySQLCloseStatementCommand: MySQLCommand, @unchecked Sendabl
 
 final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
     let sql: String
+    let cacheKey: [UInt8]
     let cache: MySQLPreparedStatementCache?
     var parameterCount = 0
     
@@ -135,6 +137,7 @@ final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is ch
         self.cache = cache
         self.state = .ready
         self.sql = sql
+        self.cacheKey = cache == nil ? [] : Array(sql.utf8)
         self.binds = binds
         self.prepareColumns = []
         self.executeColumns = []
@@ -148,7 +151,7 @@ final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is ch
         self.logger.trace("MySQLQueryCommand.\(self.state)")
         guard !packet.isError else {
             self.state = .done
-            self.cache?.entries.removeValue(forKey: self.sql)
+            self.cache?.entries.removeValue(forKey: self.cacheKey)
 
             let errorPacket = try packet.decode(
                 MySQLProtocol.ERR_Packet.self,
@@ -270,12 +273,12 @@ final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is ch
             }
         }
         if let cache, lastUserError == nil,
-           cache.entries[sql] != nil || cache.entries.count < cache.capacity {
-            cache.entries[sql] = .init(id: statementID!, parameters: parameterCount)
+           cache.entries[cacheKey] != nil || cache.entries.count < cache.capacity {
+            cache.entries[cacheKey] = .init(id: statementID!, parameters: parameterCount)
             statementID = nil // ownership transferred to the connection
             return .init(response: [], done: true, resetSequence: true)
         }
-        cache?.entries.removeValue(forKey: sql)
+        cache?.entries.removeValue(forKey: cacheKey)
         var packet = MySQLPacket()
         MySQLProtocol.COM_STMT_CLOSE(
             statementID: self.statementID!
@@ -290,7 +293,7 @@ final class MySQLQueryCommand: MySQLCommand, @unchecked Sendable { // this is ch
     }
     
     func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
-        if let entry = cache?.entries[sql] {
+        if let entry = cache?.entries[cacheKey] {
             guard entry.parameters == binds.count else { throw MySQLError.protocolError }
             statementID = entry.id
             parameterCount = entry.parameters

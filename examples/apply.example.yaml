@@ -39,6 +39,7 @@ source:
   caFile: /REPLACE/source-ca.pem    # Optional; omit to use system trust roots. Source has no verify-ca mode.
   serverID: 9100                   # Example client ID; required nonzero UInt32, unique for live capture.
   sourceUUID: REPLACE_SOURCE_UUID   # Required original source server_uuid; also identifies the archive.
+  lowerCaseTableNames: 0          # 0: exact table names; 1: native lowercase names. Both servers must match. Mode 2 is not qualified.
   mode: gtid                       # run: gtid; file-position only for an 8.4 source. replay: gtid only.
   start:                           # Source position that matches the initial data copy.
     executedGTIDs: REPLACE_SNAPSHOT_GTID_SET  # Required FULL source GTID set represented by the snapshot, not just its last GTID. Empty: "".
@@ -89,8 +90,8 @@ ddlTimeoutSeconds: 300              # Top-level setting; 1..86400 seconds. Timeo
 
 # Table exclusions apply to BOTH run and replay. Default [] is an empty YAML list:
 # nothing is excluded. '%' matches any sequence; '_' matches one character.
-# Matches are case-sensitive database.table patterns; source and target must use
-# lower_case_table_names=0 when filters are enabled. Maximum 128 patterns, 512 bytes each.
+# Matches use source.lowerCaseTableNames: mode 0 is case-sensitive; mode 1 uses
+# native lowercase names. Maximum 128 patterns, 512 bytes each.
 replicateWildIgnoreTable: []        # Exclude tables that match these patterns. Empty means no exclusions.
 # To add exclusions, REPLACE the line above with ONE of these equivalent YAML lists:
 # replicateWildIgnoreTable:
@@ -159,7 +160,7 @@ batch:                             # Prepare and apply bounded groups of source 
 #   files:                         # Optional ordered, nonempty list for EXTERNAL replay only; rejected by fetch.
 #     - binlog.000123               # Example names; omit files to read all entries in filename order.
 #     - binlog.000124               # With a fetch manifest, the manifest determines file order instead.
-#   lowerCaseTableNames: 0          # Example declaration of original source setting for EXTERNAL archives.
+#   lowerCaseTableNames: 0          # Optional original source setting for EXTERNAL archives. Must match source.lowerCaseTableNames (default 0).
 #                                  # Required as 0 when replay filters are enabled; omit if not needed.
 #                                  # A fetch manifest supplies this setting itself. This does not change MySQL.
 # Keep non-binlog files out of an external directory unless files lists the inputs explicitly.

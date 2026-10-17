@@ -19,7 +19,7 @@ func require(_ condition: @autoclosure () throws -> Bool, _ message: String, cod
     if try !condition() { throw ApplyError(message,code:code) }
 }
 func quoted(_ name: String) throws -> String {
-    try require(!name.isEmpty && name.utf8.count <= 64 && !name.contains("\0") && name.unicodeScalars.allSatisfy { $0.isASCII }, "invalid SQL identifier")
+    try require(!name.isEmpty && name.unicodeScalars.count <= 64 && !name.contains("\0") && name.unicodeScalars.allSatisfy { $0.value <= 0xffff }, "invalid SQL identifier")
     return "`" + name.replacingOccurrences(of:"`",with:"``") + "`"
 }
 public struct ApplyColumn: Codable, Equatable {
@@ -39,6 +39,9 @@ public struct ApplyColumn: Codable, Equatable {
     public var choiceDefaultOrdinal: UInt64? = nil
     /// Parser-only distinction: DEFAULT 2 is not DEFAULT '2'. Cleared at resolution.
     var numericDefaultLiteral: Bool? = nil
+    /// Parser-only source connection bytes. Cleared before a schema is saved.
+    var inputChoiceBytes: [Data]? = nil
+    var inputDefaultBytes: Data? = nil
     public static func == (lhs:Self,rhs:Self) -> Bool {
         // Swift String equality merges canonically equivalent Unicode. MySQL
         // binary collations and encoded label metadata do not merge those bytes.
@@ -56,6 +59,7 @@ public struct ApplyColumn: Codable, Equatable {
             && lhs.choiceLabels == rhs.choiceLabels && lhs.choiceDefaultBytes == rhs.choiceDefaultBytes && lhs.choiceDefaultOrdinal == rhs.choiceDefaultOrdinal
             && lhs.binaryDefaultBytes == rhs.binaryDefaultBytes
             && lhs.numericDefaultLiteral == rhs.numericDefaultLiteral
+            && lhs.inputChoiceBytes == rhs.inputChoiceBytes && lhs.inputDefaultBytes == rhs.inputDefaultBytes
     }
     var hasDefaultValue: Bool { defaultValue != nil || choiceDefaultBytes != nil || binaryDefaultBytes != nil }
     var isGenerated: Bool { generationExpression != nil }
@@ -74,6 +78,7 @@ public struct ApplyColumn: Codable, Equatable {
         } else {
             try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
         }
+        try require(inputChoiceBytes == nil && inputDefaultBytes == nil,"unresolved SQL literal bytes")
         try require(numericDefaultLiteral == nil,"unresolved native default literal")
         if let bytes=binaryDefaultBytes {
             try require(["binary","varbinary"].contains(parsed.base) && defaultValue == nil,"invalid binary default metadata")
@@ -126,8 +131,8 @@ public struct ApplyTable: Codable, Equatable {
     public var partitions: [ApplyPartition] = []
     /// Complete connected relationship component, including inbound cascades.
     public var foreignKeys: [ApplyForeignKey] = []
-    var identity: String { database + "\0" + table }
-    var keyIndexes: [Int] { primaryKeyColumns.map { name in columns.firstIndex { $0.name == name }! } }
+    let identity: SQLNameKey
+    var keyIndexes: [Int] { primaryKeyColumns.map { name in columns.firstIndex { SQLIdentifier.equal($0.name,name) }! } }
     var keyIndex: Int { keyIndexes[0] }
     init(database: String, table: String, columns: [ApplyColumn], primaryKey: String,
          defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
@@ -136,25 +141,25 @@ public struct ApplyTable: Codable, Equatable {
     }
     init(database: String, table: String, columns: [ApplyColumn], primaryKeyColumns: [String],
          defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
-        self.database=database; self.table=table; self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
+        self.database=database; self.table=table; self.identity = .table(database,table); self.columns=columns; self.primaryKeyColumns=primaryKeyColumns
         self.defaultCharacterSet=defaultCharacterSet; self.defaultCollation=defaultCollation; self.secondaryIndexes=secondaryIndexes
         self.partitions=partitions; self.foreignKeys=foreignKeys
     }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
     func validate() throws {
         _ = try sqlName
-        try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map(\.name)).count == columns.count,"invalid column manifest")
+        try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map { SQLIdentifier.key($0.name) }).count == columns.count,"invalid column manifest")
         for c in columns { try c.validate() }
         try require(foreignKeys.count <= 256,"foreign-key relationship limit exceeded")
         for key in foreignKeys { try key.validate() }
-        try require(partitions.count <= 8192 && Set(partitions.map(\.name)).count == partitions.count,"invalid partition manifest")
+        try require(partitions.count <= 8192 && Set(partitions.map { SQLIdentifier.key($0.name) }).count == partitions.count,"invalid partition manifest")
         for partition in partitions { try partition.validate() }
-        try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map{$0.name.lowercased()}).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
+        try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map { SQLIdentifier.key($0.name) }).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
         for key in secondaryIndexes {
             _ = try quoted(key.name)
-            try require(key.name.uppercased() != "PRIMARY" && ["BTREE","SPATIAL"].contains(key.type) && (1...16).contains(key.parts.count),"unsupported secondary index")
+            try require(!SQLIdentifier.equal(key.name,"PRIMARY") && ["BTREE","SPATIAL"].contains(key.type) && (1...16).contains(key.parts.count),"unsupported secondary index")
             for part in key.parts {
-                guard let column=columns.first(where:{$0.name == part.column}) else { throw ApplyError("index column is absent") }
+                guard let column=columns.first(where:{SQLIdentifier.equal($0.name,part.column)}) else { throw ApplyError("index column is absent") }
                 let type=try DMLColumnType(column)
                 if key.type == "SPATIAL" {
                     try require(!key.unique && key.parts.count == 1 && type.isSpatial && !column.nullable && part.prefix == nil,"spatial index requires one full nonnullable spatial column")
@@ -164,10 +169,10 @@ public struct ApplyTable: Codable, Equatable {
                 if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
             }
         }
-        try require((1...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns).count == primaryKeyColumns.count,"invalid primary-key columns")
-        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{primaryKeyColumns.contains($0.name)},"auto-increment requires a primary-key column")
+        try require((1...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,"invalid primary-key columns")
+        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{SQLIdentifier.contains(primaryKeyColumns,$0.name)},"auto-increment requires a primary-key column")
         for name in primaryKeyColumns {
-            guard let key = columns.first(where:{$0.name == name}) else { throw ApplyError("missing primary key column") }
+            guard let key = columns.first(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("missing primary key column") }
             let type = try DMLColumnType(key)
             try require(!key.nullable && !key.isGenerated && !type.isSpatial && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob") && type.base != "json","primary key requires full nonnullable supported base scalar columns")
         }
@@ -178,6 +183,7 @@ extension ApplyTable {
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
+        identity = .table(database,table)
         columns=try c.decode([ApplyColumn].self,forKey:.columns)
         if let names = try c.decodeIfPresent([String].self,forKey:.primaryKeyColumns) {
             try require(!c.contains(.primaryKey),"ambiguous primary-key schema")
@@ -203,7 +209,7 @@ extension ApplyTable {
     func replacing(columns: [ApplyColumn]? = nil, indexes: [ApplyIndex]? = nil, primaryKey: [String]? = nil, partitions: [ApplyPartition]? = nil) -> ApplyTable {
         ApplyTable(database:database,table:table,columns:columns ?? self.columns,primaryKeyColumns:primaryKey ?? primaryKeyColumns,
             defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,
-            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{$0.name.lowercased() < $1.name.lowercased()},partitions:partitions ?? self.partitions,foreignKeys:foreignKeys)
+            secondaryIndexes:(indexes ?? secondaryIndexes).sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)},partitions:partitions ?? self.partitions,foreignKeys:foreignKeys)
     }
 }
 public struct TargetConfiguration: Decodable {
@@ -325,14 +331,14 @@ enum DMLPlan {
     /// Validate the entire group before the first mutation. The MyISAM contract
     /// permits one statement/table; transactional targets preserve whole groups.
     static func make(_ group: CompleteTransaction, tables: [ApplyTable]) throws -> [Mutation] {
-        var plans: [String:DMLTablePlan] = [:]
+        var plans: [SQLNameKey:DMLTablePlan] = [:]
         for table in tables {
             try require(plans[table.identity] == nil,"duplicate table manifest")
             plans[table.identity] = try DMLTablePlan(table)
         }
         return try make(group,tables:plans)
     }
-    static func make(_ group: CompleteTransaction, tables: [String:DMLTablePlan], transactional: Bool = false) throws -> [Mutation] {
+    static func make(_ group: CompleteTransaction, tables: [SQLNameKey:DMLTablePlan], transactional: Bool = false) throws -> [Mutation] {
         try require(group.outcome == .committed && group.gtid != nil && !group.anonymous,"unsupported transaction identity/outcome")
         var statementEnds = 0, includedEvents = 0
         for event in group.events where event.rowFlags != nil {
@@ -343,10 +349,10 @@ enum DMLPlan {
         try require(statementEnds >= 1,"source group lacks a statement boundary")
         try require(transactional || statementEnds == 1,"only single-statement source groups are supported",code:.multipleStatements)
         var result: [Mutation] = []
-        var firstIdentity: String?
+        var firstIdentity: SQLNameKey?
         for event in group.events where event.rowFlags != nil && !event.replicationFiltered {
             guard let database = event.database, let name = event.table,
-                  let plan = tables[database + "\0" + name] else { throw ApplyError("row event outside configured scope") }
+                  let plan = tables[.table(database,name)] else { throw ApplyError("row event outside configured scope") }
             if !event.rows.isEmpty {
                 let identity = plan.table.identity
                 if let firstIdentity { try require(transactional || firstIdentity == identity,"initial applier requires a single-table DML statement",code:.multipleTables) }

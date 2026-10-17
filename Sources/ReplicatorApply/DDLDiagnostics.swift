@@ -11,9 +11,13 @@ struct DDLQueryContextDiagnostic: Codable {
     let databaseCollationID: UInt32?
     let defaultUTF8MB4CollationID: UInt32
 
+    var sourceSQLBase64: String? = nil
+    var targetSQLBase64: String? = nil
+
     init?(query: QueryControl) {
         guard let context = try? QuerySessionContext(query: query) else { return nil }
         database = query.database
+        sourceSQLBase64 = query.sql.base64EncodedString()
         clientCharsetID = context.clientCharset
         connectionCollationID = context.connectionCollation
         serverCollationID = context.serverCollation

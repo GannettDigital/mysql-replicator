@@ -163,7 +163,7 @@ public enum SharedCorrectness {
                     let service=role.rawValue
                     let value=try f.sql(role,"SET NAMES utf8mb4; SET SESSION time_zone='+00:00'; "+check.sql,preserveWhitespace:true)
                     values[service]=value
-                    try require(value == check.expected,"\(service) expectation: \(check.sql) got \(value), expected \(check.expected)")
+                    try require(LabSQLName.equal(value,check.expected),"\(service) expectation: \(check.sql) got \(value), expected \(check.expected)")
                 }
                 results.append(["query":check.sql,"expected":check.expected,"values":values])
             }
@@ -177,7 +177,7 @@ public enum SharedCorrectness {
             // schema properties; normalize integer display widths, not semantics.
             var values: [String:[String:String]]=[:]
             var rawTables: [String:String]=[:]
-            let condition="TABLE_SCHEMA='\(database)'"
+            let condition="TABLE_SCHEMA="+LabSQLName.literal(database)
             for role in LabProfile.Role.allCases {
                     let service=role.rawValue
                 func sql(_ statement: String, preserveWhitespace: Bool = false) throws -> String {
@@ -185,11 +185,11 @@ public enum SharedCorrectness {
                 }
                 var snapshot = try f.h.sqlBatch(f.profile.service(role), [
                     .init(name: "database", sql: "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"),
-                    .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY TABLE_NAME"),
-                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IF(COLUMN_TYPE LIKE 'binary(%' OR COLUMN_TYPE LIKE 'varbinary(%' OR COLUMN_TYPE LIKE 'char(%' OR COLUMN_TYPE LIKE 'varchar(%',IF(COLUMN_DEFAULT IS NULL,'<NULL>','<stored-default>'),IFNULL(COLUMN_DEFAULT,'<NULL>')),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
-                    .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
-                    .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX"),
-                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
+                    .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY BINARY TABLE_NAME"),
+                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IF(COLUMN_TYPE LIKE 'binary(%' OR COLUMN_TYPE LIKE 'varbinary(%' OR COLUMN_TYPE LIKE 'char(%' OR COLUMN_TYPE LIKE 'varchar(%',IF(COLUMN_DEFAULT IS NULL,'<NULL>','<stored-default>'),IFNULL(COLUMN_DEFAULT,'<NULL>')),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY BINARY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
+                    .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
+                    .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY TABLE_NAME,BINARY INDEX_NAME,SEQ_IN_INDEX"),
+                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
                 ])
                 // Read PARTITIONS directly. Joining the two information_schema
                 // views can duplicate rows on 8.4 with lower_case_table_names=1.
@@ -216,7 +216,7 @@ public enum SharedCorrectness {
                     return fields.joined(separator:"\t")
                 }.joined(separator:"\n")
                 var columnFields=snapshot["columns"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
-                var binaryDefinitions:[String:Data]=[:]
+                var binaryDefinitions:[Data:Data]=[:]
                 for i in columnFields.indices {
                     let fields=columnFields[i]
                     if fields.count == 10 && fields[7] == "<stored-default>" {
@@ -230,11 +230,11 @@ public enum SharedCorrectness {
                     }
                     guard fields.count == 10 && (fields[3].hasPrefix("enum(") || fields[3].hasPrefix("set(")) && (fields[5] == "binary" || fields[5].isEmpty) else { continue }
                     let table=fields[0]
-                    if binaryDefinitions[table] == nil {
+                    if binaryDefinitions[Data(table.utf8)] == nil {
                         func quote(_ value:String) -> String { "`"+value.replacingOccurrences(of:"`",with:"``")+"`" }
-                        binaryDefinitions[table]=try f.h.sqlBytes(f.profile.service(role),"SET NAMES binary; SHOW CREATE TABLE "+quote(database)+"."+quote(table))
+                        binaryDefinitions[Data(table.utf8)]=try f.h.sqlBytes(f.profile.service(role),"SET NAMES binary; SHOW CREATE TABLE "+quote(database)+"."+quote(table))
                     }
-                    let definition=try NativeChoiceDefinition.read(binaryDefinitions[table]!,column:fields[1])
+                    let definition=try NativeChoiceDefinition.read(binaryDefinitions[Data(table.utf8)]!,column:fields[1])
                     columnFields[i][3]=definition.type
                     columnFields[i][5]="binary";columnFields[i][6]="binary"
                     columnFields[i][7]=definition.defaultValue
@@ -246,28 +246,28 @@ public enum SharedCorrectness {
                 let columnRows=columns.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 let indexRows=snapshot["indexes"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
                 var rowQueries: [String]=[]
-                var jsonRows:[String:String]=[:]
+                var jsonRows:[Data:String]=[:]
                 for table in tables {
-                    let names=columnRows.filter { $0.count >= 2 && $0[0] == table }.map { $0[1] }
-                    let expressions=names.map { "IFNULL(HEX(CAST(`\($0)` AS BINARY)),'<NULL>')" }.joined(separator:",")
-                    let keys=indexRows.filter { $0.count >= 5 && $0[0] == table && $0[1] == "PRIMARY" }.map { "`\($0[4])`" }.joined(separator:",")
+                    let names=columnRows.filter { $0.count >= 2 && LabSQLName.equal($0[0],table) }.map { $0[1] }
+                    let expressions=names.map { "IFNULL(HEX(CAST("+LabSQLName.quote($0)+" AS BINARY)),'<NULL>')" }.joined(separator:",")
+                    let keys=indexRows.filter { $0.count >= 5 && LabSQLName.equal($0[0],table) && $0[1] == "PRIMARY" }.map { LabSQLName.quote($0[4]) }.joined(separator:",")
                     try require(!keys.isEmpty,"fixture table missing primary key")
-                    let jsonColumns=Set(columnRows.filter { $0.count >= 4 && $0[0] == table && $0[3] == "json" }.map { $0[1] })
+                    let jsonColumns=columnRows.filter { $0.count >= 4 && LabSQLName.equal($0[0],table) && $0[3] == "json" }.map { $0[1] }
                     if !jsonColumns.isEmpty {
-                        jsonRows[table]=try f.comparisonRows(role,table:"`\(database)`.`\(table)`",columns:names,jsonColumns:jsonColumns,orderBy:keys)
+                        jsonRows[Data(table.utf8)]=try f.comparisonRows(role,table:LabSQLName.quote(database)+"."+LabSQLName.quote(table),columns:names,jsonColumns:jsonColumns,orderBy:keys)
                     }
-                    rowQueries.append("SELECT '\(table)',\(expressions) FROM `\(database)`.`\(table)` ORDER BY \(keys)")
+                    rowQueries.append("SELECT "+LabSQLName.literal(table)+",\(expressions) FROM "+LabSQLName.quote(database)+"."+LabSQLName.quote(table)+" ORDER BY \(keys)")
                 }
                 snapshot["rows"]=rowQueries.isEmpty ? "" : try sql("SET time_zone='+00:00'; "+rowQueries.joined(separator:"; "),preserveWhitespace:true)
                 // Keep ordinary row bytes. Replace only JSON-bearing table rows
                 // with the independent value/type comparison from the servers.
                 if !jsonRows.isEmpty {
-                    var next:[String:Int]=[:]
+                    var next:[Data:Int]=[:]
                     let replacements=jsonRows.mapValues { $0.isEmpty ? [] : $0.components(separatedBy:"\n") }
                     snapshot["rows"]=try snapshot["rows"]!.components(separatedBy:"\n").map { line in
                         let table=String(line.prefix(while:{$0 != "\t"}))
-                        guard let rows=replacements[table] else { return line }
-                        let index=next[table,default:0]; next[table]=index+1
+                        guard let rows=replacements[Data(table.utf8)] else { return line }
+                        let index=next[Data(table.utf8),default:0]; next[Data(table.utf8)]=index+1
                         try require(index < rows.count,"JSON comparison row count changed")
                         return table+"\t"+rows[index]
                     }.joined(separator:"\n")
@@ -277,7 +277,8 @@ public enum SharedCorrectness {
             try writeJSON(values,to:f.output.appendingPathComponent("latest-comparison.json"))
             for service in ["native","target"] {
                 for (key,value) in values["source"]! {
-                    try require(values[service]?[key] == value,"\(database) \(service) \(key) differs; inspect latest-comparison.json")
+                    let candidate=values[service]?[key]
+                    try require(candidate.map { LabSQLName.equal($0,value) } == true,"\(database) \(service) \(key) differs; inspect latest-comparison.json")
                 }
             }
             return ["normalized":values,"raw_tables":rawTables]
@@ -348,7 +349,7 @@ public enum SharedCorrectness {
                     if f.profile.hasOptionalMetadata {
                         // These DDL workloads write ENUM/SET values. Their label
                         // validation requires FULL metadata even with position capture.
-                        let fullMetadataCases: Set<String> = ["ddl-compat-types"]
+                        let fullMetadataCases: Set<String> = ["ddl-compat-types", "ddl-compat-query-encodings"]
                         let metadata=fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
                         _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+metadata)
                     }
@@ -360,6 +361,7 @@ public enum SharedCorrectness {
                     }
                     let before=try applier.latestProgress() ?? [:], begin=try f.boundary()
                     for item in test.steps {
+                        if item.restartBefore { try applier.drain(); try applier.start(initialize:false); try wait() }
                         let sql=f.profile.transactionalTarget ? item.sqlTransactional : item.sql
                         if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
                             // Neither table is rediscovered by DML after resume.
@@ -452,7 +454,7 @@ public enum SharedCorrectness {
                         let history=try state(saved,"SELECT schema_json FROM schemas WHERE id=(SELECT after_schema_id FROM ddl_intents ORDER BY rowid DESC LIMIT 1)")
                         let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
                         try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
-                        try require(state(saved,"PRAGMA user_version") == "9","state version gate differs")
+                        try require(state(saved,"PRAGMA user_version") == "10","state version gate differs")
                         return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
                     }
                     try assertion("normalized-binlog",caseID:test.test.id) { try binlogAssertion(test,starts:starts) }

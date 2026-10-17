@@ -290,7 +290,7 @@ the original gaps, measured migration checkpoints and final removal evidence.
 
 ### Capture variants and catalog evidence
 
-Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|all`.
+Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|lowercase-tables|all`.
 The default keeps each topology's usual GTID start with a file/offset. The two
 historical forward variants use file-position with MINIMAL optional row metadata,
 or GTID-only start with FULL metadata. `--variant all` lists/runs each separately;
@@ -654,3 +654,8 @@ The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
 The live and bootstrap cases run on both 5.7-to-5.7 profiles. The inventory gives
 native error 1063 as the exclusion reason for a profile with an 8.4 source or target.
 The common selection code and both execution paths use these profile exclusions.
+
+The `lowercase-tables` variant starts all three MySQL servers with
+`lower_case_table_names=1`. Use `--case ddl-compat-table-name-case` to check
+mixed-case database/table references, native lowercase storage, LIKE, RENAME,
+row events and restart. This is separate from the default mode-0 Unicode case.

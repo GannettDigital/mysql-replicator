@@ -31,7 +31,11 @@ final class RecoveryStore {
             let flags = (writable ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READONLY) | SQLITE_OPEN_FULLMUTEX
             try require(sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,flags,nil) == SQLITE_OK,"cannot open recovery state")
             sql = SQLiteStatementCache(db:db!,timings:.init(),profiling:false)
-            try require(try q("PRAGMA user_version") == [["9"]],"recovery requires state format 9")
+            let version=try q("PRAGMA user_version")
+            try require(version == [["9"]] || version == [["10"]],"recovery requires state format 9 or 10")
+            if version == [["10"]] {
+                try require(try q("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(configuration.source.tableNameCaseSetting)]],"saved table-name case setting differs")
+            } else { try require(configuration.source.tableNameCaseSetting == 0,"legacy recovery state requires source.lowerCaseTableNames=0") }
             try require(try q("PRAGMA quick_check") == [["ok"]],"recovery SQLite integrity check failed")
             try require(try q("SELECT profile FROM replication_profile WHERE id=1") == [[configuration.replicationProfile.rawValue]],"saved replication profile differs")
             let policy = try q("SELECT policy_json FROM compatibility WHERE id=1")

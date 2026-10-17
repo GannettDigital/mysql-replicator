@@ -14,9 +14,9 @@ final class ResumeTests: XCTestCase {
         return ApplyTests()
         #endif
     }
-    func config(_ path: String, mode: String = "gtid", gtids: String? = nil) throws -> ApplyConfiguration {
+    func config(_ path: String, mode: String = "gtid", gtids: String? = nil, lowerCaseTableNames:Int = 0) throws -> ApplyConfiguration {
         let h=helper
-        let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":h.sid,"mode":mode,
+        let source: [String:Any] = ["version":2,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":h.sid,"mode":mode,"lowerCaseTableNames":lowerCaseTableNames,
             "start":["file":"binlog.000003","position":1589,"executedGTIDs":gtids ?? h.sid+":1-10"]]
         let object: [String:Any] = ["version":2,"stateDirectory":path,"source":source,
             "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true]]

@@ -43,12 +43,13 @@ extension DDLParser {
         edits.append(DDLSQLEdit(range:offset..<offset,replacement:" COLLATE "+mapped))
         return mapped
     }
-    func translatedSQL(_ source: Data) -> String {
+    func translatedSQL(_ source: Data) -> String { String(decoding:translatedBytes(source),as:UTF8.self) }
+    func translatedBytes(_ source: Data) -> Data {
         // Lexer ranges are zero-based byte offsets, including for Data slices.
         var bytes = [UInt8](source)
         for edit in edits.sorted(by:{$0.range.lowerBound > $1.range.lowerBound}) {
             bytes.replaceSubrange(edit.range,with:edit.replacement.utf8)
         }
-        return String(decoding:bytes,as:UTF8.self)
+        return Data(bytes)
     }
 }

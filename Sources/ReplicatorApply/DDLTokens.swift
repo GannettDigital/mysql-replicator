@@ -6,11 +6,12 @@ struct DDLToken: Equatable {
     let text: String
     var identifier = false
     var literal: String? = nil
+    var literalBytes: Data? = nil
     var range: Range<Int>? = nil
     static func == (lhs: Self,rhs: Self) -> Bool {
-        lhs.text == rhs.text && lhs.identifier == rhs.identifier && lhs.literal == rhs.literal
+        SQLTextBytes.equal(lhs.text,rhs.text) && lhs.identifier == rhs.identifier && SQLTextBytes.equal(lhs.literal,rhs.literal) && lhs.literalBytes == rhs.literalBytes
     }
-    var keyword: String { identifier || literal != nil ? "" : text.uppercased() }
+    var keyword: String { identifier || literal != nil ? "" : SQLIdentifier.keyword(text) }
 }
 
 enum DDLTokens {
@@ -24,10 +25,16 @@ enum DDLTokens {
         }
         return false
     }
-    static func lex(_ data: Data, sqlMode: UInt64 = 0) throws -> [DDLToken] {
+    static func lex(_ data: Data, sqlMode: UInt64 = 0, characterSet: String = "utf8mb4",
+                    decode: ((Data,Bool) throws -> DDLDecodedText)? = nil) throws -> [DDLToken] {
         try require(data.count <= 65536, "DDL statement exceeds 64 KiB")
-        guard let sql = String(data:data,encoding:.utf8) else { throw ApplyError("invalid DDL UTF-8") }
-        let b = Array(sql.utf8)
+        if decode == nil { try require(String(data:data,encoding:.utf8) != nil,"invalid DDL UTF-8") }
+        func decoded(_ bytes: [UInt8], identifier: Bool) throws -> DDLDecodedText {
+            if let decode { return try decode(Data(bytes),identifier) }
+            guard let text=String(bytes:bytes,encoding:.utf8) else { throw ApplyError("invalid DDL literal encoding") }
+            return DDLDecodedText(text:text,bytes:nil)
+        }
+        let b = Array(data)
         var i = 0, result: [DDLToken] = []
         while i < b.count {
             let c = b[i]
@@ -46,6 +53,8 @@ enum DDLTokens {
                 let isIdentifier = c == 96 || (c == 34 && sqlMode & 4 != 0)
                 i += 1; var value: [UInt8] = []; var closed = false
                 while i < b.count {
+                    let width=DDLClientEncoding.characterWidth(b,at:i,charset:characterSet)
+                    if width > 1 { value.append(contentsOf:b[i..<i+width]);i += width;continue }
                     if b[i] == c {
                         if i+1 < b.count && b[i+1] == c { value.append(c); i += 2; continue }
                         i += 1; closed = true; break
@@ -57,13 +66,14 @@ enum DDLTokens {
                     } else { value.append(b[i]); i += 1 }
                 }
                 try require(closed, "unterminated DDL quote")
-                guard let decoded = String(bytes:value,encoding:.utf8) else { throw ApplyError("invalid DDL literal encoding") }
-                if isIdentifier { _ = try quoted(decoded); result.append(DDLToken(text:decoded,identifier:true)) }
-                else { result.append(DDLToken(text:"'"+decoded.replacingOccurrences(of:"'",with:"''")+"'",literal:decoded)) }
+                let converted = try decoded(value,identifier:isIdentifier)
+                if isIdentifier { let name=SQLIdentifier.storedName(converted.text); _ = try quoted(name); result.append(DDLToken(text:name,identifier:true)) }
+                else { result.append(DDLToken(text:"'"+converted.text.replacingOccurrences(of:"'",with:"''")+"'",literal:converted.text,literalBytes:converted.bytes)) }
             } else if word(c) {
-                let start = i; i += 1
-                while i < b.count && word(b[i]) { i += 1 }
-                result.append(DDLToken(text:String(decoding:b[start..<i],as:UTF8.self)))
+                let start = i
+                repeat { i += DDLClientEncoding.characterWidth(b,at:i,charset:characterSet) } while i < b.count && word(b[i])
+                let text=try decoded(Array(b[start..<i]),identifier:true).text,name=SQLIdentifier.storedName(text)
+                result.append(DDLToken(text:name,identifier:!SQLTextBytes.equal(text,name)))
             } else {
                 try require(c < 128 && "(),.;=+-*/%@<>!|&^~:?".utf8.contains(c), "unsupported DDL token")
                 var text = String(UnicodeScalar(c)); i += 1
@@ -78,7 +88,7 @@ enum DDLTokens {
         return result
     }
     static func word(_ c: UInt8) -> Bool {
-        (65...90).contains(c) || (97...122).contains(c) || (48...57).contains(c) || c == 95 || c == 36
+        (65...90).contains(c) || (97...122).contains(c) || (48...57).contains(c) || c == 95 || c == 36 || c >= 128
     }
 }
 
