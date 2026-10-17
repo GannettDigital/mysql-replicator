@@ -213,7 +213,7 @@ extension TargetSession {
                 setMode: { _ = try self.query("SET SESSION sql_mode='\($0)'") },
                 discardConnection: { try? self.connection.close().wait() }
             ) {
-                _ = try query(definition, textProtocol: true)
+                _ = try query(definition, textProtocol: true, timeoutSeconds: config.ddlDeadline)
             }
         }
         let result = try sourceStatement(group.group.gtid!) {
