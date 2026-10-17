@@ -16,6 +16,13 @@ final class LabSQLInputTests: XCTestCase {
         XCTAssertEqual(input.arguments, ["--delimiter=_end_"])
         XCTAssertEqual(input.bytes, Data(("SET @@SESSION.GTID_NEXT = 'AUTOMATIC'\n_end_\n" + sql + "\n_end_\n").utf8))
     }
+    func testDelimiterFitsTheNativeClientBuffer() throws {
+        let input = try LabSQLInput("SELECT 1", resetGTID: false, script: false)
+        let delimiter = try XCTUnwrap(input.arguments.first).dropFirst("--delimiter=".count)
+        XCTAssertLessThanOrEqual(delimiter.utf8.count, 15)
+        XCTAssertThrowsError(
+            try LabSQLInput("SELECT 1", resetGTID: false, script: false, delimiter: String(repeating: "x", count: 16)))
+    }
     func testSourceRequestAndVerticalOutput() throws {
         let input = try LabSQLInput("SHOW REPLICA STATUS\\G", resetGTID: false, script: false, delimiter: "_end_")
         XCTAssertEqual(input.arguments, ["--delimiter=_end_", "--vertical"])
