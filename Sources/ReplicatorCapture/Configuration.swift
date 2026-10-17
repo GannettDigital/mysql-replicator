@@ -19,6 +19,7 @@ public struct CaptureConfiguration: Decodable {
     public let passwordEnvironment: String?
     public let password: String?
     public let requireTLS: Bool
+    public var tlsVerification: TLSVerification = .verifyIdentity
     public let serverHostname: String?
     public let caFile: String?
     /// Must match both servers. Mode 2 needs a case-insensitive filesystem.
@@ -51,7 +52,7 @@ public struct CaptureConfiguration: Decodable {
     /// Keep connection/protocol options, replacing only the authoritative boundary.
     public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil) -> CaptureConfiguration {
         CaptureConfiguration(version:version,host:host,port:port,username:username,
-            passwordEnvironment:passwordEnvironment,password:password,requireTLS:requireTLS,serverHostname:serverHostname,caFile:caFile,
+            passwordEnvironment:passwordEnvironment,password:password,requireTLS:requireTLS,tlsVerification:tlsVerification,serverHostname:serverHostname,caFile:caFile,
             lowerCaseTableNames:lowerCaseTableNames,serverID:serverID,sourceUUID:sourceUUID,mode:mode,
             start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
             nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
@@ -63,11 +64,7 @@ public struct CaptureConfiguration: Decodable {
         guard [0,1].contains(tableNameCaseSetting) else { throw CaptureError("source.lowerCaseTableNames must be 0 or 1; mode 2 is not qualified") }
         _ = try StopConditions(transactions:stopAfterTransactions,gtids:stopAfterGTIDs)
         if connection { try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source") }
-        if requireTLS {
-            guard !(serverHostname ?? "").isEmpty else { throw CaptureError("source verified TLS requires serverHostname") }
-        } else {
-            guard serverHostname == nil && caFile == nil else { throw CaptureError("remove source serverHostname and caFile when requireTLS is false") }
-        }
+        try ConnectionTLS.validate(required:requireTLS,verification:tlsVerification,hostname:serverHostname,caFile:caFile,endpoint:"source")
         guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
               serverID > 0, UUID(uuidString: sourceUUID) != nil,
               ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
@@ -94,7 +91,7 @@ public struct CaptureConfiguration: Decodable {
 
 extension CaptureConfiguration {
     enum CodingKeys: String, CodingKey {
-        case version, host, port, username, passwordEnvironment, password, requireTLS, serverHostname, caFile
+        case version, host, port, username, passwordEnvironment, password, requireTLS, tlsVerification, serverHostname, caFile
         case lowerCaseTableNames, serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions, stopAfterGTIDs
         case idleTimeoutSeconds, maximumEventBytes, maximumTransactionBytes, decoderProfiling, downloadCacheBytes
     }
@@ -108,6 +105,7 @@ extension CaptureConfiguration {
         passwordEnvironment = try c.decodeIfPresent(String.self, forKey: .passwordEnvironment)
         password = try c.decodeIfPresent(String.self, forKey: .password)
         requireTLS = try c.decodeIfPresent(Bool.self, forKey: .requireTLS) ?? true
+        tlsVerification = try c.decodeIfPresent(TLSVerification.self,forKey:.tlsVerification) ?? .verifyIdentity
         serverHostname = try c.decodeIfPresent(String.self, forKey: .serverHostname)
         caFile = try c.decodeIfPresent(String.self, forKey: .caFile)
         lowerCaseTableNames = try c.decodeIfPresent(Int.self,forKey:.lowerCaseTableNames)

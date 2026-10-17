@@ -211,3 +211,28 @@ public struct GTIDSet: Equatable {
 
 }
 
+
+extension GTIDSet {
+    /// Interval arithmetic avoids allocating one entry per transaction. A single
+    /// replay endpoint can estimate the prefix through that number without
+    /// changing the exact stop condition. Counts saturate at UInt64.max.
+    public func remainingTransactions(after completed:GTIDSet,throughEndpoints:Bool = false) -> UInt64 {
+        var total:UInt64=0
+        for sid in sids {
+            let done=completed.sids.first { $0.uuid == sid.uuid && $0.tag == sid.tag }?.intervals ?? []
+            let wanted=throughEndpoints ? [UInt64(1)...sid.intervals.last!.upperBound] : sid.intervals
+            var j=0
+            for range in wanted {
+                var missing=range.upperBound-range.lowerBound+1
+                while j < done.count && done[j].upperBound < range.lowerBound { j += 1 }
+                var k=j
+                while k < done.count && done[k].lowerBound <= range.upperBound {
+                    missing -= min(range.upperBound,done[k].upperBound)-max(range.lowerBound,done[k].lowerBound)+1
+                    k += 1
+                }
+                let sum=total.addingReportingOverflow(missing);total=sum.overflow ? .max : sum.partialValue
+            }
+        }
+        return total
+    }
+}

@@ -25,6 +25,8 @@ public struct ApplySummary: Encodable {
     public var stopReason: String? = nil
     public var activeBatchTransactions: Int = 0
     public var skippedTransactionsByCode: [String:Int] = [:]
+    public var estimate: ProgressEstimate? = nil
+    public var counters: ApplyCounters? = nil
     public var applyQueue: ApplyQueueSnapshot? = nil
     // Crash recovery / uncertain target replay remains unsupported.
     public let automaticRecovery = false
@@ -52,7 +54,7 @@ public enum ApplyRun {
         if archive != nil { try require(configuration.source.mode == "gtid","offline replay requires GTID positioning") }
         let profile = configuration.replicationProfile
         let legacyMetadata = profile.sourceContract.requiresHistoricalSchema
-        let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [],lowerCaseTableNames:configuration.source.tableNameCaseSetting)
+        let filter = try TableFilter(configuration.replicateWildIgnoreTable ?? [],including:configuration.replicateWildDoTable ?? [],lowerCaseTableNames:configuration.source.tableNameCaseSetting)
         let timings = StageTimings()
         let producerTimings = StageTimings()
         let targetTimings = StageTimings()
@@ -69,6 +71,27 @@ public enum ApplyRun {
         var activeBatchTransactions=0
         var executionQueue: DMLExecutor?
         let state = try StateStore(configuration:configuration,initialize:initialize,timings:timings)
+        let statistics=configuration.statistics ?? StatisticsPolicy()
+        let estimator=ProgressEstimator(window:statistics.rateWindowSeconds)
+        let monitor=archive == nil ? SourceMonitor() : nil
+        monitor?.start(source:configuration.source,password:sourcePassword,contract:profile.sourceContract,interval:statistics.sourcePollIntervalSeconds)
+        defer {monitor?.stop()}
+        var savedObservation:Double?
+        func estimate(_ lifecycle:String) -> ProgressEstimate {
+            let sample=monitor?.snapshot()
+            let observation=sample?.observation
+            let goal=archive != nil ? (limits.stopAfterGTIDs ?? archive?.availableGTIDs) : observation?.executedGTIDs
+            var value=estimator.update(now:ProcessInfo.processInfo.systemUptime,transactions:state.transactions,bytes:state.counters.processedBinlogBytes,
+                completed:state.gtids,goal:goal,replay:archive != nil,lifecycle:lifecycle,observation:observation)
+            value.sourceObservation=observation;value.monitoringError=sample?.error
+            if let observation {
+                let age=max(0,Date().timeIntervalSince1970-observation.observedAt)
+                value.sourceObservationAgeSeconds=age;value.sourceObservationStale=age > Double(statistics.sourcePollIntervalSeconds*2) || sample?.error != nil
+                if value.sourceObservationStale {value.estimatedSecondsRemaining=nil;value.status="staleSourceSample"}
+                if let applied=state.applied {value.remainingBinlogBytes=observation.bytesRemaining(after:applied)}
+            }
+            return value
+        }
         func finalTimings() -> [String:StageTimings.Sample] {
             let merged = StageTimings()
             merged.merge(timings.snapshot); merged.merge(producerTimings.snapshot); merged.merge(targetTimings.snapshot)
@@ -80,9 +103,12 @@ public enum ApplyRun {
                 pipeline:lifecycle == "RUNNING" ? nil : pipeline.queue.snapshot,
                 sourceReconnectEnabled:archive == nil && configuration.reconnectPolicy.enabled,sourceReconnectAttempts:retry.attempts,sourceReconnectReason:reconnectReason,
                 targetReconnectEnabled:configuration.targetReconnectPolicy.enabled,targetReconnectAttempts:targetRetry.attempts,
-                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions,skippedTransactionsByCode:state.skippedTransactionsByCode,applyQueue:executionQueue?.snapshot)
+                targetReconnectReason:targetReason,targetFailure:targetFailure,drainRequested:drain.isCancelled,stopReason:stopReason,activeBatchTransactions:activeBatchTransactions,skippedTransactionsByCode:state.skippedTransactionsByCode,estimate:estimate(lifecycle),counters:state.counters,applyQueue:executionQueue?.snapshot)
         }
         func report(_ value: ApplySummary) throws {
+            if let observation=value.estimate?.sourceObservation,observation.observedAt != savedObservation {
+                try state.saveSourceObservation(observation);savedObservation=observation.observedAt
+            }
             control?.publish(value);try emitProgress(value)
         }
         func stoppedResult() -> ApplySummary {
@@ -333,13 +359,13 @@ public enum ApplyRun {
                         try archive.run(configuration:capture,cancellation:stop,retainRawBytes:true,
                             emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
                             resolveSchema:resolver,timings:producerTimings,
-                            ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
+                            ignoreTable:filter.isEmpty ? nil : { filter.ignores(database:$0,table:$1) })
                     } else {
                     _ = try LiveInspection.run(configuration:capture,password:sourcePassword,retainRawBytes:true,cancellation:stop,
                         emitEvent:{ try send(.event($0)) },emitTransaction:{ try send(.transaction($0)) },
                         resolveSchema:resolver,
                         timings:producerTimings,onIdle:{ try send(.idle) },allowDDL:true,
-                        ignoreTable:filter.patterns.isEmpty ? nil : { filter.ignores(database:$0,table:$1) },sourceContract:profile.sourceContract)
+                        ignoreTable:filter.isEmpty ? nil : { filter.ignores(database:$0,table:$1) },sourceContract:profile.sourceContract)
                     }
                 },consume:{ message in
                     if drain.isCancelled { throw ApplyDrainRequested() }

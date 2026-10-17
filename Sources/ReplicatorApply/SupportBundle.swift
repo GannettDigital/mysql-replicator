@@ -18,8 +18,10 @@ public struct SupportBundleConfiguration: Decodable {
         public let format: Format?
         public let maximumBytes: UInt64?
         public let logs: [String]?
+        public var binlogContextBytes: UInt64? = nil
         func validate(stateDirectory: String) throws {
             try require((maximumBytes ?? 2*1024*1024*1024) >= 1024*1024,"support bundle maximumBytes must be at least 1 MiB")
+            try require((binlogContextBytes ?? 4*1024*1024) >= 4096 && (binlogContextBytes ?? 0) <= 256*1024*1024,"support bundle binlogContextBytes must be 4 KiB through 256 MiB")
             if onBlocked == true {
                 try require(!(directory ?? "").isEmpty,"supportBundle.onBlocked requires directory")
                 try SupportBundle.requireOutsideState(URL(fileURLWithPath:directory!), state:URL(fileURLWithPath:stateDirectory))
@@ -136,7 +138,7 @@ public enum SupportBundle {
         try require(sqlite3_open_v2(snapshot.path,&copy,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil) == SQLITE_OK,"cannot finalize SQLite support backup")
         try require(sqlite3_exec(copy,"PRAGMA journal_mode=DELETE",nil,nil,nil) == SQLITE_OK,"cannot make standalone SQLite support backup")
         sqlite3_close(copy);copy=nil
-        let q=try statements.query("SELECT lifecycle,durable_relay_length,applied_file,active_gtid FROM state WHERE id=1")
+        let q=try statements.query("SELECT lifecycle,durable_relay_length,applied_file,active_gtid,applied_position FROM state WHERE id=1")
         try require(q.count == 1,"missing support state row")
         if failureDiagnostic != nil { try require(q[0][0] == "BLOCKED","automatic bundle requires durable BLOCKED state") }
         let durable=UInt64(q[0][1] ?? "")
@@ -174,6 +176,7 @@ public enum SupportBundle {
         }
         // Save small archive diagnostics before optional payload files use the budget.
         var archiveInputs:[(String,URL)]=[]
+        var archiveRanges:[String:[Range<UInt64>]]=[:]
         if let archive=c.archive {
             let root=URL(fileURLWithPath:archive.directory)
             let manifest=root.appendingPathComponent("manifest.json")
@@ -184,7 +187,16 @@ public enum SupportBundle {
                 names=archive.files ?? (try? fm.contentsOfDirectory(atPath:root.path).sorted()) ?? []
                 if let first=archive.firstFile,let i=names.firstIndex(of:first) { names=Array(names[i...]) }
             }
-            let pending=try statements.query("SELECT DISTINCT source_file FROM groups WHERE status='PENDING' ORDER BY sequence").compactMap{$0[0]}
+            let groups=try statements.query("SELECT source_file,start_position,end_position FROM groups WHERE status='PENDING' ORDER BY sequence LIMIT 16")
+            let pending=groups.compactMap{$0[0]}
+            for row in groups {
+                if let name=row[0],let start=UInt64(row[1] ?? ""),let end=UInt64(row[2] ?? ""),end >= start {
+                    archiveRanges[name,default:[]].append(start..<end)
+                }
+            }
+            if let name=q[0][2],let offset=UInt64(q[0][4] ?? ""),archiveRanges[name] == nil {
+                archiveRanges[name]=[offset..<offset]
+            }
             let selected=Set(names)
             let preferred=(pending+(q[0][2].map{[$0]} ?? [])).filter { selected.contains($0) }+names.reversed()
             var seen=Set<String>()
@@ -230,7 +242,22 @@ public enum SupportBundle {
             omitted.append("relay.frames includes unjournaled tail at byte \(durable); tail is evidence, not committed progress")
         }
         try include(relay,as:"relay.frames")
-        for (name,path) in archiveInputs { try include(path,as:"archive/"+name) }
+        // Keep failure context before unrelated archive payload. Each excerpt retains
+        // original offsets. It is diagnostic data, not a standalone replay file.
+        for (index,input) in archiveInputs.prefix(16).enumerated() {
+            let (name,path)=input
+            do {
+                _ = try ArchiveIO.regularFile(path)
+                let available=limit > total+131072 ? limit-total-131072 : 0
+                let budget=min(c.supportBundle.binlogContextBytes ?? 4*1024*1024,available)
+                guard budget >= 4096 else { omitted.append("archive/"+name+": size limit; original file retained locally");continue }
+                let ranges=archiveRanges[name] ?? [4..<4]
+                let excerpt=try BinlogExcerpt.collect(path,to:working,prefix:"binlog-\(index)",focus:ranges[0],maximumBytes:budget)
+                for file in excerpt.files { try include(file,as:"archive/"+file.lastPathComponent) }
+                if !excerpt.complete { omitted.append("archive/"+name+": partial file; original byte ranges are in the excerpt JSON") }
+                if ranges.count > 1 { omitted.append("archive/"+name+": additional pending groups are in state.sqlite and relay.frames") }
+            } catch { omitted.append("archive/"+name+": unavailable (\(error))") }
+        }
         for (i,path) in (c.supportBundle.logs ?? []).enumerated() { try include(URL(fileURLWithPath:path),as:"logs/\(i).log") }
         let index=working.appendingPathComponent("bundle.json")
         struct Index:Encodable { let version:Int;let containsCustomerData:Bool;let files:[Entry];let omissions:[String] }

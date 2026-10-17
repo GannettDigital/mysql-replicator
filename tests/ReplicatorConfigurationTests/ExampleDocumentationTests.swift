@@ -13,7 +13,7 @@ extension ConfigurationFileTests {
             "compatibility": CompatibilityPolicy(), "ddlPolicy": DDLPolicy(),
             "storage": StoragePolicy(), "batch": BatchPolicy(),
             "sourceReconnect": SourceReconnectPolicy(), "targetReconnect": TargetReconnectPolicy(),
-            "skipErrors": SkipErrorPolicy(),
+            "skipErrors": SkipErrorPolicy(), "statistics": StatisticsPolicy(),
             "supportBundle": try ConfigurationFile.decode(SupportBundleConfiguration.Options.self,from:Data("format: tar".utf8))
         ]
         var expected = Set<String>()
@@ -52,6 +52,7 @@ extension ConfigurationFileTests {
         """.utf8))
         inspect(bundle)
 
+        XCTAssertEqual(Set(ConfigurationOptions.descriptions.keys),expected,"CLI option catalog must match the configuration models")
         let documented = documentedOptions(in: try example())
         XCTAssertEqual(expected.subtracting(documented.keys), [], "Options missing from apply.example.yaml")
         // Maps have user-defined keys, not additional configuration properties.

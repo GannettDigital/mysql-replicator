@@ -279,10 +279,6 @@ extension ApplyTable {
 public struct TargetConfiguration: Decodable {
     /// Keep the source identity in the target binlog unless explicitly disabled.
     public let preserveSourceGTIDs: Bool
-    public enum TLSVerification: String, Decodable {
-        case verifyIdentity = "verify-identity"
-        case verifyCA = "verify-ca"
-    }
     public let host: String?
     public let port: Int?
     public let unixSocket: String?
@@ -322,16 +318,8 @@ public struct TargetConfiguration: Decodable {
         } else {
             try require(!(host ?? "").isEmpty && (1...65535).contains(port ?? 0),"invalid target TCP address")
         }
-        if requireTLS {
-            if tlsVerification == .verifyIdentity {
-                try require(!(serverHostname ?? "").isEmpty,"target verify-identity TLS requires serverHostname")
-            } else {
-                try require(!(caFile ?? "").isEmpty,"target verify-ca TLS requires an explicit caFile")
-                try require(serverHostname == nil || !serverHostname!.isEmpty,"omit target serverHostname or provide a nonempty TLS name")
-            }
-        } else {
-            try require(serverHostname == nil && caFile == nil && tlsVerification == .verifyIdentity,"remove target TLS settings when requireTLS is false")
-        }
+        do { try ConnectionTLS.validate(required:requireTLS,verification:tlsVerification,hostname:serverHostname,caFile:caFile,endpoint:"target") }
+        catch { throw ApplyError(String(describing:error)) }
     }
 }
 public struct ApplyConfiguration: Decodable {
@@ -344,8 +332,10 @@ public struct ApplyConfiguration: Decodable {
     public let target: TargetConfiguration
     public let tables: [ApplyTable]?
     public let stateDirectory: String
+    public var statistics: StatisticsPolicy? = nil
     public let supportBundle: SupportBundleConfiguration.Options?
     public let maximumRelayBytes: UInt64?
+    public var replicateWildDoTable: [String]? = nil
     public let replicateWildIgnoreTable: [String]?
     public let ddlTimeoutSeconds: Int?
     public let ddlPolicy: DDLPolicy?
@@ -363,6 +353,7 @@ public struct ApplyConfiguration: Decodable {
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate(offline: Bool = false) throws {
+        try statistics?.validate()
         try supportBundle?.validate(stateDirectory:stateDirectory)
         try require(version == 2 && tables == nil && source.version == 2 && source.tables == nil && !stateDirectory.isEmpty,"use configuration version 2 without tables/schema lists; automatic discovery replaces the legacy allowlist")
         _ = try source.validate(connection:!offline)
@@ -381,7 +372,7 @@ public struct ApplyConfiguration: Decodable {
         if replicationProfile.sourceContract.requiresHistoricalSchema {
             try require(source.mode == "gtid","MySQL 5.7 source profiles require GTID positioning")
         }
-        _ = try TableFilter(replicateWildIgnoreTable ?? [])
+        _ = try TableFilter(replicateWildIgnoreTable ?? [],including:replicateWildDoTable ?? [])
         try policy.validate()
         try batchPolicy.validate()
         try reconnectPolicy.validate()

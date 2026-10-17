@@ -86,7 +86,7 @@ extension ResumeTests {
         try write(path,"DROP TABLE replication_profile; DROP TABLE ddl_details; DROP TABLE compatibility; DROP TABLE ddl_skips; PRAGMA user_version=6")
         let store=try StateStore(configuration:c,initialize:false)
         XCTAssertEqual(store.transactions,0)
-        XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"PRAGMA user_version"),[["12"]])
+        XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"PRAGMA user_version"),[["13"]])
         XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"SELECT COUNT(*) FROM ddl_skips"),[["0"]])
     }
     func testSkipAuditPrunesOnlyWithCoveredCompletedGroup() throws {

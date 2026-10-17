@@ -5,18 +5,22 @@ import ReplicatorCodec
 /// configured server setting selects exact or native lowercase comparison.
 struct TableFilter {
     let patterns: [String]
+    let includes: [String]
+    var isEmpty: Bool { patterns.isEmpty && includes.isEmpty }
     let lowerCaseTableNames: Int
-    init(_ patterns: [String] = [],lowerCaseTableNames:Int = 0) throws {
+    init(_ patterns: [String] = [],including includes: [String] = [],lowerCaseTableNames:Int = 0) throws {
         try require([0,1].contains(lowerCaseTableNames),"unsupported table-name case setting")
         self.lowerCaseTableNames=lowerCaseTableNames
+        self.includes=includes
+        try require(includes.count <= 128,"too many replicateWildDoTable patterns (maximum 128)")
         try require(patterns.count <= 128, "too many replicateWildIgnoreTable patterns (maximum 128)")
-        for pattern in patterns {
-            try require(!pattern.isEmpty && pattern.utf8.count <= 512 && pattern.unicodeScalars.allSatisfy { $0.value >= 32 && $0.value <= 0xffff && $0.value != 127 }, "invalid replicateWildIgnoreTable pattern")
+        for pattern in patterns+includes {
+            try require(!pattern.isEmpty && pattern.utf8.count <= 512 && pattern.unicodeScalars.allSatisfy { $0.value >= 32 && $0.value <= 0xffff && $0.value != 127 }, "invalid replication table pattern")
             let parts = pattern.split(separator: ".", omittingEmptySubsequences: false)
-            try require(parts.count == 2 && parts.allSatisfy { !$0.isEmpty }, "replicateWildIgnoreTable requires database.table patterns")
+            try require(parts.count == 2 && parts.allSatisfy { !$0.isEmpty }, "replication filters require database.table patterns")
             var escaped = false
             for c in pattern { if escaped { escaped = false } else if c == "\\" { escaped = true } }
-            try require(!escaped, "trailing escape in replicateWildIgnoreTable pattern")
+            try require(!escaped, "trailing escape in replication table pattern")
         }
         self.patterns = patterns
     }
@@ -24,7 +28,10 @@ struct TableFilter {
         Self.matches(lowerCaseTableNames == 1 ? SQLIdentifier.lowercase(pattern) : pattern, lowerCaseTableNames == 1 ? SQLIdentifier.lowercase(value) : value)
     }
     func ignores(database: String, table: String) -> Bool {
-        patterns.contains { matches($0, database + "." + table) }
+        let name=database+"."+table
+        if includes.contains(where:{ matches($0,name) }) { return false }
+        if patterns.contains(where:{ matches($0,name) }) { return true }
+        return !includes.isEmpty
     }
     // Native db_ok_with_wild_table matches "database." (empty table name).
     func ignores(database: String) -> Bool { ignores(database: database, table: "") }
@@ -59,14 +66,16 @@ struct TableFilter {
             try require(decisions.allSatisfy { $0 } || decisions.allSatisfy { !$0 },"DDL crosses included and excluded tables; explicit resolution required")
             return decisions.allSatisfy { $0 }
         }
-        guard !patterns.isEmpty, !objects.tokens.isEmpty else { return false }
+        guard !isEmpty, !objects.tokens.isEmpty else { return false }
         if objects.take("DROP"), objects.take("DATABASE") || objects.take("SCHEMA") {
             if objects.take("IF") { try objects.expect("EXISTS") }
             let database = try objects.identifier()
-            let partial = patterns.contains { pattern in
+            let includesDatabase=includes.contains { matches($0,database+".") }
+            let partialInclude = !includesDatabase && includes.contains { matches(String($0.split(separator:".")[0]),database) }
+            let partial = !includesDatabase && patterns.contains { pattern in
                 matches(String(pattern.split(separator:".")[0]),database)
             } && !ignores(database:database)
-            try require(!partial,"DROP DATABASE crosses included and excluded tables; explicit resolution required")
+            try require(!partial && !partialInclude,"DROP DATABASE crosses included and excluded tables; explicit resolution required")
         }
         var scope = try FilterSQL(query,tokens:tokens)
         guard let targets = try scope.targets() else { return false }
@@ -164,5 +173,12 @@ private struct FilterSQL {
             } else { i += 1 }
         }
         return names
+    }
+}
+
+
+extension ApplyConfiguration {
+    func filterIdentity() throws -> String {
+        String(decoding:try JSONEncoder().encode([Array(Set(replicateWildDoTable ?? [])).sorted(),Array(Set(replicateWildIgnoreTable ?? [])).sorted()]),as:UTF8.self)
     }
 }

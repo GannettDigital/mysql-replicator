@@ -37,6 +37,7 @@ final class StateStore {
     private(set) var relayLength: UInt64 = 0
     private var groupStart: UInt64 = 0
     private var completedGTIDs: GTIDSet
+    private(set) var counters=ApplyCounters()
     private(set) var transactions = 0
     private(set) var rows = 0
     private(set) var ddlApplied = 0
@@ -128,7 +129,8 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=12")
+            try execute("PRAGMA user_version=13")
+            try pinFilters(c,initializing:true)
             try createGTIDModeJournal(c.target.preserveSourceGTIDs)
             try createProfileJournal()
             try createNameCaseJournal()
@@ -143,6 +145,7 @@ final class StateStore {
             try execute("CREATE TABLE row_intents(gtid TEXT NOT NULL,ordinal INTEGER NOT NULL,source_event_offset TEXT NOT NULL,source_row INTEGER NOT NULL,schema_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT,PRIMARY KEY(gtid,ordinal))")
             try execute("CREATE TABLE snapshots(id INTEGER PRIMARY KEY,covered_sequence INTEGER NOT NULL,gtids TEXT NOT NULL,source_file TEXT,source_position TEXT,created_at TEXT NOT NULL)")
             try execute("INSERT INTO state(id,lifecycle,source_uuid,target_uuid,baseline_file,baseline_position,baseline_gtids,updated_at) VALUES(1,'STARTING',?,?,?,?,?,?)",[c.source.sourceUUID,nil,c.source.start.file,c.source.start.position.map(String.init),completedGTIDs.canonical,timestamp()])
+            try openCounters()
             try snapshot()
             try checkpoint()
             ready = true
@@ -161,6 +164,38 @@ final class StateStore {
               let position, let n = UInt32(position), n >= 4 else { throw ApplyError("invalid saved binlog coordinate") }
         return BinlogCoordinate(file:file,position:UInt64(n))
     }
+    func saveSourceObservation(_ observation:SourceObservation) throws {
+        let text=String(decoding:try JSONEncoder().encode(observation),as:UTF8.self)
+        try atomic {
+            try execute("CREATE TABLE IF NOT EXISTS source_observation(id INTEGER PRIMARY KEY CHECK(id=1),observation_json TEXT NOT NULL)")
+            try execute("INSERT OR REPLACE INTO source_observation VALUES(1,?)",[text])
+        }
+    }
+    private func openCounters() throws {
+        try execute("CREATE TABLE IF NOT EXISTS apply_totals(id INTEGER PRIMARY KEY CHECK(id=1),since_transaction INTEGER NOT NULL,insert_rows INTEGER NOT NULL,update_rows INTEGER NOT NULL,delete_rows INTEGER NOT NULL,dml_transactions INTEGER NOT NULL,filtered_transactions INTEGER NOT NULL,policy_skips INTEGER NOT NULL,error_skips INTEGER NOT NULL,binlog_bytes INTEGER NOT NULL,events INTEGER NOT NULL)")
+        let saved=try query("SELECT since_transaction,insert_rows,update_rows,delete_rows,dml_transactions,filtered_transactions,policy_skips,error_skips,binlog_bytes,events FROM apply_totals WHERE id=1")
+        if let row=saved.first { counters=try ApplyCounters(saved:row) }
+        else {
+            counters=ApplyCounters(sinceTransaction:Int64(transactions))
+            try saveCounters(counters)
+        }
+    }
+    private func saveCounters(_ value:ApplyCounters) throws {
+        try execute("INSERT OR REPLACE INTO apply_totals VALUES(1,?,?,?,?,?,?,?,?,?,?)",value.values)
+    }
+    private func pinFilters(_ c:ApplyConfiguration,initializing:Bool) throws {
+        let policy=try c.filterIdentity()
+        let exists=try !query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='replication_filters'").isEmpty
+        if exists {
+            try require(try query("SELECT policy FROM replication_filters WHERE id=1") == [[policy]],"table filters differ from saved state; use the original filters or prepare a new baseline")
+        } else {
+            try require(initializing || (c.replicateWildDoTable ?? []).isEmpty,"legacy state has no include filters; prepare a new baseline to enable them")
+            try atomic {
+                try execute("CREATE TABLE replication_filters(id INTEGER PRIMARY KEY CHECK(id=1),policy TEXT NOT NULL)")
+                try execute("INSERT INTO replication_filters VALUES(1,?)",[policy])
+            }
+        }
+    }
     private func reopen(configuration c: ApplyConfiguration, skipGTIDs: GTIDSet?) throws {
         try require(sqliteBytes <= policy.maximumSQLiteBytes,"saved SQLite exceeds configured storage limit")
         guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil) == SQLITE_OK else {
@@ -168,7 +203,7 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db,1000)
         let version=try number("PRAGMA user_version")
-        try require([4,5,6,7,8,9,10,11,12].contains(version),"unsupported saved state version")
+        try require([4,5,6,7,8,9,10,11,12,13].contains(version),"unsupported saved state version")
         if version >= 12 {
             try require(try query("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(c.target.preserveSourceGTIDs)]],"target.preserveSourceGTIDs differs from saved state; restore the recorded mode")
         } else {
@@ -340,6 +375,9 @@ final class StateStore {
         // Format 11 permits tagged GTID text. Older readers must reject it.
         if version < 11 {try atomic {try execute("PRAGMA user_version=11")}}
         if version < 12 {try atomic {try createGTIDModeJournal(c.target.preserveSourceGTIDs);try execute("PRAGMA user_version=12")}}
+        try pinFilters(c,initializing:false)
+        if version < 13 { try execute("PRAGMA user_version=13") }
+        try openCounters()
         ready=true
     }
     private func createGTIDModeJournal(_ preserveSourceGTIDs:Bool) throws {
@@ -653,11 +691,13 @@ final class StateStore {
                 try require(replicationProfile.transactional && error.outcome == "rolledBack" && error.code == .duplicateKey && skipPolicy.codes.contains(error.code) && acknowledgedRows[index] == 0,"skip requires an authorized rolled-back InnoDB group")
             }
             if !skipped.isEmpty { try ensureSkipJournal() }
+            var totals=counters
             var completed=0, rowCount=0, incomplete=false, next=completedGTIDs
             for (index,item) in batch.enumerated() {
                 let count=acknowledgedRows[index]
                 try require((0...item.mutations.count).contains(count) && (!incomplete || (count == 0 && skipped[index] == nil)),"batch acknowledgments are not a contiguous prefix")
                 if count == item.mutations.count || skipped[index] != nil {
+                    totals.complete(item.group,rows:count,outcome:skipped[index] == nil ? .applied : .errorSkipped)
                     completed+=1; rowCount+=count
                     try profile("journal.gtid") { try next.include(item.group.gtid!) }
                 } else { incomplete=true }
@@ -678,9 +718,11 @@ final class StateStore {
                     }
                     if index < completed && skipped[index] == nil { try execute("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,item.id]) }
                 }
+                try saveCounters(totals)
                 if !skipped.isEmpty { try coverSkippedPrefix(next,sequence:sequence+Int64(completed),end:end!,time:time) }
                 try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,rows_applied=?,active_gtid=?,updated_at=?,last_applied_at=CASE WHEN CAST(? AS INTEGER)>0 THEN ? ELSE last_applied_at END WHERE id=1",[end?.file,end.map{String($0.position)},String(sequence+Int64(completed)),String(transactions+completed),String(rows+rowCount),active,time,String(completed),time])
             }
+            counters=totals
             completedGTIDs=next; applied=end; sequence+=Int64(completed); transactions+=completed; rows+=rowCount
             if !skipped.isEmpty {
                 snapshotSequence=sequence
@@ -720,14 +762,17 @@ final class StateStore {
             && number("SELECT COUNT(*) FROM ddl_intents WHERE gtid=?",[id]) == 0,"cannot automatically skip target write intents")
         try ensureSkipJournal()
         var next=completedGTIDs;try next.include(identity)
+        var totals=counters;totals.complete(group,rows:0,outcome:.errorSkipped)
         let time=timestamp()
         try atomic {
+            try saveCounters(totals)
             try recordSkip(group,error:error,time:time)
             try coverSkippedPrefix(next,sequence:pendingSequence,end:group.end,time:time)
             try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'",[id])
             try execute("UPDATE state SET applied_file=?,applied_position=?,applied_sequence=?,transactions_applied=?,active_gtid=NULL,updated_at=?,last_applied_at=? WHERE id=1",[group.end.file,String(group.end.position),String(pendingSequence),String(transactions+1),time,time])
         }
         completedGTIDs=next;applied=group.end;sequence=pendingSequence;snapshotSequence=sequence
+        counters=totals
         transactions+=1;skippedTransactionsByCode[error.code.rawValue,default:0]+=1
         pendingGTID=nil;groupStart=relayLength
     }
@@ -783,8 +828,11 @@ final class StateStore {
         var newSchemaID: Int64?
         var additionalIDs: [SQLNameKey:Int64] = [:]
         var next=completedGTIDs; try next.include(identity)
+        var totals=counters
+        totals.complete(group,rows:rowCount,outcome:skippedDDL != nil ? .policySkipped : (filtered ? .filtered : .applied))
         let time=timestamp()
         try atomic {
+            try saveCounters(totals)
             if let skippedDDL {
                 try execute("INSERT INTO ddl_skips VALUES(?,?,?,?,?,?)",[pendingGTID,skippedDDL.name.database,skippedDDL.name.table,skippedDDL.sql,skippedDDL.reason,time])
             }
@@ -831,6 +879,7 @@ final class StateStore {
             if let after=ddl.after,let newSchemaID {schemas[after.identity]=(newSchemaID,after)}
             ddlApplied+=1
         }
+        counters=totals
         completedGTIDs=next; applied=group.end; transactions+=1; rows+=rowCount; sequence=pendingSequence
         self.pendingGTID=nil; groupStart=relayLength
         if sequence-snapshotSequence >= policy.snapshotEveryTransactions {try snapshot()}

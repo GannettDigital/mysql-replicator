@@ -390,3 +390,13 @@ resume, offline reload during blocked target execution, live idle reload,
 rejection of checkpoint changes/past limits, and acknowledged stop during an
 active target batch. It compares final rows and schemas against source/native on
 all profiles. Unit tests also cover control socket cleanup and GTID-set holes.
+
+### Binlog excerpts in support bundles
+
+Bundles copy up to `supportBundle.binlogContextBytes` per selected archive file
+(default 4 MiB). They retain the file prefix and bytes around the pending group
+or applied position. The JSON index gives original offsets, omitted ranges, and
+whether the complete pending group fits. Byte ranges are diagnostic data, not
+standalone replay files. Use `relay.frames` for captured table maps and rows.
+Corrupt input can prevent decoding; its raw bytes remain useful. The total bundle
+size limit still applies. Keep the original archive for further investigation.

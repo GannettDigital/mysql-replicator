@@ -148,6 +148,6 @@ extension TargetSession {
                 tables[name.identity] = try readSchema(database:name.database,name:name.table,validateRelationships:false)
             }
         }
-        try ForeignKeyGraph.validate(actual,tables:tables,filter:TableFilter(config.replicateWildIgnoreTable ?? [],lowerCaseTableNames:config.source.tableNameCaseSetting),missingParents:missing,parentKeys:NativeReplicationRules(profile:config.replicationProfile).foreignKeyParentKeys)
+        try ForeignKeyGraph.validate(actual,tables:tables,filter:TableFilter(config.replicateWildIgnoreTable ?? [],including:config.replicateWildDoTable ?? [],lowerCaseTableNames:config.source.tableNameCaseSetting),missingParents:missing,parentKeys:NativeReplicationRules(profile:config.replicationProfile).foreignKeyParentKeys)
     }
 }
