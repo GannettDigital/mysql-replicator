@@ -65,11 +65,16 @@ extension SharedCorrectness.Run {
                 "keyless partial-write or rollback result differs")
             let saved = f.output.appendingPathComponent("keyless-blocked")
             _ = try f.docker(["cp", f.helper + ":" + (f.config["stateDirectory"] as! String), saved.path])
+            // Direct MyISAM SQL acknowledges the first row. InnoDB rolls it back;
+            // a preserved-GTID function leaves the whole request unresolved.
+            let preservesGTIDs = (f.config["target"] as? [String: Any])?["preserveSourceGTIDs"] as? Bool ?? false
+            let done = !f.profile.transactionalTarget && !preservesGTIDs ? 1 : 0
             let state = try f.runner.run([
                 "sqlite3", saved.appendingPathComponent("state.sqlite").path,
-                "SELECT lifecycle||'|'||transactions_applied||'|'||(SELECT COUNT(*) FROM row_intents WHERE status='PENDING' AND gtid=state.active_gtid) FROM state",
+                "SELECT lifecycle||'|'||transactions_applied||'|'||(SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND gtid=state.active_gtid)||'|'||(SELECT COUNT(*) FROM row_intents WHERE status='PENDING' AND gtid=state.active_gtid) FROM state",
             ]).text
-            try require(state == "BLOCKED|7|2", "keyless failure lost its pending rows or advanced progress")
+            try require(
+                state == "BLOCKED|7|\(done)|\(2-done)", "keyless failure lost its pending rows or advanced progress")
             let refused = try invoke(label + "-replay-blocked", "replay", success: false)
             try require(
                 (refused["reason"] as? String ?? "").contains("cleanly STOPPED"),
