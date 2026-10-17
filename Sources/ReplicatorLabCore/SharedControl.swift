@@ -41,12 +41,15 @@ extension SharedCorrectness.Run {
                 let bytes = command == "fetch" ? logs.stdout : logs.stderr
                 return try JSONSerialization.jsonObject(with: Data(bytes.split(separator: 10).last!)) as! [String: Any]
             }
+            var clients: [String: String] = [:]
             func start(_ label: String, _ command: String = "replay", initialize: Bool = true) throws -> String {
                 try f.installConfig(label)
-                return try f.startClient(
+                let client = try f.startClient(
                     label,
                     arguments: [command, "--config", "/evidence/" + label + ".yaml"]
                         + (initialize ? ["--initialize"] : []))
+                clients[label] = client
+                return client
             }
             try f.installConfig("control-fetch")
             _ = try finish(
@@ -95,6 +98,15 @@ extension SharedCorrectness.Run {
             func awaitStatus(_ label: String, active: Bool = false) throws {
                 let deadline = Date().addingTimeInterval(30)
                 while Date() < deadline {
+                    if let client = clients[label],
+                        try f.docker(["inspect", "--format", "{{.State.Running}}", client]).text == "false"
+                    {
+                        let logs = try f.docker(["logs", client])
+                        try (logs.stdout + logs.stderr).write(to: f.output.appendingPathComponent(label + ".ndjson"))
+                        throw LabError(
+                            "control process exited before expected status: "
+                                + String(decoding: logs.stderr, as: UTF8.self))
+                    }
                     if let status = try? ctl("status", label), let progress = status["progress"] as? [String: Any],
                         progress["lifecycle"] as? String == "RUNNING",
                         !active || (progress["activeBatchTransactions"] as? Int ?? 0) > 0
@@ -122,6 +134,9 @@ extension SharedCorrectness.Run {
             // Reload while the first batch is actually issued and blocked.
             // Keep fewer issued transactions than the new stop boundary: a
             // reload cannot rewind an already-issued durable queue.
+            // This independent replay uses fresh SQLite state. Reset the disposable
+            // target's GTID history as well as its rows. Resume cases retain both.
+            _ = try f.sql(.target, f.profile.targetVersion.resetBinlogs)
             _ = try f.sql(.target, seed)
             source.removeValue(forKey: "stopAfterGTIDs")
             source.removeValue(forKey: "stopAfterTransactions")
