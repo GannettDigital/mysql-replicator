@@ -54,7 +54,9 @@ extension SharedCorrectness.Run {
                 "target57",
                 "REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'apply_fixture'@'%'; GRANT REPLICATION CLIENT,SUPER ON *.* TO 'apply_fixture'@'%'; GRANT SELECT ON performance_schema.* TO 'apply_fixture'@'%'"
             )
-            for database in ["poc", "otherdb", "demo", "ddlcompat"] {
+            // Source-GTID preservation needs its private MyISAM scratch schema.
+            // Keep CREATE denied on other schemas for the permission tests.
+            for database in ["poc", "otherdb", "demo", "ddlcompat", "_mysql_replicator_gtid"] {
                 _ = try h.sql(
                     "target57",
                     "GRANT SELECT,INSERT,UPDATE,DELETE,LOCK TABLES,TRIGGER,CREATE,ALTER,DROP,INDEX,CREATE VIEW,SHOW VIEW,CREATE ROUTINE,ALTER ROUTINE,EXECUTE ON \(database).* TO 'apply_fixture'@'%'"
