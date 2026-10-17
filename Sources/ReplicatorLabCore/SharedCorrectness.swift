@@ -479,7 +479,8 @@ public enum SharedCorrectness {
                         try replayDDLWorkflow("foreign-key-parent-keys",stopAfter:6,from:begin,to:end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-missing-parent" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL") == "1","missing-parent relationship was not journaled")
+                        let ids=try ddlGTIDs(saved,from:begin,to:end)
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE ddl_details.gtid IN (\(ids)) AND json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL") == "1","missing-parent relationship was not journaled")
                         try replayDDLWorkflow("foreign-key-missing-parent",stopAfter:2,from:begin,to:end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-controls" {
