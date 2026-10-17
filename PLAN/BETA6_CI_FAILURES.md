@@ -1,74 +1,152 @@
-# Beta.6 initial CI failures
+# Beta.6 CI failure corrections
 
-Snapshot: 2026-10-16. PRs 55–65 are still running. This is not a complete result
-for the stack. No jobs were cancelled or rerun during this review.
+Updated: 2026-10-16. This report covers the failures found in PRs 55–65.
+The fixes are local. No CI jobs were cancelled or rerun, and no branches were
+pushed during this work. The next CI run must check the updated stack.
 
-## Fixed locally
+## Build and unit checks
 
-| First PR | Failure | Correction | Check |
+| First PR | Failure | Correction | Local check |
 | --- | --- | --- | --- |
-| 55 | DDL evidence test expects 730 obligations; the branch has 728 | Move the existing next-branch assertion correction into the first affected branch | Six DDL evidence tests passed |
-| 56 | Periphery reports the unused string-array comparison overload | Add tests for exact Unicode bytes, order, length and empty values; later branches use the overload | Nine identifier tests passed |
-| 64, also 65 | The pinned Swift image has no `make` | Run `swift format lint --strict --parallel --recursive Sources tests` directly | The exact command passed in the pinned Linux container |
+| 55 | DDL evidence test expects 730 obligations; this branch has 728 | Correct the assertion on the first affected branch | Six DDL evidence tests passed |
+| 56 | Periphery reports an unused string-array comparison overload | Test exact UTF-8 bytes, order, length and empty arrays | Nine identifier tests passed |
+| 64 | The pinned Swift image has no `make` | Call `swift format lint` directly | The exact command passed in the pinned Linux container |
 
-Fix commits: `70b7bd0`, `9211ade`, `a0237f8`. Merge commits carry these fixes
-through the local stack without rewriting the published history. Nothing was
-pushed. The push helper still accepts the updated descendants.
+Branch 3 removes the string-array overload. Its merge therefore removes the
+new overload tests too. Branch 2 retains them. Later branches do not use that
+removed overload.
 
-Periphery reported no unused code after the new tests. Its reused local index
-also reported duplicate declarations from earlier branch builds. Treat the next
-clean CI Periphery run as the final check, not this reused-index result.
+The local Periphery check found no unused code, but its reused index contained
+duplicate declarations from older builds. A clean CI Periphery run is still
+required.
 
-## Integration failures still open
+## SQL input in the harness
 
-### SQL script framing
+PR 55 run `38981724485` showed three related failures:
 
-PR 55 run `38981724485` has two direct fixture errors:
+- The trigger fixture sent a mysql client `DELIMITER` command to the server.
+- The native DDL fixture sent an empty statement between two semicolons as part
+  of one server request.
+- The demo logged a leading SQL comment with `CREATE TABLE`. The early stack
+  branch rejected that event as a noncanonical control statement.
 
-- Job `117246385853`, forward failure sequence: a `DELIMITER $$` client command
-  reaches the server as SQL during the trigger setup.
-- Job `117246385763`, native DDL sequence: the seed ends in a semicolon and the
-  caller adds another semicolon. The server rejects the resulting multi-statement
-  request before the expected source rejection checks run.
+Later DDL jobs showed the same `DELIMITER` error in the stored-procedure case.
+A local MySQL 8.4 probe confirmed the demo event difference. The saved probe is
+`artifacts/ci-failures/demo-framing-probe.json`.
 
-`NativeHarness.sqlCommand` now preserves UTF-8 through stdin. It also assigns one
-custom delimiter to the entire input. Existing callers pass both individual
-statements and mysql client scripts. These need distinct framing. Keep byte-safe
-stdin. Let the mysql client process scripts, including their delimiter commands.
-Keep stored routine bodies intact when the input is one SQL statement. Do not
-solve the failures by weakening expected-error assertions or reverting to argv
-transport, which can change Unicode spelling on macOS.
+`LabSQLInput` now distinguishes a client script from a server SQL request. Both
+paths preserve UTF-8 bytes through stdin. The client processes scripts and their
+`DELIMITER` commands. A request keeps a compound routine body intact. The target
+GTID reset is a separate request. The custom delimiter fits the mysql client's
+15-byte limit.
 
-The forward-failure bundle contains the earlier, expected trigger/event policy
-rejections. The later malformed fixture command fails before it reaches the
-applier, so there is no support bundle for that setup error.
+The correction changes the trigger, routine, native DDL and demo callers.
+It does not change the production SQL parser or transaction-boundary checks.
 
-### Obsolete DDL skip case
+## Error-skip fixture
 
-PR 60 run `38981745802`, job `117246844523`, fails `offline-skip-errors` on the
-5.7-to-5.7 InnoDB profile. The test expects `ddl.unsupported_alter` for
-`ALTER TABLE skip_poc.items ENABLE KEYS`. Beta.6 supports that statement.
-The saved output has no DDL skip. It has `mysql.1062: 1` before and after restart.
-Transactions and applied rows match the other assertions.
+PR 60 run `38981745802`, job `117246844523`, expected an unsupported-ALTER skip
+for `ALTER TABLE ... ENABLE KEYS`. Beta.6 supports that statement. The saved
+report had the expected duplicate-key skip, but no DDL skip.
 
-Replace the obsolete DDL refusal with a deterministic failure. Keep both DDL and
-DML skip coverage, audited and counts-only variants, restart checks, and the
-MyISAM partial-write refusal. Do not merely remove the DDL counter assertion.
-Check the shared live-mode case too; it uses the same test code.
+The fixture now uses a `GRANT` statement. Account administration is outside the
+applier's scope and produces `ddl.unsupported_statement`. A locked test account
+exists on each server so that the source and native replica accept the GRANT.
 
-### Demo control event
+Each audit variant resets only its disposable target's GTID history before it
+replays the same source groups. This avoids duplicate suppression when source
+GTID preservation is enabled. The assertions still cover:
 
-PR 55 job `117246385867` fails `demo-success`. Its support bundle reports
-`noncanonical or unsupported SQL control statement` at `binlog.000003:2404`.
-This may also follow from whole-script framing, but the saved bundle does not
-contain the rejected event's SQL. The earlier completed relay data cannot prove
-that cause. Inspect or reproduce the source event before changing the assembler.
-Do not relax transaction-boundary checks based only on this error message.
+- Live and replay modes.
+- Audited and counts-only skips.
+- Skip counters after restart.
+- InnoDB rollback before continuation.
+- MyISAM refusal after a potentially partial write.
 
-## Saved evidence
+## Restricted fixture permissions
 
-Downloaded artifacts are under `artifacts/ci-failures/` in the beta.6 release
-worktree: `pr55-offline`, `pr55-native`, `pr55-demo`, and `pr60-offline`.
-Read their `result.json` files, support-bundle `failure.json` and `bundle.json`,
-and the replay skip/resume NDJSON reports before rerunning a failed case.
-No full-suite rerun or production apply change was made during this review.
+A local forward-failure run stopped during startup with MySQL error 1044.
+Its support bundle showed no captured groups. The restricted test account lacked
+access to `_mysql_replicator_gtid`, which source-GTID preservation uses on MyISAM.
+
+The fixture now grants access to that scratch schema. It still denies CREATE on
+the schemas used by the permission-failure tests.
+
+## MyISAM reconnect fixture
+
+PR 62 run `38981753753`, job `117248066385`, reported
+`missed active group for source_batch`. Its support bundle showed the actual
+cause: the generated SQL for the 8,000-row MyISAM group exceeded the target's
+`max_allowed_packet`. No target mutation had been issued.
+
+An initial correction raised the fixture's packet limit to 64 MiB. Local runs
+then showed two more problems:
+
+- Helper-function creation used the general SQL timeout instead of the configured
+  DDL timeout. The applier now uses `ddlTimeoutSeconds` for that CREATE FUNCTION.
+- The 8,000-row helper-function call exceeded the normal SQL execution timeout on
+  local MySQL 5.7. The bundle retained the uncertain group and blocked replication.
+
+The MyISAM lifecycle tests now use an explicit table lock and a 128-row group.
+They first apply one row to load the table metadata. They then wait until the
+helper-function request is issued against the locked table. Only then do they
+interrupt capture or request a drain. They release the lock and check all rows,
+GTIDs, counters and pending intents. This keeps the lifecycle assertion independent
+of execution speed. InnoDB keeps its 8,000-row partial-progress test.
+
+The 8,000-row MyISAM preserved-GTID execution timeout remains a separate limit
+found by this investigation. This work does not claim that increasing
+`max_allowed_packet` alone makes such groups succeed. Further work must measure
+helper-function preparation and execution, then reduce the generated SQL or add
+a suitable configurable execution deadline. The failed runs are retained below.
+
+## Validation
+
+All listed checks passed. Container checks ran on the release branch as fixes were added. They used the
+default capture variant. The native suite ran both engine-restriction variants.
+Earlier successful checks were not repeated for unrelated later changes.
+
+| Check | Profiles or scope | Result |
+| --- | --- | --- |
+| Focused unit tests | SQL input, account-statement skip, SQL batches, source-GTID execution | 11 passed |
+| Format lint | All Swift sources and tests | Passed |
+| Stored procedures and functions | All four profiles | Passed |
+| Live and replay error skips | All four profiles; audited and counts-only | Passed |
+| Forward failure sequence | 8.4 → 5.7 MyISAM | Passed |
+| Native DDL suite | Forward reference, restricted and unrestricted engine variants | Passed |
+| Demo success and its startup dependencies | 8.4 → 5.7 MyISAM | Passed |
+| Source and target lifecycle | 8.4 → 5.7 MyISAM | 11 cases passed |
+| Source and target lifecycle | 5.7 → 5.7 MyISAM | 11 cases passed |
+
+Reports under `artifacts/lab/`:
+
+- `20261017T000504Z-67a95bde/result.json`: routine checks on all four profiles and
+  skip checks on the three 5.7-source profiles passed. This run failed the forward
+  restricted-account setup before that grant was corrected.
+- `20261017T001725Z-d98e2362/result.json`: the corrected forward failure sequence
+  and both forward skip modes passed.
+- `20261017T000646Z-7211cb78/result.json`: native DDL passed.
+- `20261017T000648Z-865684c4/result.json`: selected demo checks passed.
+- `20261017T004750Z-d20295a1/result.json`: all forward lifecycle cases passed.
+- `20261017T004937Z-de3c68ef/result.json`: all 5.7-to-5.7 MyISAM lifecycle cases passed.
+
+The large-group execution failures remain in
+`20261017T004109Z-12c16065/` and `20261017T004258Z-6c706c8f/`, including support
+bundles. They are not passing scale tests. The lifecycle test correction does
+not close that execution-size and timeout investigation.
+
+## Saved evidence and push
+
+Downloaded CI artifacts are under `artifacts/ci-failures/` in the release
+worktree: `pr55-offline`, `pr55-native`, `pr55-demo`, `pr60-offline`, and
+`pr62-reconnect`. Original support bundles are retained unchanged.
+
+Merge commits carry the corrections through the local stack. Each branch retains
+its published history. The existing push helper accepts the updated descendants:
+
+```sh
+bash artifacts/beta6-release-stack/push-branches.sh
+```
+
+These local checks do not replace the full CI matrix. The matrix includes other
+variants and areas that were not rerun here.
