@@ -28,8 +28,10 @@ public enum ReplicatorCommandLine {
             if let request = command as? RequestCommand {
                 // Argument Parser permits repeated scalar options. Keep the
                 // CLI's existing rejection of duplicates that can hide mistakes.
-                let options: Set<String> = ["--config", "--initialize", "--source-config", "--schema",
-                    "--include-raw", "--transactions", "--binlog-file", "--gtids", "--reason", "--timeout", "--version"]
+                let options: Set<String> = [
+                    "--config", "--initialize", "--source-config", "--schema",
+                    "--include-raw", "--transactions", "--binlog-file", "--gtids", "--reason", "--timeout", "--version",
+                ]
                 var seen = Set<String>()
                 for argument in arguments {
                     if argument == "--" { break }
@@ -67,18 +69,21 @@ private struct Root: RequestCommand {
         commandName: "mysql-replicator",
         abstract: "Replicate MySQL binlog changes across supported server versions.",
         discussion: """
-        Put connection, profile, and policy settings in a YAML configuration file.
-        Commands emit JSON records. Diagnostics go to stderr. Failures exit with status 1.
-        Help and version output are plain text and do not connect to MySQL.
-        """,
-        subcommands: [Run.self, Fetch.self, Replay.self, Control.self, SupportBundle.self,
-                      Inspect.self, InspectRelay.self, Blackhole.self, Skip.self, Recovery.self])
+            Put connection, profile, and policy settings in a YAML configuration file.
+            Commands emit JSON records. Diagnostics go to stderr. Failures exit with status 1.
+            Help and version output are plain text and do not connect to MySQL.
+            """,
+        subcommands: [
+            Run.self, Fetch.self, Replay.self, Control.self, SupportBundle.self,
+            Inspect.self, InspectRelay.self, Blackhole.self, Skip.self, Recovery.self,
+        ])
     @Flag(help: "Show the release version and codec capabilities.") var version = false
     var request: CLIRequest { version ? .version : .help(Self.helpMessage(columns: 88)) }
 }
 
 private struct Config: ParsableArguments {
-    @Option(name: .customLong("config"), help: ArgumentHelp("Read settings from this YAML file.", valueName: "FILE.yaml"))
+    @Option(
+        name: .customLong("config"), help: ArgumentHelp("Read settings from this YAML file.", valueName: "FILE.yaml"))
     var path: String
     mutating func validate() throws {
         guard !path.isEmpty else { throw ValidationError("--config requires a nonempty path.") }
@@ -92,51 +97,58 @@ private struct ApplyOptions: ParsableArguments {
 }
 
 private struct Run: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "run",
+    static let configuration = CommandConfiguration(
+        commandName: "run",
         abstract: "Capture from the source and apply changes to the target.",
         discussion: """
-        Resume clean STOPPED state unless --initialize is set. Source and safe target
-        reconnect are automatic. Uncertain target writes leave the applier BLOCKED.
-        Use ctl stop for a graceful drain. SIGTERM and SIGUSR1 also request a drain.
-        """)
+            Resume clean STOPPED state unless --initialize is set. Source and safe target
+            reconnect are automatic. Uncertain target writes leave the applier BLOCKED.
+            Use ctl stop for a graceful drain. SIGTERM and SIGUSR1 also request a drain.
+            """)
     @OptionGroup var options: ApplyOptions
     var request: CLIRequest { .apply(config: options.config.path, initialize: options.initialize, offline: false) }
 }
 
 private struct Replay: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "replay",
+    static let configuration = CommandConfiguration(
+        commandName: "replay",
         abstract: "Apply raw binlog files from a local archive without source access.",
         discussion: """
-        Configure the archive directory and baseline in YAML. Replay checks archive
-        history and event CRCs before target writes. Use source.stopAfterGTIDs or
-        source.stopAfterTransactions in YAML to stop at a transaction boundary.
-        """)
+            Configure the archive directory and baseline in YAML. Replay checks archive
+            history and event CRCs before target writes. Use source.stopAfterGTIDs or
+            source.stopAfterTransactions in YAML to stop at a transaction boundary.
+            """)
     @OptionGroup var options: ApplyOptions
     var request: CLIRequest { .apply(config: options.config.path, initialize: options.initialize, offline: true) }
 }
 
 private struct Fetch: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "fetch",
+    static let configuration = CommandConfiguration(
+        commandName: "fetch",
         abstract: "Download a finite source binlog range to a local archive.",
-        discussion: "Uses source and archive settings from YAML. Does not connect to the target. Use a new archive directory for each fetch.")
+        discussion:
+            "Uses source and archive settings from YAML. Does not connect to the target. Use a new archive directory for each fetch."
+    )
     @OptionGroup var config: Config
     var request: CLIRequest { .fetch(config: config.path) }
 }
 
 private struct SupportBundle: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "support-bundle",
+    static let configuration = CommandConfiguration(
+        commandName: "support-bundle",
         abstract: "Collect local files to diagnose a replication failure.",
         discussion: """
-        Stop the applier before collection. The bundle can contain SQL, row data,
-        configuration, and logs. The command does not upload the bundle or connect
-        to MySQL. Configure output and size limits under supportBundle in YAML.
-        """)
+            Stop the applier before collection. The bundle can contain SQL, row data,
+            configuration, and logs. The command does not upload the bundle or connect
+            to MySQL. Configure output and size limits under supportBundle in YAML.
+            """)
     @OptionGroup var config: Config
     var request: CLIRequest { .supportBundle(config: config.path) }
 }
 
 private struct Control: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "ctl",
+    static let configuration = CommandConfiguration(
+        commandName: "ctl",
         abstract: "Control a running run or replay process through its local socket.",
         subcommands: [Status.self, Stop.self, Reload.self])
 }
@@ -150,102 +162,130 @@ private struct ControlOptions: ParsableArguments {
 }
 
 private struct Status: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "status", abstract: "Show the running process state and progress.")
+    static let configuration = CommandConfiguration(
+        commandName: "status", abstract: "Show the running process state and progress.")
     @OptionGroup var options: ControlOptions
     var request: CLIRequest { .control(config: options.config.path, action: "status", timeout: options.timeout) }
 }
 
 private struct Stop: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "stop", abstract: "Request a graceful drain and wait for the process to stop.")
+    static let configuration = CommandConfiguration(
+        commandName: "stop", abstract: "Request a graceful drain and wait for the process to stop.")
     @OptionGroup var options: ControlOptions
     var request: CLIRequest { .control(config: options.config.path, action: "stop", timeout: options.timeout) }
 }
 
 private struct Reload: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "reload",
+    static let configuration = CommandConfiguration(
+        commandName: "reload",
         abstract: "Reload the transaction and GTID stop limits from YAML.",
-        discussion: "Only source.stopAfterTransactions and source.stopAfterGTIDs can change. Other settings and a new baseline require a restart.")
+        discussion:
+            "Only source.stopAfterTransactions and source.stopAfterGTIDs can change. Other settings and a new baseline require a restart."
+    )
     @OptionGroup var options: ControlOptions
     var request: CLIRequest { .control(config: options.config.path, action: "reload", timeout: options.timeout) }
 }
 
 private struct Recovery: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "recovery",
+    static let configuration = CommandConfiguration(
+        commandName: "recovery",
         abstract: "Inspect or resolve saved records for uncertain target writes.",
         subcommands: [RecoveryInspect.self, RecoveryResolve.self])
 }
 
 private struct RecoveryInspect: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "inspect",
+    static let configuration = CommandConfiguration(
+        commandName: "inspect",
         abstract: "Show pending transactions and the saved recovery information.")
     @OptionGroup var config: Config
     var request: CLIRequest { .recoveryInspect(config: config.path) }
 }
 
 private enum RecoveryAction: String, ExpressibleByArgument {
-    case markApplied = "mark-applied", retry, skip
+    case markApplied = "mark-applied"
+    case retry, skip
 }
 
 private struct RecoveryResolve: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "resolve",
+    static let configuration = CommandConfiguration(
+        commandName: "resolve",
         abstract: "Record a DBA decision for a blocked transaction group.",
-        discussion: "Check the target and saved records before resolution. Supply the affected GTID set and a reason for the decision.")
+        discussion:
+            "Check the target and saved records before resolution. Supply the affected GTID set and a reason for the decision."
+    )
     @Argument(help: "Resolution: mark-applied, retry, or skip.") var action: RecoveryAction
     @OptionGroup var config: Config
     @Option(help: ArgumentHelp("GTID set to resolve.", valueName: "GTID_SET")) var gtids: String
     @Option(help: ArgumentHelp("DBA reason for this decision.", valueName: "TEXT")) var reason: String
-    var request: CLIRequest { .recoveryResolve(config: config.path, action: action.rawValue, gtids: gtids, reason: reason) }
+    var request: CLIRequest {
+        .recoveryResolve(config: config.path, action: action.rawValue, gtids: gtids, reason: reason)
+    }
 }
 
 private struct Skip: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "skip",
+    static let configuration = CommandConfiguration(
+        commandName: "skip",
         abstract: "Skip a captured failed GTID that has no target write intents.",
-        discussion: "The command leaves the applier STOPPED. Use recovery inspect for a group with target write intents.")
+        discussion:
+            "The command leaves the applier STOPPED. Use recovery inspect for a group with target write intents.")
     @Argument(help: "Captured failed GTID to exclude.") var gtidSet: String
     @OptionGroup var config: Config
     var request: CLIRequest { .skip(config: config.path, gtids: gtidSet) }
 }
 
 private struct Blackhole: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "blackhole",
+    static let configuration = CommandConfiguration(
+        commandName: "blackhole",
         abstract: "Measure capture and decoding without a target applier.")
-    @Option(name: .long, help: ArgumentHelp("Source-only YAML configuration.", valueName: "SOURCE.yaml")) var sourceConfig: String
+    @Option(name: .long, help: ArgumentHelp("Source-only YAML configuration.", valueName: "SOURCE.yaml"))
+    var sourceConfig: String
     var request: CLIRequest { .blackhole(config: sourceConfig) }
 }
 
 private struct InspectRelay: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "inspect-relay", abstract: "Read a local relay file and emit JSON records.")
+    static let configuration = CommandConfiguration(
+        commandName: "inspect-relay", abstract: "Read a local relay file and emit JSON records.")
     @Argument(help: "Local relay file.") var file: String
     @Flag(help: "Include raw event bytes as base64.") var includeRaw = false
     var request: CLIRequest { .inspectRelay(file: file, includeRaw: includeRaw) }
 }
 
 private struct Inspect: RequestCommand {
-    static let configuration = CommandConfiguration(commandName: "inspect",
+    static let configuration = CommandConfiguration(
+        commandName: "inspect",
         abstract: "Inspect a raw binlog file or a live source stream.",
         discussion: """
-        Supply FILE for local inspection, or --source-config for live inspection.
-        Row decoding requires historical column metadata. Use --schema for a local
-        schema history. For local transaction output, supply --transactions and
-        --binlog-file together. Live inspection is read-only. It has no durable
-        checkpoint or automatic reconnect.
-        """)
+            Supply FILE for local inspection, or --source-config for live inspection.
+            Row decoding requires historical column metadata. Use --schema for a local
+            schema history. For local transaction output, supply --transactions and
+            --binlog-file together. Live inspection is read-only. It has no durable
+            checkpoint or automatic reconnect.
+            """)
     @Argument(help: "Local raw binlog file. Omit for live inspection.") var file: String?
-    @Option(help: ArgumentHelp("Source-only YAML configuration for live inspection.", valueName: "SOURCE.yaml")) var sourceConfig: String?
-    @Option(help: ArgumentHelp("Historical column metadata for a local file.", valueName: "HISTORY.json")) var schema: String?
+    @Option(help: ArgumentHelp("Source-only YAML configuration for live inspection.", valueName: "SOURCE.yaml"))
+    var sourceConfig: String?
+    @Option(help: ArgumentHelp("Historical column metadata for a local file.", valueName: "HISTORY.json")) var schema:
+        String?
     @Flag(help: "Include raw event bytes as base64.") var includeRaw = false
     @Flag(help: "Emit complete transaction groups; reject incomplete EOF.") var transactions = false
-    @Option(help: ArgumentHelp("Original source filename for local transaction output.", valueName: "SOURCE_FILENAME")) var binlogFile: String?
+    @Option(help: ArgumentHelp("Original source filename for local transaction output.", valueName: "SOURCE_FILENAME"))
+    var binlogFile: String?
     mutating func validate() throws {
-        guard (file != nil) != (sourceConfig != nil) else { throw ValidationError("Supply FILE or --source-config, but not both.") }
+        guard (file != nil) != (sourceConfig != nil) else {
+            throw ValidationError("Supply FILE or --source-config, but not both.")
+        }
         if sourceConfig != nil {
-            guard schema == nil, binlogFile == nil else { throw ValidationError("--schema and --binlog-file require a local FILE.") }
+            guard schema == nil, binlogFile == nil else {
+                throw ValidationError("--schema and --binlog-file require a local FILE.")
+            }
         } else if transactions != (binlogFile != nil) {
             throw ValidationError("--transactions and --binlog-file must be supplied together for a local FILE.")
         }
     }
     var request: CLIRequest {
-        if let sourceConfig { return .inspectSource(config: sourceConfig, transactions: transactions, includeRaw: includeRaw) }
+        if let sourceConfig {
+            return .inspectSource(config: sourceConfig, transactions: transactions, includeRaw: includeRaw)
+        }
         return .inspectFile(file: file!, schema: schema, includeRaw: includeRaw, binlogFile: binlogFile)
     }
 }

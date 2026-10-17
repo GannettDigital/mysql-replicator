@@ -106,7 +106,7 @@ def build_identity(root, image, env):
     return result
 
 
-REQUIRED_DEPENDENCIES = {'lab-tools', 'unit-tests', 'packaging-and-smoke', 'combined-coverage', 'periphery'}
+REQUIRED_DEPENDENCIES = {'lab-tools', 'unit-tests', 'packaging-and-smoke', 'combined-coverage', 'periphery', 'swift-lint'}
 
 
 def validate_results(manifest, records, context, builds, matrix_digest, dependencies):

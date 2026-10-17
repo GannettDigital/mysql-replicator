@@ -78,17 +78,20 @@ replication continues.
 - **Offline replay:** fetch binlogs or use a directory of raw files from
   `mysqlbinlog`. Replay does not connect to the source. Stop after a transaction
   count or when the applied GTID set contains `source.stopAfterGTIDs`.
+- **Configuration:** use YAML and override settings with CLI options such as
+  `--source.port`. Source and target support the same TLS verification modes.
 - **Process control:** use `ctl status`, `ctl stop`, and `ctl reload`. Reload
   supports changes to selected limits, such as when to stop replication. It does
   not replace the saved replication position.
 - **Disconnects and restarts:** reconnect to the source or target when the saved
   state permits continuation. If the tool cannot confirm whether a target write
   completed, it stops replication for DBA review.
-- **Selection and error handling:** exclude tables with wildcard rules. Skip
+- **Selection and error handling:** include or exclude tables with wildcard rules. Skip
   selected errors in live or replay mode. You can record each skipped transaction
   or disable these records. The DBA remains responsible for data consistency
   after a skip.
-- **Statistics and troubleshooting:** collect transaction and row counts, plus
+- **Statistics and troubleshooting:** retain transaction, row, event and byte
+  counts. Read backlog and estimated catch-up time with `ctl status`. Measure
   time spent downloading, decoding, and applying binlog events. Export logs,
   configuration, and saved state as a **support bundle** for troubleshooting.
   Create a bundle manually or enable automatic collection when an error stops
@@ -96,7 +99,8 @@ replication continues.
 
 See the [configuration reference](examples/apply.example.yaml),
 [replay and control guide](docs/OFFLINE_REPLAY.md), and
-[filter rules](PLAN/WILDCARD_FILTERS.md). State records help a DBA investigate
+[filter rules](docs/SUPPORT.md#include-and-ignore-filters), and
+[status metrics](docs/OPERATIONS.md). State records help a DBA investigate
 failures. They do not guarantee automatic recovery when the outcome of a target
 write is unknown.
 

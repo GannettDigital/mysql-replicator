@@ -3,27 +3,31 @@ import Foundation
 /// Public option names and help. The example/model test checks this catalog for
 /// missing and obsolete settings. Values still use the normal typed decoder.
 public enum ConfigurationOptions {
-    public static let descriptions:[String:String] = [
+    public static let descriptions: [String: String] = [
         "applierProfiling": "Detailed apply timings; coarse timings stay on.",
         "archive": "Binary log files for fetch, replay, and support bundles.",
         "archive.directory": "Required. fetch: must NOT exist; replay: existing immutable raw binlogs.",
         "archive.files": "Optional ordered, nonempty list for EXTERNAL replay only; rejected by fetch.",
         "archive.firstFile": "Example starting filename (whole file, not event position).",
-        "archive.lowerCaseTableNames": "Optional original source setting for EXTERNAL archives. Must match source.lowerCaseTableNames (default 0).",
+        "archive.lowerCaseTableNames":
+            "Optional original source setting for EXTERNAL archives. Must match source.lowerCaseTableNames (default 0).",
         "archive.maximumBytes": "Default 64 GiB total archive limit; minimum 4 bytes. Increase for multi-day archives.",
         "batch": "Prepare and apply bounded groups of source transactions.",
         "batch.flushOnTableChange": "true ends a batch whenever its table changes.",
         "batch.maximumDelayMilliseconds": "Flush nonempty batch after 1..1000 ms.",
-        "batch.maximumInsertBytes": "INSERT grouping budget: 1 KiB..4 MiB. One larger row is allowed; target max_allowed_packet still applies.",
+        "batch.maximumInsertBytes":
+            "INSERT grouping budget: 1 KiB..4 MiB. One larger row is allowed; target max_allowed_packet still applies.",
         "batch.maximumInsertRows": "Compatible rows per INSERT; 1..128.",
-        "batch.maximumPreparedBatches": "Durable batches outstanding, including execution; 1..16. Requires overlapPreparation.",
+        "batch.maximumPreparedBatches":
+            "Durable batches outstanding, including execution; 1..16. Requires overlapPreparation.",
         "batch.maximumRows": "Collection threshold; 1..65536 rows.",
         "batch.maximumTransactions": "Complete source groups per batch; 1..256.",
         "batch.maximumWireBytes": "8 MiB collection threshold; 1 KiB..32 MiB.",
         "batch.overlapPreparation": "Prepare and journal ahead while the single target worker runs.",
         "compatibility": "Optional rules for differences between source and target.",
         "compatibility.collations": "Map source collation names to supported target names.",
-        "compatibility.jsonYearToInteger": "Only mysql57-to-mysql84-innodb. Convert YEAR inside JSON to UNSIGNED INTEGER.",
+        "compatibility.jsonYearToInteger":
+            "Only mysql57-to-mysql84-innodb. Convert YEAR inside JSON to UNSIGNED INTEGER.",
         "ddlPolicy": "Rules for source DDL that can cause independent target writes.",
         "ddlPolicy.events": "Only supported value; no scheduled target writes.",
         "ddlPolicy.triggers": "skip or reject. skip audits CREATE/DROP without issuing them;",
@@ -31,19 +35,23 @@ public enum ConfigurationOptions {
         "maximumRelayBytes": "Durable relay cap for run/replay; 1 MiB..1 GiB, default 256 MiB.",
         "profile": "Select a source version and target version/engine from the list above.",
         "replicateWildDoTable": "Include matching tables. Empty means all tables, subject to ignore rules.",
-        "replicateWildIgnoreTable": "To add exclusions, REPLACE the line above with ONE of these equivalent YAML lists:",
+        "replicateWildIgnoreTable":
+            "To add exclusions, REPLACE the line above with ONE of these equivalent YAML lists:",
         "skipErrors": "Optional rules to skip supported failures in run and replay.",
         "skipErrors.codes": "Example; 1062 needs confirmed InnoDB rollback.",
         "skipErrors.recordSkippedTransactions": "Default. false keeps counters/checkpoint but no per-GTID audit.",
         "source": "Source connection and binary log settings.",
         "source.caFile": "Optional; omit to use system trust roots. Source has no verify-ca mode.",
         "source.decoderProfiling": "Detailed decoder timings; coarse timings stay on.",
-        "source.downloadCacheBytes": "Normal live backlog; 20 MiB..1 GiB. One larger event can enter an empty cache. Unused by replay.",
+        "source.downloadCacheBytes":
+            "Normal live backlog; 20 MiB..1 GiB. One larger event can enter an empty cache. Unused by replay.",
         "source.host": "Source TCP address. Use 127.0.0.1 for a local server.",
         "source.idleTimeoutSeconds": "Live source read/heartbeat timeout; 1..300 seconds.",
-        "source.lowerCaseTableNames": "0: exact table names; 1: native lowercase names. Both servers must match. Mode 2 is not qualified.",
+        "source.lowerCaseTableNames":
+            "0: exact table names; 1: native lowercase names. Both servers must match. Mode 2 is not qualified.",
         "source.maximumEventBytes": "64 MiB per complete event; 23 bytes..1 GiB. Also applies to replay.",
-        "source.maximumTransactionBytes": "256 MiB of binlog data per transaction; event limit..1 GiB. Retained-data budget is four times this value.",
+        "source.maximumTransactionBytes":
+            "256 MiB of binlog data per transaction; event limit..1 GiB. Retained-data budget is four times this value.",
         "source.mode": "run: gtid; file-position only for an 8.4 source. replay: gtid only.",
         "source.nonBlocking": "Live capture only: true exits at source EOF instead of following new writes.",
         "source.password": "Alternative; remove passwordEnvironment. Choose exactly one for run/fetch.",
@@ -54,12 +62,15 @@ public enum ConfigurationOptions {
         "source.serverID": "Example client ID; required nonzero UInt32, unique for live capture.",
         "source.sourceUUID": "Required original source server_uuid; also identifies the archive.",
         "source.start": "Source position that matches the initial data copy.",
-        "source.start.executedGTIDs": "Required FULL source GTID set represented by the snapshot, not just its last GTID. Empty: \"\".",
+        "source.start.executedGTIDs":
+            "Required FULL source GTID set represented by the snapshot, not just its last GTID. Empty: \"\".",
         "source.start.file": "Example; file and position must be supplied together.",
         "source.start.position": "Example next-event byte offset; minimum 4. Required for file-position mode.",
         "source.stopAfterGTIDs": "Example inclusive GTID-set limit, not a count.",
-        "source.stopAfterTransactions": "Example limit, 1..1000000 source groups per invocation (including DDL/filtered groups).",
-        "source.tlsVerification": "Same choices as target: verify-identity or verify-ca. verify-ca requires caFile; serverHostname is optional.",
+        "source.stopAfterTransactions":
+            "Example limit, 1..1000000 source groups per invocation (including DDL/filtered groups).",
+        "source.tlsVerification":
+            "Same choices as target: verify-identity or verify-ca. verify-ca requires caFile; serverHostname is optional.",
         "source.username": "Example account; source replication/metadata privileges.",
         "source.version": "Required; legacy source.tables is not accepted by run/replay.",
         "sourceReconnect": "Retry source connections after supported transport failures.",
@@ -80,7 +91,8 @@ public enum ConfigurationOptions {
         "storage.pruneAtPercent": "Prune eligible history at 50..90% utilization.",
         "storage.snapshotEveryTransactions": "Covering GTID snapshot interval; 1..10000 groups.",
         "supportBundle": "Manual collection and automatic collection on a BLOCKED error.",
-        "supportBundle.binlogContextBytes": "Maximum payload bytes per binlog excerpt; 4 KiB through 256 MiB. Original offsets are recorded.",
+        "supportBundle.binlogContextBytes":
+            "Maximum payload bytes per binlog excerpt; 4 KiB through 256 MiB. Original offsets are recorded.",
         "supportBundle.directory": "Required when onBlocked is true. Must be outside stateDirectory.",
         "supportBundle.format": "tar packs the files. directory leaves them unpacked for inspection.",
         "supportBundle.logs": "Optional existing log files; omitted/[] adds no logs.",
@@ -95,7 +107,8 @@ public enum ConfigurationOptions {
         "target.password": "Alternative; remove passwordEnvironment. Choose exactly one.",
         "target.passwordEnvironment": "Name of the environment variable with the target password.",
         "target.port": "Required with host; valid range 1..65535.",
-        "target.preserveSourceGTIDs": "Default. Retain source GTIDs on the target. False keeps them only in the replicator.",
+        "target.preserveSourceGTIDs":
+            "Default. Retain source GTIDs on the target. False keeps them only in the replicator.",
         "target.requireTLS": "false disables TLS for TCP or a Unix socket.",
         "target.serverHostname": "Name to check against the target TLS certificate.",
         "target.tlsVerification": "Default: verify CA chain and serverHostname.",
@@ -108,9 +121,11 @@ public enum ConfigurationOptions {
         "targetReconnect.maximumDelaySeconds": "Backoff cap; initialDelaySeconds..300 seconds.",
         "version": "Required config format; do not add tables/schema allowlists.",
     ]
-    public static var help:String {
-        "Configuration overrides (CLI values replace YAML values):\n"+descriptions.sorted {$0.key < $1.key}.map {
-            "  --"+($0.key == "version" ? "config.version" : $0.key)+" VALUE  "+$0.value
-        }.joined(separator:"\n")+"\nUse YAML flow syntax for arrays/maps. [] clears an array; null clears an optional value."
+    public static var help: String {
+        "Configuration overrides (CLI values replace YAML values):\n"
+            + descriptions.sorted { $0.key < $1.key }.map {
+                "  --" + ($0.key == "version" ? "config.version" : $0.key) + " VALUE  " + $0.value
+            }.joined(separator: "\n")
+            + "\nUse YAML flow syntax for arrays/maps. [] clears an array; null clears an optional value."
     }
 }

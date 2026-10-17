@@ -114,3 +114,9 @@ test-selection:
 	@python3 tools/test_selection.py $(ARGS)
 test-selected:
 	@python3 tools/test_selection.py --run $(ARGS)
+
+.PHONY: lint format
+lint:
+	swift format lint --strict --parallel --recursive Sources tests
+format:
+	swift format format --in-place --parallel --recursive Sources tests

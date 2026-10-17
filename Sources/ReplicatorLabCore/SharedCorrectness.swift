@@ -5,59 +5,98 @@ import Foundation
 /// unlogged snapshots; their measured workloads execute only on the source.
 public enum SharedCorrectness {
     public static func run(root: URL, arguments: [String]) throws {
-        var args=arguments, build=true, slice="all"
+        var args = arguments
+        var build = true
+        var slice = "all"
         while !args.isEmpty {
-            let flag=args.removeFirst()
-            if flag == "--skip-build" { build=false }
-            else if flag == "--slice", !args.isEmpty { slice=args.removeFirst() }
-            else { throw LabError("reverse-correctness accepts --skip-build and --slice all|database|ddl|dml|indexes|policy|rejections") }
+            let flag = args.removeFirst()
+            if flag == "--skip-build" {
+                build = false
+            } else if flag == "--slice", !args.isEmpty {
+                slice = args.removeFirst()
+            } else {
+                throw LabError(
+                    "reverse-correctness accepts --skip-build and --slice all|database|ddl|dml|indexes|policy|rejections"
+                )
+            }
         }
-        try require(["all","database","ddl","dml","indexes","policy","rejections"].contains(slice),"invalid reverse correctness slice")
-        let run=Run(root:root)
-        try run.execute(build:build,slice:slice)
+        try require(
+            ["all", "database", "ddl", "dml", "indexes", "policy", "rejections"].contains(slice),
+            "invalid reverse correctness slice")
+        let run = Run(root: root)
+        try run.execute(build: build, slice: slice)
     }
 
     final class Run {
         let f: LabFixture
         let applier: LabApplier
         let reporter: QualificationReporter
-        var observation=0
-        var currentDatabase="reverse_poc"
+        var observation = 0
+        var currentDatabase = "reverse_poc"
         var session: String { f.profile.session }
         let selected: Set<String>?
-        var nativeInnoDB=false
-        var referenceDecoderVersion=""
+        var nativeInnoDB = false
+        var referenceDecoderVersion = ""
         func selects(_ id: String) -> Bool { selected?.contains(id) ?? true }
-        init(root: URL, profile: LabProfile = .reverse, selected: Set<String>? = nil,
-             category: String = "reverse-correctness", image: String = "mysql-replicator-packaging:reverse", codeCoverage: Bool = false, variant: LabVariant = .standard) {
-            self.selected=selected
-            f=LabFixture(root:root,category:category,image:image,profile:profile,codeCoverage:codeCoverage,variant:variant)
-            applier=LabApplier(f)
-            reporter=QualificationReporter(output:f.output,log:f.stage)
+        init(
+            root: URL, profile: LabProfile = .reverse, selected: Set<String>? = nil,
+            category: String = "reverse-correctness", image: String = "mysql-replicator-packaging:reverse",
+            codeCoverage: Bool = false, variant: LabVariant = .standard
+        ) {
+            self.selected = selected
+            f = LabFixture(
+                root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage,
+                variant: variant)
+            applier = LabApplier(f)
+            reporter = QualificationReporter(output: f.output, log: f.stage)
         }
         func execute(build: Bool, slice: String) throws {
-            if slice == "all" && (selects(DDLCoverageCases.positive.id) || selects("myisam-recovery") || selects(DDLCoverageCases.group.id) || selects(DDLCoverageCases.wildcardFilter.id) || ModifyIndexCases.cases.contains(where:{selects($0.test.id)})) || slice == "indexes" {
-                referenceDecoderVersion=try f.runner.run([f.h.decoder,"--no-defaults","--version"]).text
-                try require(referenceDecoderVersion.contains("Ver 8.4."),"Independent binlog comparisons require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
+            if slice == "all"
+                && (selects(DDLCoverageCases.positive.id) || selects("myisam-recovery")
+                    || selects(DDLCoverageCases.group.id) || selects(DDLCoverageCases.wildcardFilter.id)
+                    || ModifyIndexCases.cases.contains(where: { selects($0.test.id) }))
+                || slice == "indexes"
+            {
+                referenceDecoderVersion = try f.runner.run([f.h.decoder, "--no-defaults", "--version"]).text
+                try require(
+                    referenceDecoderVersion.contains("Ver 8.4."),
+                    "Independent binlog comparisons require MySQL 8.4 mysqlbinlog; set MYSQLBINLOG")
             }
-            var report: [String:Any] = ["result":"failed","profile":f.profile.rawValue,"topology":f.profile.topology,"variant":f.variant.rawValue,"slice":slice,
-                "scope":"Shared replicated and bootstrapped DML, ordered DDL, collation, failure and discovery fixtures; explicit capture variant. Native reference is profile-specific.",
-                "adaptations":["Source-version session settings and explicit temporary-table engine are declared in the fixtures", "Source/target/native table engines are checked before comparing normalized metadata"],
-                "not_covered":["Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner", "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage"]]
+            var report: [String: Any] = [
+                "result": "failed", "profile": f.profile.rawValue, "topology": f.profile.topology,
+                "variant": f.variant.rawValue, "slice": slice,
+                "scope":
+                    "Shared replicated and bootstrapped DML, ordered DDL, collation, failure and discovery fixtures; explicit capture variant. Native reference is profile-specific.",
+                "adaptations": [
+                    "Source-version session settings and explicit temporary-table engine are declared in the fixtures",
+                    "Source/target/native table engines are checked before comparing normalized metadata",
+                ],
+                "not_covered": [
+                    "Reconnect uses the separate lifecycle suite; reverse audited recovery retains its dedicated runner",
+                    "SIGKILL paths have behavioral assertions but cannot flush LLVM coverage",
+                ],
+            ]
             var failure: Error?
-            let catalogInputs=try DDLCoverageEvidence.inputs(root:f.h.root)
-            let catalogContracts=try DDLCoverageEvidence.hashes(root:f.h.root,paths:DDLCoverageEvidence.contractPaths)
-            var catalogRuntime: [String:Any]?
+            let catalogInputs = try DDLCoverageEvidence.inputs(root: f.h.root)
+            let catalogContracts = try DDLCoverageEvidence.hashes(
+                root: f.h.root, paths: DDLCoverageEvidence.contractPaths)
+            var catalogRuntime: [String: Any]?
             do {
-                try f.prepare(build:build)
+                try f.prepare(build: build)
                 try f.recordRuntime()
-                if let profile=f.variant.catalogProfile {
-                    catalogRuntime=try DDLCoverageEvidence.runtime(f.h,image:f.image,profileID:profile,inventory:DDLCoverage.load(directory:f.h.root.appendingPathComponent("tests/DDLCoverage")),inputDigest:DDLCoverageEvidence.digest(catalogInputs))
+                if let profile = f.variant.catalogProfile {
+                    catalogRuntime = try DDLCoverageEvidence.runtime(
+                        f.h, image: f.image, profileID: profile,
+                        inventory: DDLCoverage.load(directory: f.h.root.appendingPathComponent("tests/DDLCoverage")),
+                        inputDigest: DDLCoverageEvidence.digest(catalogInputs))
                 }
                 f.clients.append(applier.name)
-                var source=f.config["source"] as! [String:Any]
-                source.removeValue(forKey:"stopAfterTransactions"); f.config["source"]=source
-                try f.installConfig(); try applier.ensureIdleContainer(); try applier.start(initialize:true)
+                var source = f.config["source"] as! [String: Any]
+                source.removeValue(forKey: "stopAfterTransactions")
+                f.config["source"] = source
+                try f.installConfig()
+                try applier.ensureIdleContainer()
+                try applier.start(initialize: true)
                 if slice == "all" || slice == "database" { try databases() }
                 if slice == "all" || slice == "ddl" { try ddl() }
                 if slice == "all" || slice == "dml" { try dml() }
@@ -65,22 +104,32 @@ public enum SharedCorrectness {
                 if slice == "all" || slice == "policy" { try policies() }
                 if slice == "all" { try foreignKeys() }
                 try applier.drain()
-                _ = try f.docker(["cp",f.helper+":/evidence/state",f.output.path])
-                let state=f.output.appendingPathComponent("state/state.sqlite").path
-                let saved=try f.runner.run(["sqlite3",state,"SELECT lifecycle FROM state; SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'; SELECT COUNT(*) FROM row_intents WHERE status!='DONE'"]).text
-                try require(saved == "STOPPED\n0\n0","unclean final checkpoint or unfinished intents: " + saved)
-                if f.profile.sourceVersion == .mysql57 && selects("ddl-compat-temporary") && (slice == "all" || slice == "ddl") {
-                    let count=try f.runner.run(["sqlite3",state,"SELECT COUNT(*) FROM ddl_skips WHERE reason='row replication temporary-table cleanup'"]).text
-                    try require((Int(count) ?? 0) > 0,"temporary-table cleanup missing from durable audit")
+                _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                let state = f.output.appendingPathComponent("state/state.sqlite").path
+                let saved = try f.runner.run([
+                    "sqlite3", state,
+                    "SELECT lifecycle FROM state; SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'; SELECT COUNT(*) FROM row_intents WHERE status!='DONE'",
+                ]).text
+                try require(saved == "STOPPED\n0\n0", "unclean final checkpoint or unfinished intents: " + saved)
+                if f.profile.sourceVersion == .mysql57 && selects("ddl-compat-temporary")
+                    && (slice == "all" || slice == "ddl")
+                {
+                    let count = try f.runner.run([
+                        "sqlite3", state,
+                        "SELECT COUNT(*) FROM ddl_skips WHERE reason='row replication temporary-table cleanup'",
+                    ]).text
+                    try require((Int(count) ?? 0) > 0, "temporary-table cleanup missing from durable audit")
                 }
                 // Reopen all saved schema history, then apply another transaction.
-                try applier.start(initialize:false)
-                try step("INSERT INTO reverse_poc.aux VALUES(99,1)",database:"reverse_poc")
+                try applier.start(initialize: false)
+                try step("INSERT INTO reverse_poc.aux VALUES(99,1)", database: "reverse_poc")
                 try applier.drain()
-                _ = try f.docker(["cp",f.helper+":/evidence/state",f.output.path])
-                report["result"]="passed"; report["versions"]=f.versions; report["image"]=f.image
-                report["summary"]=try applier.latestProgress()
-                report["steps"]=observation
+                _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                report["result"] = "passed"
+                report["versions"] = f.versions
+                report["image"] = f.image
+                report["summary"] = try applier.latestProgress()
+                report["steps"] = observation
                 if slice == "all" || slice == "rejections" { try rejections() }
                 if slice == "all" {
                     try foreignKeySafety()
@@ -102,614 +151,1066 @@ public enum SharedCorrectness {
                     try myisamRecovery()
                     try largeValues()
                     try offline()
-                    try skipErrors(offline:true)
-                    try skipErrors(offline:false)
+                    try skipErrors(offline: true)
+                    try skipErrors(offline: false)
                     try runtimeControl()
                     try createSelectContract()
                 }
             } catch {
-                report["result"]="failed"
-                report["error"]=String(describing:reporter.fail(error))
+                report["result"] = "failed"
+                report["error"] = String(describing: reporter.fail(error))
                 _ = try? compare(currentDatabase)
-                if let logs=try? f.h.compose(["logs","--no-color"]) { try? (logs.stdout+logs.stderr).write(to:f.output.appendingPathComponent("containers.log")) }
-                if let boundary=try? f.boundary() {
-                    try? writeJSON(boundary.json,to:f.output.appendingPathComponent("failed-source-boundary.json"))
-                    if let raw=try? f.h.compose(["exec","-T",f.profile.service(.source),"cat","/var/lib/mysql/"+boundary.file]) {
-                        try? raw.stdout.write(to:f.output.appendingPathComponent("failed-source.binlog"))
+                if let logs = try? f.h.compose(["logs", "--no-color"]) {
+                    try? (logs.stdout + logs.stderr).write(to: f.output.appendingPathComponent("containers.log"))
+                }
+                if let boundary = try? f.boundary() {
+                    try? writeJSON(boundary.json, to: f.output.appendingPathComponent("failed-source-boundary.json"))
+                    if let raw = try? f.h.compose([
+                        "exec", "-T", f.profile.service(.source), "cat", "/var/lib/mysql/" + boundary.file,
+                    ]) {
+                        try? raw.stdout.write(to: f.output.appendingPathComponent("failed-source.binlog"))
                     }
                 }
                 try? applier.drain()
-                _ = try? f.docker(["cp",f.helper+":/evidence/state",f.output.path])
-                report["cases"]=reporter.results
-                try? writeJSON(report,to:f.output.appendingPathComponent("result.json"))
-                failure=error
+                _ = try? f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                report["cases"] = reporter.results
+                try? writeJSON(report, to: f.output.appendingPathComponent("result.json"))
+                failure = error
             }
-            var cleanupErrors: [String]=[]
-            do { try applier.drain(); try applier.archiveLogs() } catch { cleanupErrors.append(String(describing:error)) }
+            var cleanupErrors: [String] = []
+            do {
+                try applier.drain()
+                try applier.archiveLogs()
+            } catch { cleanupErrors.append(String(describing: error)) }
             if f.codeCoverage {
-                do { try f.collectCoverage() } catch { cleanupErrors.append("coverage: "+String(describing:error)) }
+                do { try f.collectCoverage() } catch { cleanupErrors.append("coverage: " + String(describing: error)) }
             }
-            do { try f.cleanup() } catch { cleanupErrors.append(String(describing:error)) }
-            report["cleanup"]=cleanupErrors.isEmpty ? "passed" : cleanupErrors.joined(separator:"; ")
-            if !cleanupErrors.isEmpty { report["result"]="failed"; if failure == nil { failure=LabError(cleanupErrors.joined(separator:"; ")) } }
-            report["cases"]=reporter.results
-            report["sql_client"]=f.h.sqlClientMeasurements
-            try writeJSON(f.h.sqlClientMeasurements,to:f.output.appendingPathComponent("sql-client.json"))
-            try writeJSON(report,to:f.output.appendingPathComponent("result.json"))
-            if let runtime=catalogRuntime, let profile=f.variant.catalogProfile {
-                try SharedCatalogSupport.export(root:f.h.root,output:f.output,profile:profile,inputs:catalogInputs,contracts:catalogContracts,runtime:runtime,results:reporter.results,result:report)
+            do { try f.cleanup() } catch { cleanupErrors.append(String(describing: error)) }
+            report["cleanup"] = cleanupErrors.isEmpty ? "passed" : cleanupErrors.joined(separator: "; ")
+            if !cleanupErrors.isEmpty {
+                report["result"] = "failed"
+                if failure == nil { failure = LabError(cleanupErrors.joined(separator: "; ")) }
+            }
+            report["cases"] = reporter.results
+            report["sql_client"] = f.h.sqlClientMeasurements
+            try writeJSON(f.h.sqlClientMeasurements, to: f.output.appendingPathComponent("sql-client.json"))
+            try writeJSON(report, to: f.output.appendingPathComponent("result.json"))
+            if let runtime = catalogRuntime, let profile = f.variant.catalogProfile {
+                try SharedCatalogSupport.export(
+                    root: f.h.root, output: f.output, profile: profile, inputs: catalogInputs,
+                    contracts: catalogContracts, runtime: runtime, results: reporter.results, result: report)
             }
             if let failure { throw failure }
             f.stage("PASS: shared correctness fixtures and saved-schema restart (\(observation) steps)")
         }
         func wait() throws {
-            let end=try f.boundary(), deadline=Date().addingTimeInterval(60)
-            try writeJSON(end.json,to:f.output.appendingPathComponent("awaited-source-boundary.json"))
+            let end = try f.boundary()
+            let deadline = Date().addingTimeInterval(60)
+            try writeJSON(end.json, to: f.output.appendingPathComponent("awaited-source-boundary.json"))
             while true {
-                if let p=try applier.latestProgress(), let gtids=p["appliedGTIDSet"] as? String,
-                   try f.sql(.source,"SELECT GTID_SUBSET('\(end.gtids)','\(gtids)')") == "1" { break }
-                let logs=try applier.logs(tail:true)
-                try require(logs.stderr.isEmpty,"applier failed: " + String(decoding:logs.stderr,as:UTF8.self))
-                try require(Date() < deadline,"applier failed to reach source GTID; inspect logs")
-                Thread.sleep(forTimeInterval:0.1)
+                if let p = try applier.latestProgress(), let gtids = p["appliedGTIDSet"] as? String,
+                    try f.sql(.source, "SELECT GTID_SUBSET('\(end.gtids)','\(gtids)')") == "1"
+                {
+                    break
+                }
+                let logs = try applier.logs(tail: true)
+                try require(logs.stderr.isEmpty, "applier failed: " + String(decoding: logs.stderr, as: UTF8.self))
+                try require(Date() < deadline, "applier failed to reach source GTID; inspect logs")
+                Thread.sleep(forTimeInterval: 0.1)
             }
             try f.awaitNative()
         }
         @discardableResult
-        func step(_ sql: String, database: String, checks: [DDLCompatibilityCases.Check] = [], warning: Int? = nil, checkWarnings: Bool = false) throws -> [String:Any] {
-            currentDatabase=database
+        func step(
+            _ sql: String, database: String, checks: [DDLCompatibilityCases.Check] = [], warning: Int? = nil,
+            checkWarnings: Bool = false
+        ) throws -> [String: Any] {
+            currentDatabase = database
             observation += 1
-            let file=f.output.appendingPathComponent(String(format:"step-%04d.json",observation))
-            try writeJSON(["sql":sql,"status":"running"],to:file)
-            let warnings=try f.sql(.source,session+"\n"+sql+(checkWarnings ? "; SHOW WARNINGS" : ""))
-            if checkWarnings { try require(warning.map { warnings.hasPrefix("Note\t\($0)\t") } ?? warnings.isEmpty,"unexpected source warnings: "+warnings) }
-            try wait()
-            var results: [[String:Any]]=[]
-            for check in checks {
-                var values: [String:String]=[:], expectedValues: [String:String]=[:]
-                for role in LabProfile.Role.allCases {
-                    let service=role.rawValue
-                    let value=try f.sql(role,"SET NAMES utf8mb4; SET SESSION time_zone='+00:00'; "+check.sql,preserveWhitespace:true)
-                    values[service]=value
-                    let expected=check.expected(engine:f.profile.engine(role))
-                    expectedValues[service]=expected
-                    try require(LabSQLName.equal(check.observation(value),expected),"\(service) expectation: \(check.sql) got \(value), expected \(expected)")
-                }
-                results.append(["query":check.sql,"expected":check.expected,"expected_by_role":expectedValues,"fields":check.fields ?? [],"values":values])
+            let file = f.output.appendingPathComponent(String(format: "step-%04d.json", observation))
+            try writeJSON(["sql": sql, "status": "running"], to: file)
+            let warnings = try f.sql(.source, session + "\n" + sql + (checkWarnings ? "; SHOW WARNINGS" : ""))
+            if checkWarnings {
+                try require(
+                    warning.map { warnings.hasPrefix("Note\t\($0)\t") } ?? warnings.isEmpty,
+                    "unexpected source warnings: " + warnings)
             }
-            let snapshots=try compare(database)
-            let result: [String:Any] = ["sql":sql,"status":"passed","checks":results,"snapshots":snapshots,"warnings":warnings]
-            try writeJSON(result,to:file)
+            try wait()
+            var results: [[String: Any]] = []
+            for check in checks {
+                var values: [String: String] = [:]
+                var expectedValues: [String: String] = [:]
+                for role in LabProfile.Role.allCases {
+                    let service = role.rawValue
+                    let value = try f.sql(
+                        role, "SET NAMES utf8mb4; SET SESSION time_zone='+00:00'; " + check.sql,
+                        preserveWhitespace: true)
+                    values[service] = value
+                    let expected = check.expected(engine: f.profile.engine(role))
+                    expectedValues[service] = expected
+                    try require(
+                        LabSQLName.equal(check.observation(value), expected),
+                        "\(service) expectation: \(check.sql) got \(value), expected \(expected)")
+                }
+                results.append([
+                    "query": check.sql, "expected": check.expected, "expected_by_role": expectedValues,
+                    "fields": check.fields ?? [], "values": values,
+                ])
+            }
+            let snapshots = try compare(database)
+            let result: [String: Any] = [
+                "sql": sql, "status": "passed", "checks": results, "snapshots": snapshots, "warnings": warnings,
+            ]
+            try writeJSON(result, to: file)
             return result
         }
-        func compare(_ database: String) throws -> [String:Any] {
+        func compare(_ database: String) throws -> [String: Any] {
             // Fixture-controlled names only. Compare exact row bytes and stable
             // schema properties; normalize integer display widths, not semantics.
-            var values: [String:[String:String]]=[:]
-            var rawTables: [String:String]=[:]
-            let condition="TABLE_SCHEMA="+LabSQLName.literal(database)
+            var values: [String: [String: String]] = [:]
+            var rawTables: [String: String] = [:]
+            let condition = "TABLE_SCHEMA=" + LabSQLName.literal(database)
             for role in LabProfile.Role.allCases {
-                    let service=role.rawValue
+                let service = role.rawValue
                 func sql(_ statement: String, preserveWhitespace: Bool = false) throws -> String {
-                    try f.sql(role,"SET NAMES utf8mb4; "+statement,preserveWhitespace:preserveWhitespace)
+                    try f.sql(role, "SET NAMES utf8mb4; " + statement, preserveWhitespace: preserveWhitespace)
                 }
-                var snapshot = try f.h.sqlBatch(f.profile.service(role), [
-                    .init(name: "database", sql: "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"),
-                    .init(name: "tables", sql: "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY BINARY TABLE_NAME"),
-                    .init(name: "columns", sql: "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IF(COLUMN_TYPE LIKE 'binary(%' OR COLUMN_TYPE LIKE 'varbinary(%' OR COLUMN_TYPE LIKE 'char(%' OR COLUMN_TYPE LIKE 'varchar(%',IF(COLUMN_DEFAULT IS NULL,'<NULL>','<stored-default>'),IFNULL(COLUMN_DEFAULT,'<NULL>')),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY BINARY TABLE_NAME,ORDINAL_POSITION", preserveWhitespace: true),
-                    .init(name: "foreignKeys", sql: "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION"),
-                    .init(name: "indexes", sql: "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY TABLE_NAME,BINARY INDEX_NAME,SEQ_IN_INDEX"),
-                    .init(name: "partitions", sql: "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION", preserveWhitespace: true)
-                ])
+                var snapshot = try f.h.sqlBatch(
+                    f.profile.service(role),
+                    [
+                        .init(
+                            name: "database",
+                            sql:
+                                "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='\(database)'"
+                        ),
+                        .init(
+                            name: "tables",
+                            sql:
+                                "SELECT TABLE_NAME,TABLE_TYPE,IFNULL(ENGINE,''),IFNULL(TABLE_COLLATION,'') FROM information_schema.TABLES WHERE \(condition) ORDER BY BINARY TABLE_NAME"
+                        ),
+                        .init(
+                            name: "columns",
+                            sql:
+                                "SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,IF(COLUMN_TYPE='geomcollection','geometrycollection',COLUMN_TYPE),IS_NULLABLE,IFNULL(CHARACTER_SET_NAME,''),IFNULL(COLLATION_NAME,''),IF(COLUMN_TYPE LIKE 'binary(%' OR COLUMN_TYPE LIKE 'varbinary(%' OR COLUMN_TYPE LIKE 'char(%' OR COLUMN_TYPE LIKE 'varchar(%',IF(COLUMN_DEFAULT IS NULL,'<NULL>','<stored-default>'),IFNULL(COLUMN_DEFAULT,'<NULL>')),EXTRA,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE \(condition) ORDER BY BINARY TABLE_NAME,ORDINAL_POSITION",
+                            preserveWhitespace: true),
+                        .init(
+                            name: "foreignKeys",
+                            sql:
+                                "SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME AND r.TABLE_NAME=k.TABLE_NAME WHERE k.TABLE_SCHEMA='\(database)' AND k.REFERENCED_TABLE_NAME IS NOT NULL ORDER BY BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION"
+                        ),
+                        .init(
+                            name: "indexes",
+                            sql:
+                                "SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,IFNULL(SUB_PART,0),INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY TABLE_NAME,BINARY INDEX_NAME,SEQ_IN_INDEX"
+                        ),
+                        .init(
+                            name: "partitions",
+                            sql:
+                                "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION",
+                            preserveWhitespace: true),
+                    ])
                 // InnoDB treats NO ACTION and RESTRICT as immediate checks.
                 // 5.7 reports an omitted action as RESTRICT; 8.4 uses NO ACTION.
                 // Normalize only the two action fields, never object names.
                 if f.profile.transactionalTarget {
-                    snapshot["foreignKeys"] = snapshot["foreignKeys"]!.components(separatedBy:"\n").map { line in
-                        var fields = line.components(separatedBy:"\t")
+                    snapshot["foreignKeys"] = snapshot["foreignKeys"]!.components(separatedBy: "\n").map { line in
+                        var fields = line.components(separatedBy: "\t")
                         if fields.count == 8 {
                             for index in 6...7 where fields[index] == "NO ACTION" { fields[index] = "RESTRICT" }
                         }
-                        return fields.joined(separator:"\t")
-                    }.joined(separator:"\n")
+                        return fields.joined(separator: "\t")
+                    }.joined(separator: "\n")
                 }
                 // Read PARTITIONS directly. Joining the two information_schema
                 // views can duplicate rows on 8.4 with lower_case_table_names=1.
                 // Exclude views by exact table-name bytes; retain duplicate partition
                 // rows so the comparison still detects unexpected metadata.
-                let baseTables=Set(snapshot["tables"]!.components(separatedBy:"\n").compactMap { line -> Data? in
-                    let fields=line.components(separatedBy:"\t")
-                    return fields.count >= 2 && fields[1] == "BASE TABLE" ? Data(fields[0].utf8) : nil
-                })
-                snapshot["partitions"]=snapshot["partitions"]!.components(separatedBy:"\n").filter { line in
-                    baseTables.contains(Data(line.components(separatedBy:"\t")[0].utf8))
-                }.joined(separator:"\n")
-                let actualTables=snapshot["tables"]!
-                rawTables[service]=actualTables
-                try actualTables.write(to:f.output.appendingPathComponent("tables-"+service+".tsv"),atomically:true,encoding:.utf8)
-                snapshot["tables"]=try actualTables.components(separatedBy:"\n").map { line in
-                    var fields=line.components(separatedBy:"\t")
+                let baseTables = Set(
+                    snapshot["tables"]!.components(separatedBy: "\n").compactMap { line -> Data? in
+                        let fields = line.components(separatedBy: "\t")
+                        return fields.count >= 2 && fields[1] == "BASE TABLE" ? Data(fields[0].utf8) : nil
+                    })
+                snapshot["partitions"] = snapshot["partitions"]!.components(separatedBy: "\n").filter { line in
+                    baseTables.contains(Data(line.components(separatedBy: "\t")[0].utf8))
+                }.joined(separator: "\n")
+                let actualTables = snapshot["tables"]!
+                rawTables[service] = actualTables
+                try actualTables.write(
+                    to: f.output.appendingPathComponent("tables-" + service + ".tsv"), atomically: true, encoding: .utf8
+                )
+                snapshot["tables"] = try actualTables.components(separatedBy: "\n").map { line in
+                    var fields = line.components(separatedBy: "\t")
                     if fields.count >= 4 && fields[1] == "BASE TABLE" {
-                        let explicitTemporaryClone = !f.profile.transactionalTarget && role == .source && database == "ddlcompat" && fields[0] == "cloned"
-                        let expected=explicitTemporaryClone ? "MyISAM" : role == .native && nativeInnoDB ? "InnoDB" : f.profile.engine(role)
-                        try require(fields[2] == expected,"unexpected \(service) engine: " + fields[2])
-                        fields[2]="<profile-engine>"
+                        let explicitTemporaryClone =
+                            !f.profile.transactionalTarget && role == .source && database == "ddlcompat"
+                            && fields[0] == "cloned"
+                        let expected =
+                            explicitTemporaryClone
+                            ? "MyISAM" : role == .native && nativeInnoDB ? "InnoDB" : f.profile.engine(role)
+                        try require(fields[2] == expected, "unexpected \(service) engine: " + fields[2])
+                        fields[2] = "<profile-engine>"
                     }
-                    return fields.joined(separator:"\t")
-                }.joined(separator:"\n")
-                var columnFields=snapshot["columns"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
-                var binaryDefinitions:[Data:Data]=[:]
-                snapshot["partitions"]=try snapshot["partitions"]!.components(separatedBy:"\n").map { line in
-                    var fields=line.components(separatedBy:"\t")
-                    guard fields.count == 5,fields[2].hasSuffix("COLUMNS") else {return line}
-                    let column=fields[3].replacingOccurrences(of:"`",with:"")
-                    guard columnFields.contains(where:{$0.count == 10 && $0[0] == fields[0] && $0[1] == column && ($0[3].hasPrefix("binary(") || $0[3].hasPrefix("varbinary("))}) else {return line}
-                    let key=Data(fields[0].utf8)
+                    return fields.joined(separator: "\t")
+                }.joined(separator: "\n")
+                var columnFields = snapshot["columns"]!.components(separatedBy: "\n").map {
+                    $0.components(separatedBy: "\t")
+                }
+                var binaryDefinitions: [Data: Data] = [:]
+                snapshot["partitions"] = try snapshot["partitions"]!.components(separatedBy: "\n").map { line in
+                    var fields = line.components(separatedBy: "\t")
+                    guard fields.count == 5, fields[2].hasSuffix("COLUMNS") else { return line }
+                    let column = fields[3].replacingOccurrences(of: "`", with: "")
+                    guard
+                        columnFields.contains(where: {
+                            $0.count == 10 && $0[0] == fields[0] && $0[1] == column
+                                && ($0[3].hasPrefix("binary(") || $0[3].hasPrefix("varbinary("))
+                        })
+                    else { return line }
+                    let key = Data(fields[0].utf8)
                     if binaryDefinitions[key] == nil {
-                        binaryDefinitions[key]=try f.h.sqlBytes(f.profile.service(role),"SET NAMES binary; SHOW CREATE TABLE "+LabSQLName.quote(database)+"."+LabSQLName.quote(fields[0]))
+                        binaryDefinitions[key] = try f.h.sqlBytes(
+                            f.profile.service(role),
+                            "SET NAMES binary; SHOW CREATE TABLE " + LabSQLName.quote(database) + "."
+                                + LabSQLName.quote(fields[0]))
                     }
-                    fields[4]=try NativeChoiceDefinition.partitionBounds(binaryDefinitions[key]!,partition:fields[1])
-                    return fields.joined(separator:"\t")
-                }.joined(separator:"\n")
+                    fields[4] = try NativeChoiceDefinition.partitionBounds(
+                        binaryDefinitions[key]!, partition: fields[1])
+                    return fields.joined(separator: "\t")
+                }.joined(separator: "\n")
                 for i in columnFields.indices {
-                    let fields=columnFields[i]
+                    let fields = columnFields[i]
                     if fields.count == 10 && fields[7] == "<stored-default>" {
-                        func quote(_ value:String) -> String { "`"+value.replacingOccurrences(of:"`",with:"``")+"`" }
-                        let stored="DEFAULT(t."+quote(fields[1])+")"
-                        let text=fields[3].hasPrefix("char(") || fields[3].hasPrefix("varchar(")
-                        let expression=text ? "CONVERT("+stored+" USING utf8mb4)" : stored
-                        let query:String
+                        func quote(_ value: String) -> String {
+                            "`" + value.replacingOccurrences(of: "`", with: "``") + "`"
+                        }
+                        let stored = "DEFAULT(t." + quote(fields[1]) + ")"
+                        let text = fields[3].hasPrefix("char(") || fields[3].hasPrefix("varchar(")
+                        let expression = text ? "CONVERT(" + stored + " USING utf8mb4)" : stored
+                        let query: String
                         if fields[4] == "NO" {
                             // DEFAULT on a null-complemented NOT NULL field is
                             // NULL. Copy the native definition, not its rows.
-                            let temporary=quote(database)+"."+quote("_lab_default_"+UUID().uuidString.replacingOccurrences(of:"-",with:""))
-                            let value=text ? "CONVERT(v USING utf8mb4)" : "v"
-                            query="SET sql_log_bin=0; CREATE TEMPORARY TABLE "+temporary+" ENGINE=InnoDB AS SELECT "+quote(fields[1])+" AS v FROM "+quote(database)+"."+quote(fields[0])+" LIMIT 0; INSERT INTO "+temporary+" VALUES(DEFAULT); SELECT HEX("+value+") FROM "+temporary+"; DROP TEMPORARY TABLE "+temporary
-                        } else { query="SELECT HEX("+expression+") FROM "+quote(database)+"."+quote(fields[0])+" AS t RIGHT JOIN (SELECT 1) AS p ON FALSE LIMIT 1" }
-                        let bytes=try sql(query,preserveWhitespace:true).trimmingCharacters(in:.newlines)
-                        try require(bytes.utf8.allSatisfy { (48...57).contains($0) || (65...70).contains($0) },"invalid native stored default bytes")
-                        columnFields[i][7]="X'"+bytes+"'"
+                            let temporary =
+                                quote(database) + "."
+                                + quote("_lab_default_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""))
+                            let value = text ? "CONVERT(v USING utf8mb4)" : "v"
+                            query =
+                                "SET sql_log_bin=0; CREATE TEMPORARY TABLE " + temporary + " ENGINE=InnoDB AS SELECT "
+                                + quote(fields[1]) + " AS v FROM " + quote(database) + "." + quote(fields[0])
+                                + " LIMIT 0; INSERT INTO " + temporary + " VALUES(DEFAULT); SELECT HEX(" + value
+                                + ") FROM " + temporary + "; DROP TEMPORARY TABLE " + temporary
+                        } else {
+                            query =
+                                "SELECT HEX(" + expression + ") FROM " + quote(database) + "." + quote(fields[0])
+                                + " AS t RIGHT JOIN (SELECT 1) AS p ON FALSE LIMIT 1"
+                        }
+                        let bytes = try sql(query, preserveWhitespace: true).trimmingCharacters(in: .newlines)
+                        try require(
+                            bytes.utf8.allSatisfy { (48...57).contains($0) || (65...70).contains($0) },
+                            "invalid native stored default bytes")
+                        columnFields[i][7] = "X'" + bytes + "'"
                     }
-                    guard fields.count == 10 && (fields[3].hasPrefix("enum(") || fields[3].hasPrefix("set(")) && (fields[5] == "binary" || fields[5].isEmpty) else { continue }
-                    let table=fields[0]
+                    guard
+                        fields.count == 10 && (fields[3].hasPrefix("enum(") || fields[3].hasPrefix("set("))
+                            && (fields[5] == "binary" || fields[5].isEmpty)
+                    else { continue }
+                    let table = fields[0]
                     if binaryDefinitions[Data(table.utf8)] == nil {
-                        func quote(_ value:String) -> String { "`"+value.replacingOccurrences(of:"`",with:"``")+"`" }
-                        binaryDefinitions[Data(table.utf8)]=try f.h.sqlBytes(f.profile.service(role),"SET NAMES binary; SHOW CREATE TABLE "+quote(database)+"."+quote(table))
+                        func quote(_ value: String) -> String {
+                            "`" + value.replacingOccurrences(of: "`", with: "``") + "`"
+                        }
+                        binaryDefinitions[Data(table.utf8)] = try f.h.sqlBytes(
+                            f.profile.service(role),
+                            "SET NAMES binary; SHOW CREATE TABLE " + quote(database) + "." + quote(table))
                     }
-                    let definition=try NativeChoiceDefinition.read(binaryDefinitions[Data(table.utf8)]!,column:fields[1])
-                    columnFields[i][3]=definition.type
-                    columnFields[i][5]="binary";columnFields[i][6]="binary"
-                    columnFields[i][7]=definition.defaultValue
+                    let definition = try NativeChoiceDefinition.read(
+                        binaryDefinitions[Data(table.utf8)]!, column: fields[1])
+                    columnFields[i][3] = definition.type
+                    columnFields[i][5] = "binary"
+                    columnFields[i][6] = "binary"
+                    columnFields[i][7] = definition.defaultValue
                 }
-                let columns=columnFields.map { $0.joined(separator:"\t") }.joined(separator:"\n")
-                snapshot["columns"]=try ReverseSchemaComparison.columns(columns,mysql84:f.profile.version(role) == "8.4")
-                snapshot["partitions"]=try ReverseSchemaComparison.partitions(snapshot["partitions"]!)
-                let tables=snapshot["tables"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }.filter { $0.count >= 2 && $0[1] == "BASE TABLE" }.map { $0[0] }
-                let columnRows=columns.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
-                let indexRows=snapshot["indexes"]!.components(separatedBy:"\n").map { $0.components(separatedBy:"\t") }
-                var rowQueries: [String]=[]
-                var jsonRows:[Data:String]=[:]
+                let columns = columnFields.map { $0.joined(separator: "\t") }.joined(separator: "\n")
+                snapshot["columns"] = try ReverseSchemaComparison.columns(
+                    columns, mysql84: f.profile.version(role) == "8.4")
+                snapshot["partitions"] = try ReverseSchemaComparison.partitions(snapshot["partitions"]!)
+                let tables = snapshot["tables"]!.components(separatedBy: "\n").map { $0.components(separatedBy: "\t") }
+                    .filter { $0.count >= 2 && $0[1] == "BASE TABLE" }.map { $0[0] }
+                let columnRows = columns.components(separatedBy: "\n").map { $0.components(separatedBy: "\t") }
+                let indexRows = snapshot["indexes"]!.components(separatedBy: "\n").map {
+                    $0.components(separatedBy: "\t")
+                }
+                var rowQueries: [String] = []
+                var jsonRows: [Data: String] = [:]
                 for table in tables {
-                    let names=columnRows.filter { $0.count >= 2 && LabSQLName.equal($0[0],table) }.map { $0[1] }
-                    let expressions=names.map { "IFNULL(HEX(CAST("+LabSQLName.quote($0)+" AS BINARY)),'<NULL>')" }.joined(separator:",")
-                    let primaryOrder=indexRows.filter { $0.count >= 5 && LabSQLName.equal($0[0],table) && $0[1] == "PRIMARY" }.map { LabSQLName.quote($0[4]) }.joined(separator:",")
+                    let names = columnRows.filter { $0.count >= 2 && LabSQLName.equal($0[0], table) }.map { $0[1] }
+                    let expressions = names.map { "IFNULL(HEX(CAST(" + LabSQLName.quote($0) + " AS BINARY)),'<NULL>')" }
+                        .joined(separator: ",")
+                    let primaryOrder = indexRows.filter {
+                        $0.count >= 5 && LabSQLName.equal($0[0], table) && $0[1] == "PRIMARY"
+                    }.map { LabSQLName.quote($0[4]) }.joined(separator: ",")
                     // The oracle does not use the applier's key selection. Sort
                     // keyless snapshots by all exact projected values instead.
-                    let keys=primaryOrder.isEmpty ? expressions : primaryOrder
-                    let jsonColumns=columnRows.filter { $0.count >= 4 && LabSQLName.equal($0[0],table) && $0[3] == "json" }.map { $0[1] }
+                    let keys = primaryOrder.isEmpty ? expressions : primaryOrder
+                    let jsonColumns = columnRows.filter {
+                        $0.count >= 4 && LabSQLName.equal($0[0], table) && $0[3] == "json"
+                    }.map { $0[1] }
                     if !jsonColumns.isEmpty {
-                        jsonRows[Data(table.utf8)]=try f.comparisonRows(role,table:LabSQLName.quote(database)+"."+LabSQLName.quote(table),columns:names,jsonColumns:jsonColumns,orderBy:keys)
+                        jsonRows[Data(table.utf8)] = try f.comparisonRows(
+                            role, table: LabSQLName.quote(database) + "." + LabSQLName.quote(table), columns: names,
+                            jsonColumns: jsonColumns, orderBy: keys)
                     }
-                    rowQueries.append("SELECT "+LabSQLName.literal(table)+",\(expressions) FROM "+LabSQLName.quote(database)+"."+LabSQLName.quote(table)+" ORDER BY \(keys)")
+                    rowQueries.append(
+                        "SELECT " + LabSQLName.literal(table) + ",\(expressions) FROM " + LabSQLName.quote(database)
+                            + "." + LabSQLName.quote(table) + " ORDER BY \(keys)")
                 }
-                snapshot["rows"]=rowQueries.isEmpty ? "" : try sql("SET time_zone='+00:00'; "+rowQueries.joined(separator:"; "),preserveWhitespace:true)
+                snapshot["rows"] =
+                    rowQueries.isEmpty
+                    ? ""
+                    : try sql("SET time_zone='+00:00'; " + rowQueries.joined(separator: "; "), preserveWhitespace: true)
                 // Keep ordinary row bytes. Replace only JSON-bearing table rows
                 // with the independent value/type comparison from the servers.
                 if !jsonRows.isEmpty {
-                    var next:[Data:Int]=[:]
-                    let replacements=jsonRows.mapValues { $0.isEmpty ? [] : $0.components(separatedBy:"\n") }
-                    snapshot["rows"]=try snapshot["rows"]!.components(separatedBy:"\n").map { line in
-                        let table=String(line.prefix(while:{$0 != "\t"}))
-                        guard let rows=replacements[Data(table.utf8)] else { return line }
-                        let index=next[Data(table.utf8),default:0]; next[Data(table.utf8)]=index+1
-                        try require(index < rows.count,"JSON comparison row count changed")
-                        return table+"\t"+rows[index]
-                    }.joined(separator:"\n")
+                    var next: [Data: Int] = [:]
+                    let replacements = jsonRows.mapValues { $0.isEmpty ? [] : $0.components(separatedBy: "\n") }
+                    snapshot["rows"] = try snapshot["rows"]!.components(separatedBy: "\n").map { line in
+                        let table = String(line.prefix(while: { $0 != "\t" }))
+                        guard let rows = replacements[Data(table.utf8)] else { return line }
+                        let index = next[Data(table.utf8), default: 0]
+                        next[Data(table.utf8)] = index + 1
+                        try require(index < rows.count, "JSON comparison row count changed")
+                        return table + "\t" + rows[index]
+                    }.joined(separator: "\n")
                 }
                 // Compare normalized row multisets. Server versions can order
                 // NULL sentinels and JSON text differently. Keep duplicate lines.
-                snapshot["rows"]=snapshot["rows"]!.components(separatedBy:"\n").sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }.joined(separator:"\n")
-                values[service]=snapshot
+                snapshot["rows"] = snapshot["rows"]!.components(separatedBy: "\n").sorted {
+                    $0.utf8.lexicographicallyPrecedes($1.utf8)
+                }.joined(separator: "\n")
+                values[service] = snapshot
             }
-            try writeJSON(values,to:f.output.appendingPathComponent("latest-comparison.json"))
-            for service in ["native","target"] {
-                for (key,value) in values["source"]! {
-                    let candidate=values[service]?[key]
-                    try require(candidate.map { LabSQLName.equal($0,value) } == true,"\(database) \(service) \(key) differs; inspect latest-comparison.json")
+            try writeJSON(values, to: f.output.appendingPathComponent("latest-comparison.json"))
+            for service in ["native", "target"] {
+                for (key, value) in values["source"]! {
+                    let candidate = values[service]?[key]
+                    try require(
+                        candidate.map { LabSQLName.equal($0, value) } == true,
+                        "\(database) \(service) \(key) differs; inspect latest-comparison.json")
                 }
             }
-            return ["normalized":values,"raw_tables":rawTables]
+            return ["normalized": values, "raw_tables": rawTables]
         }
         func databases() throws {
-            try step("CREATE DATABASE otherdb CHARACTER SET latin1 COLLATE latin1_bin",database:"otherdb")
+            try step("CREATE DATABASE otherdb CHARACTER SET latin1 COLLATE latin1_bin", database: "otherdb")
             for test in DatabaseCreationCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
-                    let prefix=f.profile.sourceVersion == .mysql57 ? test.prefix57 : test.prefix
-                    let before=try applier.latestProgress() ?? [:]
-                    let observation=try step(prefix+test.sql,database:test.database,checks:[.init(test.metadataSQL,test.expected)],warning:test.existing ? 1007 : nil,checkWarnings:true)
-                    let table=test.database+".probe"
-                    if !test.existing { try step("CREATE TABLE \(table)(id INT PRIMARY KEY,note VARCHAR(20))",database:test.database) }
-                    try assertion("schema-effects",caseID:test.test.id) {
-                        var values: [String:Any] = ["source_observation":observation]
+                    let prefix = f.profile.sourceVersion == .mysql57 ? test.prefix57 : test.prefix
+                    let before = try applier.latestProgress() ?? [:]
+                    let observation = try step(
+                        prefix + test.sql, database: test.database, checks: [.init(test.metadataSQL, test.expected)],
+                        warning: test.existing ? 1007 : nil, checkWarnings: true)
+                    let table = test.database + ".probe"
+                    if !test.existing {
+                        try step("CREATE TABLE \(table)(id INT PRIMARY KEY,note VARCHAR(20))", database: test.database)
+                    }
+                    try assertion("schema-effects", caseID: test.test.id) {
+                        var values: [String: Any] = ["source_observation": observation]
                         for role in LabProfile.Role.allCases {
-                            let metadata=try f.sql(role,test.metadataSQL)
-                            let columns=try f.sql(role,"SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE,COLUMN_KEY,IFNULL(COLLATION_NAME,'') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe' ORDER BY ORDINAL_POSITION")
-                            let engine=try f.sql(role,"SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe'")
-                            try require(metadata == test.expected && columns == "id\tint\tNO\tPRI\t\nnote\tvarchar\tYES\t\t"+test.collation && engine == f.profile.engine(role),"database/table inheritance differs")
-                            values[role.rawValue]=["database":metadata,"columns":columns,"engine":engine]
+                            let metadata = try f.sql(role, test.metadataSQL)
+                            let columns = try f.sql(
+                                role,
+                                "SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE,COLUMN_KEY,IFNULL(COLLATION_NAME,'') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe' ORDER BY ORDINAL_POSITION"
+                            )
+                            let engine = try f.sql(
+                                role,
+                                "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe'"
+                            )
+                            try require(
+                                metadata == test.expected
+                                    && columns == "id\tint\tNO\tPRI\t\nnote\tvarchar\tYES\t\t" + test.collation
+                                    && engine == f.profile.engine(role), "database/table inheritance differs")
+                            values[role.rawValue] = ["database": metadata, "columns": columns, "engine": engine]
                         }
                         return values
                     }
-                    try assertion("following-dml",caseID:test.test.id) {
-                        let insert=test.existing ? "INSERT INTO \(table) VALUES(2,NULL)" : "INSERT INTO \(table) VALUES(1,'seed'),(2,NULL)"
-                        try step(insert,database:test.database)
-                        try step("UPDATE \(table) SET id=3,note=CONVERT(0xF09F9880 USING utf8mb4) WHERE id=2",database:test.database)
-                        try step("DELETE FROM \(table) WHERE id=3",database:test.database)
-                        let summary=try applier.latestProgress() ?? [:]
-                        try require((summary["rowsApplied"] as? Int ?? 0)-(before["rowsApplied"] as? Int ?? 0) == (test.existing ? 3 : 4),"database following row count differs")
-                        var rows: [String:String] = [:]
+                    try assertion("following-dml", caseID: test.test.id) {
+                        let insert =
+                            test.existing
+                            ? "INSERT INTO \(table) VALUES(2,NULL)" : "INSERT INTO \(table) VALUES(1,'seed'),(2,NULL)"
+                        try step(insert, database: test.database)
+                        try step(
+                            "UPDATE \(table) SET id=3,note=CONVERT(0xF09F9880 USING utf8mb4) WHERE id=2",
+                            database: test.database)
+                        try step("DELETE FROM \(table) WHERE id=3", database: test.database)
+                        let summary = try applier.latestProgress() ?? [:]
+                        try require(
+                            (summary["rowsApplied"] as? Int ?? 0) - (before["rowsApplied"] as? Int ?? 0)
+                                == (test.existing ? 3 : 4), "database following row count differs")
+                        var rows: [String: String] = [:]
                         for role in LabProfile.Role.allCases {
-                            rows[role.rawValue]=try f.sql(role,"SELECT id,HEX(note) FROM \(table) ORDER BY id")
-                            try require(rows[role.rawValue] == "1\t73656564","database creation lost existing/following rows")
+                            rows[role.rawValue] = try f.sql(role, "SELECT id,HEX(note) FROM \(table) ORDER BY id")
+                            try require(
+                                rows[role.rawValue] == "1\t73656564", "database creation lost existing/following rows")
                         }
                         return rows
                     }
                     try applier.drain()
-                    let saved=try snapshot(test.test.id)
-                    let quoted=test.sql.replacingOccurrences(of:"'",with:"''")
-                    try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE' AND target_sql='\(quoted)'") == "1","database DDL intent differs")
-                    let end=try f.boundary(), result=try applier.latestProgress() ?? [:]
-                    try require(result["appliedGTIDSet"] as? String == end.gtids,"database GTIDs differ")
-                    try require((result["ddlApplied"] as? Int ?? 0)-(before["ddlApplied"] as? Int ?? 0) == (test.existing ? 1 : 2),"database DDL count differs")
-                    try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == (test.existing ? 4 : 5),"database transaction count differs")
-                    try require(state(saved,"SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state") == "STOPPED|\(end.file)|\(end.position)","database checkpoint differs")
-                    try applier.start(initialize:false)
+                    let saved = try snapshot(test.test.id)
+                    let quoted = test.sql.replacingOccurrences(of: "'", with: "''")
+                    try require(
+                        state(
+                            saved,
+                            "SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE' AND target_sql='\(quoted)'"
+                        ) == "1", "database DDL intent differs")
+                    let end = try f.boundary()
+                    let result = try applier.latestProgress() ?? [:]
+                    try require(result["appliedGTIDSet"] as? String == end.gtids, "database GTIDs differ")
+                    try require(
+                        (result["ddlApplied"] as? Int ?? 0) - (before["ddlApplied"] as? Int ?? 0)
+                            == (test.existing ? 1 : 2), "database DDL count differs")
+                    try require(
+                        (result["transactionsApplied"] as? Int ?? 0) - (before["transactionsApplied"] as? Int ?? 0)
+                            == (test.existing ? 4 : 5), "database transaction count differs")
+                    try require(
+                        state(saved, "SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
+                            == "STOPPED|\(end.file)|\(end.position)", "database checkpoint differs")
+                    try applier.start(initialize: false)
                     try wait()
                 }
             }
-            if f.profile.transactionalTarget && selects("reverse-database-table-defaults") { try reporter.run(QualificationCase("reverse-database-table-defaults","Preserve 5.7 utf8mb4 defaults through CREATE, LIKE, implicit DDL commit and RENAME")) {
-                try step("CREATE TABLE created_charset.t(id INT PRIMARY KEY,n VARCHAR(20))",database:"created_charset")
-                try step("CREATE TABLE created_charset.explicit_charset(id INT PRIMARY KEY,n VARCHAR(20)) ENGINE=InnoDB CHARACTER SET utf8mb4",database:"created_charset")
-                try step("CREATE TABLE created_charset.explicit_default(id INT PRIMARY KEY,n INT) ENGINE='DEFAULT'",database:"created_charset")
-                try step("START TRANSACTION; INSERT INTO created_charset.t VALUES(1,'before'); INSERT INTO created_charset.explicit_default VALUES(1,7); ALTER TABLE created_charset.t ADD extra INT DEFAULT 3; INSERT INTO created_charset.t(id,n) VALUES(2,'after')",database:"created_charset",checks:[.init("SELECT id,n,extra FROM created_charset.t ORDER BY id","1\tbefore\t3\n2\tafter\t3")])
-                try step("CREATE TABLE created_charset.copy LIKE created_charset.t",database:"created_charset")
-                try step("INSERT INTO created_charset.copy SELECT * FROM created_charset.t WHERE id=2",database:"created_charset")
-                try step("RENAME TABLE created_charset.t TO created_charset.old, created_charset.copy TO created_charset.t",database:"created_charset",checks:[.init("SELECT id,n,extra FROM created_charset.t","2\tafter\t3")])
-                try step("DROP TABLE created_charset.old",database:"created_charset")
-            } }
+            if f.profile.transactionalTarget && selects("reverse-database-table-defaults") {
+                try reporter.run(
+                    QualificationCase(
+                        "reverse-database-table-defaults",
+                        "Preserve 5.7 utf8mb4 defaults through CREATE, LIKE, implicit DDL commit and RENAME")
+                ) {
+                    try step(
+                        "CREATE TABLE created_charset.t(id INT PRIMARY KEY,n VARCHAR(20))", database: "created_charset")
+                    try step(
+                        "CREATE TABLE created_charset.explicit_charset(id INT PRIMARY KEY,n VARCHAR(20)) ENGINE=InnoDB CHARACTER SET utf8mb4",
+                        database: "created_charset")
+                    try step(
+                        "CREATE TABLE created_charset.explicit_default(id INT PRIMARY KEY,n INT) ENGINE='DEFAULT'",
+                        database: "created_charset")
+                    try step(
+                        "START TRANSACTION; INSERT INTO created_charset.t VALUES(1,'before'); INSERT INTO created_charset.explicit_default VALUES(1,7); ALTER TABLE created_charset.t ADD extra INT DEFAULT 3; INSERT INTO created_charset.t(id,n) VALUES(2,'after')",
+                        database: "created_charset",
+                        checks: [
+                            .init("SELECT id,n,extra FROM created_charset.t ORDER BY id", "1\tbefore\t3\n2\tafter\t3")
+                        ])
+                    try step("CREATE TABLE created_charset.copy LIKE created_charset.t", database: "created_charset")
+                    try step(
+                        "INSERT INTO created_charset.copy SELECT * FROM created_charset.t WHERE id=2",
+                        database: "created_charset")
+                    try step(
+                        "RENAME TABLE created_charset.t TO created_charset.old, created_charset.copy TO created_charset.t",
+                        database: "created_charset",
+                        checks: [.init("SELECT id,n,extra FROM created_charset.t", "2\tafter\t3")])
+                    try step("DROP TABLE created_charset.old", database: "created_charset")
+                }
+            }
         }
         func ddl() throws {
             for test in DDLCompatibilityCases.cases where selects(test.test.id) {
-                nativeInnoDB=test.nativeInnoDB
+                nativeInnoDB = test.nativeInnoDB
                 try setNativeEngine(nativeInnoDB ? "InnoDB" : "MyISAM")
                 try reporter.run(test.test) {
                     if f.profile.hasOptionalMetadata {
                         // These DDL workloads write ENUM/SET values. Their label
                         // validation requires FULL metadata even with position capture.
-                        let fullMetadataCases: Set<String> = ["ddl-compat-types", "ddl-compat-query-encodings", "ddl-compat-charset-conversion", "ddl-compat-keyless-rows"]
-                        let metadata=fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
-                        _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+metadata)
+                        let fullMetadataCases: Set<String> = [
+                            "ddl-compat-types", "ddl-compat-query-encodings", "ddl-compat-charset-conversion",
+                            "ddl-compat-keyless-rows",
+                        ]
+                        let metadata = fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
+                        _ = try f.sql(.source, "SET GLOBAL binlog_row_metadata=" + metadata)
                     }
-                    try step("DROP DATABASE IF EXISTS ddlcompat",database:"ddlcompat")
-                    try step("CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"ddlcompat")
+                    try step("DROP DATABASE IF EXISTS ddlcompat", database: "ddlcompat")
+                    try step(
+                        "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "ddlcompat")
                     if test.test.id == "ddl-compat-temporary" {
-                        try step("CREATE TABLE ddlcompat.tmp(id INT PRIMARY KEY,n INT)",database:"ddlcompat")
-                        try step("INSERT INTO ddlcompat.tmp VALUES(99,99)",database:"ddlcompat")
+                        try step("CREATE TABLE ddlcompat.tmp(id INT PRIMARY KEY,n INT)", database: "ddlcompat")
+                        try step("INSERT INTO ddlcompat.tmp VALUES(99,99)", database: "ddlcompat")
                     }
-                    let before=try applier.latestProgress() ?? [:], begin=try f.boundary()
+                    let before = try applier.latestProgress() ?? [:]
+                    let begin = try f.boundary()
                     for item in test.steps {
-                        if item.restartBefore { try applier.drain(); try applier.start(initialize:false); try wait() }
-                        let sql=f.profile.transactionalTarget ? item.sqlTransactional : item.sql
+                        if item.restartBefore {
+                            try applier.drain()
+                            try applier.start(initialize: false)
+                            try wait()
+                        }
+                        let sql = f.profile.transactionalTarget ? item.sqlTransactional : item.sql
                         if test.test.id == "ddl-compat-foreign-key-ddl" && sql == "DROP DATABASE ddlcompat" {
                             // These baseline tables have no captured DDL or row
                             // events. DROP must discover and journal all three.
                             let other = f.variant.lowerCaseTableNames == 0 ? "U_child" : "u_other"
                             for role in LabProfile.Role.allCases {
-                                _ = try f.sql(role,"SET sql_log_bin=0; CREATE TABLE ddlcompat.u_parent(id INT PRIMARY KEY) ENGINE=InnoDB; CREATE TABLE ddlcompat.u_child(id INT PRIMARY KEY,pid INT,CONSTRAINT unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB; CREATE TABLE ddlcompat." + other + "(id INT PRIMARY KEY,pid INT,CONSTRAINT other_unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB")
+                                _ = try f.sql(
+                                    role,
+                                    "SET sql_log_bin=0; CREATE TABLE ddlcompat.u_parent(id INT PRIMARY KEY) ENGINE=InnoDB; CREATE TABLE ddlcompat.u_child(id INT PRIMARY KEY,pid INT,CONSTRAINT unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB; CREATE TABLE ddlcompat."
+                                        + other
+                                        + "(id INT PRIMARY KEY,pid INT,CONSTRAINT other_unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB"
+                                )
                             }
                         }
                         if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
                             // Neither table is rediscovered by DML after resume.
                             // DROP must still retire both durable schema records.
                             try applier.drain()
-                            let checkpoint=try snapshot("database-before-drop")
-                            try require(state(checkpoint,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "2","database resume fixture lacks both saved schemas")
-                            try applier.start(initialize:false); try wait()
+                            let checkpoint = try snapshot("database-before-drop")
+                            try require(
+                                state(
+                                    checkpoint,
+                                    "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'"
+                                ) == "2", "database resume fixture lacks both saved schemas")
+                            try applier.start(initialize: false)
+                            try wait()
                         }
-                        if test.test.id == "ddl-compat-foreign-key-syntax-columns" && sql == "DELETE FROM ddlcompat.c WHERE id=1" {
+                        if test.test.id == "ddl-compat-foreign-key-syntax-columns"
+                            && sql == "DELETE FROM ddlcompat.c WHERE id=1"
+                        {
                             for role in LabProfile.Role.allCases {
-                                let result=try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(role),"mysql","--no-defaults","-uroot","-e","DELETE FROM ddlcompat.p WHERE id=1"],checked:false)
-                                try require(result.status != 0 && String(decoding:result.stderr,as:UTF8.self).contains("ERROR 1451"),"MATCH incorrectly enabled a cascade instead of rejecting the parent DELETE")
+                                let result = try f.h.compose(
+                                    [
+                                        "exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", f.profile.service(role),
+                                        "mysql", "--no-defaults", "-uroot", "-e", "DELETE FROM ddlcompat.p WHERE id=1",
+                                    ], checked: false)
+                                try require(
+                                    result.status != 0
+                                        && String(decoding: result.stderr, as: UTF8.self).contains("ERROR 1451"),
+                                    "MATCH incorrectly enabled a cascade instead of rejecting the parent DELETE")
                             }
                         }
-                        try step(sql,database:"ddlcompat",checks:item.checks)
+                        try step(sql, database: "ddlcompat", checks: item.checks)
                         if test.test.id == "ddl-compat-foreign-key-cross-database" {
-                            try writeJSON(compare("ddlfk"),to:f.output.appendingPathComponent(String(format:"fk-external-%04d.json",observation)))
+                            try writeJSON(
+                                compare("ddlfk"),
+                                to: f.output.appendingPathComponent(
+                                    String(format: "fk-external-%04d.json", observation)))
                         }
                     }
                     try applier.drain()
-                    let end=try f.boundary(), result=try applier.latestProgress() ?? [:]
-                    let count=try DMLCompatibilityCases.transactionCount(f.sql(.source,"SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')"))
-                    if f.profile.hasOptionalMetadata { try require(count == test.steps.reduce(0,{$0+$1.transactions}),"compatibility source event count differs") }
-                    try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
-                    let saved=try snapshot(test.test.id)
-                    try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0","unfinished compatibility DDL")
+                    let end = try f.boundary()
+                    let result = try applier.latestProgress() ?? [:]
+                    let count = try DMLCompatibilityCases.transactionCount(
+                        f.sql(.source, "SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')"))
+                    if f.profile.hasOptionalMetadata {
+                        try require(
+                            count == test.steps.reduce(0, { $0 + $1.transactions }),
+                            "compatibility source event count differs")
+                    }
+                    try require(
+                        (result["transactionsApplied"] as? Int ?? 0) - (before["transactionsApplied"] as? Int ?? 0)
+                            == count && result["appliedGTIDSet"] as? String == end.gtids,
+                        "compatibility checkpoint differs")
+                    let saved = try snapshot(test.test.id)
+                    try require(
+                        state(saved, "SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0",
+                        "unfinished compatibility DDL")
                     if test.test.id == "ddl-compat-source-gtid-preservation" {
-                        let applied=try f.sql(.source,"SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')")
-                        try require(f.sql(.target,"SELECT GTID_SUBSET('\(applied)',@@GLOBAL.gtid_executed)") == "1","target did not retain source GTIDs")
-                        try replayDDLWorkflow(test.test.id,stopAfter:2,from:begin,to:end)
-                        try require(f.sql(.target,"SELECT GTID_SUBSET('\(applied)',@@GLOBAL.gtid_executed)") == "1","replay did not retain source GTIDs")
+                        let applied = try f.sql(.source, "SELECT GTID_SUBTRACT('\(end.gtids)','\(begin.gtids)')")
+                        try require(
+                            f.sql(.target, "SELECT GTID_SUBSET('\(applied)',@@GLOBAL.gtid_executed)") == "1",
+                            "target did not retain source GTIDs")
+                        try replayDDLWorkflow(test.test.id, stopAfter: 2, from: begin, to: end)
+                        try require(
+                            f.sql(.target, "SELECT GTID_SUBSET('\(applied)',@@GLOBAL.gtid_executed)") == "1",
+                            "replay did not retain source GTIDs")
                     }
                     if test.test.id == "ddl-compat-tagged-gtids" {
-                        let uuid=try f.sql(.source,"SELECT @@server_uuid")
-                        try require(state(saved,"SELECT COUNT(*) FROM groups WHERE status='APPLIED' AND (gtid LIKE '%:blue:%' OR gtid LIKE '%:green:%')") == "6","tagged groups lost their identity")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status='DONE' AND gtid IN ('\(uuid):blue:1','\(uuid):green:2')") == "2","tagged DDL identity was not journaled")
-                        try require(end.gtids.contains(":blue:1-3:green:1-3"),"native tagged counters differ")
-                        try replayDDLWorkflow(test.test.id,stopAfter:2,from:begin,to:end,stopGTIDs:uuid+":green:1")
+                        let uuid = try f.sql(.source, "SELECT @@server_uuid")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM groups WHERE status='APPLIED' AND (gtid LIKE '%:blue:%' OR gtid LIKE '%:green:%')"
+                            ) == "6", "tagged groups lost their identity")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_intents WHERE status='DONE' AND gtid IN ('\(uuid):blue:1','\(uuid):green:2')"
+                            ) == "2", "tagged DDL identity was not journaled")
+                        try require(end.gtids.contains(":blue:1-3:green:1-3"), "native tagged counters differ")
+                        try replayDDLWorkflow(
+                            test.test.id, stopAfter: 2, from: begin, to: end, stopGTIDs: uuid + ":green:1")
                     }
                     if test.test.id.hasPrefix("ddl-compat-executable-comments") {
                         if test.test.id != "ddl-compat-executable-comments-source-gate" {
-                            try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/*!%ALTER%' AND source_sql=target_sql AND context_json LIKE '%target-version-executable-comments%' AND status='DONE'") != "0","executable comments were not preserved in the completed DDL journal")
+                            try require(
+                                state(
+                                    saved,
+                                    "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/*!%ALTER%' AND source_sql=target_sql AND context_json LIKE '%target-version-executable-comments%' AND status='DONE'"
+                                ) != "0", "executable comments were not preserved in the completed DDL journal")
                         } else {
-                            try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/* 80000%' AND source_sql=target_sql AND status='DONE'") == "1","source-disabled comment changed in transit")
+                            try require(
+                                state(
+                                    saved,
+                                    "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/* 80000%' AND source_sql=target_sql AND status='DONE'"
+                                ) == "1", "source-disabled comment changed in transit")
                         }
                         if test.test.id == "ddl-compat-executable-comments-target-gate" {
                             for role in LabProfile.Role.allCases {
-                                let expected=role == .target ? "" : "source-only"
-                                try require(f.sql(role,"SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'") == expected,"native target version gate differs")
+                                let expected = role == .target ? "" : "source-only"
+                                try require(
+                                    f.sql(
+                                        role,
+                                        "SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'"
+                                    ) == expected, "native target version gate differs")
                             }
                         }
-                        try replayDDLWorkflow(test.test.id,stopAfter:2,from:begin,to:end)
+                        try replayDDLWorkflow(test.test.id, stopAfter: 2, from: begin, to: end)
                         if test.test.id == "ddl-compat-executable-comments-target-gate" {
-                            try require(f.sql(.target,"SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'") == "","replay enabled an inactive target comment")
+                            try require(
+                                f.sql(
+                                    .target,
+                                    "SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'"
+                                ) == "", "replay enabled an inactive target comment")
                         }
                     }
                     if test.test.id == "ddl-compat-ignored-checks" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE source_sql LIKE 'ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check%' AND target_sql='' AND before_schema_id=after_schema_id AND status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='source-before-8.0.16-ignores-checks'") == "1","ignored CHECK lost its durable source/rule record or changed the schema version")
-                        try replayDDLWorkflow("checks",stopAfter:3,from:begin,to:end)
-                        try require(f.sql(.target,"SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA='ddlcompat' AND CONSTRAINT_TYPE='CHECK'") == "0","replay created a CHECK constraint")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE source_sql LIKE 'ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check%' AND target_sql='' AND before_schema_id=after_schema_id AND status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='source-before-8.0.16-ignores-checks'"
+                            ) == "1", "ignored CHECK lost its durable source/rule record or changed the schema version")
+                        try replayDDLWorkflow("checks", stopAfter: 3, from: begin, to: end)
+                        try require(
+                            f.sql(
+                                .target,
+                                "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA='ddlcompat' AND CONSTRAINT_TYPE='CHECK'"
+                            ) == "0", "replay created a CHECK constraint")
                     }
                     if test.test.id == "ddl-compat-subpartitions" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_array_length(schema_json,'$.partitions[0].subpartitions')=2") == "1","saved schema lost subpartitions")
-                        try replayDDLWorkflow("subpartitions",stopAfter:3,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_array_length(schema_json,'$.partitions[0].subpartitions')=2"
+                            ) == "1", "saved schema lost subpartitions")
+                        try replayDDLWorkflow("subpartitions", stopAfter: 3, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-partition-column-bounds" {
-                        try replayDDLWorkflow("partition-column-bounds",stopAfter:3,from:begin,to:end)
+                        try replayDDLWorkflow("partition-column-bounds", stopAfter: 3, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-temporary-create-select" {
-                        try replayDDLWorkflow("temporary-create-select",stopAfter:3,from:begin,to:end)
+                        try replayDDLWorkflow("temporary-create-select", stopAfter: 3, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-stored-objects" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql=target_sql AND (source_sql LIKE 'ALTER PROCEDURE ddlcompat.p%' OR source_sql LIKE 'ALTER FUNCTION ddlcompat.f%' OR source_sql LIKE 'DROP VIEW IF EXISTS ddlcompat.v,%')") == "3","stored object journal lost the original SQL")
-                        try replayDDLWorkflow("stored-objects",stopAfter:4,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql=target_sql AND (source_sql LIKE 'ALTER PROCEDURE ddlcompat.p%' OR source_sql LIKE 'ALTER FUNCTION ddlcompat.f%' OR source_sql LIKE 'DROP VIEW IF EXISTS ddlcompat.v,%')"
+                            ) == "3", "stored object journal lost the original SQL")
+                        try replayDDLWorkflow("stored-objects", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-ddl" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left FK schema snapshots current")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details WHERE transitions_json LIKE '%removableSupportingIndexes%'") != "0","FK index-removal choices were not journaled")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_extract(value,'$.before.table') IN ('u_parent','u_child','U_child','u_other') AND json_extract(value,'$.after') IS NULL") == "3","DROP DATABASE did not journal every unseen FK table")
-                        try replayDDLWorkflow("foreign-key-ddl",stopAfter:8,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'"
+                            ) == "1", "DROP DATABASE left FK schema snapshots current")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details WHERE transitions_json LIKE '%removableSupportingIndexes%'"
+                            ) != "0", "FK index-removal choices were not journaled")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_extract(value,'$.before.table') IN ('u_parent','u_child','U_child','u_other') AND json_extract(value,'$.after') IS NULL"
+                            ) == "3", "DROP DATABASE did not journal every unseen FK table")
+                        try replayDDLWorkflow("foreign-key-ddl", stopAfter: 8, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-syntax-columns" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql!=target_sql AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-match-ignores-foreign-key-actions'") == "2","MATCH translation lost its durable source SQL or rule")
-                        try replayDDLWorkflow("foreign-key-syntax-columns",stopAfter:4,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql!=target_sql AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-match-ignores-foreign-key-actions'"
+                            ) == "2", "MATCH translation lost its durable source SQL or rule")
+                        try replayDDLWorkflow("foreign-key-syntax-columns", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-cross-database" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE source_sql='DROP DATABASE ddlfk' AND json_extract(value,'$.after.database')='ddlcompat' AND json_extract(value,'$.after.table')='p' AND json_array_length(value,'$.before.foreignKeys')=1 AND json_array_length(value,'$.after.foreignKeys') IS NULL") == "2","child database DROP did not journal the surviving parent")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE source_sql='DROP DATABASE ddlcompat' AND json_extract(value,'$.after.database')='ddlfk' AND json_extract(value,'$.after.table')='c' AND json_array_length(value,'$.after.foreignKeys')=1") == "1","parent database DROP lost the surviving child's FK")
-                        try replayDDLWorkflow("foreign-key-cross-database",stopAfter:6,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE source_sql='DROP DATABASE ddlfk' AND json_extract(value,'$.after.database')='ddlcompat' AND json_extract(value,'$.after.table')='p' AND json_array_length(value,'$.before.foreignKeys')=1 AND json_array_length(value,'$.after.foreignKeys') IS NULL"
+                            ) == "2", "child database DROP did not journal the surviving parent")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE source_sql='DROP DATABASE ddlcompat' AND json_extract(value,'$.after.database')='ddlfk' AND json_extract(value,'$.after.table')='c' AND json_array_length(value,'$.after.foreignKeys')=1"
+                            ) == "1", "parent database DROP lost the surviving child's FK")
+                        try replayDDLWorkflow("foreign-key-cross-database", stopAfter: 6, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-generated" {
-                        for (sql,codes) in DDLCompatibilityCases.foreignKeyGeneratedRejections {
+                        for (sql, codes) in DDLCompatibilityCases.foreignKeyGeneratedRejections {
                             for role in LabProfile.Role.allCases {
-                                let before=try f.boundary(role)
-                                let result=try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(role),"mysql","--no-defaults","-uroot","-e",sql],checked:false)
-                                let error=String(decoding:result.stderr,as:UTF8.self)
-                                try require(result.status != 0 && codes.contains(where:{error.contains("ERROR "+$0)}),"generated FK native rejection differs: "+error)
-                                let after=try f.boundary(role)
-                                try require(before.gtids == after.gtids && before.file == after.file && before.position == after.position,"rejected generated FK changed the binlog")
+                                let before = try f.boundary(role)
+                                let result = try f.h.compose(
+                                    [
+                                        "exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", f.profile.service(role),
+                                        "mysql", "--no-defaults", "-uroot", "-e", sql,
+                                    ], checked: false)
+                                let error = String(decoding: result.stderr, as: UTF8.self)
+                                try require(
+                                    result.status != 0 && codes.contains(where: { error.contains("ERROR " + $0) }),
+                                    "generated FK native rejection differs: " + error)
+                                let after = try f.boundary(role)
+                                try require(
+                                    before.gtids == after.gtids && before.file == after.file
+                                        && before.position == after.position, "rejected generated FK changed the binlog"
+                                )
                             }
                         }
-                        try replayDDLWorkflow("foreign-key-generated",stopAfter:6,from:begin,to:end)
+                        try replayDDLWorkflow("foreign-key-generated", stopAfter: 6, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-alter-table-rename" {
-                        try replayDDLWorkflow("alter-table-rename",stopAfter:6,from:begin,to:end)
+                        try replayDDLWorkflow("alter-table-rename", stopAfter: 6, from: begin, to: end)
                     }
-                    if ["ddl-compat-column-swaps","ddl-compat-foreign-key-column-swaps","ddl-compat-column-renames","ddl-compat-alter-options","ddl-compat-generated-expressions"].contains(test.test.id) {
-                        try replayDDLWorkflow(test.test.id,stopAfter:3,from:begin,to:end)
+                    if [
+                        "ddl-compat-column-swaps", "ddl-compat-foreign-key-column-swaps", "ddl-compat-column-renames",
+                        "ddl-compat-alter-options", "ddl-compat-generated-expressions",
+                    ].contains(test.test.id) {
+                        try replayDDLWorkflow(test.test.id, stopAfter: 3, from: begin, to: end)
                     }
-                    if ["ddl-compat-partition-column-renames","ddl-compat-partition-rename-syntax"].contains(test.test.id) {
-                        try replayDDLWorkflow(test.test.id,stopAfter:5,from:begin,to:end)
+                    if ["ddl-compat-partition-column-renames", "ddl-compat-partition-rename-syntax"].contains(
+                        test.test.id)
+                    {
+                        try replayDDLWorkflow(test.test.id, stopAfter: 5, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-absent-definers" {
                         try verifyAbsentDefinerErrors()
-                        try replayDDLWorkflow("absent-definers",stopAfter:4,from:begin,to:end)
+                        try replayDDLWorkflow("absent-definers", stopAfter: 4, from: begin, to: end)
                         try verifyAbsentDefinerErrors()
                     }
                     if test.test.id == "ddl-compat-primary-key-parts" {
-                        try replayDDLWorkflow("primary-key-parts",stopAfter:4,from:begin,to:end)
+                        try replayDDLWorkflow("primary-key-parts", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-grouped-constraints" {
-                        try replayDDLWorkflow("grouped-constraints",stopAfter:6,from:begin,to:end)
+                        try replayDDLWorkflow("grouped-constraints", stopAfter: 6, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-column-index-syntax" {
-                        try replayDDLWorkflow("column-index-syntax",stopAfter:4,from:begin,to:end)
+                        try replayDDLWorkflow("column-index-syntax", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-generated-dependencies" {
-                        try replayDDLWorkflow("generated-dependencies",stopAfter:4,from:begin,to:end)
+                        try replayDDLWorkflow("generated-dependencies", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-alter-column-keys" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE target_sql LIKE 'ALTER TABLE ddlcompat.t ADD aid%' AND json_extract(context_json,'$.autoIncrementIncrement')=3 AND json_extract(context_json,'$.autoIncrementOffset')=2 AND status='DONE'") == "1","ALTER lost its logged AUTO_INCREMENT settings")
-                        try replayDDLWorkflow("alter-column-keys",stopAfter:4,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE target_sql LIKE 'ALTER TABLE ddlcompat.t ADD aid%' AND json_extract(context_json,'$.autoIncrementIncrement')=3 AND json_extract(context_json,'$.autoIncrementOffset')=2 AND status='DONE'"
+                            ) == "1", "ALTER lost its logged AUTO_INCREMENT settings")
+                        try replayDDLWorkflow("alter-column-keys", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-compound-indexes" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_array_length(value,'$.supportingIndexReplacements')>0") != "0","compound FK index choices were not journaled")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN schemas ON schemas.id=ddl_intents.after_schema_id WHERE ddl_intents.target_sql LIKE 'ALTER TABLE ddlcompat.n ADD CONSTRAINT fn1%' AND json_extract(schema_json,'$.secondaryIndexes[0].name')='fn2' AND status='DONE'") == "1","compound DDL did not save the actual target index")
-                        try replayDDLWorkflow("foreign-key-compound-indexes",stopAfter:4,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_array_length(value,'$.supportingIndexReplacements')>0"
+                            ) != "0", "compound FK index choices were not journaled")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_intents JOIN schemas ON schemas.id=ddl_intents.after_schema_id WHERE ddl_intents.target_sql LIKE 'ALTER TABLE ddlcompat.n ADD CONSTRAINT fn1%' AND json_extract(schema_json,'$.secondaryIndexes[0].name')='fn2' AND status='DONE'"
+                            ) == "1", "compound DDL did not save the actual target index")
+                        try replayDDLWorkflow("foreign-key-compound-indexes", stopAfter: 4, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-parent-keys" {
-                        try replayDDLWorkflow("foreign-key-parent-keys",stopAfter:6,from:begin,to:end)
+                        try replayDDLWorkflow("foreign-key-parent-keys", stopAfter: 6, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-missing-parent" {
-                        let ids=try ddlGTIDs(saved,from:begin,to:end)
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE ddl_details.gtid IN (\(ids)) AND json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL") == "1","missing-parent relationship was not journaled")
-                        try replayDDLWorkflow("foreign-key-missing-parent",stopAfter:2,from:begin,to:end)
+                        let ids = try ddlGTIDs(saved, from: begin, to: end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE ddl_details.gtid IN (\(ids)) AND json_extract(value,'$.after.table')='c' AND json_extract(value,'$.after.foreignKeys[0].referencedTable')='p' AND json_extract(value,'$.before') IS NULL"
+                            ) == "1", "missing-parent relationship was not journaled")
+                        try replayDDLWorkflow("foreign-key-missing-parent", stopAfter: 2, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-controls" {
-                        try replayDDLWorkflow("foreign-key-controls",stopAfter:13,from:begin,to:end)
+                        try replayDDLWorkflow("foreign-key-controls", stopAfter: 13, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-keyless-rows" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.rowIdentity.kind')='fullRow'") == "4","full-row identities were not saved")
-                        try replayDDLWorkflow("keyless-rows",stopAfter:7,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.rowIdentity.kind')='fullRow'"
+                            ) == "4", "full-row identities were not saved")
+                        try replayDDLWorkflow("keyless-rows", stopAfter: 7, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-unique-row-identity" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_array_length(schema_json,'$.primaryKeyColumns')=0 AND json_extract(schema_json,'$.rowIdentity.kind')='unique'") == "2","unique row identities were not saved")
-                        try require(state(saved,"SELECT json_extract(schema_json,'$.rowIdentity.index') FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t'") == "by_code","selected key did not follow ordered DDL")
-                        try replayDDLWorkflow("unique-row-identity",stopAfter:7,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_array_length(schema_json,'$.primaryKeyColumns')=0 AND json_extract(schema_json,'$.rowIdentity.kind')='unique'"
+                            ) == "2", "unique row identities were not saved")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT json_extract(schema_json,'$.rowIdentity.index') FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t'"
+                            ) == "by_code", "selected key did not follow ordered DDL")
+                        try replayDDLWorkflow("unique-row-identity", stopAfter: 7, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-view-renames" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_array_length(context_json,'$.viewTransitions')>0") == "4","view rename journal lost metadata")
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('final_view','renamed')") == "0","view entered the row-schema cache")
-                        let rejectedSQL="RENAME TABLE ddlcompat.final_view TO mysql.moved_view"
-                        var rejections:[String:String]=[:]
-                        for role:LabProfile.Role in [.source,.native,.target] {
-                            let before=try f.boundary(role)
-                            let result=try f.h.compose(["exec","-T","-e","MYSQL_PWD=fixture-root-only",f.profile.service(role),"mysql","--no-defaults","-uroot","-e",rejectedSQL],checked:false)
-                            let message=String(decoding:result.stderr,as:UTF8.self)
-                            try require(result.status != 0 && message.contains("ERROR 1450"),"cross-database view rename did not return native error 1450")
-                            let after=try f.boundary(role)
-                            try require(before.file == after.file && before.position == after.position && before.gtids == after.gtids,"rejected view rename changed the binlog position")
-                            rejections[f.profile.service(role)]=message
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_array_length(context_json,'$.viewTransitions')>0"
+                            ) == "4", "view rename journal lost metadata")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('final_view','renamed')"
+                            ) == "0", "view entered the row-schema cache")
+                        let rejectedSQL = "RENAME TABLE ddlcompat.final_view TO mysql.moved_view"
+                        var rejections: [String: String] = [:]
+                        for role: LabProfile.Role in [.source, .native, .target] {
+                            let before = try f.boundary(role)
+                            let result = try f.h.compose(
+                                [
+                                    "exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", f.profile.service(role), "mysql",
+                                    "--no-defaults", "-uroot", "-e", rejectedSQL,
+                                ], checked: false)
+                            let message = String(decoding: result.stderr, as: UTF8.self)
+                            try require(
+                                result.status != 0 && message.contains("ERROR 1450"),
+                                "cross-database view rename did not return native error 1450")
+                            let after = try f.boundary(role)
+                            try require(
+                                before.file == after.file && before.position == after.position
+                                    && before.gtids == after.gtids, "rejected view rename changed the binlog position")
+                            rejections[f.profile.service(role)] = message
                         }
-                        try writeJSON(rejections,to:f.output.appendingPathComponent("view-rename-rejections.json"))
-                        try replayDDLWorkflow("view-renames",stopAfter:7,from:begin,to:end)
-                        let metadata="SELECT TABLE_NAME,DEFINER,SECURITY_TYPE,CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA='ddlcompat' ORDER BY TABLE_NAME"
-                        try require(f.sql(.target,metadata) == f.sql(.native,metadata),"replay view metadata differs")
-                        try require(f.sql(.target,"SELECT * FROM ddlcompat.final_view ORDER BY id") == "1\t10\n3\t30","replay renamed view rows differ")
+                        try writeJSON(rejections, to: f.output.appendingPathComponent("view-rename-rejections.json"))
+                        try replayDDLWorkflow("view-renames", stopAfter: 7, from: begin, to: end)
+                        let metadata =
+                            "SELECT TABLE_NAME,DEFINER,SECURITY_TYPE,CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA='ddlcompat' ORDER BY TABLE_NAME"
+                        try require(
+                            f.sql(.target, metadata) == f.sql(.native, metadata), "replay view metadata differs")
+                        try require(
+                            f.sql(.target, "SELECT * FROM ddlcompat.final_view ORDER BY id") == "1\t10\n3\t30",
+                            "replay renamed view rows differ")
                     }
                     if test.test.id == "ddl-compat-conditional-routines" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-routine-create-if-not-exists'") == "5","conditional routine rule was not journaled")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql LIKE '%IF NOT EXISTS%' AND target_sql=''") == "2","conditional routine no-op count differs")
-                        try replayDDLWorkflow("conditional-routines",stopAfter:4,from:begin,to:end)
-                        try require(f.sql(.target,"SELECT ddlcompat.f(7)") == "8","replay replaced the existing function")
-                        try require(f.sql(.target,"SELECT ROUTINE_NAME,DEFINER,SECURITY_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='ddlcompat' ORDER BY ROUTINE_NAME") == f.sql(.native,"SELECT ROUTINE_NAME,DEFINER,SECURITY_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='ddlcompat' ORDER BY ROUTINE_NAME"),"replay routine metadata differs")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-routine-create-if-not-exists'"
+                            ) == "5", "conditional routine rule was not journaled")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql LIKE '%IF NOT EXISTS%' AND target_sql=''"
+                            ) == "2", "conditional routine no-op count differs")
+                        try replayDDLWorkflow("conditional-routines", stopAfter: 4, from: begin, to: end)
+                        try require(
+                            f.sql(.target, "SELECT ddlcompat.f(7)") == "8", "replay replaced the existing function")
+                        try require(
+                            f.sql(
+                                .target,
+                                "SELECT ROUTINE_NAME,DEFINER,SECURITY_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='ddlcompat' ORDER BY ROUTINE_NAME"
+                            )
+                                == f.sql(
+                                    .native,
+                                    "SELECT ROUTINE_NAME,DEFINER,SECURITY_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='ddlcompat' ORDER BY ROUTINE_NAME"
+                                ), "replay routine metadata differs")
                     }
                     if test.test.id == "ddl-compat-partition-expressions" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_extract(schema_json,'$.partitions[0].description')='739982'") != "0","saved schema lost the evaluated partition bound")
-                        try replayDDLWorkflow("partition-expressions",stopAfter:3,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_extract(schema_json,'$.partitions[0].description')='739982'"
+                            ) != "0", "saved schema lost the evaluated partition bound")
+                        try replayDDLWorkflow("partition-expressions", stopAfter: 3, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-partition-exchange-unchecked" {
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE status='DONE' AND source_sql LIKE '%EXCHANGE PARTITION%WITHOUT VALIDATION' AND target_sql=source_sql AND json_array_length(transitions_json)=2") == "3","EXCHANGE lost its SQL or one table transition")
-                        try replayDDLWorkflow("partition-exchange",stopAfter:5,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE status='DONE' AND source_sql LIKE '%EXCHANGE PARTITION%WITHOUT VALIDATION' AND target_sql=source_sql AND json_array_length(transitions_json)=2"
+                            ) == "3", "EXCHANGE lost its SQL or one table transition")
+                        try replayDDLWorkflow("partition-exchange", stopAfter: 5, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-partition-key-algorithm" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('t','copy') AND json_extract(schema_json,'$.partitions[0].keyAlgorithm')=1") == "2","saved schema lost the KEY algorithm")
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='sub' AND json_extract(schema_json,'$.partitions[0].subpartitions[0].keyAlgorithm')=1") == "1","saved schema lost the subpartition KEY algorithm")
-                        try replayDDLWorkflow("partition-key",stopAfter:3,from:begin,to:end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('t','copy') AND json_extract(schema_json,'$.partitions[0].keyAlgorithm')=1"
+                            ) == "2", "saved schema lost the KEY algorithm")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='sub' AND json_extract(schema_json,'$.partitions[0].subpartitions[0].keyAlgorithm')=1"
+                            ) == "1", "saved schema lost the subpartition KEY algorithm")
+                        try replayDDLWorkflow("partition-key", stopAfter: 3, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-database" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left current schemas")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'"
+                            ) == "1", "DROP DATABASE left current schemas")
                     }
                     if test.test.id == "ddl-compat-multi-table" {
-                        let ids=try ddlGTIDs(saved,from:begin,to:end)
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='otherdb' AND json_extract(schema_json,'$.table') IN ('moved','copy')") == "0","multi-table DROP left current schemas")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE gtid IN (\(ids)) AND target_sql LIKE 'DROP TABLE %' AND source_sql=target_sql AND status='DONE' AND json_array_length(transitions_json)=3") == "1","multi-table DROP lost its complete transition record")
+                        let ids = try ddlGTIDs(saved, from: begin, to: end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='otherdb' AND json_extract(schema_json,'$.table') IN ('moved','copy')"
+                            ) == "0", "multi-table DROP left current schemas")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE gtid IN (\(ids)) AND target_sql LIKE 'DROP TABLE %' AND source_sql=target_sql AND status='DONE' AND json_array_length(transitions_json)=3"
+                            ) == "1", "multi-table DROP lost its complete transition record")
                     }
                     if test.test.id == "ddl-compat-cross-schema-relationships" {
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database') IN ('ddlcompat','otherdb')") == "0","relationship DROP left current schemas")
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database') IN ('ddlcompat','otherdb')"
+                            ) == "0", "relationship DROP left current schemas")
                     }
-                    try applier.start(initialize:false); try wait()
+                    try applier.start(initialize: false)
+                    try wait()
                 }
             }
         }
         func dml() throws {
             try resetNativeEngine()
-            try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"poc")
-            for test in DMLCompatibilityCases.cases where selects("matrix-"+test.id) && test.applies(to:f.profile) {
-                try reporter.run(QualificationCase("matrix-"+test.id,"Shared DML matrix: "+test.id)) {
-                    if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+(test.rowMetadata ?? f.variant.metadata)) }
-                    try step("CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",database:"poc")
-                    if !test.setup.isEmpty { try step(test.setup,database:"poc") }
-                    for (ordinal,phase) in test.phases.enumerated() {
-                        let before=phase.expectsJSONDiff ? try f.boundary() : nil
-                        try step("USE poc; "+phase.sql,database:"poc",checks:[.init(phase.check,"1")])
-                        if let before { try verifyJSONDiff(before,label:"matrix-"+test.id+"-\(ordinal+1)") }
+            try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "poc")
+            for test in DMLCompatibilityCases.cases where selects("matrix-" + test.id) && test.applies(to: f.profile) {
+                try reporter.run(QualificationCase("matrix-" + test.id, "Shared DML matrix: " + test.id)) {
+                    if f.profile.hasOptionalMetadata {
+                        _ = try f.sql(
+                            .source, "SET GLOBAL binlog_row_metadata=" + (test.rowMetadata ?? f.variant.metadata))
+                    }
+                    try step(
+                        "CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                        database: "poc")
+                    if !test.setup.isEmpty { try step(test.setup, database: "poc") }
+                    for (ordinal, phase) in test.phases.enumerated() {
+                        let before = phase.expectsJSONDiff ? try f.boundary() : nil
+                        try step("USE poc; " + phase.sql, database: "poc", checks: [.init(phase.check, "1")])
+                        if let before { try verifyJSONDiff(before, label: "matrix-" + test.id + "-\(ordinal+1)") }
                     }
                 }
             }
         }
         func indexes() throws {
-            if f.profile.hasOptionalMetadata { _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+f.variant.metadata) }
+            if f.profile.hasOptionalMetadata {
+                _ = try f.sql(.source, "SET GLOBAL binlog_row_metadata=" + f.variant.metadata)
+            }
             try resetNativeEngine()
             for test in ModifyIndexCases.cases where selects(test.test.id) {
                 try reporter.run(test.test) {
-                    try step("CREATE DATABASE IF NOT EXISTS demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",database:"demo")
+                    try step(
+                        "CREATE DATABASE IF NOT EXISTS demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+                        database: "demo")
                     // Seed only on the source, through replication. Keep these
                     // single-table DROP checks separate from the multi-table case.
-                    for name in ["mi_clone","mi_renamed","mi","explicit_default_engine"] { try step("DROP TABLE IF EXISTS demo.\(name)",database:"demo") }
-                    let parts=test.seed.components(separatedBy:"; ").filter { !$0.hasPrefix("SET SESSION") && !$0.hasPrefix("CREATE DATABASE") && !$0.hasPrefix("DROP TABLE") && !$0.isEmpty }
-                    for sql in parts { try step(sql,database:"demo") }
-                    var starts: [LabProfile.Role:Boundary] = [:]
-                    for role in LabProfile.Role.allCases { starts[role]=try f.boundary(role) }
-                    let before=try applier.latestProgress() ?? [:]
-                    try assertion("schema-effects",caseID:test.test.id) {
-                        let observation=try step(test.sql,database:"demo",checks:[.init("SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",test.retained)],checkWarnings:true)
-                        var values: [String:Any] = ["source_observation":observation]
+                    for name in ["mi_clone", "mi_renamed", "mi", "explicit_default_engine"] {
+                        try step("DROP TABLE IF EXISTS demo.\(name)", database: "demo")
+                    }
+                    let parts = test.seed.components(separatedBy: "; ").filter {
+                        !$0.hasPrefix("SET SESSION") && !$0.hasPrefix("CREATE DATABASE") && !$0.hasPrefix("DROP TABLE")
+                            && !$0.isEmpty
+                    }
+                    for sql in parts { try step(sql, database: "demo") }
+                    var starts: [LabProfile.Role: Boundary] = [:]
+                    for role in LabProfile.Role.allCases { starts[role] = try f.boundary(role) }
+                    let before = try applier.latestProgress() ?? [:]
+                    try assertion("schema-effects", caseID: test.test.id) {
+                        let observation = try step(
+                            test.sql, database: "demo",
+                            checks: [
+                                .init(
+                                    "SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",
+                                    test.retained)
+                            ], checkWarnings: true)
+                        var values: [String: Any] = ["source_observation": observation]
                         for role in LabProfile.Role.allCases {
-                            values[role.rawValue]=try ModifyIndexCases.metadata(f.h,f.profile.service(role),test,expectedEngine:f.profile.engine(role))
+                            values[role.rawValue] = try ModifyIndexCases.metadata(
+                                f.h, f.profile.service(role), test, expectedEngine: f.profile.engine(role))
                         }
                         return values
                     }
                     if !test.workload.isEmpty {
-                        try assertion("following-dml",caseID:test.test.id) {
-                            var observed: [[String:Any]] = []
-                            for item in test.workload { observed.append(try step(item.sql,database:"demo",checks:[.init("SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",item.rows)])) }
+                        try assertion("following-dml", caseID: test.test.id) {
+                            var observed: [[String: Any]] = []
+                            for item in test.workload {
+                                observed.append(
+                                    try step(
+                                        item.sql, database: "demo",
+                                        checks: [
+                                            .init(
+                                                "SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",
+                                                item.rows)
+                                        ]))
+                            }
                             return observed
                         }
                     }
                     try applier.drain()
-                    let saved=try snapshot(test.test.id), end=try f.boundary()
-                    let result=try applier.latestProgress() ?? [:]
-                    try assertion("source-boundary",caseID:test.test.id) {
-                        for (key,expected) in [("transactionsApplied",1+test.workload.count),("rowsApplied",test.workload.reduce(0,{$0+$1.affectedRows})),("ddlApplied",1)] {
-                            try require((result[key] as? Int ?? 0)-(before[key] as? Int ?? 0) == expected,"MODIFY/index counter differs: "+key)
+                    let saved = try snapshot(test.test.id)
+                    let end = try f.boundary()
+                    let result = try applier.latestProgress() ?? [:]
+                    try assertion("source-boundary", caseID: test.test.id) {
+                        for (key, expected) in [
+                            ("transactionsApplied", 1 + test.workload.count),
+                            ("rowsApplied", test.workload.reduce(0, { $0 + $1.affectedRows })), ("ddlApplied", 1),
+                        ] {
+                            try require(
+                                (result[key] as? Int ?? 0) - (before[key] as? Int ?? 0) == expected,
+                                "MODIFY/index counter differs: " + key)
                         }
-                        try require(result["appliedGTIDSet"] as? String == end.gtids,"MODIFY/index GTIDs differ")
-                        let checkpoint=try state(saved,"SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
-                        try require(checkpoint == "STOPPED|\(end.file)|\(end.position)","MODIFY/index checkpoint differs")
-                        return ["source":end.json,"saved":checkpoint,"summary":result]
+                        try require(result["appliedGTIDSet"] as? String == end.gtids, "MODIFY/index GTIDs differ")
+                        let checkpoint = try state(
+                            saved, "SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
+                        try require(
+                            checkpoint == "STOPPED|\(end.file)|\(end.position)", "MODIFY/index checkpoint differs")
+                        return ["source": end.json, "saved": checkpoint, "summary": result]
                     }
-                    try assertion("schema-history",caseID:test.test.id) {
-                        let quoted=test.sql.replacingOccurrences(of:"'",with:"''")
-                        let intent=try state(saved,"SELECT status||'|'||target_sql FROM ddl_intents ORDER BY rowid DESC LIMIT 1")
-                        try require(intent == "DONE|"+test.sql,"DDL rewritten or incomplete")
+                    try assertion("schema-history", caseID: test.test.id) {
+                        let quoted = test.sql.replacingOccurrences(of: "'", with: "''")
+                        let intent = try state(
+                            saved, "SELECT status||'|'||target_sql FROM ddl_intents ORDER BY rowid DESC LIMIT 1")
+                        try require(intent == "DONE|" + test.sql, "DDL rewritten or incomplete")
                         // RENAME records several transitions and has no single after_schema_id.
                         // Check the published table against its journaled after-image.
-                        let table=test.table.replacingOccurrences(of:"'",with:"''")
-                        let published="SELECT id FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='demo' AND json_extract(schema_json,'$.table')='\(table)'"
-                        try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE id IN (\(published))") == "1","published index-test schema is missing or ambiguous")
-                        let references=try state(saved,"SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND schema_id IN (\(published))")
-                        try require(references == String(test.workload.reduce(0,{$0+$1.affectedRows})),"following rows did not use published schema")
-                        let history=try state(saved,"SELECT json_extract(value,'$.after') FROM ddl_details,json_each(transitions_json) WHERE gtid=(SELECT gtid FROM ddl_intents WHERE target_sql='\(quoted)' ORDER BY rowid DESC LIMIT 1) AND json_extract(value,'$.after.database')='demo' AND json_extract(value,'$.after.table')='\(table)'")
-                        let schema=try JSONSerialization.jsonObject(with:Data(history.utf8)) as? [String:Any]
-                        let current=try state(saved,"SELECT schema_json FROM schemas WHERE id IN (\(published))")
-                        let currentSchema=try JSONSerialization.jsonObject(with:Data(current.utf8)) as? [String:Any]
-                        try require(NSDictionary(dictionary:schema ?? [:]).isEqual(to:currentSchema ?? [:]),"published schema differs from the DDL transition")
-                        try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
-                        try require(state(saved,"PRAGMA user_version") == "13","state version gate differs")
-                        return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
+                        let table = test.table.replacingOccurrences(of: "'", with: "''")
+                        let published =
+                            "SELECT id FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='demo' AND json_extract(schema_json,'$.table')='\(table)'"
+                        try require(
+                            state(saved, "SELECT COUNT(*) FROM schemas WHERE id IN (\(published))") == "1",
+                            "published index-test schema is missing or ambiguous")
+                        let references = try state(
+                            saved,
+                            "SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND schema_id IN (\(published))")
+                        try require(
+                            references == String(test.workload.reduce(0, { $0 + $1.affectedRows })),
+                            "following rows did not use published schema")
+                        let history = try state(
+                            saved,
+                            "SELECT json_extract(value,'$.after') FROM ddl_details,json_each(transitions_json) WHERE gtid=(SELECT gtid FROM ddl_intents WHERE target_sql='\(quoted)' ORDER BY rowid DESC LIMIT 1) AND json_extract(value,'$.after.database')='demo' AND json_extract(value,'$.after.table')='\(table)'"
+                        )
+                        let schema = try JSONSerialization.jsonObject(with: Data(history.utf8)) as? [String: Any]
+                        let current = try state(saved, "SELECT schema_json FROM schemas WHERE id IN (\(published))")
+                        let currentSchema = try JSONSerialization.jsonObject(with: Data(current.utf8)) as? [String: Any]
+                        try require(
+                            NSDictionary(dictionary: schema ?? [:]).isEqual(to: currentSchema ?? [:]),
+                            "published schema differs from the DDL transition")
+                        try require(
+                            (schema?["columns"] as? [[String: Any]])?.count == 4
+                                && schema?["secondaryIndexes"] is [[String: Any]], "extended schema metadata missing")
+                        try require(state(saved, "PRAGMA user_version") == "13", "state version gate differs")
+                        return ["intent": intent, "schema": schema ?? [:], "following_row_intents": references]
+                            as [String: Any]
                     }
-                    try assertion("normalized-binlog",caseID:test.test.id) { try binlogAssertion(test,starts:starts) }
-                    try applier.start(initialize:false)
+                    try assertion("normalized-binlog", caseID: test.test.id) {
+                        try binlogAssertion(test, starts: starts)
+                    }
+                    try applier.start(initialize: false)
                     try wait()
                 }
             }
@@ -718,17 +1219,25 @@ public enum SharedCorrectness {
         /// oracle. Preserve its failure evidence, then skip that rejected range
         /// so later scenarios can establish their own equivalent table snapshots.
         func reseedNativeAfterRejections(_ label: String) throws {
-            try require(!f.profile.transactionalTarget,"native rejection cleanup requires a MyISAM fixture")
-            try f.h.sql("native",f.profile.nativeVersion.replicaStatus+"\\G",headers:true).write(to:f.output.appendingPathComponent(label+"-native-before-reset.txt"),atomically:true,encoding:.utf8)
-            let end=try f.boundary()
-            try writeJSON(end.json,to:f.output.appendingPathComponent(label+"-native-reset-boundary.json"))
-            _ = try f.sql(.native,f.profile.nativeVersion.stopReplica+"; "+f.profile.nativeVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(end.gtids)'; "+f.profile.nativeVersion.position(end)+"; "+f.profile.nativeVersion.startReplica)
+            try require(!f.profile.transactionalTarget, "native rejection cleanup requires a MyISAM fixture")
+            try f.h.sql("native", f.profile.nativeVersion.replicaStatus + "\\G", headers: true).write(
+                to: f.output.appendingPathComponent(label + "-native-before-reset.txt"), atomically: true,
+                encoding: .utf8)
+            let end = try f.boundary()
+            try writeJSON(end.json, to: f.output.appendingPathComponent(label + "-native-reset-boundary.json"))
+            _ = try f.sql(
+                .native,
+                f.profile.nativeVersion.stopReplica + "; " + f.profile.nativeVersion.resetBinlogs
+                    + "; SET GLOBAL gtid_purged='\(end.gtids)'; " + f.profile.nativeVersion.position(end) + "; "
+                    + f.profile.nativeVersion.startReplica)
             // The seeded GTID set alone cannot prove that replication resumed.
-            let status=try f.h.status()
-            try require(status[f.profile.nativeVersion.sqlRunningField] == "Yes" && status["Last_SQL_Errno"] == "0","native reference did not resume after rejected scenarios")
+            let status = try f.h.status()
+            try require(
+                status[f.profile.nativeVersion.sqlRunningField] == "Yes" && status["Last_SQL_Errno"] == "0",
+                "native reference did not resume after rejected scenarios")
         }
         func resetNativeEngine() throws {
-            nativeInnoDB=false
+            nativeInnoDB = false
             try setNativeEngine("MyISAM")
         }
         func setNativeEngine(_ engine: String) throws {
@@ -736,18 +1245,26 @@ public enum SharedCorrectness {
             // A running SQL thread retains its session default. Restart it only
             // after catching up, so the next scenario uses the declared engine.
             try f.awaitNative()
-            _ = try f.sql(.native,f.profile.nativeVersion.stopReplica+" SQL_THREAD; SET GLOBAL default_storage_engine="+engine+"; "+f.profile.nativeVersion.startReplica+" SQL_THREAD")
+            _ = try f.sql(
+                .native,
+                f.profile.nativeVersion.stopReplica + " SQL_THREAD; SET GLOBAL default_storage_engine=" + engine + "; "
+                    + f.profile.nativeVersion.startReplica + " SQL_THREAD")
         }
         func policies() throws {
             guard selects(DDLCompatibilityCases.skipTrigger.id) else { return }
             try resetNativeEngine()
             try reporter.run(DDLCompatibilityCases.skipTrigger) {
-                try step("CREATE DATABASE policy CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",database:"policy")
-                try step("CREATE TABLE policy.t(id INT PRIMARY KEY,n INT)",database:"policy")
-                try step("CREATE TRIGGER policy.tr BEFORE INSERT ON policy.t FOR EACH ROW SET NEW.n=7",database:"policy")
-                try step("INSERT INTO policy.t VALUES(1,1)",database:"policy",checks:[.init("SELECT * FROM policy.t","1\t7")])
-                try require(try f.sql(.target,"SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='policy'") == "0","trigger installed on external target")
-                try step("DROP TRIGGER policy.tr",database:"policy")
+                try step("CREATE DATABASE policy CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "policy")
+                try step("CREATE TABLE policy.t(id INT PRIMARY KEY,n INT)", database: "policy")
+                try step(
+                    "CREATE TRIGGER policy.tr BEFORE INSERT ON policy.t FOR EACH ROW SET NEW.n=7", database: "policy")
+                try step(
+                    "INSERT INTO policy.t VALUES(1,1)", database: "policy",
+                    checks: [.init("SELECT * FROM policy.t", "1\t7")])
+                try require(
+                    try f.sql(.target, "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='policy'")
+                        == "0", "trigger installed on external target")
+                try step("DROP TRIGGER policy.tr", database: "policy")
             }
         }
     }

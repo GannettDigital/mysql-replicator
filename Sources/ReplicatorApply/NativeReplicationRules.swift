@@ -9,7 +9,7 @@ struct NativeReplicationRules {
     /// InnoDB permits full leading columns of nonunique or composite indexes.
     /// MySQL 8.4 replica SQL and worker threads turn off the new client default.
     var foreignKeyParentKeys: ForeignKeyParentKeys {
-        [507,804].contains(targetVersion / 100) ? .innodb : .completeUnique
+        [507, 804].contains(targetVersion / 100) ? .innodb : .completeUnique
     }
     var foreignKeySessionSQL: String? {
         targetVersion / 100 == 804 ? "SET SESSION restrict_fk_on_non_standard_key=OFF" : nil
@@ -33,25 +33,29 @@ struct NativeReplicationRules {
     var unsafeFKRenameWithAddedColumn: Bool { targetVersion / 100 == 804 }
     /// 5.7 information_schema can read BTREE direction from an unopened .frm.
     /// All 5.7 BTREE parts are ascending, including accepted DESC syntax.
-    func indexDirection(_ raw:String?,type:String) -> String? {
-        if raw == nil && type == "BTREE" && targetVersion / 100 == 507 {return "A"}
+    func indexDirection(_ raw: String?, type: String) -> String? {
+        if raw == nil && type == "BTREE" && targetVersion / 100 == 507 { return "A" }
         return raw
     }
     let sourceVersion: UInt32
     let targetVersion: UInt32
 
-    init(sourceVersion:UInt32,targetVersion:UInt32) {
-        self.sourceVersion=sourceVersion;self.targetVersion=targetVersion
+    init(sourceVersion: UInt32, targetVersion: UInt32) {
+        self.sourceVersion = sourceVersion
+        self.targetVersion = targetVersion
     }
-    init(profile:ReplicationProfile) {
-        self.init(sourceVersion:profile.sourceContract == .mysql57 ? 50700 : 80400,
-                  targetVersion:profile.targetContract.versionPrefix == "5.7." ? 50700 : 80400)
+    init(profile: ReplicationProfile) {
+        self.init(
+            sourceVersion: profile.sourceContract == .mysql57 ? 50700 : 80400,
+            targetVersion: profile.targetContract.versionPrefix == "5.7." ? 50700 : 80400)
     }
     /// MySQL sql_check_constraint.cc and sql_table.cc clear the specification
     /// list in SQL workers for an unknown or pre-8.0.16 original source version.
     /// Profiles currently provide the source series, not chained-origin metadata.
     var checkConstraints: CheckConstraints {
-        if sourceVersion == Self.undefinedServerVersion || sourceVersion < Self.checkConstraintsIntroduced { return .discard }
+        if sourceVersion == Self.undefinedServerVersion || sourceVersion < Self.checkConstraintsIntroduced {
+            return .discard
+        }
         return targetVersion < Self.checkConstraintsIntroduced ? .targetUnsupported : .preserve
     }
 }

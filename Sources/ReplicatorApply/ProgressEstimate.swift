@@ -1,72 +1,95 @@
 import Foundation
 import ReplicatorCapture
 
-public struct StatisticsPolicy:Decodable {
-    public var sourcePollIntervalSeconds:Int = 15
-    public var rateWindowSeconds:Int = 60
+public struct StatisticsPolicy: Decodable {
+    public var sourcePollIntervalSeconds: Int = 15
+    public var rateWindowSeconds: Int = 60
     public init() {}
-    enum CodingKeys:String,CodingKey {case sourcePollIntervalSeconds,rateWindowSeconds}
-    public init(from decoder:Decoder) throws {
-        let c=try decoder.container(keyedBy:CodingKeys.self)
-        sourcePollIntervalSeconds=try c.decodeIfPresent(Int.self,forKey:.sourcePollIntervalSeconds) ?? 15
-        rateWindowSeconds=try c.decodeIfPresent(Int.self,forKey:.rateWindowSeconds) ?? 60
+    enum CodingKeys: String, CodingKey { case sourcePollIntervalSeconds, rateWindowSeconds }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sourcePollIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .sourcePollIntervalSeconds) ?? 15
+        rateWindowSeconds = try c.decodeIfPresent(Int.self, forKey: .rateWindowSeconds) ?? 60
     }
     func validate() throws {
-        try require((5...3600).contains(sourcePollIntervalSeconds) && (5...3600).contains(rateWindowSeconds),"statistics intervals must be 5 through 3600 seconds")
+        try require(
+            (5...3600).contains(sourcePollIntervalSeconds) && (5...3600).contains(rateWindowSeconds),
+            "statistics intervals must be 5 through 3600 seconds")
     }
 }
-public struct ProgressEstimate:Encodable {
-    public var mode:String
-    public var status:String
-    public var goalGTIDSet:String?
-    public var remainingTransactions:UInt64?
-    public var transactionsPerSecond:Double = 0
-    public var binlogBytesPerSecond:Double = 0
-    public var estimatedSecondsRemaining:Double?
-    public var remainingBinlogBytes:UInt64?
-    public var sourceObservation:SourceObservation?
-    public var sourceObservationAgeSeconds:Double?
-    public var sourceObservationStale:Bool = false
-    public var monitoringError:String?
+public struct ProgressEstimate: Encodable {
+    public var mode: String
+    public var status: String
+    public var goalGTIDSet: String?
+    public var remainingTransactions: UInt64?
+    public var transactionsPerSecond: Double = 0
+    public var binlogBytesPerSecond: Double = 0
+    public var estimatedSecondsRemaining: Double?
+    public var remainingBinlogBytes: UInt64?
+    public var sourceObservation: SourceObservation?
+    public var sourceObservationAgeSeconds: Double?
+    public var sourceObservationStale: Bool = false
+    public var monitoringError: String?
 }
 /// Use monotonic time for rates. GTID set counts include filtered/skipped groups.
 final class ProgressEstimator {
-    private struct Sample {let time:Double;let transactions:Int;let bytes:Int64}
-    private var samples:[Sample]=[]
-    private let window:Double
-    private var sourceRate:Double=0
-    private var priorSource:SourceObservation?
-    init(window:Int) {self.window=Double(window)}
-    func update(now:Double,transactions:Int,bytes:Int64,completed:String,goal:String?,replay:Bool,lifecycle:String,observation:SourceObservation? = nil) -> ProgressEstimate {
-        let sample=Sample(time:now,transactions:transactions,bytes:bytes)
-        if let last=samples.last,now-last.time < 0.25 { /* Keep bounded sampling at frequent DDL boundaries. */ }
-        else {samples.append(sample)}
-        while samples.count > 2 && samples[1].time < now-window {samples.removeFirst()}
-        var result=ProgressEstimate(mode:replay ? "replay" : "live",status:"collectingRateSample",goalGTIDSet:goal)
-        if let first=samples.first,now-first.time >= 1 {
-            result.transactionsPerSecond=max(0,Double(transactions-first.transactions)/(now-first.time))
-            result.binlogBytesPerSecond=max(0,Double(bytes-first.bytes)/(now-first.time))
+    private struct Sample {
+        let time: Double
+        let transactions: Int
+        let bytes: Int64
+    }
+    private var samples: [Sample] = []
+    private let window: Double
+    private var sourceRate: Double = 0
+    private var priorSource: SourceObservation?
+    init(window: Int) { self.window = Double(window) }
+    func update(
+        now: Double, transactions: Int, bytes: Int64, completed: String, goal: String?, replay: Bool, lifecycle: String,
+        observation: SourceObservation? = nil
+    ) -> ProgressEstimate {
+        let sample = Sample(time: now, transactions: transactions, bytes: bytes)
+        if let last = samples.last, now - last.time < 0.25 { /* Keep bounded sampling at frequent DDL boundaries. */
+        } else {
+            samples.append(sample)
         }
-        if let observation,observation.observedAt != priorSource?.observedAt {
-            if let previous=priorSource,observation.observedAt > previous.observedAt,
-               let next=try? GTIDSet(observation.executedGTIDs),let old=try? GTIDSet(previous.executedGTIDs) {
-                sourceRate=Double(next.remainingTransactions(after:old))/(observation.observedAt-previous.observedAt)
+        while samples.count > 2 && samples[1].time < now - window { samples.removeFirst() }
+        var result = ProgressEstimate(
+            mode: replay ? "replay" : "live", status: "collectingRateSample", goalGTIDSet: goal)
+        if let first = samples.first, now - first.time >= 1 {
+            result.transactionsPerSecond = max(0, Double(transactions - first.transactions) / (now - first.time))
+            result.binlogBytesPerSecond = max(0, Double(bytes - first.bytes) / (now - first.time))
+        }
+        if let observation, observation.observedAt != priorSource?.observedAt {
+            if let previous = priorSource, observation.observedAt > previous.observedAt,
+                let next = try? GTIDSet(observation.executedGTIDs), let old = try? GTIDSet(previous.executedGTIDs)
+            {
+                sourceRate =
+                    Double(next.remainingTransactions(after: old)) / (observation.observedAt - previous.observedAt)
             }
-            priorSource=observation
+            priorSource = observation
         }
-        if let goal,let set=try? GTIDSet(goal),let done=try? GTIDSet(completed) {
+        if let goal, let set = try? GTIDSet(goal), let done = try? GTIDSet(completed) {
             // A single configured endpoint estimates the work through that GTID.
-            let remaining=done.covers(set) ? 0 : set.remainingTransactions(after:done,throughEndpoints:replay)
-            result.remainingTransactions=remaining
-            if remaining == 0 {result.status="caughtUp";result.estimatedSecondsRemaining=0}
-            else if result.transactionsPerSecond > 0 {
-                let rate=result.transactionsPerSecond-(replay ? 0 : sourceRate)
-                result.status=rate > 0 ? "estimated" : "notCatchingUp"
-                if rate > 0 {result.estimatedSecondsRemaining=Double(remaining)/rate}
-            } else if samples.count > 1 && now-(samples.first?.time ?? now) >= 1 { result.status="noRecentProgress" }
-        } else {result.status=replay ? "readingArchiveGoal" : "waitingForSourceSample"}
-        if ["BLOCKED","STOPPED","RECONNECTING","TARGET_RECONNECTING"].contains(lifecycle),result.remainingTransactions != 0 {
-            result.status="paused";result.estimatedSecondsRemaining=nil
+            let remaining = done.covers(set) ? 0 : set.remainingTransactions(after: done, throughEndpoints: replay)
+            result.remainingTransactions = remaining
+            if remaining == 0 {
+                result.status = "caughtUp"
+                result.estimatedSecondsRemaining = 0
+            } else if result.transactionsPerSecond > 0 {
+                let rate = result.transactionsPerSecond - (replay ? 0 : sourceRate)
+                result.status = rate > 0 ? "estimated" : "notCatchingUp"
+                if rate > 0 { result.estimatedSecondsRemaining = Double(remaining) / rate }
+            } else if samples.count > 1 && now - (samples.first?.time ?? now) >= 1 {
+                result.status = "noRecentProgress"
+            }
+        } else {
+            result.status = replay ? "readingArchiveGoal" : "waitingForSourceSample"
+        }
+        if ["BLOCKED", "STOPPED", "RECONNECTING", "TARGET_RECONNECTING"].contains(lifecycle),
+            result.remainingTransactions != 0
+        {
+            result.status = "paused"
+            result.estimatedSecondsRemaining = nil
         }
         return result
     }

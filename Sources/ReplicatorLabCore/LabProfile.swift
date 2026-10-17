@@ -53,19 +53,27 @@ public enum LabProfile: String, CaseIterable, Codable {
     func engine(_ role: Role) -> String { role == .source ? "InnoDB" : targetEngine }
     var session: String { session(.source) }
     func session(_ role: Role) -> String {
-        "SET NAMES utf8mb4 COLLATE utf8mb4_bin; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION" + (version(role) == "5.7" ? ",NO_AUTO_CREATE_USER'; " : "'; SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; ")
+        "SET NAMES utf8mb4 COLLATE utf8mb4_bin; SET SESSION time_zone='+00:00'; SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION"
+            + (version(role) == "5.7"
+                ? ",NO_AUTO_CREATE_USER'; " : "'; SET SESSION default_collation_for_utf8mb4=utf8mb4_general_ci; ")
     }
-    var topology: [[String:String]] {
-        Role.allCases.map { ["role":$0.rawValue,"version":version($0),"engine":engine($0),"service":service($0)] }
+    var topology: [[String: String]] {
+        Role.allCases.map {
+            ["role": $0.rawValue, "version": version($0), "engine": engine($0), "service": service($0)]
+        }
     }
 }
 
 extension LabProfile {
     static func takeProfile(_ args: inout [String]) throws -> LabProfile {
-        guard let index=args.firstIndex(of:"--profile"), index+1 < args.count,
-              let profile=LabProfile(rawValue:args[index+1]) else { throw LabError("select one explicit --profile: "+LabProfile.allCases.map(\.rawValue).joined(separator:" | ")) }
-        args.removeSubrange(index...index+1)
-        try require(!args.contains("--profile"),"duplicate --profile")
+        guard let index = args.firstIndex(of: "--profile"), index + 1 < args.count,
+            let profile = LabProfile(rawValue: args[index + 1])
+        else {
+            throw LabError(
+                "select one explicit --profile: " + LabProfile.allCases.map(\.rawValue).joined(separator: " | "))
+        }
+        args.removeSubrange(index...index + 1)
+        try require(!args.contains("--profile"), "duplicate --profile")
         return profile
     }
 }

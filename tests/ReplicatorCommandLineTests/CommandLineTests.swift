@@ -1,11 +1,14 @@
 import XCTest
+
 @testable import ReplicatorCommandLine
 
 final class CommandLineTests: XCTestCase {
     func testHelpNeedsNoConfigurationOrDatabase() throws {
-        let paths = [[], ["run"], ["fetch"], ["replay"], ["support-bundle"], ["inspect"],
-                     ["inspect-relay"], ["blackhole"], ["skip"], ["ctl"], ["ctl", "status"],
-                     ["ctl", "stop"], ["ctl", "reload"], ["recovery"], ["recovery", "inspect"], ["recovery", "resolve"]]
+        let paths = [
+            [], ["run"], ["fetch"], ["replay"], ["support-bundle"], ["inspect"],
+            ["inspect-relay"], ["blackhole"], ["skip"], ["ctl"], ["ctl", "status"],
+            ["ctl", "stop"], ["ctl", "reload"], ["recovery"], ["recovery", "inspect"], ["recovery", "resolve"],
+        ]
         for path in paths {
             guard case .help(let text) = try ReplicatorCommandLine.parse(path + ["--help"]) else {
                 return XCTFail("No help for \(path)")
@@ -25,50 +28,77 @@ final class CommandLineTests: XCTestCase {
             (["fetch", "--config", config], .fetch(config: config)),
             (["support-bundle", "--config", config], .supportBundle(config: config)),
             (["ctl", "status", "--config", config], .control(config: config, action: "status", timeout: 60)),
-            (["ctl", "stop", "--timeout", "300", "--config", config], .control(config: config, action: "stop", timeout: 300)),
+            (
+                ["ctl", "stop", "--timeout", "300", "--config", config],
+                .control(config: config, action: "stop", timeout: 300)
+            ),
             (["ctl", "reload", "--config", config], .control(config: config, action: "reload", timeout: 60)),
             (["recovery", "inspect", "--config", config], .recoveryInspect(config: config)),
             (["skip", "uuid:1-3", "--config", config], .skip(config: config, gtids: "uuid:1-3")),
             (["blackhole", "--source-config", config], .blackhole(config: config)),
-            (["inspect-relay", "relay.frames", "--include-raw"], .inspectRelay(file: "relay.frames", includeRaw: true)),
-            (["inspect", "binlog.000001"], .inspectFile(file: "binlog.000001", schema: nil, includeRaw: false, binlogFile: nil)),
-            (["inspect", "--schema", "history.json", "data.binlog", "--transactions", "--binlog-file", "binlog.000003", "--include-raw"],
-             .inspectFile(file: "data.binlog", schema: "history.json", includeRaw: true, binlogFile: "binlog.000003")),
-            (["inspect", "--transactions", "--source-config", config, "--include-raw"], .inspectSource(config: config, transactions: true, includeRaw: true)),
+            (
+                ["inspect-relay", "relay.frames", "--include-raw"],
+                .inspectRelay(file: "relay.frames", includeRaw: true)
+            ),
+            (
+                ["inspect", "binlog.000001"],
+                .inspectFile(file: "binlog.000001", schema: nil, includeRaw: false, binlogFile: nil)
+            ),
+            (
+                [
+                    "inspect", "--schema", "history.json", "data.binlog", "--transactions", "--binlog-file",
+                    "binlog.000003", "--include-raw",
+                ],
+                .inspectFile(file: "data.binlog", schema: "history.json", includeRaw: true, binlogFile: "binlog.000003")
+            ),
+            (
+                ["inspect", "--transactions", "--source-config", config, "--include-raw"],
+                .inspectSource(config: config, transactions: true, includeRaw: true)
+            ),
         ]
-        for (args, request) in cases { XCTAssertEqual(try ReplicatorCommandLine.parse(args), request, args.joined(separator: " ")) }
+        for (args, request) in cases {
+            XCTAssertEqual(try ReplicatorCommandLine.parse(args), request, args.joined(separator: " "))
+        }
         for action in ["mark-applied", "retry", "skip"] {
-            XCTAssertEqual(try ReplicatorCommandLine.parse(["recovery", "resolve", action, "--config", config, "--gtids", "uuid:1", "--reason", "checked target"]),
-                           .recoveryResolve(config: config, action: action, gtids: "uuid:1", reason: "checked target"))
+            XCTAssertEqual(
+                try ReplicatorCommandLine.parse([
+                    "recovery", "resolve", action, "--config", config, "--gtids", "uuid:1", "--reason",
+                    "checked target",
+                ]),
+                .recoveryResolve(config: config, action: action, gtids: "uuid:1", reason: "checked target"))
         }
     }
 
     func testOptionLikeValuesUseEqualsSyntax() throws {
         for value in ["--config", "--reason", "--version"] {
-            let args=["recovery", "resolve", "retry", "--config", "a.yaml", "--gtids", "uuid:1"]
-            XCTAssertEqual(try ReplicatorCommandLine.parse(args + ["--reason=" + value]),
-                           .recoveryResolve(config:"a.yaml",action:"retry",gtids:"uuid:1",reason:value))
+            let args = ["recovery", "resolve", "retry", "--config", "a.yaml", "--gtids", "uuid:1"]
+            XCTAssertEqual(
+                try ReplicatorCommandLine.parse(args + ["--reason=" + value]),
+                .recoveryResolve(config: "a.yaml", action: "retry", gtids: "uuid:1", reason: value))
             // ArgumentParser rejects an option token as a separate value before
             // the duplicate check runs. Quoting does not change argv tokens.
             XCTAssertThrowsError(try ReplicatorCommandLine.parse(args + ["--reason", value])) { error in
-                XCTAssertTrue(String(describing:error).contains("Missing value"))
+                XCTAssertTrue(String(describing: error).contains("Missing value"))
             }
         }
     }
 
     func testInvalidRequestsFailBeforeExecution() {
         let invalid = [
-            ["unknown"], ["ctl"], ["recovery"], ["--version", "run", "--config", "a.yaml"], ["run"], ["run", "--config"], ["run", "--config", "a.yaml", "extra"],
+            ["unknown"], ["ctl"], ["recovery"], ["--version", "run", "--config", "a.yaml"], ["run"],
+            ["run", "--config"], ["run", "--config", "a.yaml", "extra"],
             ["run", "--config", "a.yaml", "--typo"], ["run", "--config", ""],
             ["replay", "--config", "a.yaml", "--stop-after-gtids", "uuid:1"],
             ["fetch", "--config", "a.yaml", "--initialize"], ["support-bundle", "--config", "a.yaml", "--initialize"],
             ["ctl", "pause", "--config", "a.yaml"], ["ctl", "stop", "--config", "a.yaml", "--timeout", "0"],
-            ["ctl", "stop", "--config", "a.yaml", "--timeout", "86401"], ["ctl", "stop", "--config", "a.yaml", "--timeout", "abc"],
+            ["ctl", "stop", "--config", "a.yaml", "--timeout", "86401"],
+            ["ctl", "stop", "--config", "a.yaml", "--timeout", "abc"],
             ["recovery", "inspect", "--config", "a.yaml", "--gtids", "uuid:1"],
             ["recovery", "resolve", "invalid", "--config", "a.yaml", "--gtids", "uuid:1", "--reason", "checked"],
             ["recovery", "resolve", "retry", "--config", "a.yaml", "--gtids", "uuid:1"],
             ["inspect"], ["inspect", "file", "--source-config", "a.yaml"], ["inspect", "file", "--transactions"],
-            ["inspect", "file", "--binlog-file", "binlog.000001"], ["inspect", "--source-config", "a.yaml", "--schema", "history.json"],
+            ["inspect", "file", "--binlog-file", "binlog.000001"],
+            ["inspect", "--source-config", "a.yaml", "--schema", "history.json"],
             ["inspect", "--source-config", "a.yaml", "--binlog-file", "binlog.000001"],
             ["run", "--config", "a.yaml", "--config", "b.yaml"],
             ["replay", "--config", "a.yaml", "--initialize", "--initialize"],
@@ -83,11 +113,13 @@ final class CommandLineTests: XCTestCase {
     }
 
     func testHelpDescribesOperationalLimits() throws {
-        for (args, words) in [(["replay", "--help"], "without source access"),
-                              (["ctl", "reload", "--help"], "source.stopAfterGTIDs"),
-                              (["support-bundle", "--help"], "does not upload"),
-                              (["recovery", "resolve", "--help"], "mark-applied"),
-                              (["help", "ctl", "stop"], "graceful drain")] {
+        for (args, words) in [
+            (["replay", "--help"], "without source access"),
+            (["ctl", "reload", "--help"], "source.stopAfterGTIDs"),
+            (["support-bundle", "--help"], "does not upload"),
+            (["recovery", "resolve", "--help"], "mark-applied"),
+            (["help", "ctl", "stop"], "graceful drain"),
+        ] {
             guard case .help(let text) = try ReplicatorCommandLine.parse(args) else { return XCTFail("No help") }
             XCTAssertTrue(text.contains(words), text)
         }

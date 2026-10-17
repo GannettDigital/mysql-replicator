@@ -4,10 +4,12 @@ public enum Inspection {
     /// Complete groups only. The returned coordinate is a validated physical
     /// boundary, not a durable checkpoint. No partial transaction is emitted.
     @discardableResult
-    public static func inspectTransactions(file: URL, sourceFile: String, history: SchemaHistory? = nil,
-                                           includeRaw: Bool = false, limits: TransactionAssembler.Limits = .init(),
-                                           cancelled: () -> Bool = { false },
-                                           emit: (CompleteTransaction) throws -> Void) throws -> BinlogCoordinate {
+    public static func inspectTransactions(
+        file: URL, sourceFile: String, history: SchemaHistory? = nil,
+        includeRaw: Bool = false, limits: TransactionAssembler.Limits = .init(),
+        cancelled: () -> Bool = { false },
+        emit: (CompleteTransaction) throws -> Void
+    ) throws -> BinlogCoordinate {
         let assembler = try TransactionAssembler(file: sourceFile, limits: limits)
         try inspect(file: file, history: history, includeRaw: includeRaw, cancelled: cancelled) { event in
             if let transaction = try assembler.consume(event, file: sourceFile) { try emit(transaction) }
@@ -19,9 +21,11 @@ public enum Inspection {
     /// Streaming offline inspection. A failed event emits no record. Earlier
     /// records may already have been emitted; the caller must report failure.
     /// Cancellation happens between bounded frames and discards decoder state.
-    public static func inspect(file: URL, history: SchemaHistory? = nil, includeRaw: Bool = false,
-                               maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes,
-                               cancelled: () -> Bool = { false }, emit: (DecodedEvent) throws -> Void) throws {
+    public static func inspect(
+        file: URL, history: SchemaHistory? = nil, includeRaw: Bool = false,
+        maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes,
+        cancelled: () -> Bool = { false }, emit: (DecodedEvent) throws -> Void
+    ) throws {
         let schemas = try history?.indexed() ?? [:]
         let input = try FileHandle(forReadingFrom: file)
         defer { try? input.close() }
@@ -38,7 +42,9 @@ public enum Inspection {
             }
             return result
         }
-        guard try read(4) == Data([0xfe,0x62,0x69,0x6e]) else { throw DecoderError(code: 2, offset: 0, reason: "invalid binlog magic") }
+        guard try read(4) == Data([0xfe, 0x62, 0x69, 0x6e]) else {
+            throw DecoderError(code: 2, offset: 0, reason: "invalid binlog magic")
+        }
         offset = 4
         let decoder = try BinlogDecoder(maximumEventBytes: maximumEventBytes)
         var seen: Set<UInt64> = []
@@ -48,16 +54,27 @@ public enum Inspection {
             let header = try read(19, allowEOF: true)
             if header.isEmpty { break }
             let length = (0..<4).reduce(UInt32(0)) { $0 | UInt32(header[9 + $1]) << (8 * $1) }
-            guard length >= 23 else { throw DecoderError(code: 2, offset: offset, eventType: header[4], reason: "impossible event length") }
-            guard length <= maximumEventBytes else { throw DecoderError(code: 5, offset: offset, eventType: header[4], reason: "event size limit exceeded before allocation") }
+            guard length >= 23 else {
+                throw DecoderError(code: 2, offset: offset, eventType: header[4], reason: "impossible event length")
+            }
+            guard length <= maximumEventBytes else {
+                throw DecoderError(
+                    code: 5, offset: offset, eventType: header[4], reason: "event size limit exceeded before allocation"
+                )
+            }
             let frame = try header + read(Int(length) - 19)
             let schema = schemas[offset]
             let event = try decoder.decode(frame, at: offset, schema: schema, includeRaw: includeRaw)
             if schema != nil { seen.insert(offset) }
             try emit(event)
-            offset += UInt64(length); eventCount += 1
+            offset += UInt64(length)
+            eventCount += 1
         }
-        guard eventCount > 0 else { throw DecoderError(code: 2, offset: offset, reason: "missing format-description event") }
-        guard seen.count == schemas.count else { throw DecoderError(code: 7, offset: offset, reason: "schema history has unused table-map positions") }
+        guard eventCount > 0 else {
+            throw DecoderError(code: 2, offset: offset, reason: "missing format-description event")
+        }
+        guard seen.count == schemas.count else {
+            throw DecoderError(code: 7, offset: offset, reason: "schema history has unused table-map positions")
+        }
     }
 }

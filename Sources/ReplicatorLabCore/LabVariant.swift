@@ -14,18 +14,27 @@ enum LabVariant: String, CaseIterable {
     var metadata: String { self == .positionMinimal ? "MINIMAL" : "FULL" }
     var catalogProfile: String? {
         switch self {
-        case .standard,.lowercaseTables,.withoutSourceGTIDs: return nil
+        case .standard, .lowercaseTables, .withoutSourceGTIDs: return nil
         case .positionMinimal: return "swift.position.metadata-minimal"
         case .gtidFull: return "swift.gtid.metadata-full"
         }
     }
     func reason(_ profile: LabProfile) -> String? {
-        (self == .positionMinimal || self == .gtidFull) && !profile.hasOptionalMetadata ? "MySQL 5.7 does not expose binlog_row_metadata; use its default GTID/bootstrap variant." : nil
+        (self == .positionMinimal || self == .gtidFull) && !profile.hasOptionalMetadata
+            ? "MySQL 5.7 does not expose binlog_row_metadata; use its default GTID/bootstrap variant." : nil
     }
-    func start(_ boundary: Boundary) -> [String:Any] {
-        var result: [String:Any] = ["executedGTIDs":boundary.gtids]
-        if self != .gtidFull { result["file"]=boundary.file; result["position"]=boundary.position }
+    func start(_ boundary: Boundary) -> [String: Any] {
+        var result: [String: Any] = ["executedGTIDs": boundary.gtids]
+        if self != .gtidFull {
+            result["file"] = boundary.file
+            result["position"] = boundary.position
+        }
         return result
     }
-    var fields: [String:Any] { ["id":rawValue,"lower_case_table_names":lowerCaseTableNames,"positioning":mode,"start_coordinates":self != .gtidFull,"forward_row_metadata":metadata] }
+    var fields: [String: Any] {
+        [
+            "id": rawValue, "lower_case_table_names": lowerCaseTableNames, "positioning": mode,
+            "start_coordinates": self != .gtidFull, "forward_row_metadata": metadata,
+        ]
+    }
 }

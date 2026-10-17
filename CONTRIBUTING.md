@@ -390,3 +390,11 @@ see the [test lab guide](docs/TEST_LAB.md). For the original forward streaming
 and capture experiments use `make lab-benchmark PROFILE=mysql84-to-mysql57-myisam`
 with `ARGS="--mode streaming"` or `ARGS="--mode capture"`; see
 [the benchmark guide](PLAN/PERFORMANCE_BENCHMARK.md). These remain uninstrumented.
+
+## Swift syntax and format
+
+Use Swift 6.2.1 and run `make lint`. This check uses the formatter in the Swift
+toolchain. It parses Swift files and checks their format without building the
+project. Run `make format` to apply the format in `.swift-format`. CI runs this
+check in parallel with Periphery and other checks. Compiler and unit-test jobs
+still check types and behavior. Vendor code and upstream MySQL trees are excluded.

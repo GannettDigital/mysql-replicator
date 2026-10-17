@@ -10,7 +10,7 @@ public struct LiveRecord: Encodable {
     public let rawBase64: String?
     /// Internal capture-to-relay handoff; JSON output retains its existing fields.
     public var rawBytes: Data? = nil
-    enum CodingKeys: String, CodingKey { case schemaVersion,kind,file,observedPosition,event,rawBase64 }
+    enum CodingKeys: String, CodingKey { case schemaVersion, kind, file, observedPosition, event, rawBase64 }
 }
 
 /// Turns dump-protocol envelopes into independently checked source coordinates.
@@ -22,7 +22,7 @@ final class StreamProcessor {
     let excluded: GTIDSet
     var completeGTIDs: GTIDSet
     let stopConditions: StopConditions
-    var stopReason: String? { stopConditions.reason(transactions:transactionCount,executed:completeGTIDs) }
+    var stopReason: String? { stopConditions.reason(transactions: transactionCount, executed: completeGTIDs) }
     let includeRaw: Bool
     let retainRawBytes: Bool
     let allowDDL: Bool
@@ -46,25 +46,31 @@ final class StreamProcessor {
         let wire: [WireColumn]
         let columns: [ColumnInterpretation]
     }
-    private var resolvedSchemas: [Data:ResolvedSchema] = [:]
+    private var resolvedSchemas: [Data: ResolvedSchema] = [:]
     let resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?
     let emitEvent: (LiveRecord) throws -> Void
     let emitTransaction: (CompleteTransaction) throws -> Void
 
-    init(config: CaptureConfiguration, includeRaw: Bool, retainRawBytes: Bool = false,
-         emitEvent: @escaping (LiveRecord) throws -> Void,
-         emitTransaction: @escaping (CompleteTransaction) throws -> Void,
-         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
-         timings: StageTimings = .init(), allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil) throws {
+    init(
+        config: CaptureConfiguration, includeRaw: Bool, retainRawBytes: Bool = false,
+        emitEvent: @escaping (LiveRecord) throws -> Void,
+        emitTransaction: @escaping (CompleteTransaction) throws -> Void,
+        resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
+        timings: StageTimings = .init(), allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil
+    ) throws {
         self.timings = timings
         self.ignoreTable = ignoreTable
-        self.allowDDL=allowDDL
+        self.allowDDL = allowDDL
         self.resolveSchema = resolveSchema
-        self.config = config; self.includeRaw = includeRaw; self.retainRawBytes=retainRawBytes
+        self.config = config
+        self.includeRaw = includeRaw
+        self.retainRawBytes = retainRawBytes
         self.excluded = try GTIDSet(config.start.executedGTIDs)
         self.completeGTIDs = self.excluded
-        self.stopConditions = try StopConditions(transactions:config.stopAfterTransactions,gtids:config.stopAfterGTIDs)
-        self.emitEvent = emitEvent; self.emitTransaction = emitTransaction
+        self.stopConditions = try StopConditions(
+            transactions: config.stopAfterTransactions, gtids: config.stopAfterGTIDs)
+        self.emitEvent = emitEvent
+        self.emitTransaction = emitTransaction
     }
     var lastCompleteBoundary: BinlogCoordinate? { assembler?.lastCompleteBoundary }
     var pendingTransactionStart: BinlogCoordinate? { assembler?.pendingTransactionStart }
@@ -75,15 +81,16 @@ final class StreamProcessor {
     // Pseudo-event CRC only. Physical events and FDE use the Rust codec's CRC.
     func validatePseudo(_ data: Data) throws {
         try check(data.count <= 4096, "oversized transport pseudo-event")
-        var crc: UInt32 = 0xffffffff
+        var crc: UInt32 = 0xffff_ffff
         for byte in data.dropLast(4) {
             crc ^= UInt32(byte)
-            for _ in 0..<8 { crc = crc >> 1 ^ (crc & 1 == 1 ? 0xedb88320 : 0) }
+            for _ in 0..<8 { crc = crc >> 1 ^ (crc & 1 == 1 ? 0xedb8_8320 : 0) }
         }
-        try check(crc ^ 0xffffffff == read(data, data.count-4, UInt32.self), "transport pseudo-event CRC mismatch")
+        try check(crc ^ 0xffff_ffff == read(data, data.count - 4, UInt32.self), "transport pseudo-event CRC mismatch")
     }
     func filename(_ data: Data) throws -> String {
-        guard !data.isEmpty, data.count <= 255, !data.contains(0), let result = String(data: data, encoding: .utf8) else {
+        guard !data.isEmpty, data.count <= 255, !data.contains(0), let result = String(data: data, encoding: .utf8)
+        else {
             throw CaptureError("invalid source binlog filename")
         }
         return result
@@ -103,16 +110,21 @@ final class StreamProcessor {
         return a.0 == b.0 && a.1 > b.1
     }
     func consume(_ frame: Data) throws {
-        try check(!finished,"source event after stream completion")
-        try check(frame.count >= 23 && frame.count <= Int(config.eventByteLimit), "live event size limit or short header")
+        try check(!finished, "source event after stream completion")
+        try check(
+            frame.count >= 23 && frame.count <= Int(config.eventByteLimit), "live event size limit or short header")
         try check(Int(read(frame, 9, UInt32.self)) == frame.count, "live frame/header length mismatch")
         receivedBytes += UInt64(frame.count)
-        let type = frame[4], next = read(frame, 13, UInt32.self), flags = read(frame, 17, UInt16.self)
+        let type = frame[4]
+        let next = read(frame, 13, UInt32.self)
+        let flags = read(frame, 17, UInt16.self)
         if type == 4 && flags & 0x20 != 0 {
-            try check(frame.count >= 31 && next == 0 && read(frame, 0, UInt32.self) == 0 && flags == 0x20,
-                      "invalid artificial rotation")
+            try check(
+                frame.count >= 31 && next == 0 && read(frame, 0, UInt32.self) == 0 && flags == 0x20,
+                "invalid artificial rotation")
             try validatePseudo(frame)
-            let target = BinlogCoordinate(file: try filename(Data(frame[27..<frame.count-4])), position: read(frame, 19, UInt64.self))
+            let target = BinlogCoordinate(
+                file: try filename(Data(frame[27..<frame.count - 4])), position: read(frame, 19, UInt64.self))
             try check(target.position >= 4 && announced == nil, "duplicate/invalid rotation announcement")
             if let expected = rotatedTo {
                 try check(target == expected, "rotation announcement disagrees with physical rotation")
@@ -120,37 +132,62 @@ final class StreamProcessor {
                 // MySQL's sender announces each next file even when shutdown
                 // or crash left no physical ROTATE in the previous file.
                 // Accept only the adjacent file at a complete group boundary.
-                func numbered(_ file:String) -> (String,UInt64)? {
-                    guard let dot=file.lastIndex(of:"."), let number=UInt64(file[file.index(after:dot)...]) else { return nil }
-                    return (String(file[..<dot]),number)
+                func numbered(_ file: String) -> (String, UInt64)? {
+                    guard let dot = file.lastIndex(of: "."), let number = UInt64(file[file.index(after: dot)...]) else {
+                        return nil
+                    }
+                    return (String(file[..<dot]), number)
                 }
-                guard let old=numbered(current.file), let next=numbered(target.file) else { throw CaptureError("invalid implicit rotation filename") }
-                try check(target.position == 4 && old.0 == next.0 && old.1 < UInt64.max && next.1 == old.1+1,
-                          "implicit rotation must identify the adjacent binlog at position 4")
-                try assembler.finish() // Reject partial transactions, including after a crash.
+                guard let old = numbered(current.file), let next = numbered(target.file) else {
+                    throw CaptureError("invalid implicit rotation filename")
+                }
+                try check(
+                    target.position == 4 && old.0 == next.0 && old.1 < UInt64.max && next.1 == old.1 + 1,
+                    "implicit rotation must identify the adjacent binlog at position 4")
+                try assembler.finish()  // Reject partial transactions, including after a crash.
             } else {
                 try check(cursor == nil && assembler == nil, "unexpected rotation announcement")
                 if config.mode == "file-position" {
-                    try check(target == BinlogCoordinate(file: config.start.file!, position: UInt64(config.start.position!)), "source changed requested positional start")
-                } else { try check(target.position == 4, "GTID file announcement must begin at position 4") }
+                    try check(
+                        target == BinlogCoordinate(file: config.start.file!, position: UInt64(config.start.position!)),
+                        "source changed requested positional start")
+                } else {
+                    try check(target.position == 4, "GTID file announcement must begin at position 4")
+                }
             }
-            announced = target; announcementCount += 1
-            try emitEvent(LiveRecord(kind: "rotationAnnouncement", file: target.file, observedPosition: String(target.position), event: nil, rawBase64: includeRaw ? frame.base64EncodedString() : nil,rawBytes:retainRawBytes ? frame : nil))
+            announced = target
+            announcementCount += 1
+            try emitEvent(
+                LiveRecord(
+                    kind: "rotationAnnouncement", file: target.file, observedPosition: String(target.position),
+                    event: nil, rawBase64: includeRaw ? frame.base64EncodedString() : nil,
+                    rawBytes: retainRawBytes ? frame : nil))
             return
         }
         if type == 15 {
             guard let start = announced else { throw CaptureError("format event without rotation announcement") }
-            resolvedSchemas.removeAll(keepingCapacity:true)
-            let fresh = try BinlogDecoder(maximumEventBytes: config.eventByteLimit, timings:config.decoderProfiling == true ? timings : nil)
-            let event = try measureDecode("decode.call.format") { try fresh.decode(frame, at: 4, includeRaw: includeRaw) }
+            resolvedSchemas.removeAll(keepingCapacity: true)
+            let fresh = try BinlogDecoder(
+                maximumEventBytes: config.eventByteLimit, timings: config.decoderProfiling == true ? timings : nil)
+            let event = try measureDecode("decode.call.format") {
+                try fresh.decode(frame, at: 4, includeRaw: includeRaw)
+            }
             let fullFile = start.position == 4
-            try check(fullFile ? UInt64(next) == UInt64(frame.count)+4 : next == 0, "unexpected dump format-event position")
+            try check(
+                fullFile ? UInt64(next) == UInt64(frame.count) + 4 : next == 0, "unexpected dump format-event position")
             let begin = BinlogCoordinate(file: start.file, position: fullFile ? UInt64(next) : start.position)
-            assembler = try TransactionAssembler(validatedStreamStart: begin, allowPreviousGTIDs: fullFile,
-                acceptsExcludedRanges: config.mode == "gtid" && !excluded.isEmpty, limits:config.transactionLimits)
-            decoder = fresh; decoderOffset = UInt64(frame.count) + 4
-            cursor = begin; announced = nil; rotatedTo = nil
-            try emitEvent(LiveRecord(kind: "formatContext", file: start.file, observedPosition: String(begin.position), event: event, rawBase64: nil,rawBytes:retainRawBytes ? frame : nil))
+            assembler = try TransactionAssembler(
+                validatedStreamStart: begin, allowPreviousGTIDs: fullFile,
+                acceptsExcludedRanges: config.mode == "gtid" && !excluded.isEmpty, limits: config.transactionLimits)
+            decoder = fresh
+            decoderOffset = UInt64(frame.count) + 4
+            cursor = begin
+            announced = nil
+            rotatedTo = nil
+            try emitEvent(
+                LiveRecord(
+                    kind: "formatContext", file: start.file, observedPosition: String(begin.position), event: event,
+                    rawBase64: nil, rawBytes: retainRawBytes ? frame : nil))
             return
         }
         guard let current = cursor, let decoder, let assembler, announced == nil, rotatedTo == nil else {
@@ -158,21 +195,29 @@ final class StreamProcessor {
         }
         if type == 27 {
             try validatePseudo(frame)
-            try check(flags == 0 && read(frame, 0, UInt32.self) == 0 && (try filename(Data(frame[19..<frame.count-4]))) == current.file,
-                      "invalid heartbeat identity/header")
+            try check(
+                flags == 0 && read(frame, 0, UInt32.self) == 0
+                    && (try filename(Data(frame[19..<frame.count - 4]))) == current.file,
+                "invalid heartbeat identity/header")
             let observed = BinlogCoordinate(file: current.file, position: UInt64(next))
             if observed.position != current.position {
-                try check(config.mode == "gtid" && !excluded.isEmpty && observed.position > current.position,
-                          "unexpected heartbeat position gap")
+                try check(
+                    config.mode == "gtid" && !excluded.isEmpty && observed.position > current.position,
+                    "unexpected heartbeat position gap")
                 try assembler.advanceExcludedRange(to: observed)
-                resolvedSchemas.removeAll(keepingCapacity:true)
+                resolvedSchemas.removeAll(keepingCapacity: true)
                 cursor = observed
             }
             heartbeatCount += 1
-            try emitEvent(LiveRecord(kind: "heartbeat", file: current.file, observedPosition: String(next), event: nil, rawBase64: includeRaw ? frame.base64EncodedString() : nil,rawBytes:retainRawBytes ? frame : nil))
+            try emitEvent(
+                LiveRecord(
+                    kind: "heartbeat", file: current.file, observedPosition: String(next), event: nil,
+                    rawBase64: includeRaw ? frame.base64EncodedString() : nil, rawBytes: retainRawBytes ? frame : nil))
             return
         }
-        try check(flags & 0x20 == 0 && UInt64(next) >= UInt64(frame.count), "unexpected artificial event/zero source position")
+        try check(
+            flags & 0x20 == 0 && UInt64(next) >= UInt64(frame.count), "unexpected artificial event/zero source position"
+        )
         let offset = UInt64(next) - UInt64(frame.count)
         try check(offset == current.position, "source event gap without a GTID exclusion heartbeat")
         var schema: TableSchema?
@@ -183,43 +228,69 @@ final class StreamProcessor {
             // current information_schema to interpret historical events.
             var identity: DecodedEvent
             if let ignoreTable {
-                identity = try measureDecode("decode.call.probe_identity") { try decoder.probeTable(frame,at:decoderOffset,filterTable:true) }
-                guard let db=identity.database,let name=identity.table else { throw CaptureError("missing table identity") }
-                filterTable=ignoreTable(db,name)
-                if !filterTable {
-                    identity = try measureDecode("decode.call.probe_metadata") { try decoder.probeTable(frame,at:decoderOffset) }
+                identity = try measureDecode("decode.call.probe_identity") {
+                    try decoder.probeTable(frame, at: decoderOffset, filterTable: true)
                 }
-            } else {
-                identity = try measureDecode("decode.call.probe_metadata") { try decoder.probeTable(frame,at:decoderOffset) }
-            }
-            guard let db=identity.database,let name=identity.table,let id=identity.tableID else { throw CaptureError("missing table identity") }
-            if !filterTable {
-            let columns: [ColumnInterpretation]
-            if config.version == 2 {
-                if let resolveSchema { columns = try historicalColumns(identity.atSourcePosition(offset),at:current,resolve:resolveSchema) }
-                else {
-                    guard let wire = identity.wireColumns else {throw CaptureError("missing wire schema")}
-                    columns = try wire.map { c in
-                        guard let kind = c.interpretation else {throw CaptureError("missing/unsupported wire signedness or charset")}
-                        return kind
+                guard let db = identity.database, let name = identity.table else {
+                    throw CaptureError("missing table identity")
+                }
+                filterTable = ignoreTable(db, name)
+                if !filterTable {
+                    identity = try measureDecode("decode.call.probe_metadata") {
+                        try decoder.probeTable(frame, at: decoderOffset)
                     }
                 }
             } else {
-                guard let table = (config.tables ?? []).first(where:{$0.database.utf8.elementsEqual(db.utf8) && $0.table.utf8.elementsEqual(name.utf8)}) else {throw CaptureError("table map outside supplied historical schema")}
-                columns = table.columns
+                identity = try measureDecode("decode.call.probe_metadata") {
+                    try decoder.probeTable(frame, at: decoderOffset)
+                }
             }
-            schema = TableSchema(offset:decoderOffset,eventSHA256:identity.sha256,database:db,table:name,tableID:id,columns:columns)
+            guard let db = identity.database, let name = identity.table, let id = identity.tableID else {
+                throw CaptureError("missing table identity")
+            }
+            if !filterTable {
+                let columns: [ColumnInterpretation]
+                if config.version == 2 {
+                    if let resolveSchema {
+                        columns = try historicalColumns(
+                            identity.atSourcePosition(offset), at: current, resolve: resolveSchema)
+                    } else {
+                        guard let wire = identity.wireColumns else { throw CaptureError("missing wire schema") }
+                        columns = try wire.map { c in
+                            guard let kind = c.interpretation else {
+                                throw CaptureError("missing/unsupported wire signedness or charset")
+                            }
+                            return kind
+                        }
+                    }
+                } else {
+                    guard
+                        let table = (config.tables ?? []).first(where: {
+                            $0.database.utf8.elementsEqual(db.utf8) && $0.table.utf8.elementsEqual(name.utf8)
+                        })
+                    else { throw CaptureError("table map outside supplied historical schema") }
+                    columns = table.columns
+                }
+                schema = TableSchema(
+                    offset: decoderOffset, eventSHA256: identity.sha256, database: db, table: name, tableID: id,
+                    columns: columns)
             }
         }
-        let event = try measureDecode("decode.call.event") { try decoder.decode(frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable).atSourcePosition(offset) }
+        let event = try measureDecode("decode.call.event") {
+            try decoder.decode(
+                frame, at: decoderOffset, schema: schema, includeRaw: includeRaw, filterTable: filterTable
+            ).atSourcePosition(offset)
+        }
         if case .query(let query) = event.control {
-            let transactionControl = [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(query.sql)
-            try check(allowDDL || transactionControl,
-                      "live schema window stops at DDL or non-control SQL")
+            let transactionControl = [Data("BEGIN".utf8), Data("COMMIT".utf8), Data("ROLLBACK".utf8)].contains(
+                query.sql)
+            try check(
+                allowDDL || transactionControl,
+                "live schema window stops at DDL or non-control SQL")
             try check(assembler.pendingTransactionStart != nil, "query without GTID on GTID-ON source")
             // Clear before publishing DDL. The next cache miss is queued after
             // that DDL and waits for the consumer's updated historical schema.
-            if !transactionControl { resolvedSchemas.removeAll(keepingCapacity:true) }
+            if !transactionControl { resolvedSchemas.removeAll(keepingCapacity: true) }
         }
         if case .gtid(let gtid) = event.control {
             try check(!completeGTIDs.contains(gtid), "source returned an excluded or duplicate GTID")
@@ -230,40 +301,49 @@ final class StreamProcessor {
         }
         if case .anonymousGTID = event.control { throw CaptureError("anonymous transaction from GTID-ON source") }
         let complete = try timings.measure("capture.assemble") { try assembler.consume(event, file: current.file) }
-        decoderOffset += UInt64(frame.count); cursor = BinlogCoordinate(file: current.file, position: UInt64(next)); eventCount += 1
-        try emitEvent(LiveRecord(kind: "event", file: current.file, observedPosition: String(next), event: event, rawBase64: nil,rawBytes:retainRawBytes ? frame : nil))
+        decoderOffset += UInt64(frame.count)
+        cursor = BinlogCoordinate(file: current.file, position: UInt64(next))
+        eventCount += 1
+        try emitEvent(
+            LiveRecord(
+                kind: "event", file: current.file, observedPosition: String(next), event: event, rawBase64: nil,
+                rawBytes: retainRawBytes ? frame : nil))
         if let complete {
             var nextSet = completeGTIDs
             guard let identity = complete.gtid else { throw CaptureError("completed live group has no GTID") }
             try nextSet.include(identity)
-            try emitTransaction(complete); transactionCount += 1; completeGTIDs = nextSet
+            try emitTransaction(complete)
+            transactionCount += 1
+            completeGTIDs = nextSet
         }
         if case .rotate(let destination) = event.control { rotatedTo = destination }
     }
     private func measureDecode<T>(_ role: String, _ body: () throws -> T) rethrows -> T {
         try timings.measure("capture.decode") {
-            if config.decoderProfiling == true { return try timings.measure(role,body) }
+            if config.decoderProfiling == true { return try timings.measure(role, body) }
             return try body()
         }
     }
-    private func historicalColumns(_ event: DecodedEvent, at position: BinlogCoordinate,
-                                   resolve: (DecodedEvent,BinlogCoordinate) throws -> [ColumnInterpretation]) throws -> [ColumnInterpretation] {
-        guard let database=event.database,let table=event.table,let wire=event.wireColumns else {
+    private func historicalColumns(
+        _ event: DecodedEvent, at position: BinlogCoordinate,
+        resolve: (DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation]
+    ) throws -> [ColumnInterpretation] {
+        guard let database = event.database, let table = event.table, let wire = event.wireColumns else {
             throw CaptureError("missing historical table-map metadata")
         }
-        let key=Data((database+"\0"+table).utf8)
-        if let cached=resolvedSchemas[key],cached.wire == wire {
+        let key = Data((database + "\0" + table).utf8)
+        if let cached = resolvedSchemas[key], cached.wire == wire {
             timings.measure("capture.schema_cache.hit") {}
             return cached.columns
         }
-        resolvedSchemas.removeValue(forKey:key)
+        resolvedSchemas.removeValue(forKey: key)
         return try timings.measure("capture.schema_cache.miss") {
-            let columns=try resolve(event,position)
-            try check(columns.count == wire.count,"historical schema column count differs from table map")
+            let columns = try resolve(event, position)
+            try check(columns.count == wire.count, "historical schema column count differs from table map")
             // Bound retention in long-lived streams with many transient tables.
             // Eviction only repeats the ordered lookup; it never changes schema.
-            if resolvedSchemas.count >= 1024 { resolvedSchemas.removeAll(keepingCapacity:true) }
-            resolvedSchemas[key]=ResolvedSchema(wire:wire,columns:columns)
+            if resolvedSchemas.count >= 1024 { resolvedSchemas.removeAll(keepingCapacity: true) }
+            resolvedSchemas[key] = ResolvedSchema(wire: wire, columns: columns)
             return columns
         }
     }
@@ -275,9 +355,11 @@ final class StreamProcessor {
     /// Only the archive reader calls this, after checksum and complete-group
     /// validation. Historical covered rows need no target schema lookup.
     func skipArchivedGroup(to boundary: BinlogCoordinate) throws {
-        guard let assembler, let cursor, cursor.file == boundary.file else { throw CaptureError("archive exclusion without format context") }
-        try assembler.advanceExcludedRange(to:boundary)
-        resolvedSchemas.removeAll(keepingCapacity:true)
-        self.cursor=boundary
+        guard let assembler, let cursor, cursor.file == boundary.file else {
+            throw CaptureError("archive exclusion without format context")
+        }
+        try assembler.advanceExcludedRange(to: boundary)
+        resolvedSchemas.removeAll(keepingCapacity: true)
+        self.cursor = boundary
     }
 }

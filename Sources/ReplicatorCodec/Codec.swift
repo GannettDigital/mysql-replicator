@@ -1,5 +1,5 @@
-import Foundation
 import CReplicatorCodec
+import Foundation
 
 public enum Codec {
     public static var abiVersion: UInt32 { replicator_codec_abi_version() }
@@ -11,15 +11,39 @@ public struct DecoderError: Error, CustomStringConvertible {
     public let offset: UInt64
     public let eventType: UInt8?
     public let reason: String
-    public var description: String { "decode error \(code) at offset \(offset), event \(eventType.map(String.init) ?? "unknown"): \(reason)" }
+    public var description: String {
+        "decode error \(code) at offset \(offset), event \(eventType.map(String.init) ?? "unknown"): \(reason)"
+    }
     public init(code: Int32, offset: UInt64, eventType: UInt8? = nil, reason: String) {
-        self.code = code; self.offset = offset; self.eventType = eventType; self.reason = reason
+        self.code = code
+        self.offset = offset
+        self.eventType = eventType
+        self.reason = reason
     }
 }
 public enum ColumnInterpretation: String, Codable {
-    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64, json, encodedText, encodedText16BE, encodedText16LE, encodedText32BE
-    public var isEncodedText: Bool { [.encodedText,.encodedText16BE,.encodedText16LE,.encodedText32BE].contains(self) }
-    var abi: UInt32 { switch self { case .signed: return 2; case .unsigned: return 3; case .utf8: return 4; case .binary: return 5; case .decimal: return 6; case .temporal: return 7; case .float32: return 8; case .float64: return 9; case .json: return 10; case .encodedText: return 11; case .encodedText16BE: return 12; case .encodedText16LE: return 13; case .encodedText32BE: return 14 } }
+    case signed, unsigned, utf8, binary, decimal, temporal, float32, float64, json, encodedText, encodedText16BE,
+        encodedText16LE, encodedText32BE
+    public var isEncodedText: Bool {
+        [.encodedText, .encodedText16BE, .encodedText16LE, .encodedText32BE].contains(self)
+    }
+    var abi: UInt32 {
+        switch self {
+        case .signed: return 2
+        case .unsigned: return 3
+        case .utf8: return 4
+        case .binary: return 5
+        case .decimal: return 6
+        case .temporal: return 7
+        case .float32: return 8
+        case .float64: return 9
+        case .json: return 10
+        case .encodedText: return 11
+        case .encodedText16BE: return 12
+        case .encodedText16LE: return 13
+        case .encodedText32BE: return 14
+        }
+    }
 }
 public struct TableSchema: Codable {
     public let offset: UInt64
@@ -28,21 +52,35 @@ public struct TableSchema: Codable {
     public let table: String
     public let tableID: String
     public let columns: [ColumnInterpretation]
-    public init(offset: UInt64, eventSHA256: String, database: String, table: String, tableID: String, columns: [ColumnInterpretation]) {
-        self.offset = offset; self.eventSHA256 = eventSHA256; self.database = database; self.table = table; self.tableID = tableID; self.columns = columns
+    public init(
+        offset: UInt64, eventSHA256: String, database: String, table: String, tableID: String,
+        columns: [ColumnInterpretation]
+    ) {
+        self.offset = offset
+        self.eventSHA256 = eventSHA256
+        self.database = database
+        self.table = table
+        self.tableID = tableID
+        self.columns = columns
     }
 }
 public struct SchemaHistory: Codable {
     public let version: Int
     public let tableMaps: [TableSchema]
-    public init(version: Int = 1, tableMaps: [TableSchema]) { self.version = version; self.tableMaps = tableMaps }
+    public init(version: Int = 1, tableMaps: [TableSchema]) {
+        self.version = version
+        self.tableMaps = tableMaps
+    }
     public func indexed() throws -> [UInt64: TableSchema] {
-        guard version == 1, tableMaps.count <= 10_000 else { throw DecoderError(code: 1, offset: 0, reason: "unsupported schema history version or size") }
+        guard version == 1, tableMaps.count <= 10_000 else {
+            throw DecoderError(code: 1, offset: 0, reason: "unsupported schema history version or size")
+        }
         var index: [UInt64: TableSchema] = [:]
         for entry in tableMaps {
             guard entry.offset >= 4, !entry.columns.isEmpty, entry.columns.count <= 256,
-                  UInt64(entry.tableID) != nil, entry.eventSHA256.count == 64,
-                  entry.eventSHA256.allSatisfy({ "0123456789abcdef".contains($0) }), index[entry.offset] == nil else {
+                UInt64(entry.tableID) != nil, entry.eventSHA256.count == 64,
+                entry.eventSHA256.allSatisfy({ "0123456789abcdef".contains($0) }), index[entry.offset] == nil
+            else {
                 throw DecoderError(code: 1, offset: entry.offset, reason: "invalid or duplicate schema entry")
             }
             index[entry.offset] = entry
@@ -52,30 +90,52 @@ public struct SchemaHistory: Codable {
 }
 
 public enum DecodedValue: Equatable, Encodable {
-    case absent, null, signed(Int64), unsigned(UInt64), text(String), binary(Data), decimal(String), temporal(String), float32(UInt32), float64(UInt64), json(JSONDocument)
+    case absent, null
+    case signed(Int64)
+    case unsigned(UInt64)
+    case text(String)
+    case binary(Data)
+    case decimal(String)
+    case temporal(String)
+    case float32(UInt32)
+    case float64(UInt64)
+    case json(JSONDocument)
     private enum Keys: String, CodingKey { case kind, value, ieeeBits, typedValues }
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: Keys.self)
         switch self {
         case .absent: try container.encode("absent", forKey: .kind)
         case .null: try container.encode("null", forKey: .kind)
-        case .signed(let value): try container.encode("signed", forKey: .kind); try container.encode(String(value), forKey: .value)
-        case .unsigned(let value): try container.encode("unsigned", forKey: .kind); try container.encode(String(value), forKey: .value)
-        case .text(let value): try container.encode("utf8", forKey: .kind); try container.encode(value, forKey: .value)
-        case .decimal(let value): try container.encode("decimal", forKey: .kind); try container.encode(value, forKey: .value)
-        case .temporal(let value): try container.encode("temporal", forKey: .kind); try container.encode(value, forKey: .value)
+        case .signed(let value):
+            try container.encode("signed", forKey: .kind)
+            try container.encode(String(value), forKey: .value)
+        case .unsigned(let value):
+            try container.encode("unsigned", forKey: .kind)
+            try container.encode(String(value), forKey: .value)
+        case .text(let value):
+            try container.encode("utf8", forKey: .kind)
+            try container.encode(value, forKey: .value)
+        case .decimal(let value):
+            try container.encode("decimal", forKey: .kind)
+            try container.encode(value, forKey: .value)
+        case .temporal(let value):
+            try container.encode("temporal", forKey: .kind)
+            try container.encode(value, forKey: .value)
         case .float32(let bits):
-            try container.encode("float32",forKey:.kind)
-            try container.encode(String(Float(bitPattern:bits)),forKey:.value)
-            try container.encode(String(format:"%08x",bits),forKey:.ieeeBits)
+            try container.encode("float32", forKey: .kind)
+            try container.encode(String(Float(bitPattern: bits)), forKey: .value)
+            try container.encode(String(format: "%08x", bits), forKey: .ieeeBits)
         case .float64(let bits):
-            try container.encode("float64",forKey:.kind)
-            try container.encode(String(Double(bitPattern:bits)),forKey:.value)
-            try container.encode(String(format:"%016llx",bits),forKey:.ieeeBits)
+            try container.encode("float64", forKey: .kind)
+            try container.encode(String(Double(bitPattern: bits)), forKey: .value)
+            try container.encode(String(format: "%016llx", bits), forKey: .ieeeBits)
         case .json(let value):
-            try container.encode("json",forKey:.kind); try container.encode(value.text,forKey:.value)
-            if !value.typedValues.isEmpty { try container.encode(value.typedValues,forKey:.typedValues) }
-        case .binary(let value): try container.encode("binary", forKey: .kind); try container.encode(value.base64EncodedString(), forKey: .value)
+            try container.encode("json", forKey: .kind)
+            try container.encode(value.text, forKey: .value)
+            if !value.typedValues.isEmpty { try container.encode(value.typedValues, forKey: .typedValues) }
+        case .binary(let value):
+            try container.encode("binary", forKey: .kind)
+            try container.encode(value.base64EncodedString(), forKey: .value)
         }
     }
 }
@@ -96,12 +156,12 @@ public struct WireColumn: Codable, Equatable {
     public var isUnsigned: Bool? = nil
     public var labels: [Data]? = nil
     public var geometryType: UInt32? = nil
-    public static func == (a:Self,b:Self) -> Bool {
-        let sameName:Bool
-        switch (a.name,b.name) {
-        case (nil,nil): sameName=true
-        case (.some(let a),.some(let b)): sameName=a.utf8.elementsEqual(b.utf8)
-        default: sameName=false
+    public static func == (a: Self, b: Self) -> Bool {
+        let sameName: Bool
+        switch (a.name, b.name) {
+        case (nil, nil): sameName = true
+        case (.some(let a), .some(let b)): sameName = a.utf8.elementsEqual(b.utf8)
+        default: sameName = false
         }
         return sameName && a.interpretation == b.interpretation && a.type == b.type
             && a.maximumBytes == b.maximumBytes && a.nullable == b.nullable && a.collation == b.collation
@@ -137,10 +197,12 @@ public struct DecodedEvent: Equatable, Encodable {
     /// contiguous input-stream offsets (GTID filtering may omit source ranges).
     /// Changes only the observation coordinate, never event bytes or headers.
     public func atSourcePosition(_ position: UInt64) -> DecodedEvent {
-        var result = DecodedEvent(offset: String(position), eventSize: eventSize, control: control, rowFlags: rowFlags,
+        var result = DecodedEvent(
+            offset: String(position), eventSize: eventSize, control: control, rowFlags: rowFlags,
             eventType: eventType, eventName: eventName, timestamp: timestamp, serverID: serverID,
             nextPosition: nextPosition, flags: flags, sha256: sha256, tableID: tableID, database: database,
-            table: table, number: number, detailBase64: detailBase64, detailText: detailText, rows: rows, rawBase64: rawBase64)
+            table: table, number: number, detailBase64: detailBase64, detailText: detailText, rows: rows,
+            rawBase64: rawBase64)
         result.wireColumns = wireColumns
         result.replicationFiltered = replicationFiltered
         return result
@@ -159,20 +221,27 @@ public final class BinlogDecoder {
     private let timings: StageTimings?
     /// When supplied, the collector and this decoder's lifetime belong to one worker.
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
-        self.maximumEventBytes=Int(maximumEventBytes)
+        self.maximumEventBytes = Int(maximumEventBytes)
         self.timings = timings
-        guard Codec.abiVersion == 14, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
-        guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
+        guard Codec.abiVersion == 14, Codec.capabilities & 5 == 5 else {
+            throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI")
+        }
+        guard timings == nil || Codec.capabilities & 2 != 0 else {
+            throw DecoderError(code: 1, offset: 0, reason: "codec lacks profiling capability")
+        }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
-        guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
+        guard status == 0, context != nil else {
+            throw DecoderError(code: status, offset: 0, reason: "cannot create decoder")
+        }
     }
     deinit { profile("decode.swift.context_free") { rc_decoder_free(context) } }
     private func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
-        if let timings { return try timings.measure(stage,body) }
+        if let timings { return try timings.measure(stage, body) }
         return try body()
     }
     public func reset() throws {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         let status = profile("decode.swift.context_reset") { rc_decoder_reset(context) }
         guard status == 0 else { throw DecoderError(code: status, offset: 0, reason: "cannot reset decoder") }
         failed = false
@@ -184,185 +253,277 @@ public final class BinlogDecoder {
     /// Inspect a TABLE_MAP without advancing the stream or installing its schema.
     /// The following decode still validates and binds the supplied interpretation.
     public func probeTable(_ frame: Data, at offset: UInt64, filterTable: Bool = false) throws -> DecodedEvent {
-        try decode(frame,at:offset,schema:nil,includeRaw:false,filterTable:filterTable,probeTable:true)
+        try decode(frame, at: offset, schema: nil, includeRaw: false, filterTable: filterTable, probeTable: true)
     }
-    public func decode(_ frame: Data, at offset: UInt64, schema: TableSchema? = nil, includeRaw: Bool = false, filterTable: Bool = false) throws -> DecodedEvent {
-        try decode(frame,at:offset,schema:schema,includeRaw:includeRaw,filterTable:filterTable,probeTable:false)
+    public func decode(
+        _ frame: Data, at offset: UInt64, schema: TableSchema? = nil, includeRaw: Bool = false,
+        filterTable: Bool = false
+    ) throws -> DecodedEvent {
+        try decode(
+            frame, at: offset, schema: schema, includeRaw: includeRaw, filterTable: filterTable, probeTable: false)
     }
-    private func decode(_ frame: Data, at offset: UInt64, schema: TableSchema?, includeRaw: Bool, filterTable: Bool, probeTable: Bool) throws -> DecodedEvent {
-        lock.lock(); defer { lock.unlock() }
+    private func decode(
+        _ frame: Data, at offset: UInt64, schema: TableSchema?, includeRaw: Bool, filterTable: Bool, probeTable: Bool
+    ) throws -> DecodedEvent {
+        lock.lock()
+        defer { lock.unlock() }
         let type = frame.count > 4 ? frame[frame.startIndex + 4] : nil
-        if failed { throw DecoderError(code: 6, offset: offset, eventType: type, reason: "decoder is poisoned; reset and replay from FDE") }
+        if failed {
+            throw DecoderError(
+                code: 6, offset: offset, eventType: type, reason: "decoder is poisoned; reset and replay from FDE")
+        }
         do {
-            if let schema, schema.offset != offset || type != 19 { throw DecoderError(code: 7, offset: offset, eventType: type, reason: "schema entry does not identify this table map") }
+            if let schema, schema.offset != offset || type != 19 {
+                throw DecoderError(
+                    code: 7, offset: offset, eventType: type, reason: "schema entry does not identify this table map")
+            }
             let kinds = schema?.columns.map(\.abi) ?? []
             var result: OpaquePointer?
             defer { profile("decode.swift.result_free") { rc_result_free(result) } }
             let status = try profile("decode.rust") {
-                var native=rc_decode_profile()
-                let status=frame.withUnsafeBytes { raw in
+                var native = rc_decode_profile()
+                let status = frame.withUnsafeBytes { raw in
                     kinds.withUnsafeBufferPointer { columns in
                         if probeTable {
                             if timings != nil {
-                                return rc_decoder_probe_table(context,raw.bindMemory(to:UInt8.self).baseAddress,UInt64(raw.count),offset,filterTable ? 1 : 0,&result,&native)
+                                return rc_decoder_probe_table(
+                                    context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset,
+                                    filterTable ? 1 : 0, &result, &native)
                             }
-                            return rc_decoder_probe_table(context,raw.bindMemory(to:UInt8.self).baseAddress,UInt64(raw.count),offset,filterTable ? 1 : 0,&result,nil)
+                            return rc_decoder_probe_table(
+                                context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset,
+                                filterTable ? 1 : 0, &result, nil)
                         }
                         if timings != nil {
-                            return rc_decoder_feed_profiled(context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset, columns.baseAddress, UInt32(columns.count), filterTable ? 1 : 0, &result, &native)
+                            return rc_decoder_feed_profiled(
+                                context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset,
+                                columns.baseAddress, UInt32(columns.count), filterTable ? 1 : 0, &result, &native)
                         }
-                        return rc_decoder_feed_filtered(context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset, columns.baseAddress, UInt32(columns.count), filterTable ? 1 : 0, &result)
+                        return rc_decoder_feed_filtered(
+                            context, raw.bindMemory(to: UInt8.self).baseAddress, UInt64(raw.count), offset,
+                            columns.baseAddress, UInt32(columns.count), filterTable ? 1 : 0, &result)
                     }
                 }
                 if let timings {
-                    let names=["decode.rust.crc32","decode.rust.event_read","decode.rust.raw_copy","decode.rust.sha256","decode.rust.payload_read","decode.rust.table_map","decode.rust.rows"]
-                    withUnsafeBytes(of:&native.stages) { raw in
-                        for (name,sample) in zip(names,raw.bindMemory(to:rc_stage_timing.self)) {
-                            timings.recordNative(name,count:sample.count,failures:sample.failures,nanoseconds:sample.nanoseconds)
+                    let names = [
+                        "decode.rust.crc32", "decode.rust.event_read", "decode.rust.raw_copy", "decode.rust.sha256",
+                        "decode.rust.payload_read", "decode.rust.table_map", "decode.rust.rows",
+                    ]
+                    withUnsafeBytes(of: &native.stages) { raw in
+                        for (name, sample) in zip(names, raw.bindMemory(to: rc_stage_timing.self)) {
+                            timings.recordNative(
+                                name, count: sample.count, failures: sample.failures, nanoseconds: sample.nanoseconds)
                         }
                     }
                 }
                 if status != 0 {
-                    var error=rc_event()
+                    var error = rc_event()
                     let reason: String
-                    if let result, rc_result_event(result,&error) == 0 { reason=String(decoding:bytes(error.error),as:UTF8.self) }
-                    else { reason="codec returned no result" }
-                    throw DecoderError(code:status,offset:offset,eventType:type,reason:reason)
+                    if let result, rc_result_event(result, &error) == 0 {
+                        reason = String(decoding: bytes(error.error), as: UTF8.self)
+                    } else {
+                        reason = "codec returned no result"
+                    }
+                    throw DecoderError(code: status, offset: offset, eventType: type, reason: reason)
                 }
                 return status
             }
             var info = rc_event()
-            guard let result, rc_result_event(result, &info) == 0 else { throw DecoderError(code: status, offset: offset, eventType: type, reason: "codec returned no result") }
+            guard let result, rc_result_event(result, &info) == 0 else {
+                throw DecoderError(code: status, offset: offset, eventType: type, reason: "codec returned no result")
+            }
             func identifier(_ data: rc_bytes) throws -> String? {
                 let raw = bytes(data)
                 if raw.isEmpty { return nil }
-                guard let text = String(data: raw, encoding: .utf8) else { throw DecoderError(code: 4, offset: offset, eventType: type, reason: "non-UTF8 database/table identifier unsupported") }
+                guard let text = String(data: raw, encoding: .utf8) else {
+                    throw DecoderError(
+                        code: 4, offset: offset, eventType: type,
+                        reason: "non-UTF8 database/table identifier unsupported")
+                }
                 return text
             }
-            let (database,table) = try profile("decode.swift.identifiers") { (try identifier(info.database),try identifier(info.table)) }
+            let (database, table) = try profile("decode.swift.identifiers") {
+                (try identifier(info.database), try identifier(info.table))
+            }
             let digest = profile("decode.swift.fingerprint_hex") {
                 // The native result owns these bytes until the deferred free;
                 // the returned String owns its encoded storage independently.
-                HexEncoding.lowercase(UnsafeBufferPointer(start:info.fingerprint.data,count:Int(info.fingerprint.length)))
+                HexEncoding.lowercase(
+                    UnsafeBufferPointer(start: info.fingerprint.data, count: Int(info.fingerprint.length)))
             }
             if let schema {
-                guard let database,let table,schema.eventSHA256 == digest, schema.tableID == String(info.table_id), schema.database.utf8.elementsEqual(database.utf8), schema.table.utf8.elementsEqual(table.utf8) else {
-                    throw DecoderError(code: 7, offset: offset, eventType: type, reason: "schema history fingerprint or table identity differs")
+                guard let database, let table, schema.eventSHA256 == digest, schema.tableID == String(info.table_id),
+                    schema.database.utf8.elementsEqual(database.utf8), schema.table.utf8.elementsEqual(table.utf8)
+                else {
+                    throw DecoderError(
+                        code: 7, offset: offset, eventType: type,
+                        reason: "schema history fingerprint or table identity differs")
                 }
             }
             func image(_ row: UInt32, _ side: UInt32, before: [DecodedValue]? = nil) throws -> [DecodedValue] {
                 try (0..<info.column_count).map { column in
                     var value = rc_value()
-                    guard rc_result_value(result, row, side, column, &value) == 0 else { throw DecoderError(code: 8, offset: offset, reason: "invalid result index") }
+                    guard rc_result_value(result, row, side, column, &value) == 0 else {
+                        throw DecoderError(code: 8, offset: offset, reason: "invalid result index")
+                    }
                     switch value.kind {
                     case 0: return .absent
                     case 1: return .null
                     case 2: return .signed(value.signed_value)
                     case 3: return .unsigned(value.unsigned_value)
                     case 4:
-                        guard let text = String(data: bytes(value.bytes), encoding: .utf8) else { throw DecoderError(code: 8, offset: offset, reason: "codec emitted invalid UTF8") }
+                        guard let text = String(data: bytes(value.bytes), encoding: .utf8) else {
+                            throw DecoderError(code: 8, offset: offset, reason: "codec emitted invalid UTF8")
+                        }
                         return .text(text)
                     case 5: return .binary(bytes(value.bytes))
-                    case 6: return .decimal(String(decoding:bytes(value.bytes),as:UTF8.self))
+                    case 6: return .decimal(String(decoding: bytes(value.bytes), as: UTF8.self))
                     case 8: return .float32(UInt32(value.unsigned_value))
                     case 9: return .float64(value.unsigned_value)
-                    case 10: return .json(try JSONDocument(source:bytes(value.bytes)))
+                    case 10: return .json(try JSONDocument(source: bytes(value.bytes)))
                     case 11:
-                        guard side == 1,let before,case .json(let original)=before[Int(column)] else { throw DecoderError(code:7,offset:offset,reason:"partial JSON requires a complete JSON before image") }
-                        return .json(try original.applying(delta:bytes(value.bytes),maximumBytes:maximumEventBytes*3))
-                    case 7: return .temporal(String(decoding:bytes(value.bytes),as:UTF8.self))
+                        guard side == 1, let before, case .json(let original) = before[Int(column)] else {
+                            throw DecoderError(
+                                code: 7, offset: offset, reason: "partial JSON requires a complete JSON before image")
+                        }
+                        return .json(
+                            try original.applying(delta: bytes(value.bytes), maximumBytes: maximumEventBytes * 3))
+                    case 7: return .temporal(String(decoding: bytes(value.bytes), as: UTF8.self))
                     default: throw DecoderError(code: 8, offset: offset, reason: "unknown ABI value kind")
                     }
                 }
             }
-            let insert = [23, 30].contains(info.event_type), delete = [25, 32].contains(info.event_type)
+            let insert = [23, 30].contains(info.event_type)
+            let delete = [25, 32].contains(info.event_type)
             let rows = try profile("decode.swift.rows") {
                 try (0..<info.row_count).map { row in
-                    let before=insert ? nil : try image(row,0)
-                    return DecodedRow(operation:insert ? "insert" : delete ? "delete" : "update",before:before,after:delete ? nil : try image(row,1,before:before))
+                    let before = insert ? nil : try image(row, 0)
+                    return DecodedRow(
+                        operation: insert ? "insert" : delete ? "delete" : "update", before: before,
+                        after: delete ? nil : try image(row, 1, before: before))
                 }
             }
             let detail = bytes(info.detail)
             let control: BinlogControl? = try profile("decode.swift.control") {
                 let control: BinlogControl?
                 switch info.event_type {
-                case 2: control = .query(QueryControl(database: database, sql: detail,
-                    errorCode: info.query_error_code, statusVariables: bytes(info.query_status)))
+                case 2:
+                    control = .query(
+                        QueryControl(
+                            database: database, sql: detail,
+                            errorCode: info.query_error_code, statusVariables: bytes(info.query_status)))
                 case 3: control = .stop
                 case 4:
                     guard let file = String(data: detail, encoding: .utf8), !file.isEmpty,
-                          !file.utf8.contains(0), info.number >= 4 else {
-                        throw DecoderError(code: 2, offset: offset, eventType: type, reason: "invalid rotation coordinate")
+                        !file.utf8.contains(0), info.number >= 4
+                    else {
+                        throw DecoderError(
+                            code: 2, offset: offset, eventType: type, reason: "invalid rotation coordinate")
                     }
                     control = .rotate(BinlogCoordinate(file: file, position: info.number))
                 case 15: control = .formatDescription
                 case 16: control = .xid(String(info.number))
-                case 33,42:
-                    guard detail.count == 16 else { throw DecoderError(code: 8, offset: offset, reason: "invalid GTID SID from codec") }
-                    let sid: String
-                    if let cachedSID, cachedSID.bytes == detail { sid=cachedSID.text }
-                    else {
-                        var encoded=Array(detail.withUnsafeBytes { HexEncoding.lowercase($0.bindMemory(to:UInt8.self)) }.utf8)
-                        for index in [20,16,12,8] { encoded.insert(45,at:index) }
-                        sid=String(decoding:encoded,as:UTF8.self)
-                        cachedSID=(detail,sid)
+                case 33, 42:
+                    guard detail.count == 16 else {
+                        throw DecoderError(code: 8, offset: offset, reason: "invalid GTID SID from codec")
                     }
-                    let rawTag=bytes(info.gtid_tag)
-                    let tag = try info.event_type == 42 ? SourceGTID.normalizedTag(String(decoding:rawTag,as:UTF8.self)) : nil
-                    control = .gtid(SourceGTID(sid: sid, sequence: String(info.number), flags: info.payload_flags, tag:tag))
+                    let sid: String
+                    if let cachedSID, cachedSID.bytes == detail {
+                        sid = cachedSID.text
+                    } else {
+                        var encoded = Array(
+                            detail.withUnsafeBytes { HexEncoding.lowercase($0.bindMemory(to: UInt8.self)) }.utf8)
+                        for index in [20, 16, 12, 8] { encoded.insert(45, at: index) }
+                        sid = String(decoding: encoded, as: UTF8.self)
+                        cachedSID = (detail, sid)
+                    }
+                    let rawTag = bytes(info.gtid_tag)
+                    let tag =
+                        try info.event_type == 42
+                        ? SourceGTID.normalizedTag(String(decoding: rawTag, as: UTF8.self)) : nil
+                    control = .gtid(
+                        SourceGTID(sid: sid, sequence: String(info.number), flags: info.payload_flags, tag: tag))
                 case 34: control = .anonymousGTID(flags: info.payload_flags)
                 case 35: control = .previousGTIDs
                 default: control = nil
                 }
                 return control
             }
-            let rawBase64 = profile("decode.swift.raw_base64") { includeRaw ? bytes(info.raw).base64EncodedString() : nil }
-            var decoded = profile("decode.swift.event_build") { DecodedEvent(offset: String(offset), eventSize: info.event_size, control: control,
-                rowFlags: [23,24,25,30,31,32,39].contains(info.event_type) ? info.payload_flags : nil, eventType: info.event_type, eventName: String(decoding: bytes(info.name), as: UTF8.self), timestamp: info.timestamp, serverID: info.server_id, nextPosition: info.next_position, flags: info.flags, sha256: digest,
-                tableID: info.column_count == 0 ? nil : String(info.table_id), database: database, table: table,
-                number: [4,16,33,42].contains(info.event_type) ? String(info.number) : nil,
-                detailBase64: detail.isEmpty ? nil : detail.base64EncodedString(), detailText: [2,4,15].contains(info.event_type) ? String(data: detail, encoding: .utf8) : nil,
-                rows: rows, rawBase64: rawBase64) }
+            let rawBase64 = profile("decode.swift.raw_base64") {
+                includeRaw ? bytes(info.raw).base64EncodedString() : nil
+            }
+            var decoded = profile("decode.swift.event_build") {
+                DecodedEvent(
+                    offset: String(offset), eventSize: info.event_size, control: control,
+                    rowFlags: [23, 24, 25, 30, 31, 32, 39].contains(info.event_type) ? info.payload_flags : nil,
+                    eventType: info.event_type, eventName: String(decoding: bytes(info.name), as: UTF8.self),
+                    timestamp: info.timestamp, serverID: info.server_id, nextPosition: info.next_position,
+                    flags: info.flags, sha256: digest,
+                    tableID: info.column_count == 0 ? nil : String(info.table_id), database: database, table: table,
+                    number: [4, 16, 33, 42].contains(info.event_type) ? String(info.number) : nil,
+                    detailBase64: detail.isEmpty ? nil : detail.base64EncodedString(),
+                    detailText: [2, 4, 15].contains(info.event_type) ? String(data: detail, encoding: .utf8) : nil,
+                    rows: rows, rawBase64: rawBase64)
+            }
             decoded.replicationFiltered = rc_result_is_filtered(result) == 1
             if info.event_type == 19 && !decoded.replicationFiltered {
                 decoded.wireColumns = try profile("decode.swift.table_columns") {
                     try (0..<info.column_count).map { index in
                         var c = rc_column()
-                        guard rc_result_column(result,index,&c)==0 else {throw DecoderError(code:8,offset:offset,reason:"missing table-map column")}
-                        let kind: ColumnInterpretation? = [2:.signed,3:.unsigned,4:.utf8,5:.binary,6:.decimal,7:.temporal,8:.float32,9:.float64,10:.json,11:.encodedText,12:.encodedText16BE,13:.encodedText16LE,14:.encodedText32BE][c.kind]
-                        let packedLabels = bytes(c.labels)
-                        var labels: [Data] = [], labelOffset = 0
-                        while labelOffset < packedLabels.count {
-                            guard packedLabels.count-labelOffset >= 4 else { throw DecoderError(code:8,offset:offset,reason:"invalid label metadata") }
-                            let length = (0..<4).reduce(0) { $0 | (Int(packedLabels[labelOffset+$1]) << ($1*8)) }
-                            labelOffset += 4
-                            guard length <= packedLabels.count-labelOffset else { throw DecoderError(code:8,offset:offset,reason:"invalid label length") }
-                            labels.append(packedLabels.subdata(in:labelOffset..<labelOffset+length)); labelOffset += length
+                        guard rc_result_column(result, index, &c) == 0 else {
+                            throw DecoderError(code: 8, offset: offset, reason: "missing table-map column")
                         }
-                        return WireColumn(interpretation:kind,type:c.column_type,maximumBytes:c.maximum_bytes,nullable:c.nullable != 0,
-                            collation:c.collation,primaryKey:c.primary_key != 0,name:try identifier(c.name),metadata:bytes(c.metadata),isUnsigned:c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2,labels:packedLabels.isEmpty ? nil : labels,geometryType:c.geometry_type == 0 ? nil : c.geometry_type-1)
+                        let kind: ColumnInterpretation? = [
+                            2: .signed, 3: .unsigned, 4: .utf8, 5: .binary, 6: .decimal, 7: .temporal, 8: .float32,
+                            9: .float64, 10: .json, 11: .encodedText, 12: .encodedText16BE, 13: .encodedText16LE,
+                            14: .encodedText32BE,
+                        ][c.kind]
+                        let packedLabels = bytes(c.labels)
+                        var labels: [Data] = []
+                        var labelOffset = 0
+                        while labelOffset < packedLabels.count {
+                            guard packedLabels.count - labelOffset >= 4 else {
+                                throw DecoderError(code: 8, offset: offset, reason: "invalid label metadata")
+                            }
+                            let length = (0..<4).reduce(0) { $0 | (Int(packedLabels[labelOffset + $1]) << ($1 * 8)) }
+                            labelOffset += 4
+                            guard length <= packedLabels.count - labelOffset else {
+                                throw DecoderError(code: 8, offset: offset, reason: "invalid label length")
+                            }
+                            labels.append(packedLabels.subdata(in: labelOffset..<labelOffset + length))
+                            labelOffset += length
+                        }
+                        return WireColumn(
+                            interpretation: kind, type: c.column_type, maximumBytes: c.maximum_bytes,
+                            nullable: c.nullable != 0,
+                            collation: c.collation, primaryKey: c.primary_key != 0, name: try identifier(c.name),
+                            metadata: bytes(c.metadata), isUnsigned: c.unsigned_flag == 0 ? nil : c.unsigned_flag == 2,
+                            labels: packedLabels.isEmpty ? nil : labels,
+                            geometryType: c.geometry_type == 0 ? nil : c.geometry_type - 1)
                     }
                 }
             }
             return decoded
         } catch {
             failed = true
-            if let error=error as? DecoderError, error.offset == 0 {
-                throw DecoderError(code:error.code,offset:offset,eventType:type,reason:error.reason)
+            if let error = error as? DecoderError, error.offset == 0 {
+                throw DecoderError(code: error.code, offset: offset, eventType: type, reason: error.reason)
             }
             throw error
         }
     }
 }
 
-public extension DecodedEvent {
+extension DecodedEvent {
     /// Conservative retained-data accounting, not a measurement of process RSS.
-    var retainedByteCost: Int {
+    public var retainedByteCost: Int {
         // Accounting budget, not an RSS claim. Count owned strings, raw/base64
         // copies, query bytes and decoded cells; bound accumulation across events.
         var cost = 1024
-        for s in [self.offset, self.eventName, self.sha256, self.tableID, self.database,
-                  self.table, self.number, self.detailBase64, self.detailText, self.rawBase64] {
+        for s in [
+            self.offset, self.eventName, self.sha256, self.tableID, self.database,
+            self.table, self.number, self.detailBase64, self.detailText, self.rawBase64,
+        ] {
             cost += s?.utf8.count ?? 0
         }
         if case .query(let query) = self.control { cost += query.sql.count + query.statusVariables.count }
