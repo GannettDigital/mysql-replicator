@@ -34,9 +34,15 @@ policy outside the syntax target. The target does not yet implement full MySQL s
 [generated-expression increment](../PLAN/GENERATED_EXPRESSIONS.md) for its native
 metadata rules and test evidence.
 
-The source path retains the current executable-comment rejection policy. Only
-native metadata parsing opts in to those comments. Source-version comment
-evaluation requires a separate tested change. The expression parser handles PIPES_AS_CONCAT and HIGH_NOT_PRECEDENCE.
+`SQLExecutableComments` builds a parser view that retains Query SQL byte offsets.
+It uses the exact target version, SQL mode and client encoding. The applier
+sends the original executable comments to MySQL; it never executes this parser
+view. Ordinary comments that the source disabled stay inactive. Native SHOW CREATE
+metadata retains its separate lexer mode. See [the contract and tests](../PLAN/EXECUTABLE_COMMENTS.md).
+The catalog marks `ddl.executable-comments` as implemented with remaining test
+combinations, not as a confirmed unsupported form.
+
+The expression parser handles PIPES_AS_CONCAT and HIGH_NOT_PRECEDENCE.
 Other mode-sensitive grammar and statement extraction remain separate work.
 
 ## Design rules

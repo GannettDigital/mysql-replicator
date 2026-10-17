@@ -110,7 +110,11 @@ Final summaries include queue high-water marks and enqueued/dequeued group count
 in `pipeline`. These counters reset per run and are diagnostic, not recovery state.
 Capture and apply use separate timing collectors; their elapsed times overlap.
 
-## Declared subset and checks
+## Original forward-profile contract and current value handling
+
+The connection/group bullets below describe the original MyISAM profile.
+Use the [current support status](../docs/SUPPORT.md#support-status) to distinguish
+unsupported behavior, target incompatibility, policy and incomplete tests.
 
 - MySQL 8.4 GTID-ON InnoDB source with ROW/FULL/CRC32, as qualified by live inspect;
   verified TLS with CA/hostname checking on both connections by default; the
@@ -120,11 +124,13 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   set `--skip-slave-start` and assert `target.nativeAutoStartDisabled: true`.
 - Complete committed source groups with one row statement affecting one discovered
   table. Multi-row events/statements and primary-key changes are supported within
-  this subset. Multi-statement groups are rejected before any target mutation,
-  consistent with the accepted native MyISAM expected-negative reference.
-- Prefer a primary key or eligible UNIQUE index with 1–16 full, nonnullable
-  supported base scalar columns, including DATE/integer composite keys. Without
-  such a key, use [full-row matching](KEYLESS_ROWS.md) and change one matching copy.
+  this subset. The tool rejects broader MyISAM groups before target writes.
+  Native GTID rules reject some broader forms. Eligibility of other forms needs
+  separate native review; the tool limit is not proof of a native restriction.
+- Prefer a primary key or eligible UNIQUE index with supported nonnullable base
+  columns, including DATE/integer composite keys. Primary keys can have prefixes;
+  TEXT/BLOB primary keys require them. Unique-key fallback requires full scalar
+  columns. Row lookups use full values. Without such a key, use [full-row matching](KEYLESS_ROWS.md) and change one matching copy.
   Named ordinary/unique BTREE secondary indexes
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
   key selection is described in [beta.6 row identity](ROW_IDENTITY.md). Target triggers are rejected. The
@@ -143,8 +149,8 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   than precision); DATE, YEAR, TIME/DATETIME/TIMESTAMP with fractional precision
   0–6; CHAR(n), BINARY(n), VARCHAR(n), VARBINARY(n), ENUM, SET, and
   TINY/ordinary/MEDIUM/LONG TEXT and BLOB.
-  Text requires matching source and target collations from the supported
-  utf8mb4, utf8mb3, latin1 or ASCII subset. See [character sets](CHARACTER_SETS.md). A source 8.4-only collation fails unless covered by the explicit
+  Text uses the native 5.7 charset/collation registry. Source and target
+  metadata must match under the selected compatibility policy. See [character sets](CHARACTER_SETS.md). A source 8.4-only collation fails unless covered by the explicit
   [collation mapping policy](DDL_COMPATIBILITY.md#optional-collation-translation-and-table-replacement).
   CHAR/BINARY lengths are 0–255. VARCHAR uses the declared charset byte width;
   VARBINARY uses bytes. Both allow at most 65,535 declared bytes, subject to
@@ -165,8 +171,9 @@ primary keys. See [BIT support and tests](BIT_SUPPORT.md).
 
 Finite FLOAT/DOUBLE values retain their exact IEEE bits through decoding, binary
 SQL parameters, target reads, and recovery. See [FLOAT/DOUBLE support and tests](FLOATING_POINT_SUPPORT.md).
-Fixed-scale FLOAT/DOUBLE
-forms, NaN, and infinity remain unsupported.
+Fixed-scale FLOAT/DOUBLE forms are implemented. NaN and infinity remain
+unsupported by the value transport. Boundary and cross-version qualification
+are separate from this implementation status.
 
 The [JSON increment](JSON_SUPPORT.md) adds full documents, typed values and
 partial updates. Selected integration cases passed on the applicable profiles.

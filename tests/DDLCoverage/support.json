@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "inventory_revision": "beta6-zero-width-columns",
+  "inventory_revision": "beta6-support-assessment",
   "review_state": "partial",
   "requirements": [
     {
       "id": "values.character-sets",
       "stage": 2,
       "family": "values",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -56,9 +56,9 @@
       "id": "values.variable-width",
       "stage": 2,
       "family": "values",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -99,9 +99,9 @@
       "id": "values.fixed-scale-float",
       "stage": 2,
       "family": "values",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -312,9 +312,9 @@
       "id": "values.enum-zero",
       "stage": 2,
       "family": "values",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -352,9 +352,9 @@
       "id": "values.enum-labels",
       "stage": 2,
       "family": "values",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -402,7 +402,7 @@
       "id": "values.identifiers",
       "stage": 2,
       "family": "values",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "needs_native_review",
       "implementation": "subset",
       "profiles": [
@@ -421,7 +421,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Query events support native system-charset names, exact cache keys and scalar name lengths. Native supplementary names resolve to the stored question mark. Table-name modes 0 and 1 require matching source/target settings and are pinned in state. Mode 2 and cross-setting replication remain unqualified.",
+      "current_behavior": "Native identifier handling and matching table-name modes 0 and 1 are implemented. Selected encoded-query, Unicode-name, restart and replay cases pass. Remaining combinations need qualification. See names.case-settings for the specific unsupported modes.",
       "acceptance": "Quote native-valid identifiers without renaming; verify case rules and multibyte limits.",
       "assertions": [
         "source_outcome",
@@ -470,7 +470,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "The native row applier writes binary JSON through internal field storage. SQL constructors can change YEAR and binary-string subtypes across versions. See PLAN/JSON_TRANSPORT_INVESTIGATION.md.",
-      "current_behavior": "Exact constructors cover the implemented types. Native-source review and direct 5.7/8.4 probes confirm YEAR type-13 and legacy type-253 constructor differences. MYSQL_TYPE_JSON parameters use text input, not internal binary storage. Remaining subtype/range gaps require a separate transport design; no lossy fallback is enabled.",
+      "current_behavior": "Ordinary JSON and implemented typed constructors are supported. Some opaque binary subtypes and temporal/range values have no exact SQL construction path. The optional jsonYearToInteger rule addresses 5.7 YEAR values on 8.4; it is not an exact binary-type transfer.",
       "acceptance": "Prove exact binary subtype transport or record the protocol limit.",
       "assertions": [
         "source_outcome",
@@ -493,7 +493,7 @@
       "id": "ddl.table-options",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "needs_native_review",
       "implementation": "subset",
       "profiles": [
@@ -511,7 +511,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Parses table/column COMMENT, ROW_FORMAT, AUTO_INCREMENT, selected physical/statistics options and same-engine rebuilds. Original SQL is journaled. Physical options are not row-schema metadata. Other options remain open. FORCE and ENABLE/DISABLE KEYS use the normal DDL journal and target engine behavior.",
+      "current_behavior": "Selected physical/statistics options, comments, same-engine rebuilds, ORDER BY, validation, COLUMN_FORMAT and STORAGE are parsed. The target executes original SQL and checks engine/plugin limits. The remaining native-valid syntax inventory needs review; missing tests alone do not identify an unsupported option.",
       "acceptance": "Support each native-valid option with schema checks and following DML.",
       "assertions": [
         "source_outcome",
@@ -544,7 +544,7 @@
       "id": "ddl.fulltext",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
       "implementation": "subset",
       "profiles": [
@@ -587,7 +587,7 @@
       "id": "ddl.spatial-btree",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
       "implementation": "subset",
       "profiles": [
@@ -637,7 +637,7 @@
       "id": "ddl.index-forms",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "needs_native_review",
       "implementation": "subset",
       "profiles": [
@@ -655,7 +655,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Functional indexes require an 8.4 target. MySQL 5.7 ignores DESC; 8.4 preserves it. Invisible indexes and other index attributes remain open.",
+      "current_behavior": "Inline/grouped keys, native unnamed-key rules, primary-key prefixes, direction, index options and execution options are implemented. An 8.4 target retains functional indexes and visibility; 5.7 rejects newer-only attributes. Full combinations and failure qualification remain open.",
       "acceptance": "Separate unavailable target syntax from eligible index forms.",
       "assertions": [
         "source_outcome",
@@ -664,7 +664,12 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-column-index-syntax",
+        "ddl-compat-grouped-constraints",
+        "ddl-compat-primary-key-parts",
+        "json-target84-schema"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift"
       ],
@@ -674,7 +679,7 @@
       "id": "ddl.alter-conversions",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
       "implementation": "subset",
       "profiles": [
@@ -692,7 +697,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "MODIFY and CHANGE permit native cross-family conversions. Table-default charset changes and CONVERT TO CHARACTER SET use native field metadata before execution. Selected cases cover TEXT widening, binary columns, exact defaults, ENUM/SET, following DML and restart; full conversion and failure qualification remains open.",
+      "current_behavior": "Column conversions, charset conversion, inline keys, implicit rebuild values, logged AUTO_INCREMENT settings, compound table renames and simultaneous column-name swaps are implemented. Native engine row order can change new AUTO_INCREMENT values. The cross-version conversion and failure matrix remains unqualified. On an 8.4 target, the combined parent-table rename, referenced-column rename and ADD COLUMN is refused because native 8.4.8 can fail or lose cascades; use separate source ALTER statements.",
       "acceptance": "Compare native metadata, converted rows, SQL-mode errors and following DML.",
       "assertions": [
         "source_outcome",
@@ -703,8 +708,12 @@
       ],
       "candidate_cases": [
         "ddl-compat-alter-conversions",
+        "ddl-compat-alter-column-keys",
         "ddl-compat-table-charset",
-        "ddl-compat-charset-conversion"
+        "ddl-compat-charset-conversion",
+        "ddl-compat-column-index-syntax",
+        "ddl-compat-alter-table-rename",
+        "alter-rename-target84-refusal"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift",
@@ -717,7 +726,7 @@
       "id": "ddl.generated-expressions",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "needs_native_review",
       "implementation": "subset",
       "profiles": [
@@ -735,7 +744,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Independent typed syntax covers selected CASE, predicate, bit, interval, byte and native function forms. Metadata comparison preserves generated-value checks; full grammar remains open.",
+      "current_behavior": "Typed syntax accepts ordinary function calls and implemented special SQL forms. The target checks function eligibility. Generated/default/functional-index dependencies use the whole ALTER. Selected expressions and native values pass. The remaining grammar and dependency matrix needs qualification; no function is unsupported solely because it lacks a named test.",
       "acceptance": "Apply native-valid expressions and verify source/target generated values.",
       "assertions": [
         "source_outcome",
@@ -747,7 +756,9 @@
       "candidate_cases": [
         "ddl-compat-json-indexes",
         "json-target84-schema",
-        "ddl-compat-generated-expressions"
+        "ddl-compat-generated-expressions",
+        "ddl-compat-generated-dependencies",
+        "expression-target84-dependencies"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DDLTokens.swift",
@@ -759,7 +770,7 @@
       "id": "ddl.partition-operations",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "needs_native_review",
       "implementation": "subset",
       "profiles": [
@@ -777,7 +788,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Typed partition syntax and saved metadata support RANGE/LIST subpartitions by HASH/KEY, KEY algorithms, native names and selected lifecycle operations. Constant numeric/date bounds use native evaluation before journaling. COLUMNS bounds retain binary and charset values, including raw SHOW CREATE metadata. EXCHANGE accepts WITHOUT VALIDATION and journals both tables. Native probes reject the tested misplaced-row UPDATE/DELETE operations. Partition maintenance checks native results. Remaining expression forms, the complete conversion matrix, tablespace operations and full failure qualification remain open.",
+      "current_behavior": "Partition/subpartition definitions, KEY algorithms, bounds, maintenance and exchange are implemented for the listed cases. Column renames can replace or remove partitioning in the same ALTER. Native-valid expression and conversion combinations still need qualification. File/tablespace administration is outside application-DDL scope.",
       "acceptance": "Compare metadata and row effects for eligible engine/version combinations.",
       "assertions": [
         "source_outcome",
@@ -793,7 +804,9 @@
         "ddl-compat-partition-maintenance",
         "ddl-compat-partition-expressions",
         "ddl-compat-partition-exchange-unchecked",
-        "ddl-compat-partition-column-bounds"
+        "ddl-compat-partition-column-bounds",
+        "ddl-compat-partition-column-renames",
+        "ddl-compat-partition-rename-syntax"
       ],
       "code_references": [
         "Sources/MySQLSyntax/SQLPartitionClause.swift",
@@ -857,9 +870,9 @@
       "id": "ddl.multi-drop",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -903,9 +916,9 @@
       "id": "ddl.cross-schema-rename",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -1051,7 +1064,7 @@
       "id": "ddl.objects",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "needs_native_review",
       "implementation": "subset",
       "profiles": [
@@ -1069,7 +1082,7 @@
       ],
       "source_behavior": "View and routine DDL uses Query events under ROW logging. Calls and view writes produce row events. 8.4 also logs routine CREATE IF NOT EXISTS, including an existing-object no-op.",
       "native_behavior": "5.7 and 8.4 support routine ALTER characteristics, parenthesized view queries and multi-view DROP. Native CREATE records resolved definers. Target privileges and query syntax still apply.",
-      "current_behavior": "CREATE/DROP routines, ALTER characteristics, view CREATE/REPLACE/ALTER/DROP and multi-view DROP use journaled original SQL. Shared tests check explicit definers, metadata, following rows, restart and replay. Routine IF NOT EXISTS is translated for 5.7, with existing objects recorded as no-ops. Ordered view and mixed table/view renames retain metadata in the DDL journal. Cross-database view moves follow the native rejection. Partial source failures remain a gap.",
+      "current_behavior": "View and routine lifecycle operations, definers, conditional routine CREATE, view renames and absent-definer behavior have selected tests. Routine bodies remain original SQL for the target to check. Complete body/version/privilege combinations need qualification. Partial source errors are tracked separately in ddl.partial-source-errors.",
       "acceptance": "Check native object metadata, logged session settings, conditional DDL and subsequent row effects.",
       "assertions": [
         "source_outcome",
@@ -1083,7 +1096,8 @@
         "ddl-compat-conditional-routines",
         "ddl-compat-view-renames",
         "ddl-compat-views",
-        "ddl-compat-routines"
+        "ddl-compat-routines",
+        "ddl-compat-absent-definers"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DDLObjects.swift",
@@ -1167,9 +1181,9 @@
       "id": "ddl.check-version-semantics",
       "stage": 3,
       "family": "ddl",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql57-to-mysql84-innodb",
         "mysql57-to-mysql57-myisam",
@@ -1269,7 +1283,7 @@
       "id": "rows.unique-key",
       "stage": 4,
       "family": "rows",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
       "implementation": "subset",
       "profiles": [
@@ -1287,7 +1301,7 @@
       ],
       "source_behavior": "Tables can use a nonnullable unique index without a declared primary key. FULL metadata can report a promoted internal primary key.",
       "native_behavior": "Native row apply first seeks a primary key, then a nonnullable unique key whose columns are present. Other lookup methods remain separate.",
-      "current_behavior": "Select and save a full nonnullable scalar unique index when no primary key exists. Use its values for row matching and recovery. Shared cases cover key changes, ordered DDL, restart and replay. Nullable, prefix, generated and expression identities remain outside this fallback.",
+      "current_behavior": "Eligible full nonnullable base-column UNIQUE indexes provide row identity. Other tables use full-row matching where their base columns permit it. Generated, nullable and prefix indexes are not selected as unique identities; this alone does not reject a table. Native promoted-key metadata for unusual indexes needs qualification.",
       "acceptance": "Use eligible unique keys without ambiguous NULL or prefix comparisons.",
       "assertions": [
         "source_outcome",
@@ -1322,7 +1336,7 @@
       "id": "rows.keyless",
       "stage": 4,
       "family": "rows",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
       "implementation": "subset",
       "profiles": [
@@ -1391,7 +1405,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "One statement on one included table is permitted.",
+      "current_behavior": "The tool rejects groups with more than one row statement or included table. This refusal is confirmed. Native GTID restrictions reject some broader forms; eligibility of other forms still needs native review. Do not classify every refusal as a native restriction.",
       "acceptance": "Classify other native-valid groups before extending the profile.",
       "assertions": [
         "source_outcome",
@@ -1414,7 +1428,7 @@
       "family": "rows",
       "classification": "native_restriction",
       "eligibility": "excluded",
-      "implementation": "missing",
+      "implementation": "not_applicable",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql57-myisam"
@@ -1458,7 +1472,7 @@
       "id": "rows.foreign-keys",
       "stage": 4,
       "family": "rows",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
       "implementation": "subset",
       "profiles": [
@@ -1474,7 +1488,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Native row application restores NO_FOREIGN_KEY_CHECKS_F. InnoDB performs unlogged cascades and permits self-references and cycles subject to its action limits.",
-      "current_behavior": "Self-references, cycles, source check settings, supporting-index additions, FK-column renames and internal database DROP are implemented. Missing-parent relationships and parent recreation are supported. Native InnoDB parent-key rules accept nonunique, composite-prefix and extended indexes. FK names, MySQL 5.7 MATCH actions and native column storage rules are supported. Cross-database drops record surviving relationship schemas. Stored generated FK columns use native action limits. Virtual FK columns remain a native restriction. Selected compound FK/index/column changes use compact, exact index-choice records. Other ALTER combinations still need qualification.",
+      "current_behavior": "Self-references, cycles, per-event checks, missing parents, native parent-key/column rules, supporting indexes and compound DDL are implemented. Parent/child/self column-name swaps retain FK relationships. Filters cannot split a relationship. Remaining relationship, value and failure combinations need qualification.",
       "acceptance": "Preserve native-valid relationships, DDL dependencies, cascades and rollback.",
       "assertions": [
         "source_outcome",
@@ -1493,7 +1507,8 @@
         "ddl-compat-foreign-key-syntax-columns",
         "ddl-compat-foreign-key-cross-database",
         "ddl-compat-foreign-key-generated",
-        "ddl-compat-foreign-key-compound-indexes"
+        "ddl-compat-foreign-key-compound-indexes",
+        "ddl-compat-foreign-key-column-swaps"
       ],
       "code_references": [
         "Sources/ReplicatorApply/ForeignKeys.swift",
@@ -1527,9 +1542,9 @@
       "id": "rows.foreign-key-checks",
       "stage": 4,
       "family": "rows",
-      "classification": "tool_gap",
+      "classification": "untested",
       "eligibility": "eligible",
-      "implementation": "subset",
+      "implementation": "implemented",
       "profiles": [
         "mysql57-to-mysql84-innodb",
         "mysql57-to-mysql57-innodb"
@@ -1543,7 +1558,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Native row application restores NO_FOREIGN_KEY_CHECKS_F. InnoDB performs unlogged cascades and permits self-references and cycles subject to its action limits.",
-      "current_behavior": "Self-references, cycles, per-event foreign_key_checks, missing-parent DDL and parent recreation are supported. Native InnoDB parent-key rules accept nonunique, composite-prefix and extended indexes. Some compound relationship changes remain outside the subset.",
+      "current_behavior": "Per-event foreign_key_checks controls DDL and row apply. Selected self-reference, cycle, missing-parent and parent-recreation cases pass. The complete relationship and failure matrix still needs qualification.",
       "acceptance": "Reproduce recorded source effects without duplicate target cascades.",
       "assertions": [
         "source_outcome",
@@ -1666,7 +1681,7 @@
       "family": "ddl",
       "classification": "safety_policy",
       "eligibility": "excluded",
-      "implementation": "missing",
+      "implementation": "implemented",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -1682,7 +1697,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Event DDL is rejected.",
+      "current_behavior": "Scheduled-event DDL is explicitly rejected to prevent an independent target writer. This policy is implemented and has a rejection test; it is not missing ordinary DDL support.",
       "acceptance": "Keep rejection tests; scheduled writes must not create an independent target writer.",
       "assertions": [
         "source_outcome",
@@ -1970,7 +1985,7 @@
       "family": "ddl",
       "classification": "target_limit",
       "eligibility": "excluded",
-      "implementation": "missing",
+      "implementation": "not_applicable",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql57-myisam",
@@ -2408,6 +2423,236 @@
           "repository": "mysql84",
           "path": "sql/sql_table.cc",
           "symbol": "prepare_key_column"
+        }
+      ]
+    },
+    {
+      "id": "ddl.partial-source-errors",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "tool_gap",
+      "eligibility": "eligible",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required.",
+        "The source actually logs a Query event with a nonzero error after partial changes; check each source version and statement."
+      ],
+      "source_behavior": "A MySQL 5.7 multi-object DROP can change some objects and then return an error. Its logged Query event can retain that nonzero error.",
+      "native_behavior": "Native SQL replication checks the expected source error and statement outcome. A source error does not always mean that no object changed.",
+      "current_behavior": "Query events with a nonzero source error stop apply before target SQL. Partial source DDL results are not reproduced.",
+      "acceptance": "Define and journal object-specific partial results before implementing replay. Do not blindly retry the complete statement.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/DDL.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_rm_table_no_locks"
+        }
+      ]
+    },
+    {
+      "id": "names.case-settings",
+      "stage": 2,
+      "family": "values",
+      "classification": "tool_gap",
+      "eligibility": "needs_native_review",
+      "implementation": "missing",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required.",
+        "Mode 2 and cross-setting variants do not exist in the current harness; default identifies the baseline profile, not evidence for those modes."
+      ],
+      "source_behavior": "Native table-name behavior depends on lower_case_table_names and the filesystem.",
+      "native_behavior": "Mode 2 needs a case-insensitive filesystem. Cross-setting replication needs a separate collision and metadata review.",
+      "current_behavior": "Configuration accepts only matching source/target modes 0 and 1. Mode 2 and cross-setting operation cannot be enabled. This is a specific tool restriction, not only a missing test.",
+      "acceptance": "Define native-eligible mode/profile combinations and test stored names, collisions, DDL, filters, replay and restart before enabling them.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [],
+      "code_references": [
+        "Sources/ReplicatorApply/Configuration.swift",
+        "Sources/ReplicatorCapture/LiveInspection.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.simultaneous-column-renames",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "Original column identities drive swaps and chains. Existing keys and FK peers are mapped once. Selected four-profile live, restart and replay tests pass; full failure combinations remain unqualified.",
+      "acceptance": "Retain exact key/FK and row behavior through applicable compound changes, replay and interrupted checkpoints.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "ddl-compat-column-swaps",
+        "ddl-compat-column-renames",
+        "ddl-compat-foreign-key-column-swaps"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/AlterColumnLayout.swift",
+        "Sources/ReplicatorApply/DDLForeignKeys.swift"
+      ],
+      "native_references": []
+    },
+    {
+      "id": "ddl.partition-column-renames",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
+      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
+      "current_behavior": "A column rename or drop can replace/remove partitioning in the same ALTER. Implicit KEY follows the primary key. Unchanged explicit partition/subpartition dependencies are rejected, as in native MySQL. Selected restart/replay cases pass; full failure combinations remain unqualified.",
+      "acceptance": "Compare final partition metadata and rows, retain both DDL layouts, and qualify interruption/failure outcomes.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "ddl-compat-partition-column-renames",
+        "ddl-compat-partition-rename-syntax"
+      ],
+      "code_references": [
+        "Sources/ReplicatorApply/PartitionColumnDependencies.swift",
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/DDLColumnRename.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_table.cc",
+          "symbol": "check_if_field_used_by_partitioning_func"
+        }
+      ]
+    },
+    {
+      "id": "ddl.executable-comments",
+      "stage": 3,
+      "family": "ddl",
+      "classification": "untested",
+      "eligibility": "eligible",
+      "implementation": "implemented",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "variants": [
+        "default"
+      ],
+      "conditions": [
+        "GTID restrictions apply with GTID and file-position capture.",
+        "ROW logging and a matching target baseline are required."
+      ],
+      "source_behavior": "Active executable comments remain in logged Query SQL. Native source parsing changes inactive version comments into ordinary comments before logging.",
+      "native_behavior": "The target evaluates executable comments against its own exact server version. A lower target can acknowledge a fully inactive statement without a schema change. Five/six-digit parsing follows the target version.",
+      "current_behavior": "Original executable comments are sent to MySQL. A separate byte-preserving parser view predicts metadata under the target version gate. Fully inactive DDL has a durable no-op intent and advances only after target acknowledgement. Existing compatibility rules and object/filter policies apply to active clauses. Incompatible later row events still block.",
+      "acceptance": "Retain native gate behavior, original and target SQL, journal outcomes and exact schema checks across restart and replay. Qualify remaining lexical and failure combinations without claiming complete MySQL grammar support.",
+      "assertions": [
+        "source_outcome",
+        "native_outcome",
+        "target_schema_and_rows",
+        "checkpoint_and_restart",
+        "failure_state"
+      ],
+      "candidate_cases": [
+        "ddl-compat-executable-comments",
+        "ddl-compat-executable-comments-target-gate",
+        "ddl-compat-executable-comments-source-gate"
+      ],
+      "code_references": [
+        "Sources/MySQLSyntax/SQLExecutableComments.swift",
+        "Sources/ReplicatorApply/LoggedDDL.swift",
+        "Sources/ReplicatorApply/ApplyRun.swift",
+        "Sources/ReplicatorApply/DDL.swift",
+        "Sources/ReplicatorCodec/TransactionAssembler.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_lex.cc",
+          "symbol": "MY_LEX_LONG_COMMENT"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/sql_lex.cc",
+          "symbol": "MY_LEX_LONG_COMMENT"
         }
       ]
     }

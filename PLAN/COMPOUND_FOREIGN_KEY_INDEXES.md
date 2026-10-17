@@ -75,6 +75,8 @@ These were selected tests, not the full correctness matrix.
 ## Remaining scope
 
 This increment qualifies the listed compound forms. It does not qualify every
-ALTER grammar combination. Inline primary-key column additions, some column
-conversions and generated-expression dependency changes remain in the complete
-support plan. Native engine restrictions still apply.
+ALTER grammar combination. Branch 55 adds [inline primary-key column additions
+and implicit values](ALTER_COLUMN_KEYS.md). Branch 56 adds selected
+[generated-column dependency changes](GENERATED_COLUMN_DEPENDENCIES.md).
+Other column conversions and expression combinations remain in the complete support plan.
+Native engine restrictions still apply.

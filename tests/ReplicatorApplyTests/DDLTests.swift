@@ -70,6 +70,28 @@ final class DDLTests: XCTestCase {
         XCTAssertEqual(metadata.name,"d");XCTAssertEqual(metadata.before,encoding);XCTAssertEqual(metadata.after,encoding)
         XCTAssertEqual(try helpers.sqlite(db,"SELECT transactions_applied,ddl_applied FROM state"),[["2","2"]])
     }
+    func testInactiveVersionCommentHasDurableIntentAndCheckpoint() throws {
+        #if os(Linux)
+        let helpers=ApplyTests(name:"fixtures",testClosure:{_ in})
+        #else
+        let helpers=ApplyTests()
+        #endif
+        let parent=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:parent,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:parent)}
+        let store=try StateStore(configuration:helpers.config(parent.appendingPathComponent("state").path))
+        let group=try ddlGroup(helpers.groups()[0],sql:"/*!80400 CREATE TABLE skipped(id INT) */")
+        let sql="/*!80400 CREATE TABLE skipped(id INT) */"
+        let plan=PreparedDDL(statement:.versionCommentNoop,before:nil,after:nil,sql:sql,rawSQL:Data(sql.utf8),compatibilityRules:[LoggedDDL.commentRule])
+        let db=store.directory.appendingPathComponent("state.sqlite")
+        try store.begin(group);try store.ddlIntent(plan,event:group.events[1],coordinate:group.start)
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT status,target_sql FROM ddl_intents"),[["PENDING",sql]])
+        try store.complete(group,rowCount:0,ddl:plan)
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT status,target_sql,source_sql FROM ddl_intents JOIN ddl_details USING(gtid)"),[["DONE",sql,sql]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT COUNT(*) FROM schemas"),[["0"]])
+        XCTAssertEqual(try helpers.sqlite(db,"SELECT transactions_applied,ddl_applied FROM state"),[["1","1"]])
+        XCTAssertNoThrow(try parse("ALTER TABLE t ADD n INT /*!80000 INVISIBLE */"))
+    }
     func testUnsupportedDDLNeverFallsThroughToRawSQL() throws {
         for sql in [
             "CREATE TEMPORARY TABLE t(k INT PRIMARY KEY) ENGINE=InnoDB",
@@ -80,8 +102,6 @@ final class DDLTests: XCTestCase {
             "CREATE TABLE t(k INT PRIMARY KEY,v VARCHAR(10)) ENGINE=InnoDB",
             "CREATE TABLE t(k INT PRIMARY KEY,v GEOMETRY) ENGINE=InnoDB",
             "CREATE TABLE t(k INT PRIMARY KEY,INDEX(k)) ENGINE=InnoDB",
-            "ALTER TABLE t ADD n INT NOT NULL",
-            "ALTER TABLE t ADD n INT PRIMARY KEY", "ALTER TABLE t ADD n INT /*!80000 INVISIBLE */",
             "DROP TABLE IF NOT EXISTS t", "CREATE TABLE IF EXISTS t(id INT PRIMARY KEY)", "CREATE TABLE t LIKE x; DROP TABLE x", "CREATE TABLE t LIKE x ENGINE=MyISAM", "DROP TABLE t; DROP DATABASE poc",
             "ALTER TABLE t ADD n INT DEFAULT (1+1)", "DROP TABLE \"t\""
         ] {XCTAssertThrowsError(try parse(sql),sql)}

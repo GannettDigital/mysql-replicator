@@ -3,7 +3,7 @@ import ReplicatorCodec
 
 extension TargetSession {
     func setDDLSession(_ context: QuerySessionContext,source: QueryControl,useDatabase: Bool = true) throws {
-        _ = try query("SET SESSION sql_mode=\(contract.ddlSQLMode(context.sqlMode))")
+        _ = try query("SET SESSION sql_mode=\(contract.ddlSQLMode(context.sqlMode)),auto_increment_increment=\(context.autoIncrementIncrement),auto_increment_offset=\(context.autoIncrementOffset)")
         // A named zone must exist on the target too; no timezone substitution.
         _ = try query("SET SESSION time_zone=?",[.init(string:context.timeZone ?? "+00:00")])
         try require(context.explicitDefaultsForTimestamp != false,"legacy implicit TIMESTAMP defaults are unsupported")

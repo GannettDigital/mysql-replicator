@@ -10,7 +10,12 @@ typealias DDLClientEncoding = SQLClientEncoding
 extension TargetSession {
     /// Read-only conversion uses the target's native charset tables. This runs
     /// at a DDL barrier, not in the row apply loop. Original SQL stays unchanged.
-    func ddlTokens(_ source:QueryControl) throws -> [DDLToken] {
+    func ddlTokens(_ original:QueryControl) throws -> [DDLToken] {
+        let source:QueryControl
+        if original.sql.range(of:Data("/*!".utf8)) != nil {
+            guard let version=serverVersionID else {throw ApplyError("target version is unavailable")}
+            source=try LoggedDDL.parsingView(original,targetVersion:version)
+        } else {source=original}
         let context=try QuerySessionContext(query:source)
         guard let client=CharacterSetRegistry.collation(id:context.clientCharset)?.characterSet,
               let connection=CharacterSetRegistry.collation(id:config.compatibilityPolicy.targetID(context.connectionCollation))?.characterSet else {

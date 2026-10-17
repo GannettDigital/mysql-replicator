@@ -4,6 +4,15 @@ import XCTest
 @testable import MySQLSyntax
 
 final class SQLExpressionTests: XCTestCase {
+  func testIntervalFunctionAndDurationAreDistinct() throws {
+    guard case .call("interval", let args) = try parse("INTERVAL(n,1,5)") else {return XCTFail()}
+    XCTAssertEqual(args.count,3)
+    guard case .interval(_, "day") = try parse("INTERVAL (n+1) DAY") else {return XCTFail()}
+    guard case .interval(_, "day") = try parse("INTERVAL COALESCE(n,1) DAY") else {return XCTFail()}
+    guard case .cast(_, "year") = try parse("CAST(d AS YEAR)") else {return XCTFail()}
+    XCTAssertThrowsError(try parse("INTERVAL(n,1,)"))
+    XCTAssertThrowsError(try parse("INTERVAL (n+1)"))
+  }
   func testFlatAndNestedTreesStayBounded() throws {
     let flat = Array(repeating: "a", count: 200).joined(separator: "+")
     XCTAssertThrowsError(try parse(flat))

@@ -1,6 +1,8 @@
 # Beta.6 support work
 
 Status: work started. This is not a release qualification claim.
+See the [current assessment](COMPLETE_MYSQL_SUPPORT.md#current-beta6-assessment)
+for specific limits and incomplete tests. The entries below retain branch history.
 
 ## Baseline and release separation
 
@@ -1171,3 +1173,142 @@ Record exact index replacements for compound FK/index/column changes. Validate
 the actual target schema without enumerating full-schema combinations. Test native
 outcomes, cascades, restart and offline replay.
 See [scope and verification](COMPOUND_FOREIGN_KEY_INDEXES.md). Keep this branch local.
+
+## Increment 55: ALTER column keys
+
+Branch: `beta/6/55-alter-column-keys`, based on branch 54.
+
+Support inline primary keys and NOT NULL column additions without a default.
+Restore logged AUTO_INCREMENT settings before DDL. Test native values, key changes,
+restart and offline replay on all four profiles.
+See [scope and verification](ALTER_COLUMN_KEYS.md). Keep this branch local.
+
+## Increment 56: generated-column dependencies
+
+Branch: `beta/6/56-generated-column-dependencies`, based on branch 55.
+
+Check all ALTER actions before rejecting generated-column dependency changes.
+Use identifier references and the target-specific 5.7 DROP restriction. Test
+changed expressions, stored/ordinary conversion, later DML, restart and replay.
+See [scope and verification](GENERATED_COLUMN_DEPENDENCIES.md). Keep this branch local.
+
+## Increment 57: functional-index and default dependencies
+
+Branch: `beta/6/57-expression-dependencies`, based on branch 56.
+
+Check functional-index and expression-default dependencies across the complete
+ALTER. Permit explicit removal or replacement in the same statement. Test an
+existing 8.4 target schema, refusals, later DML, saved-state restart and replay.
+See [scope and verification](COLUMN_EXPRESSION_DEPENDENCIES.md). Keep this branch local.
+
+## Increment 58: DDL checklist and future events
+
+Branch: `beta/6/58-ddl-completion-checklist`, based on branch 57.
+
+Use the [specific DDL checklist](DDL_COMPLETION_CHECKLIST.md). Record row-image
+variants, tagged GTIDs and XA as [future work](FUTURE_BINLOG_SUPPORT.md). These
+remain limits on a complete-support claim. Keep this branch local.
+
+## Increment 59: column and index syntax
+
+Branch: `beta/6/59-column-index-syntax`, based on branch 58.
+
+Add inline keys, serial attributes, grouped columns/indexes, physical index
+options and execution options. Test native key names, later rows, restart and
+replay. See [scope and results](COLUMN_INDEX_SYNTAX.md). Keep this branch local.
+
+## Increment 60: compound table renames
+
+Branch: `beta/6/60-compound-table-renames`, based on branch 59.
+
+Apply ALTER renames and column/FK changes as one statement. Journal the final
+name and all affected FK peers. Cross-schema moves, cascades, restart and replay
+pass on all four profiles. Reject the reproduced native 8.4 parent-rename defect
+before target SQL. See [scope and results](COMPOUND_TABLE_RENAMES.md). Keep this branch local.
+
+## Increment 61: grouped constraints and index names
+
+Branch: `beta/6/61-grouped-constraints-index-names`, based on branch 60.
+
+Add grouped FK/CHECK clauses and native unnamed-index boundary rules. See
+[scope and checks](GROUPED_CONSTRAINTS_AND_NAMES.md). Keep this branch local.
+
+## Increment 62: primary-key parts
+
+Branch: `beta/6/62-primary-key-parts`, based on branch 61.
+
+Preserve primary-key prefixes and directions through discovery and saved schemas.
+See [scope and tests](PRIMARY_KEY_PARTS.md). Keep this branch local.
+
+## Increment 63: remaining ALTER forms
+
+Branch: `beta/6/63-alter-forms`, based on branch 62.
+
+Translate RENAME COLUMN with native column definitions. Accept ORDER BY,
+validation clauses and additional physical options. See
+[scope and checks](REMAINING_ALTER_FORMS.md). Keep this branch local.
+
+## Increment 64: 8.4 index and SRID metadata
+
+Branch: `beta/6/64-target84-index-srid`, based on branch 63.
+
+Retain index visibility and spatial reference constraints in discovered and
+saved schemas. See [scope and checks](TARGET84_INDEX_SRID.md). Keep this branch local.
+
+## Increment 65: native DDL audit
+
+Branch: `beta/6/65-ddl-native-audit`, based on branch 64.
+
+Add INTERVAL function parsing, YEAR casts and remaining physical-option forms.
+Extend shared expression and absent-definer tests. Record native restrictions,
+privilege rules and the FULLTEXT reproduction in [the audit](DDL_NATIVE_AUDIT.md).
+Keep this branch local. Full release qualification remains assigned to GitHub.
+
+## Increment 66: simultaneous column names
+
+Branch: `beta/6/66-simultaneous-column-renames`, based on branch 65.
+
+Resolve CHANGE swaps and chains from original column identities. Map keys and
+FK peers once. Test column order, following DML, restart, replay and failed
+checkpoints. See [scope and results](SIMULTANEOUS_COLUMN_RENAMES.md).
+Keep this branch local. Full release qualification remains assigned to GitHub.
+
+## Increment 67: partition-column renames
+
+Branch: `beta/6/67-partition-column-renames`, based on branch 66.
+
+Accept column renames when one ALTER replaces or removes partitioning. Keep
+native dependency checks for unchanged expressions. Add native trailing syntax,
+subpartition and implicit-KEY tests, restart and replay. See
+[scope and results](PARTITION_COLUMN_RENAMES.md). Keep this branch local.
+
+## Increment 68: support status audit
+
+Branch: `beta/6/68-support-status-audit`, based on branch 67.
+
+Separate confirmed tool gaps, native restrictions, target limits, policies and
+incomplete tests. Correct stale feature limits in the support guide, README,
+DDL/DML guides and related plans. Keep historical branch results labelled as
+history. The catalog report counts specific tool gaps and incomplete test groups
+separately. Candidate case IDs do not qualify a requirement. Full release
+qualification remains assigned to GitHub.
+
+Validation: 117 selected lab/catalog unit tests passed. The catalog check accepts
+63 DDL scenarios, 237 registered cases and 56 support requirements. Its report
+separates 10 specific tool-gap groups, 28 incomplete-test groups and 18 native,
+target or policy exclusions. These counts are not feature-support percentages.
+Periphery found no unused code in the completed build index. This increment
+changes reporting and documentation; it does not change apply behavior.
+
+## Increment 69: executable version comments
+
+Branch: `beta/6/69-executable-comments`, based on branch 68.
+
+Retain executable comments in target SQL. Predict schema changes using the exact
+target version. Journal fully inactive statements and await target acknowledgement.
+Capture recognizes comment-wrapped DDL while it keeps transaction controls strict.
+Shared cases cover active comments, source-disabled comments, the lower target's
+version gate, restart and replay. See [the contract and results](EXECUTABLE_COMMENTS.md).
+The catalog moves this requirement from a specific tool gap to implemented work
+with incomplete qualification. The remaining inventory has nine specific tool-gap
+groups; it is not a complete MySQL feature denominator.

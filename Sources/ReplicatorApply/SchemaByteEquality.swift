@@ -7,7 +7,7 @@ extension ApplyIndexPart {
 }
 extension ApplyIndex {
     public static func == (a:Self,b:Self) -> Bool {
-        SQLTextBytes.equal(a.name,b.name) && a.unique == b.unique && a.parts == b.parts && a.type == b.type && SQLTextBytes.equal(a.parser,b.parser) && a.implicitName == b.implicitName
+        SQLTextBytes.equal(a.name,b.name) && a.unique == b.unique && a.parts == b.parts && a.type == b.type && SQLTextBytes.equal(a.parser,b.parser) && (a.visible ?? true) == (b.visible ?? true) && a.implicitName == b.implicitName && a.implicitNameByteLimit == b.implicitNameByteLimit
     }
 }
 extension ApplySubpartition {
@@ -32,7 +32,7 @@ extension ApplyForeignKey {
 }
 extension ApplyTable {
     public static func == (a:Self,b:Self) -> Bool {
-        a.identity == b.identity && a.columns == b.columns && SQLIdentifier.equal(a.primaryKeyColumns,b.primaryKeyColumns)
+        a.identity == b.identity && a.columns == b.columns && SQLIdentifier.equal(a.primaryKeyColumns,b.primaryKeyColumns) && a.effectivePrimaryKeyParts == b.effectivePrimaryKeyParts
             && a.defaultCharacterSet == b.defaultCharacterSet && a.defaultCollation == b.defaultCollation
             && a.rowIdentity == b.rowIdentity && a.secondaryIndexes == b.secondaryIndexes && a.partitions == b.partitions && a.foreignKeys == b.foreignKeys
     }

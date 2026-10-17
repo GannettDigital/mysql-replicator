@@ -35,10 +35,37 @@ and tables. MyISAM writes cannot be rolled back. Neither profile makes a target
 commit atomic with the SQLite checkpoint. Uncertain writes require DBA review;
 InnoDB provides explicit recovery inspection and resolution commands.
 
+## Support status
+
+Use these terms when you read this guide and the support catalog:
+
+| Status | Meaning |
+| --- | --- |
+| Unsupported by this tool (`tool_gap`) | A specific path is refused or not implemented. Native eligibility can still need review. |
+| Incompatible with the target (`target_limit`) | The target version or engine cannot retain the source feature or behavior. |
+| Rejected by native MySQL (`native_restriction`) | Native MySQL rejects the stated form under the stated settings. |
+| Deliberate policy (`safety_policy`) | The tool intentionally excludes the operation, such as installing active target triggers. |
+| Not fully tested (`untested`) | The stated combinations still need qualification. Selected tests can already pass. This label is not evidence of an implementation failure. |
+
+Implementation and qualification are separate. `subset` states a bounded
+implementation scope. It does not identify an additional unsupported SQL form.
+`implemented` does not mean that every profile, value boundary and failure path
+has passed release checks. Candidate test IDs are pointers, not proof of a pass.
+
+The current specific tool restrictions include partial source DDL errors,
+some typed JSON values, MyISAM groups outside one statement/one included table,
+and table-name modes other than matching
+0 or 1. See the source requirements above for unsupported event formats. Expression, conversion,
+partition, unusual row-key and failure combinations also need more qualification.
+Do not call those whole feature families unsupported because their tests are
+incomplete. See the [current work list](../PLAN/COMPLETE_MYSQL_SUPPORT.md) and
+[machine-readable support catalog](../tests/DDLCoverage/support.json).
+
 ## Native restrictions and tool limits
 
-A support gap is a native-valid operation that this tool cannot yet apply within
-its declared profile. Keep these other cases separate:
+A positive-support gap requires a native-valid operation within the declared
+profile. A confirmed tool refusal can still need native eligibility review.
+Keep these other cases separate:
 
 | Case | Native behavior and this tool's scope |
 | --- | --- |
@@ -63,8 +90,8 @@ Table and column names can use Unicode characters in the native system charset.
 Table caches and prepared statement caches keep distinct UTF-8 byte sequences.
 Column and index references use the native case map. Table-name modes 0 and 1
 require matching source and target settings. Mode 1 has selected DDL/DML and
-restart tests on all four profiles. Mode 2 and cross-setting replication remain
-unqualified. See [table-name settings](../PLAN/TABLE_NAME_CASE.md).
+restart tests on all four profiles. Mode 2 and cross-setting replication cannot
+be enabled. They require a separate implementation and qualification. See [table-name settings](../PLAN/TABLE_NAME_CASE.md).
 Query events retain their client charset and original SQL bytes. Selected latin1
 and Shift-JIS DDL cases cover names and text/binary defaults. See the
 [identifier notes](../PLAN/IDENTIFIER_SUPPORT.md) and
@@ -85,10 +112,11 @@ and Shift-JIS DDL cases cover names and text/binary defaults. See the
 | JSON | Ordinary and typed values; partial updates require a full before image. Some legacy opaque types have no exact target SQL constructor; see [JSON support and limits](JSON_SUPPORT.md). |
 | Spatial types | GEOMETRY, POINT, LINESTRING, POLYGON, MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION; exact SRID and WKB bytes, with [DDL and index limits](../PLAN/SPATIAL_SUPPORT.md) |
 
-NULL is supported where the column permits it. Primary keys need 1–16 full,
-nonnullable, nongenerated scalar columns. TEXT, BLOB, JSON, and spatial columns
-cannot serve as primary keys in this applier. Types outside this table, including
-newer-server-only types, are rejected. Numeric aliases and DDL forms have further
+NULL is supported where the column permits it. Primary keys can have 1–16
+nonnullable base columns of supported types. TEXT/BLOB keys require prefixes.
+Row lookups use the full source values, not only the indexed prefixes. Generated,
+JSON and spatial columns cannot serve as primary keys in this applier. Types
+outside this table, including newer-server-only types, are rejected. Numeric aliases and DDL forms have further
 rules in the [DML guide](../PLAN/DML_APPLY.md).
 
 CHAR, VARCHAR and TEXT accept the 40 native 5.7 text encodings and their
@@ -123,11 +151,18 @@ databases, tables, indexes, generated columns, partitions, views, and routines.
 It is a subset of MySQL SQL. Important exclusions and policies are:
 
 - No engine rewriting. An explicit engine must match the target profile.
+- Executable version comments are retained in target SQL. MySQL evaluates them
+  against the target version. Schema prediction uses the same version gate.
+  Entirely inactive statements are journaled and acknowledged before checkpoint
+  advancement. If an ignored clause causes incompatible later row events, apply
+  blocks under the existing schema checks. See [comment support and tests](../PLAN/EXECUTABLE_COMMENTS.md).
 - FULLTEXT indexes support CREATE, ADD, DROP and RENAME with parser metadata.
   Source and target need compatible parser plugins and search settings. See
   [FULLTEXT scope and tests](../PLAN/FULLTEXT_SUPPORT.md).
   Functional indexes require an 8.4 target. MySQL 5.7 ignores DESC index
-  direction; 8.4 retains it. Invisible indexes are not supported.
+  direction; 8.4 retains it. Index visibility is retained on 8.4 targets.
+  A 5.7 target rejects active visibility attributes because it lacks the feature.
+  It ignores attributes inside executable comments whose version exceeds the target version.
   SPATIAL indexes require one full, nonnullable spatial column.
 - Cross-schema RENAME and ordered multi-table RENAME are supported. The table
   keeps its encoding. Multi-table DROP records every affected schema before
@@ -145,8 +180,13 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
   implicit KEY columns are supported. See [partition scope and tests](../PLAN/PARTITION_SUPPORT.md).
   KEY ALGORITHM=1 and 2 are tracked in the saved schema. REBUILD, ANALYZE,
   OPTIMIZE and REPAIR PARTITION use the normal DDL journal. CHECK PARTITION
-  does not enter the source binlog. Some partition expressions and tablespace
-  operations remain outside the current implementation.
+  does not enter the source binlog. The complete partition-expression and bound
+  matrix is not qualified. File/tablespace administration is outside application
+  schema replication scope.
+  Column renames can replace or remove partitioning in the same ALTER. New
+  partition expressions use final column names. Unchanged expressions still
+  block dependent renames. Implicit KEY() follows the primary key. See
+  [partition-column renames](../PLAN/PARTITION_COLUMN_RENAMES.md).
   Selected constant partition bounds use native evaluation. COLUMNS bounds
   support byte literals and charset introducers. Binary bounds retain exact
   bytes in saved state. Native type and conversion checks remain active.
@@ -160,15 +200,36 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
   selected physical/statistics options, and same-engine rebuilds are parsed.
   The original SQL is saved and sent to the target. Comments and physical
   options are not part of the saved row schema. The target checks engine limits.
+  ALTER TABLE RENAME also supports compound column/index/FK changes and
+  cross-schema moves. The original ALTER is executed once. See
+  [compound rename behavior](../PLAN/COMPOUND_TABLE_RENAMES.md).
+  On an 8.4 target, do not combine a table rename, a referenced parent-column rename and
+  ADD COLUMN in one ALTER. Native 8.4.8 can fail or lose cascade behavior.
+  The applier stops before this statement. Put ADD COLUMN in a separate source
+  ALTER. This restriction does not apply to 5.7 targets.
+  ADD, MODIFY and CHANGE support inline primary and UNIQUE keys. SERIAL and
+  SERIAL DEFAULT VALUE retain native auto-increment and unique-key behavior.
+  Grouped ADD supports column and index definitions. Index COMMENT, KEY_BLOCK_SIZE,
+  USING and ALGORITHM/LOCK options use native target behavior. COLUMN_FORMAT and
+  STORAGE attributes remain in the original SQL. See [column and index syntax](../PLAN/COLUMN_INDEX_SYNTAX.md).
+  ADD NOT NULL without a
+  default uses native rebuild values. Logged AUTO_INCREMENT increment and offset
+  are restored before DDL. New IDs on populated tables can differ by engine
+  row order or ALTER algorithm. See [column keys and native limits](../PLAN/ALTER_COLUMN_KEYS.md).
   MODIFY and CHANGE permit cross-family conversions. ALTER TABLE can change
   its default charset or convert text columns with CONVERT TO CHARACTER SET.
   Native field probes determine converted types, labels and defaults before
   application SQL is issued. Binary columns retain their bytes and types.
   The target converts the data under the recorded SQL mode. Version-specific conversion differences
-  still need qualification. Arbitrary table options remain unsupported.
-- Generated columns use a limited deterministic expression grammar, including
+  still need qualification. The parser accepts the documented table options;
+  other forms need a specific syntax audit before we classify them.
+- Generated columns use typed expression parsing, including
   JSON extraction. Indexes on VIRTUAL generated columns require InnoDB. Indexes
-  on STORED generated columns also work on MyISAM. See [JSON DDL](JSON_SUPPORT.md#json-indexes-and-defaults).
+  on STORED generated columns also work on MyISAM. CHANGE can rename a dependency
+  when the same ALTER replaces or removes its generated expressions. MySQL 5.7
+  requires a separate ALTER before dropping a referenced base column. See
+  [dependency rules](../PLAN/GENERATED_COLUMN_DEPENDENCIES.md) and
+  [JSON DDL](JSON_SUPPORT.md#json-indexes-and-defaults).
 - Trigger DDL is skipped by default or rejected by policy. Target tables with
   triggers are rejected. Source trigger effects arrive as row changes and remain
   subject to the profile's transaction limits.
@@ -186,13 +247,19 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
 - Temporary tables are not copied. The supported logged DROP TEMPORARY TABLE
   cleanup is skipped; CREATE TEMPORARY TABLE is not a supported apply operation.
 - MySQL 5.7 targets reject expression defaults and functional indexes. MySQL 8.4
-  targets accept functional indexes and JSON expression defaults, including
-  discovery of existing tables. Spatial defaults are not qualified. Spatial
+  targets accept functional indexes and expression defaults, including JSON and
+  integer defaults on existing tables. Compound ALTER can remove or replace dependent
+  indexes and defaults while it renames or drops columns. Unchanged dependencies
+  stop apply before target SQL. See [the tested dependency forms](../PLAN/COLUMN_EXPRESSION_DEPENDENCIES.md).
+  Spatial defaults are not qualified. Spatial
   BTREE byte-prefix indexes are supported on 5.7 targets; MySQL 8.4 rejects
   them with native error 1089. See [the version limits](../PLAN/SPATIAL_PREFIX_INDEXES.md).
-  MySQL 8.4 column SRID attributes remain unsupported. Stored
+  MySQL 8.4 targets retain column SRID constraints and index visibility in saved
+  schemas. MySQL 5.7 targets reject these attributes with a version-specific
+  error. See [target metadata tests](../PLAN/TARGET84_INDEX_SRID.md). Stored
   spatial bytes can have different function semantics across server versions.
-- InnoDB foreign keys use the [documented subset](../PLAN/MYSQL57_FOREIGN_KEYS.md).
+- InnoDB foreign keys use the [documented rules and tests](../PLAN/MYSQL57_FOREIGN_KEYS.md).
+  Selected tests pass; the full relationship and failure matrix is not qualified.
   Self-references, cycles and source `foreign_key_checks` settings are supported.
   Nonunique parent indexes, leading columns of composite keys, and clustered-key
   extensions are supported. MySQL 8.4 sessions use native replica-thread settings.
@@ -240,3 +307,12 @@ or the selected database default. When neither is in the Query event, source and
 target `@@GLOBAL.collation_database` values must match. This value is separate
 from `collation_server`. The binlog does not record an unmodified initial session
 value. See [the native behavior and tests](../PLAN/ALTER_CHARSET.md).
+
+Primary-key prefix lengths and sort directions are retained in saved schemas.
+TEXT/BLOB primary keys require a prefix. Row lookups use the complete source key
+values. MySQL 5.7 treats DESC as ascending. See [primary-key details](../PLAN/PRIMARY_KEY_PARTS.md).
+
+Compound ALTER statements can swap column names or rename a chain of columns.
+Existing keys and FK relationships follow the original columns. New constraints
+use the final names. Expression and target-engine restrictions still apply.
+See [column rename behavior and tests](../PLAN/SIMULTANEOUS_COLUMN_RENAMES.md).

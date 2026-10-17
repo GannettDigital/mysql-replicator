@@ -91,6 +91,9 @@ public enum SharedCorrectness {
                     try collationWorkflows()
                     try jsonYearCompatibility()
                     try jsonTarget84Schema()
+                    try target84IndexSpatialMetadata()
+                    try expressionTarget84Dependencies()
+                    try rejectUnsafeTarget84Rename()
                     try jsonTarget57Limits()
                     try checkTarget57Limits()
                     try filters()
@@ -441,6 +444,23 @@ public enum SharedCorrectness {
                     try require((result["transactionsApplied"] as? Int ?? 0)-(before["transactionsApplied"] as? Int ?? 0) == count && result["appliedGTIDSet"] as? String == end.gtids,"compatibility checkpoint differs")
                     let saved=try snapshot(test.test.id)
                     try require(state(saved,"SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0","unfinished compatibility DDL")
+                    if test.test.id.hasPrefix("ddl-compat-executable-comments") {
+                        if test.test.id != "ddl-compat-executable-comments-source-gate" {
+                            try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/*!%ALTER%' AND source_sql=target_sql AND context_json LIKE '%target-version-executable-comments%' AND status='DONE'") != "0","executable comments were not preserved in the completed DDL journal")
+                        } else {
+                            try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/* 80000%' AND source_sql=target_sql AND status='DONE'") == "1","source-disabled comment changed in transit")
+                        }
+                        if test.test.id == "ddl-compat-executable-comments-target-gate" {
+                            for role in LabProfile.Role.allCases {
+                                let expected=role == .target ? "" : "source-only"
+                                try require(f.sql(role,"SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'") == expected,"native target version gate differs")
+                            }
+                        }
+                        try replayDDLWorkflow(test.test.id,stopAfter:2,from:begin,to:end)
+                        if test.test.id == "ddl-compat-executable-comments-target-gate" {
+                            try require(f.sql(.target,"SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'") == "","replay enabled an inactive target comment")
+                        }
+                    }
                     if test.test.id == "ddl-compat-ignored-checks" {
                         try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE source_sql LIKE 'ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check%' AND target_sql='' AND before_schema_id=after_schema_id AND status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='source-before-8.0.16-ignores-checks'") == "1","ignored CHECK lost its durable source/rule record or changed the schema version")
                         try replayDDLWorkflow("checks",stopAfter:3,from:begin,to:end)
@@ -487,6 +507,36 @@ public enum SharedCorrectness {
                             }
                         }
                         try replayDDLWorkflow("foreign-key-generated",stopAfter:6,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-alter-table-rename" {
+                        try replayDDLWorkflow("alter-table-rename",stopAfter:6,from:begin,to:end)
+                    }
+                    if ["ddl-compat-column-swaps","ddl-compat-foreign-key-column-swaps","ddl-compat-column-renames","ddl-compat-alter-options","ddl-compat-generated-expressions"].contains(test.test.id) {
+                        try replayDDLWorkflow(test.test.id,stopAfter:3,from:begin,to:end)
+                    }
+                    if ["ddl-compat-partition-column-renames","ddl-compat-partition-rename-syntax"].contains(test.test.id) {
+                        try replayDDLWorkflow(test.test.id,stopAfter:5,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-absent-definers" {
+                        try verifyAbsentDefinerErrors()
+                        try replayDDLWorkflow("absent-definers",stopAfter:4,from:begin,to:end)
+                        try verifyAbsentDefinerErrors()
+                    }
+                    if test.test.id == "ddl-compat-primary-key-parts" {
+                        try replayDDLWorkflow("primary-key-parts",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-grouped-constraints" {
+                        try replayDDLWorkflow("grouped-constraints",stopAfter:6,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-column-index-syntax" {
+                        try replayDDLWorkflow("column-index-syntax",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-generated-dependencies" {
+                        try replayDDLWorkflow("generated-dependencies",stopAfter:4,from:begin,to:end)
+                    }
+                    if test.test.id == "ddl-compat-alter-column-keys" {
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE target_sql LIKE 'ALTER TABLE ddlcompat.t ADD aid%' AND json_extract(context_json,'$.autoIncrementIncrement')=3 AND json_extract(context_json,'$.autoIncrementOffset')=2 AND status='DONE'") == "1","ALTER lost its logged AUTO_INCREMENT settings")
+                        try replayDDLWorkflow("alter-column-keys",stopAfter:4,from:begin,to:end)
                     }
                     if test.test.id == "ddl-compat-foreign-key-compound-indexes" {
                         try require(state(saved,"SELECT COUNT(*) FROM ddl_details,json_each(transitions_json) WHERE json_array_length(value,'$.supportingIndexReplacements')>0") != "0","compound FK index choices were not journaled")

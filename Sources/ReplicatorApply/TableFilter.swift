@@ -59,7 +59,7 @@ struct TableFilter {
             try require(decisions.allSatisfy { $0 } || decisions.allSatisfy { !$0 },"DDL crosses included and excluded tables; explicit resolution required")
             return decisions.allSatisfy { $0 }
         }
-        guard !patterns.isEmpty else { return false }
+        guard !patterns.isEmpty, !objects.tokens.isEmpty else { return false }
         if objects.take("DROP"), objects.take("DATABASE") || objects.take("SCHEMA") {
             if objects.take("IF") { try objects.expect("EXISTS") }
             let database = try objects.identifier()
@@ -82,7 +82,7 @@ struct TableFilter {
 
 /// Scope-only lexer. It does not qualify SQL for target execution: included
 /// queries still go through DDLStatement. Excluded column types/engines need no
-/// schema model. Unknown SQL, executable comments and ambiguous syntax fail closed.
+/// schema model. Unknown SQL and ambiguous syntax fail closed. Tokens use target version gates.
 private struct FilterSQL {
     struct Token { let text: String; let quoted: Bool }
     struct Target { let database: String; let table: String? }

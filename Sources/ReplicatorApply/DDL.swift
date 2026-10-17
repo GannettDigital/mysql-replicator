@@ -25,6 +25,7 @@ struct PreparedDatabaseDDL: Codable {
     let serverCollation:String?
 }
 enum DDLStatement: Equatable {
+    case versionCommentNoop
     case createDatabase(CreateDatabase)
     case alterDatabase(CreateDatabase)
     case dropDatabase(String,ifExists:Bool)
@@ -45,26 +46,28 @@ enum DDLStatement: Equatable {
     case truncate(TableName)
     var name: TableName? {
         switch self {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany,.dropMany: return nil
+        case .versionCommentNoop,.createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany,.dropMany: return nil
         case .alter(let t,_): return t
         case .create(let t,_),.createIfAbsent(let t,_): return TableName(database:t.database,table:t.table)
         case .modify(let t,_,_),.indexes(let t,_),.add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
     }
-    static func parse(_ query: QueryControl, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0) throws -> DDLStatement {
+    static func parse(_ query: QueryControl, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0,targetVersion:Int? = nil) throws -> DDLStatement {
         try require(query.errorCode == 0,"DDL source query reported an error: source error code \(query.errorCode); partial source DDL is not supported")
-        try DDLPolicy.rejectProhibited(query)
-        var parser=try DDLParser(query:query,tokens:tokens)
+        let expanded=try LoggedDDL.parsingView(query,targetVersion:targetVersion ?? (profile.targetContract.versionPrefix == "5.7." ? 50700 : 80400))
+        try DDLPolicy.rejectProhibited(expanded)
+        var parser=try DDLParser(query:expanded,tokens:tokens)
+        if parser.tokens.isEmpty && expanded.sql != query.sql {return .versionCommentNoop}
         parser.nativeRules=NativeReplicationRules(profile:profile)
         parser.engine = profile.targetContract.engine
         parser.targetVersion = profile.targetContract.versionPrefix
         parser.lowerCaseTableNames=lowerCaseTableNames
         return try parser.parse()
     }
-    static func from(_ group: CompleteTransaction, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0) throws -> DDLStatement {
+    static func from(_ group: CompleteTransaction, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0,targetVersion:Int? = nil) throws -> DDLStatement {
         try require(group.outcome == .statement && group.gtid != nil && !group.anonymous && group.events.count == 2,"DDL requires a standalone named-GTID query group")
         guard case .gtid = group.events[0].control,case .query(let query)=group.events[1].control else {throw ApplyError("invalid DDL event group")}
-        return try parse(query,profile:profile,tokens:tokens,lowerCaseTableNames:lowerCaseTableNames)
+        return try parse(query,profile:profile,tokens:tokens,lowerCaseTableNames:lowerCaseTableNames,targetVersion:targetVersion)
     }
 }
 struct PreparedDDL {
@@ -80,7 +83,7 @@ struct PreparedDDL {
     var supportingIndexReplacements: [ForeignKeyIndexReplacement]? = nil
     var removableSupportingIndexes: [ApplyIndex]? = nil
     var preservesSchema: Bool {
-        if statement.ignoredChecksOnly { return true }
+        if statement.ignoredChecksOnly || statement == .versionCommentNoop { return true }
         switch statement {
         case .createIfAbsent, .createLike(_,_,true): return before != nil && before == after
         case .dropIfPresent: return before == nil && after == nil
@@ -160,6 +163,14 @@ extension TargetSession {
         try result.validate();return result
     }
     func prepareDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64? = nil, tokens:[DDLToken]? = nil) throws -> PreparedDDL {
+        if statement == .versionCommentNoop {
+            var plan=try prepareTargetDDL(statement,query:source,timestamp:timestamp)
+            plan.rawSQL=source.sql
+            return plan
+        }
+        if case .alter(_,let actions)=statement,actions.contains(where:{if case .renameColumn=$0 {return true};return false}) {
+            return try prepareColumnRenames(statement,source:source,timestamp:timestamp,tokens:tokens)
+        }
         let policy = config.compatibilityPolicy
         let hasEncodingDefault: Bool
         if case .alter(_,let actions)=statement {
@@ -198,6 +209,11 @@ extension TargetSession {
         plan.sql = String(decoding:plan.rawSQL!,as:UTF8.self)
         return plan
     }
+    func checkedDDLSchema(_ name:TableName) throws -> ApplyTable {
+        let current=try readSchema(database:name.database,name:name.table)
+        if let cached=discovered[name.identity] {try require(current==cached,"target schema drift before DDL")}
+        return current
+    }
     private func prepareTargetDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64?) throws -> PreparedDDL {
         try unlock()
         try invalidateStatements()
@@ -209,6 +225,10 @@ extension TargetSession {
         // DDL stays a drained, journaled barrier even for stored objects.
         try require(CharacterSetRegistry.collation(id:context.clientCharset) != nil,"unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
         if let timestamp { _ = try query("SET SESSION timestamp=\(timestamp).\(String(format:"%06u",context.microseconds))") }
+        if statement == .versionCommentNoop {
+            try setDDLSession(context,source:source,useDatabase:false)
+            return PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self))
+        }
         switch statement {
         case .createDatabase(let definition),.alterDatabase(let definition):
             return try prepareDatabaseDDL(statement,definition:definition,source:source,context:context)
@@ -228,36 +248,35 @@ extension TargetSession {
         // Read the local LIKE template even when IF NOT EXISTS keeps the
         // destination. MySQL opens the template before testing the destination.
         var template:ApplyTable?
-        func checkedSchema(_ name:TableName) throws -> ApplyTable {
-            let current=try readSchema(database:name.database,name:name.table)
-            if let cached=discovered[name.identity] {try require(current==cached,"target schema drift before DDL")}
-            return current
-        }
-        if case .createLike(_,let source,_)=statement {template=try checkedSchema(source)}
+        if case .createLike(_,let source,_)=statement {template=try checkedDDLSchema(source)}
         let exists=try tableExists(name)
         let before:ApplyTable?
         switch statement {
         case .create,.createLike(_,_,false):
             try require(!exists,"DDL CREATE target already exists");before=nil
         case .createIfAbsent,.createLike(_,_,true),.dropIfPresent:
-            if exists {before=try checkedSchema(name)}
+            if exists {before=try checkedDDLSchema(name)}
             else {
                 try require(discovered[name.identity]==nil,"target schema disappeared before DDL")
                 before=nil
             }
-        default: before=try checkedSchema(name)
+        default: before=try checkedDDLSchema(name)
+        }
+        if let destination=statement.alterRenameDestination,destination != name {
+            try require(!(try tableExists(destination)),"DDL RENAME destination exists: \(destination.database).\(destination.table)")
+            try require(discovered[destination.identity] == nil,"cached RENAME destination disappeared")
         }
         var after:ApplyTable?
         var additional: [SchemaTransition] = []
         switch statement {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object,.rename,.renameMany,.dropMany: throw ApplyError("non-table DDL reached table prediction")
+        case .versionCommentNoop,.createDatabase,.alterDatabase,.dropDatabase,.object,.rename,.renameMany,.dropMany: throw ApplyError("non-table DDL reached table prediction")
         case .alter(_,let actions):
             after=try altering(before!,actions:actions,context:context)
             for action in actions {
                 if case .partition(.exchange(_,let other))=action {
                     try require(actions.count == 1 && other != name,"EXCHANGE must be a standalone table operation")
-                    let exchanged=try checkedSchema(other)
-                    try require(exchanged.partitions.isEmpty && exchanged.columns == before!.columns && exchanged.primaryKeyColumns == before!.primaryKeyColumns && exchanged.secondaryIndexes == before!.secondaryIndexes && exchanged.defaultCollation == before!.defaultCollation,"EXCHANGE table schema differs")
+                    let exchanged=try checkedDDLSchema(other)
+                    try require(exchanged.partitions.isEmpty && exchanged.columns == before!.columns && exchanged.effectivePrimaryKeyParts == before!.effectivePrimaryKeyParts && exchanged.secondaryIndexes == before!.secondaryIndexes && exchanged.defaultCollation == before!.defaultCollation,"EXCHANGE table schema differs")
                     additional.append(SchemaTransition(before:exchanged,after:exchanged))
                 }
             }
@@ -271,12 +290,12 @@ extension TargetSession {
             }
             let parent=try databaseEncoding(name.database)
             let encoding=try resolveEncoding(charset:table.defaultCharacterSet,collation:table.defaultCollation,parent:parent,context:context)
-            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context,database:table.database)},primaryKeyColumns:table.primaryKeyColumns,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation,secondaryIndexes:table.secondaryIndexes,partitions:table.partitions,foreignKeys:table.foreignKeys)
+            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context,database:table.database)},primaryKeyColumns:table.primaryKeyColumns,primaryKeyParts:table.primaryKeyParts,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation,secondaryIndexes:table.secondaryIndexes,partitions:table.partitions,foreignKeys:table.foreignKeys)
         case .createLike:
             if let before {after=before}
             else {
                 let template=template!
-                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKeyColumns:template.primaryKeyColumns,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation,secondaryIndexes:template.secondaryIndexes,partitions:template.partitions)
+                after=ApplyTable(database:name.database,table:name.table,columns:template.columns,primaryKeyColumns:template.primaryKeyColumns,primaryKeyParts:template.primaryKeyParts,defaultCharacterSet:template.defaultCharacterSet,defaultCollation:template.defaultCollation,secondaryIndexes:template.secondaryIndexes,partitions:template.partitions)
             }
         case .add(_,let column,let placement):
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
@@ -311,7 +330,8 @@ extension TargetSession {
         let sql=String(decoding:source.sql,as:UTF8.self)
         let plan=try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:before,after:after,sql:sql,additional:additional),foreignKeyChecks:context.foreignKeyChecks)
         try setDDLSession(context,source:source)
-        return plan
+        try plan.validateNativeAlterRename(profile:config.replicationProfile)
+        return try plan.applyingAlterRename()
     }
     func prepareDatabaseDDL(_ statement:DDLStatement,definition:CreateDatabase,source:QueryControl,context:QuerySessionContext) throws -> PreparedDDL {
         let exists=try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:definition.name)]) != "0"
@@ -341,6 +361,11 @@ extension TargetSession {
         try unlock()
         try invalidateStatements()
         try writerExclusion()
+        if plan.statement == .versionCommentNoop {
+            _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
+            try resetDMLSession()
+            return
+        }
         if let database=plan.database {
             guard let previous=try scalar("SELECT @@SESSION.collation_server AS v") else {throw ApplyError("missing target server collation")}
             if let collation=database.serverCollation {_ = try query("SET SESSION collation_server=?",[.init(string:collation)])}

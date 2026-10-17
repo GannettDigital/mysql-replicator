@@ -14,6 +14,8 @@ struct NativeReplicationRules {
     var foreignKeySessionSQL: String? {
         targetVersion / 100 == 804 ? "SET SESSION restrict_fk_on_non_standard_key=OFF" : nil
     }
+    /// 5.7 tests original generated dependencies even when this ALTER removes them.
+    var dropChecksOriginalGeneratedDependencies: Bool { targetVersion / 100 == 507 }
     enum CheckConstraints: Equatable { case discard, preserve, targetUnsupported }
     static let checkConstraintsIntroduced: UInt32 = 80016
     static let undefinedServerVersion: UInt32 = 999999
@@ -26,6 +28,15 @@ struct NativeReplicationRules {
     var foreignKeyMatchIgnoresActions: Bool { sourceVersion / 100 == 507 }
     /// InnoDB enforces both actions immediately. The metadata spelling differs.
     var foreignKeyDefaultAction: String { targetVersion / 100 == 507 ? "RESTRICT" : "NO ACTION" }
+    /// 8.4.8 can fail this combined ALTER or retain metadata while losing
+    /// FK cascades with an explicit INPLACE algorithm. Do not rewrite it.
+    var unsafeFKRenameWithAddedColumn: Bool { targetVersion / 100 == 804 }
+    /// 5.7 information_schema can read BTREE direction from an unopened .frm.
+    /// All 5.7 BTREE parts are ascending, including accepted DESC syntax.
+    func indexDirection(_ raw:String?,type:String) -> String? {
+        if raw == nil && type == "BTREE" && targetVersion / 100 == 507 {return "A"}
+        return raw
+    }
     let sourceVersion: UInt32
     let targetVersion: UInt32
 

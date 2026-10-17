@@ -4,7 +4,20 @@ extension ForeignKeyGraph {
     /// MySQL can remove an old generated child index when a new BTREE covers
     /// its complete column prefix. information_schema omits the generated flag.
     /// Journal removable definitions, not every possible subset of indexes.
-    static func removableIndexes(before:ApplyTable,after:ApplyTable,actions:[AlterAction]) -> [ApplyIndex] {
+    static func removableIndexes(before:ApplyTable,after:ApplyTable,actions:[AlterAction]) throws -> [ApplyIndex] {
+        let names=try ColumnNameChanges(actions)
+        var before=before
+        // Compare old index identities in the final column namespace.
+        before.secondaryIndexes=before.secondaryIndexes.map { index in
+            let parts=index.parts.map { part -> ApplyIndexPart in
+                .init(column:part.column.map(names.name),prefix:part.prefix,direction:part.direction,expression:part.expression)
+            }
+            return .init(name:index.name,unique:index.unique,parts:parts,type:index.type,parser:index.parser,visible:index.visible)
+        }
+        before=before.replacing(primaryKey:before.primaryKeyColumns.map(names.name),primaryKeyParts:before.primaryKeyParts.map { parts in
+            parts.map { .init(column:$0.column.map(names.name),prefix:$0.prefix,direction:$0.direction,expression:$0.expression) }
+        })
+        before.foreignKeys=before.foreignKeys.map{$0.renamingColumns(in:before.identity,using:names)}
         let protected = actions.compactMap { action -> String? in
             if case .indexes(.rename(let old,_)) = action { return old }; return nil
         }
@@ -22,7 +35,7 @@ extension ForeignKeyGraph {
                   (before.foreignKeys+after.foreignKeys).contains(where: { $0.child == before.identity && covers(old.parts,$0.columns) }) else { return false }
             let columns = old.parts.compactMap(\.column)
             return added.contains { $0.type == "BTREE" && covers($0.parts,columns) }
-                || (before.primaryKeyColumns != after.primaryKeyColumns && SQLIdentifier.equal(Array(after.primaryKeyColumns.prefix(columns.count)),columns))
+                || (before.effectivePrimaryKeyParts != after.effectivePrimaryKeyParts && after.primaryKeyCovers(columns))
         }
     }
 

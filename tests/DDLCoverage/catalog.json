@@ -9696,6 +9696,16 @@
     },
     {
       "suite": "ddl-suite",
+      "case_id": "ddl-compat-generated-dependencies",
+      "reason": "Compound generated dependency changes, stored/base conversions, following DML, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-column-keys",
+      "reason": "Inline primary keys, AUTO_INCREMENT, implicit rebuild values, following DML, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
       "case_id": "ddl-compat-foreign-key-compound-indexes",
       "reason": "Compound FK/index/column changes, compact replacement journal, actual schema persistence, restart and replay."
     },
@@ -9713,6 +9723,76 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-foreign-key-ddl",
       "reason": "Supporting-index replacement, FK-column renames, internal database DROP, durable schema transitions and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-column-index-syntax",
+      "reason": "Inline keys, grouped columns, native key names, index and execution options, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-table-rename",
+      "reason": "Standalone and compound ALTER renames, changed FK peers, cross-schema moves, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-grouped-constraints",
+      "reason": "Grouped FK and ignored CHECK clauses, reserved index names, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-primary-key-parts",
+      "reason": "Primary-key prefixes, full-value row lookups, ALTER, CREATE LIKE, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-column-renames",
+      "reason": "Remaining ALTER syntax, preserved metadata, subsequent rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-options",
+      "reason": "Remaining ALTER syntax, preserved metadata, subsequent rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-absent-definers",
+      "reason": "Absent definer metadata, invoker execution, native error 1449, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-column-swaps",
+      "reason": "Simultaneous column names, original key identities, placement, generated expressions, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-column-swaps",
+      "reason": "Parent, child and self FK swaps, new constraints, cascades, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-column-renames",
+      "reason": "Column rename with replacement/removal of partitioning, following DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-rename-syntax",
+      "reason": "Column rename with replacement/removal of partitioning, following DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-executable-comments",
+      "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-executable-comments-target-gate",
+      "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-executable-comments-source-gate",
+      "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
     }
   ]
 }

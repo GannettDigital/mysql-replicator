@@ -17,6 +17,8 @@ pub struct QueryContext {
     pub explicit_defaults_timestamp: u32,
     pub time_zone_length: u32,
     pub time_zone: [u8; 64],
+    pub auto_increment_increment: u32,
+    pub auto_increment_offset: u32,
 }
 impl Default for QueryContext {
     fn default() -> Self { unsafe { std::mem::zeroed() } }
@@ -58,7 +60,11 @@ fn decode(bytes: &[u8]) -> Checked<QueryContext> {
             StatusVarVal::Flags2(v) => {out.flags2=v.0;(0,5)},
             StatusVarVal::SqlMode(v) => {out.sql_mode=v.0;(1,9)},
             StatusVarVal::Catalog(v) => (2,1+v.len()),
-            StatusVarVal::AutoIncrement {..} => (3,5),
+            StatusVarVal::AutoIncrement {increment,offset} => {
+                ensure(increment != 0 && offset != 0,MALFORMED,"invalid auto increment context")?;
+                out.auto_increment_increment=increment as u32;
+                out.auto_increment_offset=offset as u32;(3,5)
+            },
             StatusVarVal::Charset {charset_client,collation_connection,collation_server} => {
                 out.charset_client=charset_client as u32;out.collation_connection=collation_connection as u32;
                 out.collation_server=collation_server as u32;(4,7)
@@ -104,6 +110,18 @@ pub unsafe extern "C" fn rc_query_context_decode(bytes:*const u8,length:u64,out:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auto_increment_context_preserves_values_and_rejects_bad_framing() {
+        let context=decode(&[3,3,0,2,0]).unwrap();
+        assert_eq!(context.auto_increment_increment,3);
+        assert_eq!(context.auto_increment_offset,2);
+        assert_eq!(context.present,1<<3);
+        let maximum=decode(&[3,255,255,255,255]).unwrap();
+        assert_eq!(maximum.auto_increment_increment,65535);
+        for data in [&[3,0,0,1,0][..],&[3,1,0,0,0],&[3,3,0,2],&[3,3,0,2,0,3,1,0,1,0]] {
+            assert!(decode(data).is_err());
+        }
+    }
     #[test]
     fn updated_databases_skip_each_terminator_and_preserve_following_fields() {
         let data=b"\x0c\x02rejected\0mysql\0\x10\x01";

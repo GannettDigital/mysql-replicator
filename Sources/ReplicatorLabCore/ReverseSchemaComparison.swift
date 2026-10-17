@@ -59,7 +59,8 @@ enum ReverseSchemaComparison {
             if mysql84 {
                 let known=[
                     "(`n` is null)":"isnull(`n`)",
-                    "trim(both _utf8mb4\\'x\\' from `v`)":"trim(both 'x' from `v`)"
+                    "trim(both _utf8mb4\\'x\\' from `v`)":"trim(both 'x' from `v`)",
+                    "_utf8mb4\\'`a`\\'":"'`a`'"
                 ]
                 fields[9]=known[fields[9]] ?? fields[9]
             }

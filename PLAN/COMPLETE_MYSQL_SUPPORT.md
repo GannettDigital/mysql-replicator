@@ -35,83 +35,82 @@ scope. SELECT workloads and stored routine calls are not reconstructed from row
 binlogs. Their recorded row effects are in scope. Automatic repair of uncertain
 writes and new target engines are separate projects.
 
-## Beta.6 assessment after the syntax extraction
+## Current beta.6 assessment
 
-The original plan in the beta.5 worktree remains the scope baseline. This copy
-tracks beta.6 work. The support audit has 51 requirements. Most are broad groups,
-not individual assertions. None is release-qualified yet. Do not use the branch
-count or unit line coverage as a completeness measure.
+The support catalog is a partial inventory. It separates specific tool limits
+from incomplete tests. `implemented` describes code, not release qualification.
+`untested` means that the stated combinations are not fully tested; selected
+cases can already pass. See [the status definitions](../docs/SUPPORT.md#support-status).
+Do not use branch count or code coverage as a MySQL feature-support percentage.
 
-| Area | Implemented work | Work still needed |
-| --- | --- | --- |
-| Values and names | Charset registry and byte transport, numeric defaults and attributes, ENUM zero and labels, native identifier comparison, non-UTF-8 query decoding, table-name case settings, JSON YEAR translation. | Complete the boundary, replay and failure matrix. Keep binary values inside JSON as a documented transport gap. |
-| Table DDL | FULLTEXT subset, JSON generated indexes, table options, selected conversions, multi-table DROP and RENAME, subpartition metadata/lifecycle operations, KEY algorithms, partition maintenance, evaluated bounds and unchecked exchange. CTAS source and target restrictions are classified. | The selected charset, expression and geometry-prefix cases pass. Complete remaining index and partition operations, ALTER forms, CHECK qualification and stored-object behavior. FULLTEXT replacement after deletes still needs its native document-ID investigation. |
-| Parser | Independent lexer and typed expression target, isolated unit coverage and Docker build stage. | Move additional grammar into typed syntax nodes. Expand expressions with native metadata comparison tests. Do not import the unfinished string-producing parser as a second grammar. |
-| Row identity and relationships | Primary-key DML, full nonnullable scalar unique-key fallback, full-row matching for keyless tables and duplicates, saved lookup mode, selected InnoDB FKs and recovery records. | Complete unusual promoted-key metadata and the row-value boundary matrix. Complete remaining ALTER combinations and generated-expression boundaries. Native column compatibility, MATCH and cross-database drops are implemented. |
-| Binlog events | Existing FULL row-image and ordinary GTID paths. | MINIMAL/NOBLOB images, compression, tagged GTIDs, XA and checksum modes. Each requires live, replay and restart checks. |
-| Qualification | Shared four-profile harness, native comparisons and support bundles. | Bind catalog assertions to exact builds. Run full release checks and representative performance checks after the remaining implementation work. |
+### Confirmed tool limits
 
-Current execution order:
+- Some opaque JSON subtypes and value ranges lack an exact SQL transport.
+  Ordinary JSON works. See [JSON support](../docs/JSON_SUPPORT.md).
+- Query events with nonzero source errors stop apply. A partially successful
+  source DDL statement needs a separate result and recovery design.
+- Table-name settings must match and must be 0 or 1. Mode 2 and cross-setting
+  replication cannot be enabled. Native eligibility still needs review.
+- MyISAM groups are limited to one row statement on one included table. Native
+  GTID rules reject some broader forms. Do not assume that they reject all forms
+  which this tool rejects.
+- FULL row images and CRC32 are required. Transaction compression, tagged GTIDs
+  and XA are not implemented. Row-image variants, tagged GTIDs and XA are
+  deferred to [future event work](FUTURE_BINLOG_SUPPORT.md).
 
-1. Completed: confirm the combined charset ALTER, generated-expression and
-   geometry-prefix increments with fixed inputs on all applicable profiles.
-   Run `20261015T073916Z-20bde8e4` passed 21 applicable cases.
-2. Move the remaining DDL statement grammar into typed syntax nodes. Complete
-   the remaining ALTER, index and partition forms, including subpartitions.
-   The inline `ALTER TABLE ADD column ... PRIMARY KEY`
-   form and `ADD NOT NULL AUTO_INCREMENT` without a default still need parser
-   support. Adding a primary key to an existing column works.
-   FORCE and ENABLE/DISABLE KEYS now pass on all four profiles. See
-   [maintenance checks](TABLE_MAINTENANCE.md). Branch 37 adds subpartition
-   metadata and selected lifecycle operations, with passing tests on all four
-   profiles. Branch 38 adds KEY algorithm metadata and partition maintenance.
-   Branch 39 adds native bound evaluation and EXCHANGE WITHOUT VALIDATION.
-   Branch 40 adds exact binary/charset COLUMNS bounds and native conversion
-   checks. It records the tested native restrictions on misplaced-row DML.
-   See [partition work](PARTITION_SUPPORT.md)
-   for implementation, tests and the remaining forms.
-3. Classify CHECK and CTAS by source version and target engine. The native
-   [5.7 to 8.0 CHECK rule](CHECK_CONSTRAINTS.md) is implemented in branch 36;
-   selected live and offline checks passed on all three 5.7-source profiles.
-   Branch 41 records permanent CTAS native limits and adds temporary CTAS live,
-   restart and replay cases. See [CTAS contract](CREATE_TABLE_SELECT.md).
-   Next, audit views, routines, definers and remaining temporary cleanup forms.
-   Branch 42 adds routine ALTER, parenthesized views and multi-view DROP.
-   See [stored-object scope](STORED_OBJECT_SUPPORT.md) for the native rules,
-   verification. Branch 43 adds conditional routine CREATE translation.
-   Branch 44 adds view renaming and mixed table/view rename lists.
-4. Branch 45 adds nonnullable full unique-key fallback and saves the selected
-   identity with each schema. See [row identity](ROW_IDENTITY.md). Branch 46 adds
-   [full-row matching and duplicate operations in recovery](KEYLESS_ROWS.md).
-   Branch 47 adds [FK self-references, cycles and source check settings](FOREIGN_KEY_CONTROLS.md).
-   Branch 48 adds [supporting indexes, column renames and internal database DROP](FOREIGN_KEY_DDL.md).
-   Branch 49 adds [missing-parent relationships](MISSING_PARENT_FOREIGN_KEYS.md).
-   Branch 50 adds [native parent-key rules](FOREIGN_KEY_PARENT_KEYS.md).
-   Branch 51 adds [FK syntax and native column compatibility](FOREIGN_KEY_SYNTAX_COLUMNS.md).
-   Branch 52 adds [cross-database FK drops](CROSS_DATABASE_FOREIGN_KEYS.md).
-   Branch 53 adds [stored generated FK columns](GENERATED_COLUMN_FOREIGN_KEYS.md).
-   Branch 54 adds [compound FK index changes](COMPOUND_FOREIGN_KEY_INDEXES.md).
-   Next, finish the remaining ALTER forms and generated-expression boundaries.
-5. Add row-image and event variants. XA and tagged GTIDs need durable-state and
-   archive designs, not decoder changes alone.
-6. Run qualification and publish native limits separately from tool gaps.
+These are concrete restrictions, not a complete inventory of every MySQL form.
+Value transport limits, including nonfinite floating-point values, remain in the
+[support guide](../docs/SUPPORT.md).
 
-The catalog still marks five tool-gap groups as missing:
-MINIMAL/NOBLOB images,
-transaction compression, tagged GTIDs, XA and checksum modes other than CRC32.
-The remaining `subset` entries also need work. Those include expression and
-partition forms, FK relationships, replay/failure coverage and value boundaries.
-This list is not a claim that the partial inventory contains every missing form.
+### Native and target limits
 
-Other entries marked `missing` describe native restrictions, a target
-limit, or the existing scheduled-event rejection policy. Do not report these as
-missing replication features. Their evidence or catalog status needs review.
-In particular, event rejection already exists in `DDLPolicy` and the shared
-`ddl-compat-reject-event` case. Qualification remains separate from implementation.
+A target cannot retain a feature absent from its version or engine. Examples
+include 8.4-only index attributes on 5.7, foreign keys on MyISAM and native CTAS
+restrictions under the tested GTID settings. Cross-version collation translation
+uses explicit compatibility rules; it does not make all collations equivalent.
+The [DDL native audit](DDL_NATIVE_AUDIT.md) also records the native FULLTEXT
+replacement result. Do not report that native result as a tool defect.
 
-Branches 29 and 30 remain experiment records. Branches 32 and 33 replace their
-implementation work. Keep their saved failure bundles. Keep all beta.6 branches
-local until the user approves publication of the complete stack.
+Trigger, event, filter and explicit-engine policies are separate decisions.
+The configured resource limits and DBA resolution of uncertain commits are also
+policies. Keep their negative tests; do not count them as missing ordinary DDL.
+
+### Implemented work that needs broader tests
+
+The broad charset, expression, index, partition, conversion, stored-object,
+row-identity and FK groups have selected passing tests. They still need boundary,
+compound-operation and failure checks on the applicable profiles. A missing test
+is not evidence that an entire feature family is unsupported.
+
+Branch 69 implements [executable version comments](EXECUTABLE_COMMENTS.md).
+The target evaluates the original comments; schema prediction follows its version.
+Remaining lexical and failure combinations need qualification.
+
+Branches 66 and 67 close the concrete
+[column-name swap](SIMULTANEOUS_COLUMN_RENAMES.md) and
+[partition-column rename](PARTITION_COLUMN_RENAMES.md) gaps.
+The [DDL checklist](DDL_COMPLETION_CHECKLIST.md) retains implementation history.
+Its old baseline labels are not the current unsupported-feature list.
+
+Next work:
+
+1. Run the combined release checks in GitHub. Keep evidence tied to exact builds.
+2. Bind support assertions to evidence. Candidate case IDs alone do not qualify
+   a catalog requirement. The support report retains `unverified` until this
+   binding exists, even when a selected run has passed.
+3. Audit remaining native-valid syntax and value combinations. Add a concrete
+   tool-gap row only when code, a probe or a failed test identifies a restriction.
+4. Keep deferred event formats and confirmed transport limits visible.
+
+Keep all beta.6 branches local until the user approves publication. Branches 29
+and 30 are experiment records; branches 32 and 33 replace their implementation.
+Preserve their failure evidence.
+
+## Original delivery plan
+
+The numbered stages below retain the original goals and design order. They are
+not a current missing-feature list. Use the assessment above, `support.json` and
+the linked implementation records for current status.
 
 ## 1. Establish the support catalog
 
@@ -317,8 +316,9 @@ implementation gaps. Do not change the scope merely to make the percentage 100%.
 ## Recommended delivery order
 
 Deliver stage 1 first, then stage 2 in separate charset, scalar/identifier, and
-JSON changes. Continue with stage 3's table/index and ALTER work. Then implement
-stage 4 and stage 5. Apply stage 6's acceptance checks to each increment and run
+JSON changes. Continue with stage 3's table/index and ALTER work. Then continue
+stage 4. The row-image, tagged-GTID and XA parts of stage 5 are future work.
+Apply stage 6's acceptance checks to each increment and run
 the full release checks at the end. Use one PR per testable feature family.
 
 The remaining JSON transport, MyISAM transaction, and XA items need design

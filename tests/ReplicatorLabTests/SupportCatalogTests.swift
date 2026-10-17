@@ -36,12 +36,36 @@ final class SupportCatalogTests: XCTestCase {
         try reject({ $0["profiles"]=["unknown"] },message:"unknown profile")
         try reject({ $0["profiles"]=["mysql57-to-mysql57-innodb"]; $0["variants"]=["position-minimal"] },message:"unsupported profile/variant")
         try reject({ $0["candidate_cases"]=["not-a-test"] },message:"unknown candidate case")
-        try reject({ $0["eligibility"]="excluded" },message:"tool gaps cannot be hidden")
+        try reject({ $0["eligibility"]="excluded" },message:"positive-support work cannot be hidden")
         try reject({ $0["implementation"]="not_applicable" },message:"implementation gaps cannot be marked not applicable")
         try reject({ $0["classification"]="native_restriction" },message:"cannot count as positive support")
         try reject({ $0["classification"]="native_restriction"; $0["eligibility"]="excluded" },message:"needs a pinned source reference")
+        try reject({ $0["classification"]="tool_gap"; $0["implementation"]="implemented" },message:"tool gap needs a missing or subset implementation")
         try reject({ $0["qualification"]="passed" },message:"qualification")
         try reject({ $0["code_references"]=["../escape.swift"] },message:"unsafe catalog relative path")
+    }
+    func testReportSeparatesUnsupportedPathsFromIncompleteTests() throws {
+        let inventory=try DDLCoverage.load(directory:catalog)
+        let report=inventory.support.report(upstream:inventory.upstream)
+        let rows=report["requirements"] as! [[String:Any]]
+        let summary=report["summary"] as! [String:Int]
+        let gaps=rows.filter{$0["classification"] as? String == "tool_gap"}
+        let untested=rows.filter{$0["classification"] as? String == "untested"}
+        XCTAssertFalse(gaps.isEmpty)
+        XCTAssertFalse(untested.isEmpty)
+        XCTAssertEqual(summary["confirmed_tool_gaps"],gaps.count)
+        XCTAssertEqual(summary["qualification_gaps"],untested.count)
+        XCTAssertTrue(untested.contains{$0["implementation"] as? String == "implemented"})
+        for id in ["ddl.partial-source-errors","names.case-settings"] {
+            XCTAssertTrue(gaps.contains{$0["id"] as? String == id},id)
+        }
+        for id in ["ddl.executable-comments","ddl.partition-column-renames","ddl.simultaneous-column-renames","ddl.generated-expressions"] {
+            XCTAssertTrue(untested.contains{$0["id"] as? String == id},id)
+        }
+        let text=inventory.support.markdown
+        XCTAssertTrue(text.contains("selected cases can already pass"))
+        XCTAssertTrue(text.contains("not feature-support percentages"))
+        XCTAssertEqual(summary["qualified"],0)
     }
     func testRequirementsReferenceExistingImplementationFiles() throws {
         let inventory=try DDLCoverage.load(directory:catalog)

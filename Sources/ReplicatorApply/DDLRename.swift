@@ -21,7 +21,7 @@ struct TableRename: Equatable {
 
 extension ApplyTable {
     func renamed(to name: TableName) -> ApplyTable {
-        ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:primaryKeyColumns,
+        ApplyTable(database:name.database,table:name.table,columns:columns,primaryKeyColumns:primaryKeyColumns,primaryKeyParts:primaryKeyParts,
                    defaultCharacterSet:defaultCharacterSet,defaultCollation:defaultCollation,secondaryIndexes:secondaryIndexes,partitions:partitions,foreignKeys:foreignKeys.map { $0.renamed(TableRename(from:TableName(database:database,table:table),to:name)) })
     }
 }

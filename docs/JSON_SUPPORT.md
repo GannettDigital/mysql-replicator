@@ -99,7 +99,8 @@ CREATE TABLE example (
 
 This form works with all tested target profiles. The parser accepts
 `JSON_EXTRACT`, `JSON_UNQUOTE`, `->`, `->>`, JSON constructors, and supported
-`CAST` expressions. The generated-expression grammar is not complete.
+`CAST` expressions. The full generated-expression matrix is not qualified. Missing tests do not
+identify a specific unsupported expression. See [support status](SUPPORT.md#support-status).
 A direct index on a JSON column is invalid in native MySQL.
 
 MySQL 8.4 also accepts these forms:

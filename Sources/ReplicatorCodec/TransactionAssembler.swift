@@ -1,4 +1,5 @@
 import Foundation
+import MySQLSyntax
 
 public struct TransactionError: Error, CustomStringConvertible {
     public enum Code: String { case sequence, unsupported, incomplete, limit, poisoned }
@@ -210,13 +211,13 @@ public final class TransactionAssembler {
     private enum QueryKind { case begin, commit, rollback, statement }
     private func classify(_ sql: Data, at: BinlogCoordinate) throws -> QueryKind {
         // MySQL writes canonical BEGIN/COMMIT controls. Do not rewrite arbitrary
-        // SQL, strip comments, or treat ROLLBACK TO SAVEPOINT as transaction end.
+        // SQL or treat ROLLBACK TO SAVEPOINT as transaction end. Comments can wrap
+        // standalone DDL, but never turn a noncanonical control into a commit.
         if sql == Data("BEGIN".utf8) { return .begin }
         if sql == Data("COMMIT".utf8) { return .commit }
         if sql == Data("ROLLBACK".utf8) { return .rollback }
-        let prefix = String(decoding: sql.prefix(128), as: UTF8.self).uppercased()
-        let token = prefix.prefix { $0.isASCII && ($0.isLetter || $0 == "_") }
-        try require(!token.isEmpty && !["BEGIN", "COMMIT", "ROLLBACK", "XA", "START", "SAVEPOINT", "RELEASE"].contains(String(token)),
+        let token = SQLExecutableComments.leadingKeyword(sql)
+        try require(token != nil && !["BEGIN", "COMMIT", "ROLLBACK", "XA", "START", "SAVEPOINT", "RELEASE"].contains(token ?? ""),
                     at, "noncanonical or unsupported SQL control statement", code: .unsupported)
         return .statement
     }
