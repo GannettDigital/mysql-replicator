@@ -9643,6 +9643,26 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-partition-exchange-unchecked",
       "reason": "Unchecked exchange row placement, two-table journal, exchange back, DML and offline stop/resume."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-temporary-create-select",
+      "reason": "Temporary CTAS row effects, native comparison, clean restart and offline stop/resume."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-stored-objects",
+      "reason": "Routine attributes and definers, view check options, multi-view DROP, following rows, journal, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-view-renames",
+      "reason": "Ordered view/table rename chains, view metadata journal, row effects, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-conditional-routines",
+      "reason": "5.7 routine conditional CREATE translation, preserved bodies and definers, journaled no-ops, restart and replay."
     }
   ]
 }

@@ -37,7 +37,7 @@ its declared profile. Keep these other cases separate:
 
 | Case | Native behavior and this tool's scope |
 | --- | --- |
-| CREATE TABLE SELECT with GTIDs | MySQL 5.7 rejects logged, non-temporary CREATE TABLE SELECT with GTID consistency enabled. MySQL 8.4 permits it with an atomic-DDL engine such as InnoDB. Do not treat the 5.7 source rejection as an applier gap. The 8.4 case needs a separate check of target-engine and event requirements; this tool currently rejects it. |
+| CREATE TABLE SELECT with GTIDs | MySQL 5.7 rejects logged, permanent CTAS with GTID consistency enabled (1786). MySQL 8.4 logs atomic InnoDB CTAS as a generated CREATE plus row events. The CREATE uses START TRANSACTION: 5.7 cannot parse it (1064), and native 8.4 MyISAM cannot execute it (3979). The applier stops before target writes. Temporary CTAS permanent-row effects use normal row replication. See [native contract and tests](../PLAN/CREATE_TABLE_SELECT.md). |
 | Explicit `ENGINE=InnoDB` on a MyISAM-only target | Native replication executes the explicit engine clause. It does not convert it to the target's default engine. If the engine is disabled or unavailable, `NO_ENGINE_SUBSTITUTION` causes an error. With substitution allowed, native MySQL can use a default engine and issue warnings. This tool requires the explicit engine to match the profile and does not substitute engines. |
 | GTID transaction applied to nontransactional tables | Some source transaction forms cannot be applied by native replication to MyISAM under the same GTID. The native multistatement fixture expects error 1837. Keep this restriction separate from the tool's one-statement, one-included-table limit; check each proposed extension against native behavior. |
 | Row transaction with included and excluded tables | Native ROW replication can apply only the included table changes. This tool also permits mixed included/excluded row events within the profile's transaction limits. This can break application relationships. The tool rejects foreign keys across a filter boundary and DDL that changes both included and excluded objects. These are explicit safety policies, not a claim that native replication rejects every transaction across filters. |
@@ -148,7 +148,8 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
   EXCHANGE supports WITHOUT VALIDATION. This can keep rows outside their partition bounds, as in
   MySQL. Queries can then miss those rows. Native UPDATE and DELETE can fail
   with error 1863. The tests exchange the rows back before DML. An uncertain exchange requires manual resolution; it is not retried.
-  CREATE TABLE SELECT remains unsupported.
+  Permanent CREATE TABLE SELECT has native source or target restrictions on
+  the current profiles. Temporary CTAS permanent-row effects are supported.
   FORCE and ENABLE/DISABLE KEYS use the target engine behavior.
   Table and column COMMENT, ROW_FORMAT, AUTO_INCREMENT,
   selected physical/statistics options, and same-engine rebuilds are parsed.
@@ -167,6 +168,16 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
   triggers are rejected. Source trigger effects arrive as row changes and remain
   subject to the profile's transaction limits.
 - Event DDL is rejected. Stored routine creation does not execute its body.
+- Views support CREATE, REPLACE, ALTER and DROP, including parenthesized
+  queries and multi-view DROP. Procedures and functions support CREATE,
+  ALTER characteristics and DROP. Definers and SQL SECURITY are preserved.
+  The target checks account privileges and query syntax. Routine CREATE IF
+  NOT EXISTS is translated for 5.7: create an absent routine, or retain an
+  existing routine and record a no-op. RENAME TABLE supports views within one
+  database, including ordered lists with tables. The target account needs
+  SHOW VIEW to read definitions before a rename. MySQL rejects cross-database
+  view moves. See
+  [stored-object scope and tests](../PLAN/STORED_OBJECT_SUPPORT.md).
 - Temporary tables are not copied. The supported logged DROP TEMPORARY TABLE
   cleanup is skipped; CREATE TEMPORARY TABLE is not a supported apply operation.
 - MySQL 5.7 targets reject expression defaults and functional indexes. MySQL 8.4

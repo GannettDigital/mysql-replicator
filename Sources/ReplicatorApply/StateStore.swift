@@ -545,6 +545,7 @@ final class StateStore {
         var diagnostic = DDLQueryContextDiagnostic(query:source)
         diagnostic?.targetSQLBase64 = plan.rawSQL?.base64EncodedString()
         diagnostic?.nativeCompatibilityRules = plan.compatibilityRules.isEmpty ? nil : plan.compatibilityRules
+        diagnostic?.viewTransitions = plan.viewTransitions.isEmpty ? nil : plan.viewTransitions
         let contextJSON = try diagnostic.map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
         let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,afterAlternatives:plan.afterAlternatives)] : [])
         let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)

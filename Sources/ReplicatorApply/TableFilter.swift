@@ -49,11 +49,15 @@ struct TableFilter {
     }
     func ignores(_ query: QueryControl,tokens:[DDLToken]? = nil) throws -> Bool {
         try DDLPolicy.rejectProhibited(query)
+        try require(query.errorCode == 0, "filtered DDL source query reported an error: source error code \(query.errorCode); partial source DDL is not supported")
         // Stored-program bodies may contain semicolons. Classify their header
         // before the scope-only table lexer; trigger/event policy is unconditional.
         var objects = try DDLParser(query:query,tokens:tokens)
         if let statement = try objects.objectStatement(), case .object(let object) = statement {
-            return object.kind == .view ? ignores(database:object.name.database,table:object.name.table) : ignores(database:object.name.database)
+            if object.kind != .view { return ignores(database:object.name.database) }
+            let decisions=object.names.map { ignores(database:$0.database,table:$0.table) }
+            try require(decisions.allSatisfy { $0 } || decisions.allSatisfy { !$0 },"DDL crosses included and excluded tables; explicit resolution required")
+            return decisions.allSatisfy { $0 }
         }
         guard !patterns.isEmpty else { return false }
         if objects.take("DROP"), objects.take("DATABASE") || objects.take("SCHEMA") {
@@ -64,7 +68,6 @@ struct TableFilter {
             } && !ignores(database:database)
             try require(!partial,"DROP DATABASE crosses included and excluded tables; explicit resolution required")
         }
-        try require(query.errorCode == 0, "filtered DDL source query reported an error: source error code \(query.errorCode); partial source DDL is not supported")
         var scope = try FilterSQL(query,tokens:tokens)
         guard let targets = try scope.targets() else { return false }
         let decisions = targets.map { target in

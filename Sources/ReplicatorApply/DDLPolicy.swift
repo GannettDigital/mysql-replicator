@@ -150,4 +150,7 @@ struct ObjectDDL: Equatable {
     let operation: Operation
     let name: TableName
     var ifExists = false
+    var additionalNames: [TableName] = []
+    var ifNotExists = false
+    var names: [TableName] { [name]+additionalNames }
 }

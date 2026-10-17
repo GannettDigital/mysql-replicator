@@ -67,7 +67,8 @@ The source needs its normal replication privileges. The target needs DML and
 schema visibility privileges, including explicit global REFERENCES (complete incoming FK
 discovery), explicit TRIGGER visibility and
 REPLICATION CLIENT to exclude native replication. DDL also needs the corresponding
-CREATE/ALTER/DROP/index/view/routine privileges. Preserving source DEFINER clauses
+CREATE/ALTER/DROP/index/view/routine privileges. View renaming also requires
+SHOW VIEW to read the current definition. Preserving source DEFINER clauses
 may need `SET_ANY_DEFINER` on 8.4; stored functions with binary logging have additional
 server privilege/flag requirements. The disposable harness grants ALL PRIVILEGES
 plus SET_ANY_DEFINER; this is not a least-privilege Cloud SQL recipe. The applier

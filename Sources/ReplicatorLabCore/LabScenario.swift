@@ -31,6 +31,11 @@ struct LabScenario {
         value["profile"]=profile.rawValue; value["variant"]=variant.rawValue; value["family"]=family
         value["dependencies"]=dependencies; value["intent"]=intent
         value["expected"]=["source":"accept","native":"apply","applier":intent]
+        if id == "create-select-contract" {
+            value["expected"]=profile.sourceVersion == .mysql57
+                ? ["source":"reject permanent CTAS with error 1786","native":"apply following row group","applier":"apply following row group"]
+                : ["source":"accept atomic InnoDB CTAS; reject MyISAM CTAS","native":"reject atomic DDL on MyISAM with error 3979","applier":"reject incomplete group; retain checkpoint"]
+        }
         if family == "failures" || family == "recovery" { value["expected"]=["source":"accept","native":"per-case success or expected rejection","applier":intent] }
         if id == "myisam-recovery" { value["ordered_steps"]=SharedWorkflowCases.recovery.map { $0.fields } }
         if id == "forward-failures" { value["ordered_steps"]=SharedWorkflowCases.failures.map { $0.fields } }
@@ -50,6 +55,7 @@ struct LabScenario {
         }
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
         cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",profileExclusions:$0.profileExclusions,smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
+        cases.append(.init(test:.init("create-select-contract","Native permanent CTAS restrictions and unchanged target progress"),family:"rejections",intent:"source or target restriction; no partial apply"))
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,profileExclusions:$0.profileExclusions,smoke:$0.id == "composite") }
         cases.append(.init(test:.init("check-target57-limits","Reject enforced 8.4 CHECK constraints before target DDL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source with enforced CHECK constraints.",intent:"reject before target SQL"))
         cases.append(.init(test:.init("json-target57-limits","Native 5.7 version and MyISAM engine limits stop JSON DDL before target SQL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source to emit expression defaults and functional indexes.",intent:"reject before target SQL"))

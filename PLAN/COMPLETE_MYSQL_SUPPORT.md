@@ -45,7 +45,7 @@ count or unit line coverage as a completeness measure.
 | Area | Implemented work | Work still needed |
 | --- | --- | --- |
 | Values and names | Charset registry and byte transport, numeric defaults and attributes, ENUM zero and labels, native identifier comparison, non-UTF-8 query decoding, table-name case settings, JSON YEAR translation. | Complete the boundary, replay and failure matrix. Keep binary values inside JSON as a documented transport gap. |
-| Table DDL | FULLTEXT subset, JSON generated indexes, table options, selected conversions, multi-table DROP and RENAME, subpartition metadata/lifecycle operations, KEY algorithms, partition maintenance, evaluated bounds and unchecked exchange. | The selected charset, expression and geometry-prefix cases pass. Complete remaining index and partition operations, ALTER forms, CHECK qualification, CTAS and stored-object behavior. FULLTEXT replacement after deletes still needs its native document-ID investigation. |
+| Table DDL | FULLTEXT subset, JSON generated indexes, table options, selected conversions, multi-table DROP and RENAME, subpartition metadata/lifecycle operations, KEY algorithms, partition maintenance, evaluated bounds and unchecked exchange. CTAS source and target restrictions are classified. | The selected charset, expression and geometry-prefix cases pass. Complete remaining index and partition operations, ALTER forms, CHECK qualification and stored-object behavior. FULLTEXT replacement after deletes still needs its native document-ID investigation. |
 | Parser | Independent lexer and typed expression target, isolated unit coverage and Docker build stage. | Move additional grammar into typed syntax nodes. Expand expressions with native metadata comparison tests. Do not import the unfinished string-producing parser as a second grammar. |
 | Row identity and relationships | Primary-key DML, selected InnoDB FKs and recovery records. | Unique-key fallback, duplicate/keyless matching, FK cycles and source foreign_key_checks behavior. Define durable recovery records before changing row identity. |
 | Binlog events | Existing FULL row-image and ordinary GTID paths. | MINIMAL/NOBLOB images, compression, tagged GTIDs, XA and checksum modes. Each requires live, replay and restart checks. |
@@ -69,8 +69,14 @@ Current execution order:
    for implementation, tests and the remaining forms.
 3. Classify CHECK and CTAS by source version and target engine. The native
    [5.7 to 8.0 CHECK rule](CHECK_CONSTRAINTS.md) is implemented in branch 36;
-   selected live and offline checks passed on all three 5.7-source profiles. Implement the
-   eligible forms. Audit views, routines, definers and temporary cleanup.
+   selected live and offline checks passed on all three 5.7-source profiles.
+   Branch 41 records permanent CTAS native limits and adds temporary CTAS live,
+   restart and replay cases. See [CTAS contract](CREATE_TABLE_SELECT.md).
+   Next, audit views, routines, definers and remaining temporary cleanup forms.
+   Branch 42 adds routine ALTER, parenthesized views and multi-view DROP.
+   See [stored-object scope](STORED_OBJECT_SUPPORT.md) for the native rules,
+   verification. Branch 43 adds conditional routine CREATE translation.
+   Branch 44 adds view renaming and mixed table/view rename lists.
 4. Add unique-key and keyless row identity. Define durable recovery records
    before changing the DML selection path. Then extend FK relationships and
    source foreign_key_checks behavior.
@@ -78,16 +84,16 @@ Current execution order:
    archive designs, not decoder changes alone.
 6. Run qualification and publish native limits separately from tool gaps.
 
-The catalog still marks nine tool-gap groups as missing: CTAS,
+The catalog still marks eight tool-gap groups as missing:
 unique-key identity, keyless identity, disabled FK checks, MINIMAL/NOBLOB images,
 transaction compression, tagged GTIDs, XA and checksum modes other than CRC32.
 The remaining `subset` entries also need work. Those include expression and
 partition forms, FK relationships, replay/failure coverage and value boundaries.
 This list is not a claim that the partial inventory contains every missing form.
 
-Four other entries marked `missing` describe native restrictions, a target
+Other entries marked `missing` describe native restrictions, a target
 limit, or the existing scheduled-event rejection policy. Do not report these as
-four missing replication features. Their evidence or catalog status needs review.
+missing replication features. Their evidence or catalog status needs review.
 In particular, event rejection already exists in `DDLPolicy` and the shared
 `ddl-compat-reject-event` case. Qualification remains separate from implementation.
 
@@ -197,9 +203,10 @@ that bypasses filters, schema tracking, or recovery records.
    automatic DDL repair is not implemented.
 5. Classify CREATE TABLE SELECT by source version and target engine first.
    MySQL 5.7 source rejection under GTID consistency is outside positive support.
-   MySQL 8.4 accepts the atomic-DDL InnoDB case. Check its binlog sequence and native
-   MyISAM target behavior before deciding whether it is an implementation gap for
-   the forward profile. Implement only eligible cases. Never execute the SELECT
+   Branch 41 classifies 8.4 atomic CTAS as a target limit for the forward profile.
+   The generated START TRANSACTION clause fails on native MyISAM and on 5.7.
+   Shared tests cover temporary CTAS permanent-row effects, restart and replay.
+   See [native CTAS contract](CREATE_TABLE_SELECT.md). Never execute the SELECT
    and then also apply its generated row events.
 6. Audit views, routine DDL, definers, conditional DDL, and temporary-table event
    behavior. Source temporary objects and their permanent-table effects are

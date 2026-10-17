@@ -51,18 +51,33 @@ extension DDLParser {
         try require(!replace || (verb == "CREATE" && kind == .view),"OR REPLACE is supported only for views")
         var conditional = false
         if verb == "DROP" && take("IF") { try expect("EXISTS"); conditional = true }
+        var ifNotExists=false
+        let conditionalStart=index
+        if verb == "CREATE" && kind != .view && take("IF") {
+            try expect("NOT");try expect("EXISTS");ifNotExists=true
+            if nativeRules.translateRoutineIfNotExists {
+                edits.append(.init(range:try itemRange(from:conditionalStart),replacement:""))
+            }
+        }
         let name = try name(foldTable:kind == .view)
+        var additionalNames: [TableName] = []
         let operation: ObjectDDL.Operation = verb == "DROP" ? .drop : verb == "ALTER" ? .alter : replace ? .replace : .create
         if operation == .drop {
-            if kind == .view { _ = take("RESTRICT") || take("CASCADE") }; try end()
+            if kind == .view {
+                while take(",") { additionalNames.append(try self.name()) }
+                _ = take("RESTRICT") || take("CASCADE")
+            }
+            try end()
         } else if kind == .view {
             if isNext("(") { _ = try parenthesized() }
-            try expect("AS"); try expect("SELECT")
+            try expect("AS")
+            try require(isNext("SELECT") || isNext("(") || isNext("WITH") || isNext("TABLE"),"unsupported view query")
             try require(index < tokens.count,"empty view SELECT")
-            // A view is not a compound stored program; semicolons must end it.
-            if tokens.last?.keyword == ";" { tokens.removeLast() }
-            try require(!tokens[index...].contains{$0.keyword == ";"},"multiple statements in view DDL")
-            index = tokens.count
+            try simpleObjectTail()
+        } else if operation == .alter {
+            // Native ALTER changes characteristics, not parameters or the body.
+            // MySQL checks the source-accepted characteristics on the target.
+            try simpleObjectTail()
         } else {
             try require(operation == .create,"only CREATE/DROP stored routines are supported")
             _ = try parenthesized() // Also rules out loadable FUNCTION ... SONAME.
@@ -72,7 +87,12 @@ extension DDLParser {
             // CLIENT_MULTI_STATEMENTS is not negotiated by our target driver.
             index = tokens.count
         }
-        return .object(ObjectDDL(kind:kind,operation:operation,name:name,ifExists:conditional))
+        return .object(ObjectDDL(kind:kind,operation:operation,name:name,ifExists:conditional,additionalNames:additionalNames,ifNotExists:ifNotExists))
+    }
+    private mutating func simpleObjectTail() throws {
+        if tokens.last?.keyword == ";" { tokens.removeLast() }
+        try require(!tokens[index...].contains{$0.keyword == ";"},"multiple statements in object DDL")
+        index = tokens.count
     }
     private mutating func accountPart() throws {
         if index < tokens.count && tokens[index].literal != nil { index += 1 }
@@ -81,28 +101,38 @@ extension DDLParser {
 }
 
 extension TargetSession {
-    func objectExists(_ object: ObjectDDL) throws -> Bool {
+    func objectExists(_ object: ObjectDDL,name:TableName? = nil) throws -> Bool {
+        let name=name ?? object.name
         let sql: String
         switch object.kind {
         case .view: sql = "SELECT COUNT(*) AS v FROM information_schema.VIEWS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?"
         case .function,.procedure: sql = "SELECT COUNT(*) AS v FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=? AND ROUTINE_TYPE='\(object.kind.rawValue)'"
         }
-        return try scalar(sql,[.init(string:object.name.database),.init(string:object.name.table)]) != "0"
+        return try scalar(sql,[.init(string:name.database),.init(string:name.table)]) != "0"
     }
     func prepareObjectDDL(_ statement: DDLStatement,object: ObjectDDL,source: QueryControl,context: QuerySessionContext) throws -> PreparedDDL {
-        let exists = try objectExists(object)
-        if object.kind == .view {
+        let translate=object.ifNotExists && NativeReplicationRules(profile:config.replicationProfile).translateRoutineIfNotExists
+        var skipCreation=false
+        for name in object.names {
+            let exists = try objectExists(object,name:name)
+            if object.kind == .view {
             // CREATE OR REPLACE must never displace a base table/history entry.
-            try require(discovered[object.name.identity] == nil,"view DDL conflicts with a discovered base table")
-            if try tableExists(object.name) { try require(exists,"view DDL target is a base table") }
-        }
-        switch object.operation {
-        case .create: try require(!exists,"DDL object already exists")
-        case .alter: try require(exists,"DDL object is absent")
-        case .drop: try require(exists || object.ifExists,"DDL object is absent")
-        case .replace: break
+                try require(discovered[name.identity] == nil,"view DDL conflicts with a discovered base table")
+                if try tableExists(name) { try require(exists,"view DDL target is a base table") }
+            }
+            switch object.operation {
+            case .create:
+                try require(!exists || object.ifNotExists,"DDL object already exists")
+                skipCreation=translate && exists
+            case .alter: try require(exists,"DDL object is absent")
+            case .drop: try require(exists || object.ifExists,"DDL object is absent")
+            case .replace: break
+            }
         }
         try setDDLSession(context,source:source)
-        return PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self))
+        return PreparedDDL(statement:statement,before:nil,after:nil,
+            sql:skipCreation ? "" : String(decoding:source.sql,as:UTF8.self),
+            rawSQL:skipCreation ? Data() : nil,
+            compatibilityRules:translate ? [NativeReplicationRules.conditionalRoutineRule] : [])
     }
 }
