@@ -16,8 +16,8 @@ struct LabScenario {
         if id == "ddl-compat-source-gtid-preservation" && variant != .standard {
             return "Use the default variant to test target GTID preservation."
         }
-        if variant == .withoutSourceGTIDs && id != "ddl-compat-tagged-gtids" {
-            return "This variant tests tagged source GTIDs without target preservation."
+        if variant == .withoutSourceGTIDs && !["ddl-compat-tagged-gtids", "positive"].contains(id) {
+            return "This variant tests tagged GTIDs and basic DML without target GTID preservation."
         }
         if id == "ddl-compat-tagged-gtids" && variant != .withoutSourceGTIDs {
             return "5.7 cannot preserve tags; use --variant without-source-gtids to test SQLite tag tracking."

@@ -8,7 +8,7 @@ enum BinlogExecution {
         skipErrors: SkipErrorPolicy = .init(),
         prepare: (PreparedDMLGroup) throws -> Void, begin: () throws -> Void,
         write: (PreparedDMLGroup) throws -> Void, commit: () throws -> Void,
-        rollback: () throws -> Void, finish: () throws -> Void,
+        rollback: () throws -> Void,
         skippedGTID: (PreparedDMLGroup) throws -> Void,
         resetTrace: () -> Void, trace: () -> TargetStatementTrace
     ) -> DMLExecution.Outcome {
@@ -18,7 +18,6 @@ enum BinlogExecution {
             var started = false
             var issued = false
             var committing = false
-            var committed = false
             do {
                 resetTrace()
                 try require(!cancellation.isCancelled, "apply cancelled")
@@ -31,18 +30,14 @@ enum BinlogExecution {
                 try require(!cancellation.isCancelled, "apply cancelled")
                 committing = true
                 try commit()
-                committed = true
-                try finish()
                 counts[index] = group.mutations.count
             } catch {
                 let statement = trace()
                 var failure: Error = error
                 var outcome =
-                    committed
-                    ? "committed"
-                    : committing
-                        ? "commitUncertain"
-                        : issued && statement.phase != .notIssued ? "possiblyExecuted" : "notStarted"
+                    committing
+                    ? "commitUncertain"
+                    : issued && statement.phase != .notIssued ? "possiblyExecuted" : "notStarted"
                 if transactional && started && !committing {
                     do {
                         try rollback()
@@ -53,7 +48,6 @@ enum BinlogExecution {
                     let skip = skipErrors.match(error, at: .rolledBack)
                 {
                     do {
-                        try finish()
                         try skippedGTID(group)
                         skipped[index] = skip
                         continue
@@ -116,7 +110,9 @@ extension TargetSession {
                 try self.timings.measure("target.binlog.format") {
                     // A new session must get its own FDE, even if its source file
                     // matches the previous connection. FDE carries no row writes.
-                    try self.binlogContext.install(program.format) { sql in
+                    try self.binlogContext.install(
+                        program.format, preserveSourceGTIDs: self.config.target.preserveSourceGTIDs
+                    ) { sql in
                         _ = try self.query(sql, textProtocol: true)
                     }
                 }
@@ -124,16 +120,16 @@ extension TargetSession {
             }, begin: { _ = try self.query("BEGIN", textProtocol: true) },
             write: { item in
                 try checkSourceFailure()
-                try self.timings.measure("target.binlog.rows") {
-                    let sql = try self.timings.measure("apply.binlog.base64") {
-                        guard let program = item.binlog else { throw ApplyError("missing prepared BINLOG program") }
-                        return program.rows.sql()
+                guard let program = item.binlog else { throw ApplyError("missing prepared BINLOG program") }
+                for statement in program.statements {
+                    try require(!cancellation.isCancelled, "apply cancelled")
+                    try self.timings.measure("target.binlog.rows") {
+                        let sql = try self.timings.measure("apply.binlog.base64") { statement.sql() }
+                        _ = try self.query(sql, textProtocol: true, mutation: true)
                     }
-                    _ = try self.query(sql, textProtocol: true, mutation: true)
                 }
             }, commit: { _ = try self.query("COMMIT", textProtocol: true, mutation: true) },
             rollback: { _ = try self.query("ROLLBACK", textProtocol: true) },
-            finish: { if self.config.target.preserveSourceGTIDs { try self.resetSourceGTID() } },
             skippedGTID: { try self.emptySourceGTID($0.group.gtid!) },
             resetTrace: { self.statementTrace = .init() }, trace: { self.statementTrace })
     }

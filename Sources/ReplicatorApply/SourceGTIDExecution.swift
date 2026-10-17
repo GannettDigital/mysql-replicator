@@ -22,6 +22,9 @@ extension TargetSession {
     func checkSourceGTID(_ identity: SourceGTID) throws {
         guard config.target.preserveSourceGTIDs else { return }
         try SourceGTIDExecution.validate(identity, targetVersion: serverVersionID ?? 0)
+        // Match mysqlbinlog replay: the server handles an already-executed GTID.
+        // Pending SQLite intents still block ordinary restart after uncertain writes.
+        guard config.target.transport != .binlog else { return }
         try require(
             try scalar("SELECT GTID_SUBSET(?,@@GLOBAL.gtid_executed) AS v", [.init(string: identity.canonical)]) == "0",
             "target already executed source GTID \(identity.canonical) but SQLite has not recorded it; inspect the target and saved state before recovery"
@@ -35,20 +38,27 @@ extension TargetSession {
     func resetSourceGTID() throws {
         _ = try query("SET SESSION GTID_NEXT='AUTOMATIC'", textProtocol: true)
     }
-    func emptySourceGTID(_ identity: SourceGTID) throws {
+    func emptySourceGTID(_ identity: SourceGTID, rolledBack: Bool = false) throws {
         guard config.target.preserveSourceGTIDs else { return }
         try assignSourceGTID(identity)
         _ = try query("BEGIN", textProtocol: true)
-        _ = try query("COMMIT", textProtocol: true, mutation: true)
-        try resetSourceGTID()
+        let end = config.target.transport == .binlog && rolledBack ? "ROLLBACK" : "COMMIT"
+        _ = try query(end, textProtocol: true, mutation: true)
+        if config.target.transport != .binlog { try resetSourceGTID() }
     }
     /// Set immediately before the actual write, after metadata and JSON scratch
-    /// preparation. Restore AUTOMATIC before post-write metadata checks.
-    func sourceStatement<T>(_ identity: SourceGTID, _ body: () throws -> T) throws -> T {
+    /// preparation. BINLOG replay assigns the next GTID directly.
+    func sourceStatement<T>(
+        _ identity: SourceGTID, requiresCommit: Bool = true, _ body: () throws -> T
+    ) throws -> T {
         guard config.target.preserveSourceGTIDs else { return try body() }
         try require(statementSourceGTID == nil, "nested source GTID statement")
         statementSourceGTID = identity
-        defer { statementSourceGTID = nil }
+        statementRequiresCommit = requiresCommit
+        defer {
+            statementSourceGTID = nil
+            statementRequiresCommit = true
+        }
         let result = try body()
         if statementSourceGTID != nil {
             statementSourceGTID = nil

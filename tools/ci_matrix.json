@@ -38,5 +38,54 @@
     "mysql57-to-mysql84-innodb": 5,
     "mysql57-to-mysql57-myisam": 4,
     "mysql57-to-mysql57-innodb": 5
-  }
+  },
+  "binlog_selections": [
+    {
+      "area": "rows-json-replay",
+      "suite": "correctness",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "cases": [
+        "positive",
+        "matrix-json",
+        "matrix-typedjson",
+        "offline-replay",
+        "live-skip-errors"
+      ]
+    },
+    {
+      "area": "gtids-disabled",
+      "suite": "correctness",
+      "variant": "without-source-gtids",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "cases": [
+        "positive"
+      ]
+    },
+    {
+      "area": "reconnect",
+      "suite": "lifecycle",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "cases": [
+        "source-reconnect",
+        "target-reconnect",
+        "target-uncertain",
+        "target-uncertain-resume"
+      ]
+    }
+  ]
 }

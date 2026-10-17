@@ -400,7 +400,9 @@ public enum ApplyRun {
                                 hasDDLIntent = true
                                 try require(!cancellation.isCancelled, "apply cancelled")
                                 try checkSourceFailure()
-                                try target.sourceStatement(group.gtid!) { try target.applyDDL(&plan) }
+                                try target.sourceStatement(
+                                    group.gtid!, requiresCommit: plan.statement == .versionCommentNoop
+                                ) { try target.applyDDL(&plan) }
                                 planningCache = try DMLPlanningCache(
                                     target.discovered, compatibility: configuration.compatibilityPolicy,
                                     legacyMetadata: legacyMetadata)
@@ -467,7 +469,7 @@ public enum ApplyRun {
                             try target.unlock()
                             try state.begin(group)
                             try target.checkSourceGTID(group.gtid!)
-                            try target.emptySourceGTID(group.gtid!)
+                            try target.emptySourceGTID(group.gtid!, rolledBack: group.outcome == .rolledBack)
                             try state.complete(group, rowCount: 0, filtered: true)
                             try progress()
                             return
@@ -670,6 +672,7 @@ public enum ApplyRun {
                         }
                     }
                     try target.unlock()
+                    if configuration.target.transport == .binlog { try target.resetSourceGTID() }
                     try state.stopped()
                     return stoppedResult()
                 } catch {

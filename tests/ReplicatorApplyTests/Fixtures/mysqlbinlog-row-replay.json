@@ -1,0 +1,30 @@
+{
+  "generator": "mysqlbinlog 8.4; --no-defaults tests/ReplicatorLabTests/Fixtures/source-positive.binlog",
+  "scope": "Row transactions 11 through 14; base64 whitespace removed; session settings excluded",
+  "transactions": [
+    {
+      "gtid": "8ba09bde-bc41-11f1-8272-ba06e9024a03:11",
+      "statements": [
+        "BINLOG '0xq8ahPRIAAAOQAAAAQHAAAAAFgAAAAAAAEAA3BvYwAFaXRlbXMAAwMPCAKQAQABAUACAeAkaUIT0xq8ah7RIAAAOgAAAD4HAAAAAFgAAAAAAAEAAgAD/wADAAAACABpbnNlcnRlZP//////////COLmsg=='"
+      ]
+    },
+    {
+      "gtid": "8ba09bde-bc41-11f1-8272-ba06e9024a03:12",
+      "statements": [
+        "BINLOG '0xq8ahPRIAAAOQAAADUIAAAAAFgAAAAAAAEAA3BvYwAFaXRlbXMAAwMPCAKQAQABAUACAeC1mktR0xq8ah/RIAAAUQAAAIYIAAAAAFgAAAAAAAEAAgAD//8AAQAAAAgAc2VlZC1vbmUBAAAAAAAAAAABAAAABwB1cGRhdGVkAQAAAAAAAADT1wKC'"
+      ]
+    },
+    {
+      "gtid": "8ba09bde-bc41-11f1-8272-ba06e9024a03:13",
+      "statements": [
+        "BINLOG '0xq8ahPRIAAAOQAAAHQJAAAAAFgAAAAAAAEAA3BvYwAFaXRlbXMAAwMPCAKQAQABAUACAeAhAPjV0xq8aiDRIAAAOgAAAK4JAAAAAFgAAAAAAAEAAgAD/wACAAAACABzZWVkLXR3bwIAAAAAAAAAH0GUKg=='"
+      ]
+    },
+    {
+      "gtid": "8ba09bde-bc41-11f1-8272-ba06e9024a03:14",
+      "statements": [
+        "BINLOG '0xq8ahPRIAAAOQAAAKUKAAAAAFgAAAAAAAEAA3BvYwAFaXRlbXMAAwMPCAKQAQABAUACAeDtiELy0xq8ah/RIAAAVQAAAPoKAAAAAFgAAAAAAAEAAgAD//8AAwAAAAgAaW5zZXJ0ZWT//////////wADAAAACwBmaW5hbC10aHJlZf//////////fd5JWw=='"
+      ]
+    }
+  ]
+}

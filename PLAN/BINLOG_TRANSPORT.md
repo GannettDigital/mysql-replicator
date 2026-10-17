@@ -3,6 +3,24 @@
 Status: opt-in BINLOG execution is connected to the apply loop. SQL remains the
 default. Focused unit and shared lab tests check this first implementation. No beta.6 branch was changed for this work.
 
+## Completion scope
+
+The initial opt-in path is implemented for compatible FULL row events. It uses
+mysqlbinlog transaction boundaries and the shared durable queue. SQL remains the
+default. The operator guide lists the supported inputs and explicit refusals.
+Full CI now selects BINLOG cases for all four profiles. A complete SQL test pass does not imply a BINLOG test pass.
+
+The broader byte-rewriting work in delivery step 4 remains future work:
+generated-column mapping, partial JSON updates, compressed transaction payloads,
+and compatibility conversions that change row bytes. Partially filtered groups
+also remain an explicit refusal. Do not enable these paths by removing checks.
+MyISAM retains the shared one-statement/one-table rule even without source GTID
+preservation. Cloud SQL permissions still need a live environment test.
+
+The performance target is not met. Track the possible beta.6 slowdown in
+[BETA6_PERFORMANCE_REGRESSION.md](BETA6_PERFORMANCE_REGRESSION.md). This is a
+separate investigation; the current timings do not prove a regression or cause.
+
 ## Purpose
 
 Add a second target execution mode. Keep SQL as the default. The new mode sends
@@ -186,12 +204,13 @@ for SQL. It checks these conditions before execution:
 - A raw-byte budget and a packet budget for base64, SQL syntax, and COM_QUERY.
 - The MyISAM multi-statement restriction when source GTIDs must be preserved.
 
-Each prepared group has one row request. If it does not fit the packet budget,
-preparation fails. The builder does not split a source statement, rewrite events,
+Each complete source row statement has one row request. If that statement does
+not fit the packet budget, preparation fails. A transaction can contain several
+requests, within its original BEGIN and COMMIT boundaries. The builder does not split a source statement, rewrite events,
 or substitute an FDE. The existing codec and schema checks must validate row
 values and target compatibility. This builder does not replace those checks.
 
-The focused request-builder Swift suite has 13 tests. It includes damaged and
+The focused request-builder Swift suite has 15 tests. It includes damaged and
 truncated events, map reuse, missing statement ends, UPDATE before/after bitmaps,
 packet boundaries, and the MyISAM restriction. Seven Python unit tests cover the
 probe helpers.
@@ -199,7 +218,11 @@ probe helpers.
 The apply loop now carries the prepared program through the existing durable
 queue. State format 14 binds `target.transport` and program version 1. Existing
 SQL state migrates without changing transport. Recovery checks the same binding.
-A connection-local FDE cache resets on reconnect. InnoDB uses explicit BEGIN,
+A connection-local FDE cache resets on reconnect. BINLOG execution follows
+mysqlbinlog's GTID assignments and source statement boundaries. It does not query
+target GTIDs or reset GTID_NEXT after each group. Initial or changed FDEs and
+clean shutdown have their own session reset. See [the measurements](BINLOG_TRANSPORT_MEASUREMENTS.md).
+InnoDB uses explicit BEGIN,
 COMMIT, and confirmed rollback before an allowed duplicate-key skip. MyISAM
 failures retain all unacknowledged row intents. No SQL fallback is attempted.
 
@@ -363,3 +386,19 @@ alone does not prove complete MyISAM application.
   recovery records? Optimize only after the first durable path is correct.
 - Does BINLOG materially reduce total apply time once GTID assignment, commits,
   base64 encoding and the shared journal are included?
+
+## CI matrix size
+
+The normal full matrix has 242 jobs, including 12 selected BINLOG jobs. The
+expanded coverage matrix exceeds GitHub's limit of 256 jobs. The existing SQL
+matrix also exceeds that limit with expanded coverage. Split the execution matrix
+before the next expanded-coverage run. Do not remove release-binary assertions to
+fit coverage copies. Normal full CI and local selected cases remain available.
+
+## Paused checkpoint (2026-10-17)
+
+The final selected checks passed: 48 Swift tests and 28 CI tool tests. The four-profile
+integration run built the release image, then stopped at the user's request during
+fixture startup. It did not complete the selected JSON and replay cases. The new
+BINLOG CI selections have not run on GitHub. Keep this distinction when resuming
+beta.7 work. The prior completed integration and timing runs remain listed above.

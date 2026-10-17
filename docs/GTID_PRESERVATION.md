@@ -47,7 +47,7 @@ ordinary GTID assignment permission without adding a GTID. Tagged assignment has
 an additional privilege check when a tagged transaction arrives. There is no
 automatic fallback to `preserveSourceGTIDs: false`.
 
-The MyISAM path also needs `CREATE`, `DROP`, `SELECT`, `INSERT`, `CREATE ROUTINE`,
+The SQL MyISAM path also needs `CREATE`, `DROP`, `SELECT`, `INSERT`, `CREATE ROUTINE`,
 `ALTER ROUTINE` and `EXECUTE` on the reserved `_mysql_replicator_gtid` database.
 It uses `SUPER` to change `sql_log_bin` for scratch preparation and to create
 stored functions with binary logging enabled. Do not use this database for
@@ -144,9 +144,12 @@ also report source transactions from before this run. Other target transactions
 can add GTIDs under other UUIDs, so the entire target GTID set can differ from
 the source set.
 
-If the target already has a source GTID that SQLite has not completed, replication
-blocks for DBA review. It does not silently accept the target GTID as proof of
-complete application. Keep the saved intents and inspect the target rows.
+With SQL transport, a per-transaction check blocks if the target already has a
+source GTID that SQLite has not completed. BINLOG transport follows `mysqlbinlog`:
+it omits this query and lets MySQL skip an already-executed GTID. In both modes,
+pending SQLite intents still block ordinary restart after an uncertain write.
+Keep the saved intents and inspect the target rows. A recorded target GTID is
+not proof that a failed MyISAM group applied in full.
 
 Filtered and intentionally skipped groups record an empty source GTID when
 preservation is enabled. An offline operator recovery action queues this marker
@@ -161,7 +164,7 @@ normal SQL client can need several target statements for the same rows. MySQL
 5.7 completes an explicit GTID after the first MyISAM statement, even inside
 `BEGIN` and `COMMIT`.
 
-The implementation uses one direct statement when possible. For larger groups,
+The SQL transport uses one direct statement when possible. For larger groups,
 it prepares typed values in an unlogged scratch table and creates a stored
 function. One outer `SELECT` executes the ordered writes under the source GTID.
 Scratch objects are not a second replication journal. SQLite still records all

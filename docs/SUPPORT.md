@@ -42,6 +42,15 @@ and tables. MyISAM writes cannot be rolled back. Neither profile makes a target
 commit atomic with the SQLite checkpoint. Uncertain writes require DBA review;
 InnoDB provides explicit recovery inspection and resolution commands.
 
+## Target transport
+
+The feature lists below describe the default `target.transport: sql` path.
+The opt-in `binlog` path uses the same decoder, schema checks, SQLite state,
+and SQL DDL policies. MySQL applies its row events. This path has additional
+limits: generated columns, partially filtered groups, partial JSON updates,
+and JSON YEAR translation are not implemented. It cannot change transport in an
+existing state directory. See [BINLOG setup, tests, and limits](BINLOG_TRANSPORT.md).
+
 ## Support status
 
 Use these terms when you read this guide and the support catalog:
@@ -302,8 +311,10 @@ YEAR modifiers normalize to native YEAR metadata. See
 The remaining JSON opaque subtype and range limits are documented in the
 [JSON transport investigation](../PLAN/JSON_TRANSPORT_INVESTIGATION.md). Native
 row replication can store binary JSON values that ordinary client SQL cannot
-recreate with the same type. The applier retains the source bytes and stops
-before a write when its constructor cannot preserve the value.
+recreate with the same type. The SQL transport retains the source bytes and stops
+before a write when its constructor cannot preserve the value. BINLOG sends
+the row bytes directly. Target-version restrictions still apply. See
+[BINLOG transport](BINLOG_TRANSPORT.md).
 
 ### Database defaults in legacy ALTER syntax
 

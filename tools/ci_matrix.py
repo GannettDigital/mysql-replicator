@@ -160,6 +160,29 @@ def generate(catalogs, policy, expanded_coverage=False):
     for image in ('release', 'coverage'):
         add(sample['profile'], 'default', 'correctness', 'sample', sample['cases'],
             image=image, reports=int(image == 'coverage'), count=False)
+    # Selected BINLOG runs use the same named cases. They supplement SQL
+    # catalog obligations; a passing SQL case does not test the BINLOG executor.
+    for selection in policy.get('binlog_selections', []):
+        for profile in selection['profiles']:
+            variant, suite = selection.get('variant', 'default'), selection['suite']
+            rows = {r['id']: r for r in groups.get((profile, variant, suite), [])}
+            requested = selection['cases']
+            if not requested or len(set(requested)) != len(requested):
+                raise ValueError('BINLOG selection must contain unique case IDs')
+            selected = set()
+
+            def include(identifier, visiting=()):
+                if identifier not in rows or identifier in visiting:
+                    raise ValueError(f'missing or cyclic BINLOG case: {profile}: {identifier}')
+                for dependency in rows[identifier].get('dependencies', []):
+                    include(dependency, visiting + (identifier,))
+                selected.add(identifier)
+
+            for identifier in requested:
+                include(identifier)
+            add(profile, variant, suite, 'binlog-' + selection['area'],
+                [identifier for identifier in rows if identifier in selected], count=False)
+            shards[-1].update(dml_transport='binlog', owns_obligations=False)
     # Keep release-binary obligations intact. These extra runs measure the same
     # shared scenarios with instrumentation; adapters have no coverage contract.
     if expanded_coverage:

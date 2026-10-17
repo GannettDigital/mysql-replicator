@@ -14,9 +14,23 @@ extension ApplyTests {
         let format = LiveRecord(
             kind: "formatContext", file: "binlog.000003", observedPosition: "4",
             event: nil, rawBase64: nil, rawBytes: fde)
+        struct Reference: Decodable {
+            struct Transaction: Decodable {
+                let gtid: String
+                let statements: [String]
+            }
+            let transactions: [Transaction]
+        }
+        let reference = try JSONDecoder().decode(
+            Reference.self,
+            from: Data(
+                contentsOf: root.appendingPathComponent(
+                    "tests/ReplicatorApplyTests/Fixtures/mysqlbinlog-row-replay.json")))
+        let sourceGroups = try groups()
+        XCTAssertEqual(sourceGroups.count, reference.transactions.count)
         var capture = BinlogGroupCapture(maximumRawBytes: 1024 * 1024)
         capture.append(format)
-        for group in try groups() {
+        for (group, expected) in zip(sourceGroups, reference.transactions) {
             for event in group.events {
                 capture.append(
                     LiveRecord(
@@ -27,9 +41,18 @@ extension ApplyTests {
                 group, mutations: DMLPlan.make(group, tables: tables()),
                 maximumPacketBytes: 1024 * 1024, transactional: true, preserveSourceGTIDs: true)
             XCTAssertEqual(
-                program.rows.events,
+                program.statements.flatMap(\.events),
                 group.events.filter { [19, 30, 31, 32].contains(Int($0.eventType)) }
                     .map { Data(base64Encoded: $0.rawBase64!)! })
+            XCTAssertEqual(group.gtid?.canonical, expected.gtid)
+            XCTAssertEqual(program.statements.map { $0.sql() }, expected.statements)
+            XCTAssertEqual(group.outcome, .committed)
+            if case .query(let begin) = group.events[1].control {
+                XCTAssertEqual(begin.sql, Data("BEGIN".utf8))
+            } else {
+                XCTFail("missing source BEGIN")
+            }
+            XCTAssertEqual(group.events.last?.eventType, 16)  // Native XID prints COMMIT.
             capture.resetGroup()
         }
         let group = try groups()[0]
@@ -65,11 +88,11 @@ extension ApplyTests {
                     calls.append("commit")
                     XCTAssertEqual(state.transactions, 0)
                 }, rollback: { XCTFail() },
-                finish: { calls.append("reset") }, skippedGTID: { _ in XCTFail() },
+                skippedGTID: { _ in XCTFail() },
                 resetTrace: {}, trace: { .init(phase: .acknowledged) })
             XCTAssertNil(outcome.failure)
             XCTAssertEqual(
-                calls, Array(repeating: ["prepare", "begin", "binlog", "commit", "reset"], count: 4).flatMap { $0 })
+                calls, Array(repeating: ["prepare", "begin", "binlog", "commit"], count: 4).flatMap { $0 })
             try outcome.record(in: state)
             XCTAssertEqual(state.transactions, 4)
         }
@@ -87,7 +110,7 @@ extension ApplyTests {
                     commits += 1
                     if commits == 2 { throw TargetConnectionFailure(description: "lost commit") }
                 },
-                rollback: { XCTFail("A later rollback cannot disprove COMMIT") }, finish: {},
+                rollback: { XCTFail("A later rollback cannot disprove COMMIT") },
                 skippedGTID: { _ in XCTFail() }, resetTrace: {},
                 trace: { .init(phase: .possiblyExecuted, sql: "COMMIT") })
             XCTAssertEqual(writes, 2)
@@ -111,7 +134,7 @@ extension ApplyTests {
                     write: { _ in
                         writes += 1
                         throw ApplyError("duplicate", code: .duplicateKey, mysqlErrorNumber: 1062)
-                    }, commit: { XCTFail() }, rollback: { rollbacks += 1 }, finish: {},
+                    }, commit: { XCTFail() }, rollback: { rollbacks += 1 },
                     skippedGTID: { _ in XCTFail() }, resetTrace: {}, trace: { .init(phase: .possiblyExecuted) })
                 XCTAssertEqual(writes, 1)
                 XCTAssertEqual(rollbacks, transactional ? 1 : 0)
@@ -138,7 +161,7 @@ extension ApplyTests {
                     skipErrors: policy, prepare: { _ in }, begin: {},
                     write: { _ in
                         throw ApplyError("duplicate", code: .duplicateKey, mysqlErrorNumber: 1062)
-                    }, commit: { XCTFail() }, rollback: {}, finish: {}, skippedGTID: { _ in markers += 1 },
+                    }, commit: { XCTFail() }, rollback: {}, skippedGTID: { _ in markers += 1 },
                     resetTrace: {}, trace: { .init(phase: .possiblyExecuted) })
                 XCTAssertEqual(markers, transactional ? 1 : 0)
                 XCTAssertEqual(outcome.skipped.count, transactional ? 1 : 0)
@@ -162,7 +185,7 @@ extension ApplyTests {
                 write: { _ in
                     throw ApplyError("duplicate", code: .duplicateKey, mysqlErrorNumber: 1062)
                 }, commit: {}, rollback: { throw TargetConnectionFailure(description: "lost rollback") },
-                finish: {}, skippedGTID: { _ in XCTFail() }, resetTrace: {}, trace: { .init(phase: .possiblyExecuted) })
+                skippedGTID: { _ in XCTFail() }, resetTrace: {}, trace: { .init(phase: .possiblyExecuted) })
             XCTAssertEqual(outcome.diagnostic?.transactionOutcome, "rollbackUnconfirmed")
             XCTAssertTrue(outcome.skipped.isEmpty)
         }
@@ -174,7 +197,7 @@ extension ApplyTests {
                 groups, transactional: true, cancellation: .init(),
                 prepare: { _ in throw TargetConnectionFailure(description: "FDE request lost") },
                 begin: { XCTFail() }, write: { _ in XCTFail() }, commit: { XCTFail() },
-                rollback: { XCTFail() }, finish: {}, skippedGTID: { _ in XCTFail() },
+                rollback: { XCTFail() }, skippedGTID: { _ in XCTFail() },
                 resetTrace: {}, trace: { .init() })
             XCTAssertTrue(outcome.discardUnwritten)
             XCTAssertEqual(outcome.diagnostic?.transactionOutcome, "notStarted")

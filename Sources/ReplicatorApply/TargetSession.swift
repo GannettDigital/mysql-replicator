@@ -13,6 +13,7 @@ final class TargetSession {
     var jsonScratchOrdinal: UInt64 = 0
     var statementTrace = TargetStatementTrace()
     var statementSourceGTID: SourceGTID?
+    var statementRequiresCommit = true
     var binlogContext = BinlogFormatContext()
     private var foreignKeyChecks: Bool?
     func setForeignKeyChecks(_ enabled: Bool) throws {
@@ -76,8 +77,10 @@ final class TargetSession {
                 rawSQL: rawSQL)
             // DDL and MyISAM complete at the statement boundary. An inactive
             // version comment needs this COMMIT to record its empty transaction.
-            _ = try query("COMMIT", textProtocol: true)
-            try resetSourceGTID()
+            if config.target.transport != .binlog || statementRequiresCommit {
+                _ = try query("COMMIT", textProtocol: true)
+            }
+            if config.target.transport != .binlog { try resetSourceGTID() }
             return result
         }
         try require(

@@ -59,24 +59,50 @@ final class BinlogEventProgramTests: XCTestCase {
             maximumPacketBytes: packet, maximumRawBytes: raw,
             transactionalTarget: transactional, preserveSourceGTIDs: preserve)
     }
-    func testCompleteStatementsStayInOneRequestWithExactBytes() throws {
+    func testEachCompleteSourceStatementGetsOneRequestWithExactBytes() throws {
         let frames = [map(), row(end: false), row(), map(2), row(2, kind: 31), map(), row(kind: 32)]
         let prepared = try program(frames)
-        let sql = prepared.rows.sql()
-        XCTAssertEqual(prepared.rows.commandBytes, sql.utf8.count + 1)
-        XCTAssertEqual(Data(base64Encoded: String(sql.dropFirst(8).dropLast())), frames.reduce(Data(), +))
+        XCTAssertEqual(
+            prepared.statements.map(\.events), [Array(frames[0..<3]), Array(frames[3..<5]), Array(frames[5..<7])])
+        for request in prepared.statements {
+            let sql = request.sql()
+            XCTAssertEqual(request.commandBytes, sql.utf8.count + 1)
+            XCTAssertEqual(Data(base64Encoded: String(sql.dropFirst(8).dropLast())), request.events.reduce(Data(), +))
+        }
         XCTAssertEqual(prepared.format.sql(), "BINLOG '" + format().base64EncodedString() + "'")
         XCTAssertEqual(BinlogEventProgram.formatVersion, 1)
     }
     func testPacketBudgetIncludesBase64SQLAndCommandByte() throws {
         let frames = [map(), row()]
         let prepared = try program(frames)
-        let limit = max(prepared.format.commandBytes, prepared.rows.commandBytes)
+        let limit = max(prepared.format.commandBytes, prepared.statements[0].commandBytes)
         XCTAssertNoThrow(try program(frames, packet: limit))
         XCTAssertThrowsError(try program(frames, packet: limit - 1))
         let many = [map()] + Array(repeating: row(end: false), count: 10) + [row()]
         let large = try program(many)
-        XCTAssertThrowsError(try program(many, packet: large.rows.commandBytes - 1))
+        XCTAssertThrowsError(try program(many, packet: large.statements[0].commandBytes - 1))
+    }
+    func testPacketLimitAppliesToEachStatementNotTheWholeTransaction() throws {
+        let statement = [map()] + Array(repeating: row(end: false), count: 10) + [row()]
+        let first = try program(statement)
+        let limit = max(first.format.commandBytes, first.statements[0].commandBytes)
+        let multiple = try program(statement + statement, packet: limit)
+        XCTAssertEqual(multiple.statements.count, 2)
+        XCTAssertTrue(multiple.statements.allSatisfy { $0.commandBytes <= limit })
+    }
+    func testPreservedGTIDResetsBeforeInitialOrChangedFormatButNotCacheHits() throws {
+        let first = try program([map(), row()]).format
+        var changed = format()
+        changed[21] = 56
+        let next = try program([map(), row()], format: checksum(changed)).format
+        var context = BinlogFormatContext()
+        var sent: [String] = []
+        try context.install(first, preserveSourceGTIDs: true) { sent.append($0) }
+        XCTAssertEqual(sent, ["SET SESSION GTID_NEXT='AUTOMATIC'", first.sql()])
+        try context.install(first, preserveSourceGTIDs: true) { _ in XCTFail("cached FDE must not reset GTID") }
+        sent = []
+        try context.install(next, preserveSourceGTIDs: true) { sent.append($0) }
+        XCTAssertEqual(sent, ["SET SESSION GTID_NEXT='AUTOMATIC'", next.sql()])
     }
     func testRawBudgetIncludesFormatAndAllEvents() throws {
         let frames = [map(), row()]
@@ -147,7 +173,7 @@ final class BinlogEventProgramTests: XCTestCase {
         nextFormat = checksum(nextFormat)
         let next = try program([map(), row()], format: nextFormat)
         XCTAssertNotEqual(first.format.sql(), next.format.sql())
-        XCTAssertEqual(first.rows.sql(), next.rows.sql())
+        XCTAssertEqual(first.statements.map { $0.sql() }, next.statements.map { $0.sql() })
     }
     func testDataSlicesWithNonzeroIndices() throws {
         let prefixed = Data([0, 0]) + row()
@@ -157,16 +183,16 @@ final class BinlogEventProgramTests: XCTestCase {
         let request = try program([map(), row()]).format
         var context = BinlogFormatContext()
         var sent: [String] = []
-        try context.install(request) { sent.append($0) }
-        try context.install(request) { sent.append($0) }
+        try context.install(request, preserveSourceGTIDs: false) { sent.append($0) }
+        try context.install(request, preserveSourceGTIDs: false) { sent.append($0) }
         XCTAssertEqual(sent, [request.sql(), "SET SESSION GTID_NEXT='AUTOMATIC'"])
         context = BinlogFormatContext()
         XCTAssertThrowsError(
-            try context.install(request) { sql in
+            try context.install(request, preserveSourceGTIDs: false) { sql in
                 if sql.hasPrefix("SET") { throw ApplyError("reset failed") }
             })
         sent = []
-        try context.install(request) { sent.append($0) }
+        try context.install(request, preserveSourceGTIDs: false) { sent.append($0) }
         XCTAssertEqual(sent.count, 2)
     }
 }

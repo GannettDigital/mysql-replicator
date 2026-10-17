@@ -8,6 +8,12 @@ binlogs through the same decoder, DDL policies, target execution, and SQLite
 journal as `run`. Replay never connects to the source. `support-bundle` collects
 local evidence into one uncompressed tar file without contacting either database.
 
+Select `target.transport: sql` (default) or `binlog` before initialization.
+BINLOG replay uses the same local archive and checkpoint controls. It does not
+connect to the source or run an external `mysqlbinlog` process. Read the
+[BINLOG limits and privileges](BINLOG_TRANSPORT.md) before selecting it.
+Do not change transport when you resume an existing state directory.
+
 The `source.maximumEventBytes` and `source.maximumTransactionBytes` settings
 also apply to replay. See [large-value limits](LARGE_VALUES.md).
 

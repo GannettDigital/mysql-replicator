@@ -58,6 +58,9 @@ struct BinlogGroupCapture {
         try require(
             group.events.allSatisfy { [2, 16, 19, 29, 30, 31, 32, 33, 42].contains(Int($0.eventType)) },
             "source group contains an event not supported by BINLOG transport")
+        // The assembler admits row events only between canonical BEGIN and
+        // COMMIT/XID. Use those source boundaries, never the preparation batch.
+        try require(group.outcome == .committed, "BINLOG row group must end with source COMMIT or XID")
         return try BinlogEventProgram(
             format: format, events: frames,
             maximumPacketBytes: maximumPacketBytes, maximumRawBytes: maximumRawBytes,

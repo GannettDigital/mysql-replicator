@@ -9,6 +9,16 @@ cases through the opt-in BINLOG path. The default is `sql`. Profiles and case
 selection stay the same. The report records `dml_transport`. Read the
 [BINLOG transport limits](BINLOG_TRANSPORT.md) before selecting cases.
 
+Full CI adds selected BINLOG jobs for each profile. Their names include
+`binlog-rows-json-replay`, `binlog-gtids-disabled`, or `binlog-reconnect`.
+The exact case lists are in `tools/ci_matrix.json` under `binlog_selections`.
+These jobs use the release binary and supplement the SQL jobs. PR smoke
+selection stays unchanged. The current expanded-coverage matrix exceeds GitHub's
+256-job limit; it needs separate matrices before instrumented copies can run.
+See [the BINLOG plan](../PLAN/BINLOG_TRANSPORT.md#ci-matrix-size).
+Use `--variant without-source-gtids --case positive` to check basic DML without
+target GTID preservation. SQLite still tracks source GTIDs in that variant.
+
 Shared fixtures enable automatic support bundles when the applier enters
 `BLOCKED`. They use `format: directory` so you can read the files without extraction.
 After a test, look in its `support-bundles/` artifact directory. Start with

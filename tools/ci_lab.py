@@ -23,8 +23,11 @@ def command(shard):
         args += ['--coverage']
     if shard['suite'] in ('correctness', 'lifecycle'):
         args += ['--variant', shard['variant']]
+    if 'dml_transport' in shard:
+        args += ['--dml-transport', shard['dml_transport']]
     if shard['suite'] == 'correctness':
         args += ['--tier', shard['tier']]
+    if shard['suite'] in ('correctness', 'lifecycle'):
         for case in shard['cases']:
             args += ['--case', case]
     return args

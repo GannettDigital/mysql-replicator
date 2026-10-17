@@ -31,8 +31,10 @@ differences.
 ## How cross-version replication works
 
 Many row changes from MySQL 8.4 use types and operations that MySQL 5.7 supports.
-An external decoder can turn those events into SQL that 5.7 accepts. The target
-does not need to decode the source binlog itself.
+The default SQL transport turns those events into SQL that 5.7 accepts. The
+target does not need to decode the source binlog itself. The optional BINLOG
+transport instead sends compatible row events to the target replication code.
+It has [additional limits and privileges](docs/BINLOG_TRANSPORT.md).
 
 Native replication includes its decoder and event handlers in the MySQL server.
 An older server can read some newer binlog events, but new event formats, SQL
@@ -73,6 +75,10 @@ replication continues.
 - **Live replication:** start from a GTID set or binlog file position. Stop cleanly
   and resume from the saved replication position. GTID restrictions apply even
   when you use a binlog file position.
+- **Target transport:** use SQL statements by default, or select
+  `target.transport: binlog` to apply compatible row events with MySQL's `BINLOG`
+  statement. Both modes retain state in SQLite. BINLOG is opt-in; it is not a
+  native replication channel or a demonstrated performance improvement.
 - **Source GTIDs:** preserve them on a target that permits assignment, or track
   them only in SQLite. See [required privileges and Cloud SQL limits](docs/GTID_PRESERVATION.md).
 - **Offline replay:** fetch binlogs or use a directory of raw files from
@@ -211,7 +217,7 @@ flowchart TB
     harness -->|Test SQL| source
     source -->|Binlog events| ioThread
     source -->|Binlog events| applier
-    applier -->|SQL statements| target
+    applier -->|SQL or BINLOG statements| target
     harness -.->|Read rows and schema| nativeTables
     harness -.->|Read rows and schema| target
 ```

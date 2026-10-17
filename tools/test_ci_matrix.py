@@ -133,6 +133,24 @@ class MatrixTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'sample case missing'):
             self.generate()
 
+    def test_binlog_selection_is_separate_and_checks_dependencies(self):
+        self.policy['binlog_selections'] = [dict(area='rows', suite='correctness',
+                                               profiles=['forward'], cases=['drop'])]
+        result = self.generate()
+        shard = next(s for s in result['include'] if s.get('dml_transport') == 'binlog')
+        self.assertEqual(shard['cases'], ['create', 'drop'])
+        self.assertEqual(shard['area'], 'binlog-rows')
+        self.assertEqual(shard['image'], 'release')
+        self.assertFalse(shard['owns_obligations'])
+        self.assertEqual(result['obligations'], len(self.rows))
+        expanded = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=True)
+        copies = [s for s in expanded['include'] if s.get('dml_transport') == 'binlog']
+        self.assertEqual({s['image'] for s in copies}, {'release', 'coverage'})
+        for invalid in [[], ['missing'], ['drop', 'drop']]:
+            self.policy['binlog_selections'][0]['cases'] = invalid
+            with self.subTest(cases=invalid), self.assertRaises(ValueError):
+                self.generate()
+
     def test_empty_or_oversized_matrix_fails(self):
         with self.assertRaisesRegex(ValueError, 'empty lab catalog'):
             generate([dict(scenarios=[])], self.policy)

@@ -4,12 +4,12 @@ import Foundation
 /// This type checks transport framing. The codec and schema planner must still
 /// validate row values and target compatibility before construction.
 ///
-/// Keep all row statements in one request. A BINLOG request closes MySQL's
+/// Keep each complete row statement in one request. A BINLOG request closes MySQL's
 /// table-map context even if the last row event has no STMT_END_F flag.
 struct BinlogEventProgram {
     static let formatVersion = 1
     let format: Request
-    let rows: Request
+    let statements: [Request]
 
     struct Request {
         let events: [Data]
@@ -22,7 +22,7 @@ struct BinlogEventProgram {
             try require(
                 commandBytes <= maximumPacketBytes,
                 "BINLOG request needs \(commandBytes) bytes; target packet limit is \(maximumPacketBytes). "
-                    + "A source row group cannot be split across requests")
+                    + "A source row statement cannot be split across requests")
             self.events = events
         }
 
@@ -67,8 +67,10 @@ struct BinlogEventProgram {
         var tables = Set<UInt64>()
         var statementOpen = false
         var rowEventCount = 0
-        var statementCount = 0
+        var statements: [Request] = []
+        var statementEvents: [Data] = []
         for event in events {
+            statementEvents.append(event)
             try Self.validateFrame(event)
             let kind = Self.byte(event, 4)
             try require(
@@ -87,7 +89,8 @@ struct BinlogEventProgram {
             try Self.validateFullImageHeader(event, update: kind == 31)
             rowEventCount += 1
             if Self.little(event, 25, 2) & 1 != 0 {
-                statementCount += 1
+                statements.append(try Request(events: statementEvents, maximumPacketBytes: maximumPacketBytes))
+                statementEvents.removeAll(keepingCapacity: true)
                 tables.removeAll(keepingCapacity: true)
                 statementOpen = false
             }
@@ -96,11 +99,11 @@ struct BinlogEventProgram {
             rowEventCount > 0 && !statementOpen,
             "BINLOG group ends before a row event with STMT_END_F")
         try require(
-            transactionalTarget || !preserveSourceGTIDs || statementCount == 1,
+            transactionalTarget || !preserveSourceGTIDs || statements.count == 1,
             "BINLOG cannot preserve one source GTID across multiple MyISAM row statements; "
                 + "the target completes the GTID at the first statement end")
         self.format = try Request(events: [format], maximumPacketBytes: maximumPacketBytes)
-        rows = try Request(events: events, maximumPacketBytes: maximumPacketBytes)
+        self.statements = statements
     }
 
     private static func validateFullImageHeader(_ event: Data, update: Bool) throws {
@@ -164,11 +167,17 @@ struct BinlogEventProgram {
 struct BinlogFormatContext {
     private var format: Data?
     init() {}
-    mutating func install(_ request: BinlogEventProgram.Request, send: (String) throws -> Void) throws {
+    mutating func install(
+        _ request: BinlogEventProgram.Request, preserveSourceGTIDs: Bool, send: (String) throws -> Void
+    ) throws {
         guard format != request.events[0] else { return }
+        // mysqlbinlog ends the previous logical binlog before installing a new FDE.
+        // We install lazily: even the first FDE can follow completed source DDL.
+        if preserveSourceGTIDs { try send("SET SESSION GTID_NEXT='AUTOMATIC'") }
         try send(request.sql())
-        // FDE changes internal GTID state, even when preservation is disabled.
-        try send("SET SESSION GTID_NEXT='AUTOMATIC'")
+        // With preservation enabled, the caller assigns the next source GTID.
+        // Otherwise undo the FDE's internal GTID state before automatic writes.
+        if !preserveSourceGTIDs { try send("SET SESSION GTID_NEXT='AUTOMATIC'") }
         format = request.events[0]
     }
 }

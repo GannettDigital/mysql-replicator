@@ -6,7 +6,11 @@ values. SQL NULL and JSON null remain separate values.
 
 MySQL stores JSON in a binary format. Row-based binlog events use that format.
 The replicator decodes these events and writes equivalent values to the target.
-Object key order and whitespace can change. Array order is preserved.
+With the default SQL transport, object key order and whitespace can change.
+Array order is preserved. The opt-in [BINLOG transport](BINLOG_TRANSPORT.md)
+sends the original complete row values to MySQL. It avoids SQL constructors for
+binary JSON values, but still requires compatible target types and event formats.
+It does not implement partial JSON updates or `jsonYearToInteger` translation.
 
 For example, this source statement is supported:
 

@@ -46,6 +46,15 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
                          '--suite', 'correctness', '--skip-build', '--variant', 'gtid-full',
                          '--tier', 'full', '--case', 'one', '--case', 'two'])
 
+    def test_binlog_lifecycle_passes_transport_and_selected_cases(self):
+        shard = dict(profile='profile', variant='default', suite='lifecycle',
+                     image='release', dml_transport='binlog',
+                     cases=['target-uncertain', 'target-uncertain-resume'])
+        self.assertEqual(ci_lab.command(shard), [
+            'test', '--profile', 'profile', '--suite', 'lifecycle', '--skip-build',
+            '--variant', 'default', '--dml-transport', 'binlog',
+            '--case', 'target-uncertain', '--case', 'target-uncertain-resume'])
+
     def test_adapters_use_shared_entrypoint_without_unsupported_selectors(self):
         for suite in ['native', 'recovery', 'demo']:
             shard = dict(profile='profile', suite=suite, image='release', cases=['internal-case'])
