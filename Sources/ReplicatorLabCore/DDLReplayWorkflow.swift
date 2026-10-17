@@ -41,6 +41,8 @@ extension SharedCorrectness.Run {
         if f.variant != .withoutSourceGTIDs {
             _ = try f.sql(.target, f.profile.targetVersion.resetBinlogs + "; SET GLOBAL gtid_purged='\(start.gtids)'")
         }
+        // Offline replay uses GTIDs even when the live case uses file/position.
+        source["mode"] = "gtid"
         source["host"] = "127.0.0.1"
         source["port"] = 1
         source.removeValue(forKey: "passwordEnvironment")

@@ -306,7 +306,7 @@ public enum SharedCorrectness {
                         .init(
                             name: "partitions",
                             sql:
-                                "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE \(condition) AND TABLE_TYPE='BASE TABLE') ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION",
+                                "SELECT TABLE_NAME,IFNULL(PARTITION_NAME,''),IFNULL(PARTITION_METHOD,''),IFNULL(PARTITION_EXPRESSION,''),IFNULL(PARTITION_DESCRIPTION,'') FROM information_schema.PARTITIONS WHERE \(condition) ORDER BY BINARY TABLE_NAME,PARTITION_ORDINAL_POSITION",
                             preserveWhitespace: true),
                     ])
                 // InnoDB treats NO ACTION and RESTRICT as immediate checks.
@@ -321,6 +321,18 @@ public enum SharedCorrectness {
                         return fields.joined(separator: "\t")
                     }.joined(separator: "\n")
                 }
+                // Read PARTITIONS directly. Joining the two information_schema
+                // views can duplicate rows on 8.4 with lower_case_table_names=1.
+                // Exclude views by exact table-name bytes; retain duplicate partition
+                // rows so the comparison still detects unexpected metadata.
+                let baseTables = Set(
+                    snapshot["tables"]!.components(separatedBy: "\n").compactMap { line -> Data? in
+                        let fields = line.components(separatedBy: "\t")
+                        return fields.count >= 2 && fields[1] == "BASE TABLE" ? Data(fields[0].utf8) : nil
+                    })
+                snapshot["partitions"] = snapshot["partitions"]!.components(separatedBy: "\n").filter { line in
+                    baseTables.contains(Data(line.components(separatedBy: "\t")[0].utf8))
+                }.joined(separator: "\n")
                 let actualTables = snapshot["tables"]!
                 rawTables[service] = actualTables
                 try actualTables.write(
@@ -603,6 +615,16 @@ public enum SharedCorrectness {
                 nativeInnoDB = test.nativeInnoDB
                 try setNativeEngine(nativeInnoDB ? "InnoDB" : "MyISAM")
                 try reporter.run(test.test) {
+                    if f.profile.hasOptionalMetadata {
+                        // These DDL workloads write ENUM/SET values. Their label
+                        // validation requires FULL metadata even with position capture.
+                        let fullMetadataCases: Set<String> = [
+                            "ddl-compat-types", "ddl-compat-query-encodings", "ddl-compat-charset-conversion",
+                            "ddl-compat-keyless-rows",
+                        ]
+                        let metadata = fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
+                        _ = try f.sql(.source, "SET GLOBAL binlog_row_metadata=" + metadata)
+                    }
                     try step("DROP DATABASE IF EXISTS ddlcompat", database: "ddlcompat")
                     try step(
                         "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "ddlcompat")
