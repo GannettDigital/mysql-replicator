@@ -239,9 +239,42 @@ compares source and target GTID deltas. The original failed result remains at
 `artifacts/lab/20261017T060057Z-c293c398/result.json`. The applier completed that
 run, so it did not create an automatic failure bundle.
 
-These runs do not establish full type support or performance. Live reconnect
-and the full test matrix have not run with BINLOG transport. Unit tests check
+These runs do not establish full type support or performance. The full test
+matrix has not run with BINLOG transport. Unit tests check
 connection-local FDE state, pre-write connection loss, and lost COMMIT replies.
+
+## Selected reconnect tests
+
+Commit `143d3c9` contains the first apply path. Follow-up work is on
+`beta/7/02-binlog-validation`. The lab now accepts lifecycle case selection and
+`--dml-transport sql|binlog` for backlog benchmarks. SQL remains the default.
+Selecting a lifecycle resume case also selects the setup case that it needs.
+The 31 focused lab option and command-line tests passed.
+
+On 2026-10-17 UTC, both cross-version profiles passed these BINLOG cases:
+
+- `source-reconnect`: source socket loss, rotation, clean restart, and crash/restart.
+- `target-reconnect`: target socket loss and server restart.
+- `target-uncertain`: disconnect after a row request was issued.
+- `target-uncertain-resume`: refuse ordinary resume with unresolved writes.
+
+The InnoDB failure bundle records `rollbackUnconfirmed` and two pending row
+intents. The MyISAM bundle records `possiblyExecuted` and two pending row intents.
+Both bundles retain BINLOG transport version 1. The tests compare rows with the
+source and native reference, and check the SQLite checkpoint.
+
+Results:
+
+- `artifacts/lab/20261017T061841Z-68e1a7e9/result.json` (5.7 → 8.4 InnoDB).
+- `artifacts/lab/20261017T062232Z-0e3ebc04/result.json` (8.4 → 5.7 MyISAM).
+- `artifacts/binlog-validation-unit-rerun.log` (focused Swift tests).
+
+No full lifecycle or correctness suite ran in this step.
+
+The first four 10K backlog runs passed. BINLOG did not improve elapsed time in
+these single-row comparisons. Native times varied substantially. See
+[timings and the mysqlbinlog comparison](BINLOG_TRANSPORT_MEASUREMENTS.md) before
+selecting the next optimization.
 
 ## Implementation structure
 

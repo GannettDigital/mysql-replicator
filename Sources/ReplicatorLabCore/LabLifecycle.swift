@@ -22,6 +22,25 @@ enum LabLifecycle {
         .init("target-uncertain-resume", "Ordinary resume refuses an unresolved target write"),
         .init("target-reconnect-settings", "Block incompatible target settings without advancing progress"),
     ]
+    static func select(family: String?, ids: Set<String>) throws -> Set<String> {
+        try require(family == nil || ["source", "target"].contains(family!), "unknown lifecycle family")
+        let known = Set(cases.map(\.id))
+        try require(
+            ids.isSubset(of: known),
+            "unknown lifecycle case: " + ids.subtracting(known).sorted().joined(separator: ", "))
+        var selected = Set(
+            cases.filter {
+                (ids.isEmpty || ids.contains($0.id)) && (family == nil || $0.id.hasPrefix(family! + "-"))
+            }.map(\.id))
+        try require(ids.isEmpty || selected == ids, "lifecycle cases do not belong to requested family")
+        try require(!selected.isEmpty, "no lifecycle cases match the selection")
+        for (resume, setup) in [
+            ("target-drain-resume", "target-drain"), ("target-uncertain-resume", "target-uncertain"),
+        ] {
+            if selected.contains(resume) { selected.insert(setup) }
+        }
+        return selected
+    }
     static func fields(_ profile: LabProfile, variant: LabVariant = .standard) -> [[String: Any]] {
         cases.map { test in
             var row = test.fields
@@ -58,10 +77,12 @@ enum LabLifecycle {
         let f: LabFixture, reporter: QualificationReporter
         var configurations: [String: [String: Any]] = [:]
         var completed: Set<String> = []
+        let selected: Set<String>
         init(
             root: URL, profile: LabProfile, category: String, image: String, codeCoverage: Bool = false,
-            variant: LabVariant = .standard, dmlTransport: String = "sql"
+            variant: LabVariant = .standard, dmlTransport: String = "sql", selected: Set<String>? = nil
         ) {
+            self.selected = selected ?? Set(LabLifecycle.cases.map(\.id))
             f = LabFixture(
                 root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage,
                 variant: variant, dmlTransport: dmlTransport)
@@ -102,7 +123,7 @@ enum LabLifecycle {
                 try sourceCases()
                 try targetCases()
                 try require(
-                    reporter.results.count == LabLifecycle.cases.count, "lifecycle runner omitted declared cases")
+                    reporter.results.count == selected.count, "lifecycle runner omitted selected cases")
             } catch {
                 failure = reporter.fail(error)
                 report["error"] = String(describing: failure!)
@@ -135,6 +156,7 @@ enum LabLifecycle {
             f.stage("PASS: source and target lifecycle (\(reporter.results.count) cases)")
         }
         func scenario(_ id: String, _ body: () throws -> Void) throws {
+            guard selected.contains(id) else { return }
             try reporter.run(LabLifecycle.cases.first { $0.id == id }!, body)
         }
         func native(start: Bool) throws {
@@ -508,7 +530,8 @@ enum LabLifecycle {
                     f.profile.transactionalTarget
                     ? "UPDATE lifecycle.target_uncertain SET v=v+10 ORDER BY id"
                     : "INSERT INTO lifecycle.target_uncertain VALUES(2,2),(3,3)"
-                let operation = f.profile.transactionalTarget ? "UPDATE" : "INSERT INTO"
+                let operation =
+                    f.dmlTransport == "binlog" ? "BINLOG" : f.profile.transactionalTarget ? "UPDATE" : "INSERT INTO"
                 _ = try f.sql(.source, mutation)
                 while try f.sql(
                     .target,

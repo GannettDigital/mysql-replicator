@@ -256,6 +256,7 @@ private struct Benchmark: LabRequestCommand {
     static let configuration = CommandConfiguration(
         commandName: "benchmark", abstract: "Compare native and external replication time.")
     @OptionGroup var profile: ProfileOption
+    @Option(help: "Backlog DML transport: sql (default) or binlog.") var dmlTransport: String?
     @Option(help: "backlog on all profiles; streaming and capture on the forward profile.") var mode: BenchmarkMode =
         .backlog
     @Option(help: "insert or multi-table-transaction for backlog; insert or mixed for streaming/capture.") var workload:
@@ -301,6 +302,7 @@ private struct Benchmark: LabRequestCommand {
         var arguments: [String] = []
         arguments += profile.arguments
         arguments += option("mode", mode.rawValue)
+        arguments += option("dml-transport", dmlTransport)
         arguments += option("workload", workload)
         arguments += option("target-transport", targetTransport)
         arguments += option("table-distribution", tableDistribution)

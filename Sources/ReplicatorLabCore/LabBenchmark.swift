@@ -5,6 +5,7 @@ public enum LabBenchmark {
     struct Options {
         let profile: LabProfile
         var mode = "backlog", workload = "insert"
+        var dmlTransport = "sql"
         var build = true, events = 1000
         var decoderProfiling = false, applierProfiling = true, batchTransactions = 8
         var preparedBatches = 8, serverProfiling = false
@@ -38,6 +39,8 @@ public enum LabBenchmark {
                     events = n
                 } else if flag == "--workload" {
                     workload = value
+                } else if flag == "--dml-transport" {
+                    dmlTransport = value
                 } else if flag == "--batch-transactions", let n = Int(value) {
                     batchTransactions = n
                 } else if flag == "--prepared-batches", let n = Int(value) {
@@ -56,6 +59,7 @@ public enum LabBenchmark {
                 }
             }
             try require((1...100000).contains(events), "events must be 1...100000")
+            try require(["sql", "binlog"].contains(dmlTransport), "DML transport must be sql or binlog")
             try require((1...256).contains(batchTransactions), "batch-transactions must be 1...256")
             try require((1...16).contains(preparedBatches), "prepared-batches must be 1...16")
             try require(["insert", "multi-table-transaction"].contains(workload), "unknown backlog workload")
@@ -88,10 +92,13 @@ public enum LabBenchmark {
         let events = options.events
         let build = options.build
         let image = try LabBuild.prepare(root: root, build: build, coverage: false)
-        let f = LabFixture(root: root, category: "lab-benchmark/" + profile.rawValue, image: image, profile: profile)
+        let f = LabFixture(
+            root: root, category: "lab-benchmark/" + profile.rawValue, image: image, profile: profile,
+            dmlTransport: options.dmlTransport)
         var result: [String: Any] = [
             "result": "failed", "profile": profile.rawValue, "topology": profile.topology, "mode": mode,
             "workload": workload, "events": events,
+            "dml_transport": options.dmlTransport,
             "server_profiling": options.serverProfiling, "decoder_profiling": options.decoderProfiling,
             "applier_profiling": options.applierProfiling, "batch_transactions": options.batchTransactions,
             "prepared_batches": options.preparedBatches,

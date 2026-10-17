@@ -356,7 +356,11 @@ Run reconnect qualification for all profiles, or select one:
 ```sh
 make lab-test ARGS="--suite lifecycle"
 make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle --skip-build"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle --case source-reconnect --case target-reconnect --dml-transport binlog --skip-build"
 ```
+
+Lifecycle selection accepts `--case ID` and `--family source|target`. A resume
+case also selects its setup case. Use `--list` to inspect the selected cases.
 
 The 11 lifecycle cases use equivalent bootstrapped integer tables and default to
 GTIDs; capture variants below also exercise file-position starts.
@@ -520,8 +524,9 @@ that all selected smoke obligations passed. It does not certify all profiles.
 
 Reproduce a shard with the usual `make lab-test PROFILE=...` command
 and its `ARGS="--suite ... --variant ... --case ..."` selections. Only correctness
-and lifecycle accept `--variant`; omit case selectors for lifecycle, demo and
-specialized adapters, which run their complete suite in CI.
+and lifecycle accept `--variant`. Lifecycle and demo also accept named cases.
+Omit case selectors to run all cases in those suites. Specialized adapters run
+their complete suite.
 
 The forward negative suites archive the native reference's error and the source
 boundary before reseeding that disposable reference past rejected transactions.
@@ -575,6 +580,12 @@ migration to obtain the SQLite-equipped demo image; retained sessions never rebu
 or switch their image implicitly.
 
 ## Comparable benchmarks
+
+Backlog benchmarks accept `--dml-transport sql|binlog`. SQL is the default.
+The workload, native reference, and timing method are the same for both modes.
+The result records `dml_transport`. Run comparisons sequentially to avoid CPU
+and disk contention between fixtures. Streaming and capture benchmarks do not
+accept this option.
 
 ```sh
 make lab-benchmark PROFILE=mysql84-to-mysql57-myisam ARGS="--events 10000"

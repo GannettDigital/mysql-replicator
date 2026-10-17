@@ -97,8 +97,8 @@ struct LabTestOptions {
             tier == "full" || suite == "correctness",
             "--tier smoke selects shared correctness only; adapter suites retain their full scope")
         try require(
-            ["correctness", "demo"].contains(suite) || (family == nil && ids.isEmpty),
-            "--case and --family select correctness or demo scenarios")
+            ["correctness", "demo", "lifecycle"].contains(suite) || (family == nil && ids.isEmpty),
+            "--case and --family select correctness, demo, or lifecycle scenarios")
         try require(["sql", "binlog"].contains(dmlTransport), "DML transport must be sql or binlog")
         try require(
             dmlTransport == "sql" || ["correctness", "lifecycle"].contains(suite),
@@ -112,6 +112,8 @@ struct LabTestOptions {
             "--variant selects shared correctness or lifecycle; adapters retain their own variants")
         if suite == "demo" {
             _ = try LabDemoQualification.select(family: family, ids: ids)
+        } else if suite == "lifecycle" {
+            _ = try LabLifecycle.select(family: family, ids: ids)
         } else {
             _ = try LabScenario.select(tier: tier, family: family, ids: ids)
         }

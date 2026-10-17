@@ -227,6 +227,32 @@ final class LabProfileTests: XCTestCase {
         XCTAssertTrue(options.coverage)
         XCTAssertEqual(options.profiles, LabProfile.allCases)
     }
+    func testLifecycleSelectionKeepsDependenciesAndRejectsMissingCases() throws {
+        XCTAssertEqual(
+            try LabLifecycle.select(family: nil, ids: ["source-reconnect", "target-reconnect"]),
+            ["source-reconnect", "target-reconnect"])
+        XCTAssertEqual(
+            try LabLifecycle.select(family: nil, ids: ["target-drain-resume"]),
+            ["target-drain", "target-drain-resume"])
+        XCTAssertEqual(
+            try LabLifecycle.select(family: nil, ids: ["target-uncertain-resume"]),
+            ["target-uncertain", "target-uncertain-resume"])
+        XCTAssertEqual(try LabLifecycle.select(family: "source", ids: []).count, 4)
+        XCTAssertNoThrow(try LabTestOptions(["--suite", "lifecycle", "--case", "target-reconnect"]))
+        XCTAssertThrowsError(try LabTestOptions(["--suite", "lifecycle", "--case", "positive"]))
+        XCTAssertThrowsError(try LabLifecycle.select(family: "missing", ids: []))
+        XCTAssertThrowsError(try LabLifecycle.select(family: "source", ids: ["source-reconnect", "target-reconnect"]))
+    }
+    func testBacklogBenchmarkSelectsTransportAndRejectsUnsupportedModes() throws {
+        let prefix = ["--profile", LabProfile.forward.rawValue]
+        XCTAssertEqual(try LabBenchmark.Options(prefix).dmlTransport, "sql")
+        XCTAssertEqual(try LabBenchmark.Options(prefix + ["--dml-transport", "binlog"]).dmlTransport, "binlog")
+        XCTAssertThrowsError(try LabBenchmark.validate(arguments: prefix + ["--dml-transport", "other"]))
+        for mode in ["streaming", "capture"] {
+            XCTAssertThrowsError(
+                try LabBenchmark.validate(arguments: prefix + ["--mode", mode, "--dml-transport", "binlog"]))
+        }
+    }
     func testVersionSessionSettingsFollowEachServerRole() {
         for profile in LabProfile.allCases {
             for role in LabProfile.Role.allCases {

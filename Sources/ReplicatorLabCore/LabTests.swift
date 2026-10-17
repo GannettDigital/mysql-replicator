@@ -29,7 +29,10 @@ public enum LabTests {
                         row["suite"] = suite
                         rows.append(row)
                     } else if suite == "lifecycle" {
-                        rows += LabLifecycle.fields(profile, variant: variant)
+                        let selected = try LabLifecycle.select(family: options.family, ids: options.ids)
+                        rows += LabLifecycle.fields(profile, variant: variant).filter {
+                            selected.contains($0["id"] as! String)
+                        }
                     } else {
                         rows.append(adapter(profile: profile, suite: suite))
                     }
@@ -129,7 +132,9 @@ public enum LabTests {
                             } else {
                                 let run = LabLifecycle.Run(
                                     root: root, profile: profile, category: category, image: image!,
-                                    codeCoverage: options.coverage, variant: variant, dmlTransport: options.dmlTransport
+                                    codeCoverage: options.coverage, variant: variant,
+                                    dmlTransport: options.dmlTransport,
+                                    selected: selected
                                 )
                                 reporter = run.reporter
                                 output = run.f.output

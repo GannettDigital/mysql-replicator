@@ -115,4 +115,14 @@ final class LabCommandLineTests: XCTestCase {
             XCTAssertEqual(forwarded[index + 1], value)
         }
     }
+    func testBacklogTransportReachesBenchmark() throws {
+        guard
+            case .run(let command, let arguments) = try ReplicatorLabCommandLine.parse([
+                "benchmark", "--profile", profile, "--dml-transport", "binlog", "--events", "10000",
+            ])
+        else { return XCTFail("No benchmark request") }
+        XCTAssertEqual(command, "benchmark")
+        let index = try XCTUnwrap(arguments.firstIndex(of: "--dml-transport"))
+        XCTAssertEqual(arguments[index + 1], "binlog")
+    }
 }

@@ -95,5 +95,10 @@ The test report records `dml_transport`. See [the test lab guide](TEST_LAB.md).
 The first shared runs passed `positive` on both profiles above. The reverse
 profile also passed `offline-replay` and `live-skip-errors`. These checks cover
 rotation, stop/resume, external archives, and duplicate-error rollback with
-continuation. Live reconnect and the full type matrix remain untested in this mode.
-No performance improvement is claimed until the benchmark runs are complete.
+continuation. Both profiles also passed the selected lifecycle cases
+`source-reconnect`, `target-reconnect`, `target-uncertain`, and
+`target-uncertain-resume`. These cover socket loss, server restarts, and refusal
+to resume an uncertain write. The full type and lifecycle matrices remain untested.
+The first 10K single-row benchmarks passed, but BINLOG did not improve elapsed
+time. Native times varied between runs. No performance improvement is claimed.
+See [the measurements](../PLAN/BINLOG_TRANSPORT_MEASUREMENTS.md) for scope and limits.
