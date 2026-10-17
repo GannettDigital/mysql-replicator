@@ -23,12 +23,15 @@ automatic DDL replay or crash recovery.
   including supplementary characters. See [the metadata design](ENUM_LABEL_METADATA.md).
   COLUMN_TYPE alone can replace these characters with `?`.
 - Literal and NULL defaults, CURRENT_TIMESTAMP defaults/ON UPDATE, integer
-  AUTO_INCREMENT, inline secondary BTREE and SPATIAL indexes, ALTER SET/DROP DEFAULT,
+  AUTO_INCREMENT, inline secondary BTREE, SPATIAL and FULLTEXT indexes, ALTER SET/DROP DEFAULT,
   common comma-separated column/index operations, and replacement primary keys.
   Tables must retain a supported nonnullable primary key. ADD NOT NULL requires
   an explicit default or generated expression. Column removal updates the
   surviving index parts. Supported ALGORITHM/LOCK clauses are passed through;
   5.7 decides whether the requested execution method is possible.
+- FULLTEXT CREATE/ADD/DROP/RENAME, parser metadata and CREATE TABLE LIKE.
+  See [FULLTEXT support](FULLTEXT_SUPPORT.md) for native restrictions, version
+  differences, selected search assertions and remaining qualification.
 - ALTER DATABASE/SCHEMA encoding defaults and DROP DATABASE/SCHEMA, including
   IF EXISTS. DROP retires every cached schema in that database in the same
   SQLite transaction as checkpoint advancement. It does not issue USE against

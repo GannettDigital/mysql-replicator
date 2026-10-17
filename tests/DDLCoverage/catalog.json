@@ -9538,6 +9538,36 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-table-name-case",
       "reason": "Native mode-1 table names through DDL, row events and clean restart. This case does not qualify case-insensitive filesystems or cross-setting replication."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-json-indexes",
+      "reason": "JSON generated-column indexes, row changes, CREATE LIKE and restart on four profiles. This selected regression does not qualify every generated expression."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-fulltext",
+      "reason": "FULLTEXT parser metadata and indexed search after row changes, DDL or restart. Selected regression; full engine and option qualification remains open."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-options",
+      "reason": "Comments, physical options, AUTO_INCREMENT, LIKE and restart. Other engine options need qualification."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-conversions",
+      "reason": "Selected native cross-family MODIFY and CHANGE conversions, following DML and restart. This does not qualify all conversions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-multi-table",
+      "reason": "Ordered cross-schema moves, swaps, DROP lists, saved schema retirement and restart. Failure and filter boundaries also have unit checks."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-cross-schema-relationships",
+      "reason": "Cross-schema parent/child renames and multi-table DROP. InnoDB variants check foreign-key metadata and a cascade. MyISAM variants omit foreign keys."
     }
   ]
 }

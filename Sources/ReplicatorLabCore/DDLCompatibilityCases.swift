@@ -29,6 +29,12 @@ enum DDLCompatibilityCases {
         unicodeNames,
         encodedQueryText,
         tableNameCase,
+        fulltextIndexes,
+        jsonGeneratedIndexes,
+        tableOptions,
+        alterConversions,
+        multiTableDDL,
+        crossSchemaRelationships,
         .init("constraints","Named PRIMARY/UNIQUE constraints in CREATE and ALTER preserve index names and following DML",[
             .init("CREATE TABLE ddlcompat.aux(id INT, val INT, CONSTRAINT pk PRIMARY KEY(id), CONSTRAINT initial_uni UNIQUE(val))",[
                 .init("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='aux' ORDER BY BINARY INDEX_NAME","PRIMARY\ninitial_uni")]),

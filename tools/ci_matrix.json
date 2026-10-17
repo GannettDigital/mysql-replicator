@@ -8,7 +8,7 @@
       "matrix-composite",
       "ddl-index-create",
       "ddl-compat-skip-trigger",
-      "reject-fulltext",
+      "reject-engine",
       "wild-ignore",
       "positive",
       "offline-replay",

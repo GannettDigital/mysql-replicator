@@ -95,7 +95,9 @@ Prioritize application schemas that currently fail discovery or CREATE:
    If the client protocol cannot represent a native value, record that result and
    review a separate transport design. Do not substitute strings or approximate
    numbers. A target extension would change the deployment contract and needs its
-   own design decision.
+   own design decision. The explicit 5.7 to 8.4 YEAR-to-integer rule is an
+   approved exception to exact type preservation. It is disabled by default.
+   See [JSON_YEAR_COMPATIBILITY.md](JSON_YEAR_COMPATIBILITY.md).
 
 Place type codecs and version rules behind small interfaces. Keep transaction
 ordering, checkpointing, and error handling generic. Avoid a general plugin
@@ -114,13 +116,25 @@ that bypasses filters, schema tracking, or recovery records.
    indexes, and the remaining native-valid index forms at the 5.7 boundary.
 2. Add cross-family column conversions and remaining ALTER operations. Let the
    target execute the source SQL under compatible logged session settings.
+   Increment 27 adds parsed table options and native cross-family conversions.
+   Its selected cases include exact defaults, row changes and restart. Other
+   ALTER forms, charset conversion and the full conversion matrix remain open.
    Verify resulting metadata and subsequent row effects. Do not predict a lossy
    conversion as exact when native behavior depends on SQL mode or table data.
 3. Complete generated-expression coverage and partition operations, including
    subpartitions. Test evaluation changes across versions and retain source-value
    comparison where it is needed.
+   Current JSON work adds extraction and CAST expressions, indexed generated
+   columns, and 8.4 target discovery of functional indexes and JSON expression
+   defaults. It does not complete the expression grammar or partition work.
+   See [JSON support](../docs/JSON_SUPPORT.md#json-indexes-and-defaults).
 4. Add ordered multi-table DROP and cross-schema RENAME. Include filter boundaries,
    name case rules, FK dependencies, partial failure, and saved schema retirement.
+   Increment 28 implements DROP lists and cross-schema RENAME through the
+   existing multi-table DDL journal. Shared cases cover moves, swaps, FK
+   relationships, following DML and restart. Unit checks cover filter boundaries
+   and atomic local checkpoint failure. A target DDL failure remains pending;
+   automatic DDL repair is not implemented.
 5. Classify CREATE TABLE SELECT by source version and target engine first.
    MySQL 5.7 source rejection under GTID consistency is outside positive support.
    MySQL 8.4 accepts the atomic-DDL InnoDB case. Check its binlog sequence and native

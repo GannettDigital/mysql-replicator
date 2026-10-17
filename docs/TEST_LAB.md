@@ -120,20 +120,54 @@ defaults and preserve exact Unicode bytes.
 VARCHAR, BINARY and VARBINARY columns. They distinguish empty values from NULL
 and exercise width changes before and after DML.
 
+`json-year-compatibility` checks the optional 5.7 to 8.4 YEAR conversion inside
+JSON. It includes default refusal, native type checks, restart, UPDATE/DELETE,
+policy-change refusal and offline replay. Run it with:
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case json-year-compatibility"
+```
+
+`ddl-compat-json-indexes` checks indexed generated columns, JSON extraction,
+ALTER, CREATE LIKE, row changes, and restart on all four profiles. It uses a
+STORED indexed column on MyISAM targets and a VIRTUAL indexed column on InnoDB
+targets. It also adds a STORED indexed column on all profiles.
+
+`json-target57-limits` uses the 8.4 source and native InnoDB replica to accept
+JSON expression defaults, functional indexes, and an indexed VIRTUAL column.
+The 5.7 MyISAM target must reject each statement before target SQL. The test
+checks that no target table exists and the transaction count remains zero.
+
+`json-target84-schema` checks an existing 8.4 target table with functional
+indexes and a JSON expression default. It checks INSERT, UPDATE, DELETE,
+restart, indexed queries, and offline replay. The source and native reference
+are 5.7; their tables have the same visible columns, without the 8.4-only index
+and default definitions. Target-side queries verify these extra definitions.
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-json-indexes --case json-target84-schema"
+```
+
 `matrix-json` and `bootstrap-matrix-json` check ordinary JSON values.
 `matrix-typedjson` and `bootstrap-matrix-typedjson` check DECIMAL, temporal and
 binary JSON types. All four profiles select these cases. `matrix-jsonpartial`
 and `bootstrap-matrix-jsonpartial` check partial updates on an 8.4 source.
 They inspect mysqlbinlog output to confirm that the source emitted a change
 record. These cases passed on the applicable profiles. The old `matrix-reject-json-opaque` case
-is removed. See [JSON paths and remaining limits](../PLAN/JSON_SUPPORT.md).
+is removed. See [JSON support and limits](JSON_SUPPORT.md).
 
 `matrix-spatial` and `bootstrap-matrix-spatial` check all eight spatial types,
 SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key
 changes, added columns, and SPATIAL index changes. They compare stored bytes
 and SRIDs with the native replica. They do not compare WKT output across server
 versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
-The former `reject-geometry` case is now `reject-fulltext`.
+The former `reject-geometry` and `reject-fulltext` refusal cases have positive
+coverage. The refusal selection now uses `reject-engine`.
+
+`ddl-compat-fulltext` checks index creation, changes, parser metadata, search
+results, CREATE TABLE LIKE and restart. `matrix-fulltext` and
+`bootstrap-matrix-fulltext` check row changes and discovery with the ngram
+parser. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md).
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
@@ -659,3 +693,24 @@ The `lowercase-tables` variant starts all three MySQL servers with
 `lower_case_table_names=1`. Use `--case ddl-compat-table-name-case` to check
 mixed-case database/table references, native lowercase storage, LIKE, RENAME,
 row events and restart. This is separate from the default mode-0 Unicode case.
+
+Selected table-option and conversion checks:
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-table-options --case ddl-compat-alter-conversions"
+```
+
+These shared cases check comments, row format, AUTO_INCREMENT, CREATE LIKE,
+selected cross-family column conversions, following row changes and restart.
+They apply to all four profiles. Other physical options and conversion pairs
+need separate qualification.
+
+`ddl-compat-multi-table` checks cross-schema moves, swaps, DROP lists, name
+reuse and saved schema retirement. `ddl-compat-cross-schema-relationships`
+checks parent/child moves and ordered DROP. InnoDB profiles also check a
+foreign-key cascade. MyISAM profiles use the same table layout without FKs.
+Both cases include saved-state restart.
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-multi-table --case ddl-compat-cross-schema-relationships"
+```

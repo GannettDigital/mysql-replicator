@@ -180,9 +180,9 @@ final class StateStore {
             let saved = try query("SELECT policy_json FROM compatibility WHERE id=1")
             guard saved.count == 1, let json = saved[0][0] else { throw ApplyError("missing saved compatibility policy") }
             let policy = try JSONDecoder().decode(CompatibilityPolicy.self,from:Data(json.utf8))
-            try require(policy == compatibility,"compatibility.collations differs from saved state; restore the original mapping or initialize a newly prepared baseline")
+            try require(policy == compatibility,"compatibility policy differs from saved state; restore the original rules or initialize a newly prepared baseline")
         } else {
-            try require(compatibility.collations.isEmpty,"legacy state uses strict collation semantics; enabling compatibility.collations requires a newly prepared baseline")
+            try require(compatibility == CompatibilityPolicy(),"legacy state uses strict compatibility semantics; enabling translation requires a newly prepared baseline")
         }
         try require(version != 4 || skipGTIDs == nil,"format-4 BLOCKED state requires resolution with its original runtime before upgrading")
         try require(try query("PRAGMA quick_check") == [["ok"]],"saved SQLite integrity check failed")

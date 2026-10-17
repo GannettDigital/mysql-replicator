@@ -39,22 +39,24 @@ enum DDLStatement: Equatable {
     case dropColumn(TableName,String)
     case rename(TableName,TableName)
     case renameMany([TableRename])
+    case dropMany([TableName],ifExists:Bool)
     case drop(TableName)
     case dropIfPresent(TableName)
     case truncate(TableName)
     var name: TableName? {
         switch self {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany: return nil
+        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany,.dropMany: return nil
         case .alter(let t,_): return t
         case .create(let t,_),.createIfAbsent(let t,_): return TableName(database:t.database,table:t.table)
         case .modify(let t,_,_),.indexes(let t,_),.add(let t,_,_),.dropColumn(let t,_),.rename(let t,_),.drop(let t),.dropIfPresent(let t),.createLike(let t,_,_),.truncate(let t): return t
         }
     }
     static func parse(_ query: QueryControl, profile: ReplicationProfile = .mysql84To57MyISAM, tokens:[DDLToken]? = nil,lowerCaseTableNames:Int = 0) throws -> DDLStatement {
-        try require(query.errorCode == 0,"DDL source query reported an error")
+        try require(query.errorCode == 0,"DDL source query reported an error: source error code \(query.errorCode); partial source DDL is not supported")
         try DDLPolicy.rejectProhibited(query)
         var parser=try DDLParser(query:query,tokens:tokens)
         parser.engine = profile.targetContract.engine
+        parser.targetVersion = profile.targetContract.versionPrefix
         parser.lowerCaseTableNames=lowerCaseTableNames
         return try parser.parse()
     }
@@ -131,7 +133,7 @@ extension TargetSession {
                 let type=try DMLColumnType(column.type)
                 guard let base=["char":"binary","varchar":"varbinary","tinytext":"tinyblob","text":"blob","mediumtext":"mediumblob","longtext":"longblob"][type.base] else { throw ApplyError("unsupported binary charset column") }
                 let definition=base+(type.arguments.isEmpty ? "" : "("+type.arguments.map(String.init).joined(separator:",")+")")
-                var binary=ApplyColumn(name:column.name,type:definition,nullable:column.nullable,collation:nil,defaultValue:column.defaultValue,extra:column.extra,generationExpression:column.generationExpression)
+                var binary=ApplyColumn(name:column.name,type:definition,nullable:column.nullable,collation:nil,defaultValue:column.defaultValue,extra:column.extra,generationExpression:column.generationExpression,defaultExpression:column.defaultExpression)
                 binary.binaryDefaultBytes=column.binaryDefaultBytes ?? column.inputDefaultBytes
                 binary.numericDefaultLiteral=column.numericDefaultLiteral
                 return try resolveBinaryDefault(binary,database:database,sqlMode:context.sqlMode)
@@ -163,6 +165,7 @@ extension TargetSession {
         var parser = try DDLParser(query:source,tokens:tokens)
         parser.lowerCaseTableNames=config.source.tableNameCaseSetting
         parser.engine=config.replicationProfile.targetContract.engine
+        parser.targetVersion=contract.versionPrefix
         parser.compatibility = policy; parser.defaultUTF8MB4Collation = context.defaultUTF8MB4Collation
         let translated = try parser.parse()
         var plan = try prepareTargetDDL(translated,query:source,timestamp:timestamp)
@@ -188,6 +191,8 @@ extension TargetSession {
             return try prepareDropDatabase(statement,name:name,conditional:conditional,source:source,context:context)
         case .renameMany(let renames):
             return try prepareRenames(renames,source:source,context:context)
+        case .dropMany(let names,let conditional):
+            return try prepareDrops(names,conditional:conditional,source:source,context:context)
         case .object(let object):
             return try prepareObjectDDL(statement,object:object,source:source,context:context)
         default: break
@@ -218,7 +223,7 @@ extension TargetSession {
         var after:ApplyTable?
         var additional: [SchemaTransition] = []
         switch statement {
-        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany: throw ApplyError("non-table DDL reached table prediction")
+        case .createDatabase,.alterDatabase,.dropDatabase,.object,.renameMany,.dropMany: throw ApplyError("non-table DDL reached table prediction")
         case .alter(_,let actions):
             after=try altering(before!,actions:actions,context:context)
             for action in actions {
@@ -274,6 +279,7 @@ extension TargetSession {
         case .truncate: after=before
         }
         try after?.validate()
+        if let after { try contract.validateSchemaFeatures(after) }
         try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= maximumCachedTables,"discovered schema limit reached")
         // The outer preparation layer applies only authorized encoding edits.
         let sql=String(decoding:source.sql,as:UTF8.self)
@@ -329,7 +335,10 @@ extension TargetSession {
             try require(try objectExists(object) == (object.operation != .drop),"DDL target object existence mismatch")
             return
         }
-        if case .renameMany = plan.statement { try applyRenames(plan); return }
+        switch plan.statement {
+        case .renameMany,.dropMany: try applyTableTransitions(plan); return
+        default: break
+        }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
         _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
         try resetDMLSession()

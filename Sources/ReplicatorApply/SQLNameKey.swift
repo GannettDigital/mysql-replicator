@@ -20,7 +20,4 @@ enum SQLTextBytes {
         default: return false
         }
     }
-    static func equal(_ a:[String],_ b:[String]) -> Bool {
-        a.count == b.count && zip(a,b).allSatisfy { equal($0,$1) }
-    }
 }

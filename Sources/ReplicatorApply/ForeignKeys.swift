@@ -52,7 +52,7 @@ enum ForeignKeyGraph {
             try require(!filter.ignores(database:key.database,table:key.table) && !filter.ignores(database:key.referencedDatabase,table:key.referencedTable),"foreign key \(key.name) crosses an excluded table")
             guard let child = tables[key.child], let parent = tables[key.parent] else { throw ApplyError("foreign key \(key.name) references an absent table") }
             try require(child.partitions.isEmpty && parent.partitions.isEmpty,"partitioned foreign-key tables are unsupported")
-            let unique = SQLIdentifier.equal(parent.primaryKeyColumns,key.referencedColumns) || parent.secondaryIndexes.contains { $0.unique && SQLIdentifier.equal($0.parts.map(\.column),key.referencedColumns) && $0.parts.allSatisfy { $0.prefix == nil } }
+            let unique = SQLIdentifier.equal(parent.primaryKeyColumns,key.referencedColumns) || parent.secondaryIndexes.contains { $0.unique && SQLIdentifier.equal($0.parts.map { $0.column ?? "" },key.referencedColumns) && $0.parts.allSatisfy { $0.prefix == nil } }
             try require(unique,"foreign key \(key.name) requires a complete unique parent key; nonunique and partial keys are unsupported")
             try require(child.hasForeignKeyIndex(key.columns),"foreign key \(key.name) lacks a supporting child index")
             for (childName,parentName) in zip(key.columns,key.referencedColumns) {
@@ -69,7 +69,7 @@ enum ForeignKeyGraph {
 extension ApplyTable {
     func hasForeignKeyIndex(_ names: [String]) -> Bool {
         SQLIdentifier.equal(Array(primaryKeyColumns.prefix(names.count)),names) || secondaryIndexes.contains {
-            SQLIdentifier.equal(Array($0.parts.prefix(names.count)).map(\.column),names) && $0.parts.prefix(names.count).allSatisfy { $0.prefix == nil }
+            SQLIdentifier.equal(Array($0.parts.prefix(names.count)).map { $0.column ?? "" },names) && $0.parts.prefix(names.count).allSatisfy { $0.prefix == nil }
         }
     }
     func addingForeignKey(_ definition: ApplyForeignKey, indexName: String?) throws -> ApplyTable {

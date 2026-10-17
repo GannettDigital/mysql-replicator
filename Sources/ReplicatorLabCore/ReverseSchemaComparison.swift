@@ -17,7 +17,7 @@ enum ReverseSchemaComparison {
         }.joined(separator:"\n")
     }
 
-    static func columns(_ text: String, mysql84 _: Bool) throws -> String {
+    static func columns(_ text: String, mysql84: Bool) throws -> String {
         if text.isEmpty { return text }
         return try text.components(separatedBy:"\n").map { line in
             var fields=line.components(separatedBy:"\t")
@@ -38,6 +38,11 @@ enum ReverseSchemaComparison {
                 if fields[8].range(of:#"(?i)^on update current_timestamp(?:\([0-6]?\))?$"#,options:.regularExpression) != nil {
                     fields[8]="on update "+fields[8].dropFirst(10).uppercased().replacingOccurrences(of:"()",with:"")
                 }
+            }
+            if mysql84 && fields[9].contains("json_extract(") {
+                // Only the ASCII JSON paths in the shared fixtures. Preserve
+                // other literals and compare their bytes without substitution.
+                fields[9]=fields[9].replacingOccurrences(of:#"_utf8mb4\\'([$.A-Za-z0-9_]+)\\'"#,with:"'$1'",options:.regularExpression)
             }
             return fields.joined(separator:"\t")
         }.joined(separator:"\n")

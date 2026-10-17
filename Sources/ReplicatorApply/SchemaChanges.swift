@@ -7,7 +7,7 @@ enum IndexChange: Equatable {
         var indexes=table.secondaryIndexes
         func validateAddition(_ index: ApplyIndex) throws {
             try require(!table.foreignKeys.contains { key in
-                key.child == table.identity && SQLIdentifier.equal(Array(index.parts.prefix(key.columns.count)).map(\.column),key.columns)
+                key.child == table.identity && SQLIdentifier.equal(Array(index.parts.prefix(key.columns.count)).map { $0.column ?? "" },key.columns)
             },"adding a replacement foreign-key supporting index is unsupported; its implicit index removal requires qualification")
         }
         func remove(_ name:String) throws -> ApplyIndex {
@@ -15,12 +15,12 @@ enum IndexChange: Equatable {
             return indexes.remove(at:i)
         }
         switch self {
-        case .add(let index): try validateAddition(index); indexes.append(index)
+        case .add(let definition): let index=definition.resolvingName(among:indexes);try validateAddition(index); indexes.append(index)
         case .drop(let name): _ = try remove(name)
         case .rename(let old,let new):
             let index=try remove(old)
-            indexes.append(ApplyIndex(name:new,unique:index.unique,parts:index.parts,type:index.type))
-        case .replace(let old,let index): try validateAddition(index); _ = try remove(old);indexes.append(index)
+            indexes.append(ApplyIndex(name:new,unique:index.unique,parts:index.parts,type:index.type,parser:index.parser))
+        case .replace(let old,let definition): _ = try remove(old);let index=definition.resolvingName(among:indexes);try validateAddition(index);indexes.append(index)
         }
         let result=table.replacing(indexes:indexes);try result.validate();return result
     }
@@ -28,15 +28,6 @@ enum IndexChange: Equatable {
 extension ApplyTable {
     func modifying(_ column:ApplyColumn,placement:ColumnPlacement?) throws -> ApplyTable {
         guard let old=columns.firstIndex(where:{SQLIdentifier.equal($0.name,column.name)}) else {throw ApplyError("MODIFY column is absent")}
-        func family(_ column:ApplyColumn) -> String {
-            guard let type=try? DMLColumnType(column.type) else {return "unsupported"}
-            if type.isSpatial {return "spatial"}
-            if type.floatingWidth != nil {return "floating"}
-            if type.bitWidth != nil {return "bit"}
-            if type.integerBits != nil {return "integer"}
-            return type.interpretation.rawValue
-        }
-        try require(family(columns[old]) == family(column),"cross-family MODIFY is unsupported")
         var replacement=column
         if SQLIdentifier.contains(primaryKeyColumns,column.name) {
             replacement.nullable=false
@@ -62,6 +53,7 @@ extension TargetSession {
         let encoding = DDLEncoding(characterSet:table.defaultCharacterSet!,collation:table.defaultCollation!)
         for action in actions {
             switch action {
+            case .tableOption: break // Original SQL applies the engine-specific option.
             case .addForeignKey(let key,let index): result = try result.addingForeignKey(key,indexName:index)
             case .dropForeignKey(let name):
                 guard let i = result.foreignKeys.firstIndex(where: { $0.child == result.identity && SQLIdentifier.equal($0.name,name) }) else { throw ApplyError("DROP foreign key is absent") }
@@ -81,11 +73,9 @@ extension TargetSession {
             case .modify(let old,let definition,let placement):
                 var column = try resolveColumn(definition,parent:encoding,context:context,database:table.database)
                 guard let i = result.columns.firstIndex(where:{SQLIdentifier.equal($0.name,old)}) else { throw ApplyError("MODIFY/CHANGE column is absent") }
-                let oldType = try DMLColumnType(result.columns[i].type), newType = try DMLColumnType(column.type)
-                try require((oldType.bitWidth == nil) == (newType.bitWidth == nil),"cross-family BIT MODIFY/CHANGE is unsupported")
-                try require((oldType.floatingWidth != nil && newType.floatingWidth != nil) || (oldType.integerBits != nil && newType.integerBits != nil) || (oldType.integerBits == nil && newType.integerBits == nil && oldType.interpretation == newType.interpretation),"cross-family MODIFY/CHANGE is unsupported")
                 if !SQLIdentifier.equal(old,column.name) {
                     try require(!result.columns.contains{SQLIdentifier.equal($0.name,column.name)},"CHANGE destination column exists")
+                    try require(try !result.secondaryIndexes.flatMap(\.parts).contains { try $0.expression.map { try DDLExpression.references(old,in:$0) } == true },"target cannot rename a column used by a functional index; drop that index first")
                     // MySQL rejects renaming a referenced generated/partition
                     // dependency. Do not invent a different expression rewrite.
                     try require(result.columns.allSatisfy{!($0.generationExpression?.contains((try? quoted(old)) ?? old) ?? false)} && result.partitions.allSatisfy{!$0.expression.contains((try? quoted(old)) ?? old)},"CHANGE of a generated/partition dependency is unsupported")
@@ -101,18 +91,27 @@ extension TargetSession {
                     guard let after = columns.firstIndex(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("CHANGE AFTER column absent or self-referential") }; position = after+1
                 }
                 columns.insert(column,at:position)
-                let indexes = result.secondaryIndexes.map { key in ApplyIndex(name:key.name,unique:key.unique,parts:key.parts.map { ApplyIndexPart(column:SQLIdentifier.equal($0.column,old) ? column.name : $0.column,prefix:$0.prefix,direction:$0.direction) },type:key.type) }
+                let indexes = result.secondaryIndexes.map { key in ApplyIndex(name:key.name,unique:key.unique,parts:key.parts.map { ApplyIndexPart(column:SQLIdentifier.equal($0.column ?? "",old) ? column.name : $0.column,prefix:$0.prefix,direction:$0.direction,expression:$0.expression) },type:key.type,parser:key.parser) }
                 result = result.replacing(columns:columns,indexes:indexes,primaryKey:result.primaryKeyColumns.map{SQLIdentifier.equal($0,old) ? column.name : $0})
             case .drop(let name):
+                try require(try !result.secondaryIndexes.flatMap(\.parts).contains { try $0.expression.map { try DDLExpression.references(name,in:$0) } == true },"target cannot drop a column used by a functional index; drop that index first")
                 try require(result.columns.contains{SQLIdentifier.equal($0.name,name)},"DROP column is absent")
                 let indexes = result.secondaryIndexes.compactMap { key -> ApplyIndex? in
-                    let parts = key.parts.filter{!SQLIdentifier.equal($0.column,name)}
-                    return parts.isEmpty ? nil : ApplyIndex(name:key.name,unique:key.unique,parts:parts,type:key.type)
+                    let parts = key.parts.filter{!SQLIdentifier.equal($0.column ?? "",name)}
+                    return parts.isEmpty ? nil : ApplyIndex(name:key.name,unique:key.unique,parts:parts,type:key.type,parser:key.parser)
                 }
                 result = result.replacing(columns:result.columns.filter{!SQLIdentifier.equal($0.name,name)},indexes:indexes,primaryKey:result.primaryKeyColumns.filter{!SQLIdentifier.equal($0,name)})
+            case .defaultExpression(let name,let expression):
+                guard let i=result.columns.firstIndex(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("ALTER DEFAULT column is absent") }
+                var columns=result.columns
+                try require(!columns[i].isGenerated,"generated column cannot have a default")
+                columns[i].defaultValue=nil;columns[i].binaryDefaultBytes=nil;columns[i].choiceDefaultBytes=nil;columns[i].choiceDefaultOrdinal=nil
+                columns[i].defaultExpression=expression
+                result=result.replacing(columns:columns)
             case .defaultValue(let name,let value,let numeric,let bytes,let literalBytes):
                 guard let i = result.columns.firstIndex(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("ALTER DEFAULT column is absent") }
                 var columns = result.columns
+                columns[i].defaultExpression=nil
                 try require(!columns[i].isGenerated,"generated column cannot have a default")
                 let type=try DMLColumnType(columns[i].type)
                 let binary=["binary","varbinary"].contains(type.base),text=["char","varchar"].contains(type.base)

@@ -469,8 +469,8 @@
         "ROW logging and a matching target baseline are required."
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Some legacy opaque values have no exact SQL constructor.",
+      "native_behavior": "The native row applier writes binary JSON through internal field storage. SQL constructors can change YEAR and binary-string subtypes across versions. See PLAN/JSON_TRANSPORT_INVESTIGATION.md.",
+      "current_behavior": "Exact constructors cover the implemented types. Native-source review and direct 5.7/8.4 probes confirm YEAR type-13 and legacy type-253 constructor differences. MYSQL_TYPE_JSON parameters use text input, not internal binary storage. Remaining subtype/range gaps require a separate transport design; no lossy fallback is enabled.",
       "acceptance": "Prove exact binary subtype transport or record the protocol limit.",
       "assertions": [
         "source_outcome",
@@ -484,7 +484,8 @@
       ],
       "code_references": [
         "Sources/ReplicatorApply/DMLColumnType.swift",
-        "Sources/ReplicatorApply/JSONSQL.swift"
+        "Sources/ReplicatorApply/JSONSQL.swift",
+        "PLAN/JSON_TRANSPORT_INVESTIGATION.md"
       ],
       "native_references": []
     },
@@ -510,7 +511,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Only selected table options are parsed.",
+      "current_behavior": "Parses table/column COMMENT, ROW_FORMAT, AUTO_INCREMENT, selected physical/statistics options and same-engine rebuilds. Original SQL is journaled. Physical options are not row-schema metadata. Other options remain open.",
       "acceptance": "Support each native-valid option with schema checks and following DML.",
       "assertions": [
         "source_outcome",
@@ -519,11 +520,24 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-table-options"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift"
       ],
-      "native_references": []
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_yacc.yy",
+          "symbol": "create_table_option"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_alter_table"
+        }
+      ]
     },
     {
       "id": "ddl.fulltext",
@@ -531,7 +545,7 @@
       "family": "ddl",
       "classification": "tool_gap",
       "eligibility": "eligible",
-      "implementation": "missing",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -543,11 +557,12 @@
       ],
       "conditions": [
         "GTID restrictions apply with GTID and file-position capture.",
-        "ROW logging and a matching target baseline are required."
+        "ROW logging and a matching target baseline are required.",
+        "Parser plugins, token sizes, stopwords and collations must be compatible. Last-index replacement after deletions has an open native document-ID investigation; see PLAN/FULLTEXT_SUPPORT.md."
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "FULLTEXT indexes are rejected.",
+      "native_behavior": "Both pinned versions expose FULLTEXT with NULL direction and prefix. MySQL 5.7 ignores explicit index order; 8.4 rejects it. Native parser plugins must exist on each server.",
+      "current_behavior": "CREATE, ADD, DROP and RENAME FULLTEXT indexes retain parser metadata. Native discovery reads NULL direction and ignored prefixes. Selected default-parser and ngram cases include DML, bootstrap and restart. Full grammar and failure qualification remain open.",
       "acceptance": "Apply native-valid FULLTEXT DDL and compare indexed schema and following DML.",
       "assertions": [
         "source_outcome",
@@ -556,9 +571,14 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-fulltext",
+        "matrix-fulltext",
+        "bootstrap-matrix-fulltext"
+      ],
       "code_references": [
-        "Sources/ReplicatorApply/DDLParser.swift"
+        "Sources/ReplicatorApply/DDLParser.swift",
+        "Sources/ReplicatorApply/FulltextMetadata.swift"
       ],
       "native_references": []
     },
@@ -607,7 +627,7 @@
       "family": "ddl",
       "classification": "tool_gap",
       "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -623,7 +643,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Functional, descending and invisible index forms are rejected.",
+      "current_behavior": "Functional indexes require an 8.4 target. MySQL 5.7 ignores DESC; 8.4 preserves it. Invisible indexes and other index attributes remain open.",
       "acceptance": "Separate unavailable target syntax from eligible index forms.",
       "assertions": [
         "source_outcome",
@@ -660,7 +680,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Cross-family column conversions and some ALTER forms are rejected.",
+      "current_behavior": "Cross-family MODIFY and CHANGE use target-native conversion under logged session settings. Selected conversions have shared cases. Other ALTER operations and version-specific conversion differences remain open.",
       "acceptance": "Compare native metadata, converted rows, SQL-mode errors and following DML.",
       "assertions": [
         "source_outcome",
@@ -669,7 +689,9 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-alter-conversions"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift",
         "Sources/ReplicatorApply/SchemaChanges.swift"
@@ -698,7 +720,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Generated expressions use a limited deterministic grammar.",
+      "current_behavior": "Generated expressions include JSON extraction and CAST. Indexed VIRTUAL columns require InnoDB; indexed STORED columns also work on MyISAM. Functional indexes and JSON expression defaults are accepted on 8.4 targets. The expression grammar remains limited.",
       "acceptance": "Apply native-valid expressions and verify source/target generated values.",
       "assertions": [
         "source_outcome",
@@ -707,7 +729,10 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-json-indexes",
+        "json-target84-schema"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLTokens.swift"
       ],
@@ -756,7 +781,7 @@
       "family": "ddl",
       "classification": "tool_gap",
       "eligibility": "eligible",
-      "implementation": "missing",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -772,7 +797,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Multi-table DROP is rejected.",
+      "current_behavior": "Multi-table DROP is parsed and sent once. Every existing table and affected FK peer is journaled. Failure leaves the DDL pending. Mixed filter boundaries are rejected.",
       "acceptance": "Preserve object order, partial failure records, filters and saved-schema retirement.",
       "assertions": [
         "source_outcome",
@@ -781,11 +806,20 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-multi-table",
+        "ddl-compat-cross-schema-relationships"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift"
       ],
-      "native_references": []
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_rm_table_no_locks"
+        }
+      ]
     },
     {
       "id": "ddl.cross-schema-rename",
@@ -793,7 +827,7 @@
       "family": "ddl",
       "classification": "tool_gap",
       "eligibility": "eligible",
-      "implementation": "missing",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -809,7 +843,7 @@
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
       "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Cross-schema RENAME is rejected.",
+      "current_behavior": "Single and ordered multi-table RENAME can cross schemas. Table encoding is retained. Affected FK components are journaled. Mixed filter boundaries remain rejected.",
       "acceptance": "Preserve native ordering, FK dependencies, filters and saved schema names.",
       "assertions": [
         "source_outcome",
@@ -818,11 +852,20 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
+      "candidate_cases": [
+        "ddl-compat-multi-table",
+        "ddl-compat-cross-schema-relationships"
+      ],
       "code_references": [
         "Sources/ReplicatorApply/DDLRename.swift"
       ],
-      "native_references": []
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_rename.cc",
+          "symbol": "do_rename"
+        }
+      ]
     },
     {
       "id": "native.ctas57",

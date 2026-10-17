@@ -166,6 +166,7 @@ final class TargetSession {
             table.partitions=try readPartitions(database:database,name:name)
             if contract.transactional && validateRelationships { table.foreignKeys = try readForeignKeys(TableName(database:database,table:name)) }
             try table.validate()
+            try contract.validateSchemaFeatures(table)
             if validateRelationships { try verifySchema(table) }
             else {
                 // Related-table validation must not replace a complete prepared
@@ -180,13 +181,17 @@ final class TargetSession {
         var column=ApplyColumn(name:name,type:normalizeType(type),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
         column.characterSet=row.column("CHARACTER_SET_NAME")?.string
         let binary=type.hasPrefix("binary(") || type.hasPrefix("varbinary(")
-        if binary {
+        let expressionDefault = contract.versionPrefix == "8.4." && row.column("EXTRA")?.string == "DEFAULT_GENERATED" && !(type.hasPrefix("timestamp") || type.hasPrefix("datetime"))
+        if expressionDefault {
+            guard let value=row.column("COLUMN_DEFAULT")?.string else { throw ApplyError("missing default expression metadata") }
+            column.defaultExpression=try DDLExpressionMetadata.canonical(value,mysql84:true)
+        } else if binary {
             if row.column("COLUMN_DEFAULT")?.buffer != nil { column = try discoverBinaryDefault(column,table:table) }
         } else if type.hasPrefix("char(") || type.hasPrefix("varchar(") {
             if row.column("COLUMN_DEFAULT")?.buffer != nil { column = try discoverTextDefault(column,table:table) }
         } else { column.defaultValue=try contract.columnDefault(row.column("COLUMN_DEFAULT")?.string,type:type) }
-        column.extra=contract.columnExtra(row.column("EXTRA")?.string,defaultValue:row.column("COLUMN_DEFAULT")?.string,type:type)
-        column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }
+        column.extra=expressionDefault ? nil : contract.columnExtra(row.column("EXTRA")?.string,defaultValue:row.column("COLUMN_DEFAULT")?.string,type:type)
+        column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpressionMetadata.canonical($0,mysql84:contract.versionPrefix == "8.4.") }
         if type.hasPrefix("enum(") || type.hasPrefix("set(") {
             // 8.4 reports binary ENUM/SET with NULL charset/collation; 5.7
             // reports the explicit binary charset. Normalize that presentation.
@@ -205,12 +210,18 @@ final class TargetSession {
         return type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
     func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
-        let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
+        let expressionColumn=contract.versionPrefix == "8.4." ? ",EXPRESSION" : ""
+        let rows=try query("SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION\(expressionColumn) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",[.init(string:database),.init(string:name)]).0
         var indexes:[ApplyIndex]=[], primary=0
         for row in rows {
-            guard let name=row.column("INDEX_NAME")?.string, let column=row.column("COLUMN_NAME")?.string,
+            guard let name=row.column("INDEX_NAME")?.string,
                   let unique=row.column("NON_UNIQUE")?.int, [0,1].contains(unique), let ordinal=row.column("SEQ_IN_INDEX")?.int,
-                  let type=row.column("INDEX_TYPE")?.string,let direction=row.column("COLLATION")?.string else {throw ApplyError("incomplete index metadata")}
+                  let type=row.column("INDEX_TYPE")?.string,let directionValue=row.column("COLLATION") else {throw ApplyError("incomplete index metadata")}
+            let column=row.column("COLUMN_NAME")?.string
+            let expression=try row.column("EXPRESSION")?.string.map { try DDLExpressionMetadata.canonical($0,mysql84:true) }
+            try require((column == nil) != (expression == nil),"index part must have a column or expression")
+            let direction=directionValue.string
+            try require(type == "FULLTEXT" ? direction == nil : direction != nil,"invalid index direction metadata")
             var prefix=row.column("SUB_PART")?.int
             if type == "SPATIAL" {
                 // MySQL reports the implicit 32-byte bounding box as SUB_PART.
@@ -219,9 +230,9 @@ final class TargetSession {
             }
             if name == "PRIMARY" {
                 primary += 1
-                try require(primary <= primaryKey.count && SQLIdentifier.equal(column,primaryKey[primary-1]) && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
+                try require(primary <= primaryKey.count && SQLIdentifier.equal(column ?? "",primaryKey[primary-1]) && ordinal == primary && unique == 0 && prefix == nil && type == "BTREE" && direction == "A","unsupported primary-key index")
             } else {
-                let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction)
+                let part=ApplyIndexPart(column:column,prefix:prefix,direction:direction,expression:expression)
                 if let previous=indexes.last, SQLTextBytes.equal(previous.name,name) {
                     try require(ordinal == previous.parts.count+1 && previous.unique == (unique == 0) && previous.type == type,"inconsistent index metadata")
                     indexes[indexes.count-1]=ApplyIndex(name:name,unique:previous.unique,parts:previous.parts+[part],type:type)
@@ -232,6 +243,17 @@ final class TargetSession {
             }
         }
         try require(primary == primaryKey.count,"missing primary-key index")
+        if indexes.contains(where:{ $0.type == "FULLTEXT" }) {
+            _ = try query("SET SESSION sql_quote_show_create=1")
+            let rows=try query("SHOW CREATE TABLE "+quoted(database)+"."+quoted(name)).0
+            guard let definition=rows.first?.column("Create Table")?.string else { throw ApplyError("missing native FULLTEXT parser metadata") }
+            let parsers=try FulltextMetadata.parsers(Data(definition.utf8))
+            for i in indexes.indices where indexes[i].type == "FULLTEXT" {
+                guard let native=parsers[SQLIdentifier.key(indexes[i].name)] else { throw ApplyError("missing FULLTEXT index in native metadata") }
+                indexes[i].parser=native.parser
+            }
+            try require(parsers.keys.allSatisfy { key in indexes.contains { SQLIdentifier.key($0.name) == key && $0.type == "FULLTEXT" } },"unknown FULLTEXT parser index")
+        }
         return indexes.sorted{SQLIdentifier.key($0.name) < SQLIdentifier.key($1.name)}
     }
     func verifySchema(_ t: ApplyTable) throws {
@@ -241,6 +263,7 @@ final class TargetSession {
         validatedPlans[t.identity] = try DMLSQLPlan(t)
     }
     private func verifyTargetSchema(_ t: ApplyTable,validateRelationships: Bool) throws {
+        try contract.validateSchemaFeatures(t)
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]
         let metadata = try query("SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",binds).0.first
         try require(metadata?.column("ENGINE")?.string == contract.engine,"target table is absent or not \(contract.engine)")
@@ -350,8 +373,9 @@ final class TargetSession {
                 case .json:
                     guard let text = value.string else { throw ApplyError("invalid target JSON text") }
                     guard case .json(let document)=expected[index] else { throw ApplyError("target JSON differs from expected SQL NULL") }
-                    try require(try document.matchesTargetText(text),"target JSON before-image differs")
-                    try verifyJSONTypes(document,column:c.name,table:t,key:key)
+                    let targetDocument=try config.compatibilityPolicy.targetJSON(document)
+                    try require(try targetDocument.matchesTargetText(text),"target JSON before-image differs")
+                    try verifyJSONTypes(targetDocument,column:c.name,table:t,key:key)
                     return .json(document)
                 case .float32,.float64: return try FloatingPointSQL.read(value,type:type)
                 case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)

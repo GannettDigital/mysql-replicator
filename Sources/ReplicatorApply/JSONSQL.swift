@@ -108,7 +108,8 @@ extension TargetSession {
             guard let after=mutation.row.after else { continue }
             for (column,value) in zip(mutation.table.columns,after) where !column.isGenerated {
                 guard case .json(let document)=value else { continue }
-                for entry in document.typedValues where JSONSQL.scalar(entry.scalar) == nil {
+                let targetDocument=try config.compatibilityPolicy.targetJSON(document)
+                for entry in targetDocument.typedValues where JSONSQL.scalar(entry.scalar) == nil {
                     jsonScratchOrdinal += 1
                     _ = try createJSONScratch(entry.scalar,database:mutation.table.database,ordinal:jsonScratchOrdinal)
                 }
@@ -138,7 +139,8 @@ extension TargetSession {
         return .init(sql:"JSON_EXTRACT((SELECT j FROM "+name+" WHERE id=1),'$')",binds:[])
     }
     func prepareJSONValue(_ value:DecodedValue,database:String) throws -> JSONSQLValue {
-        guard case .json(let document)=value else { return .init(sql:"?",binds:[try bind(value)]) }
+        guard case .json(let sourceDocument)=value else { return .init(sql:"?",binds:[try bind(value)]) }
+        let document=try config.compatibilityPolicy.targetJSON(sourceDocument)
         let scalars=try document.typedValues.map { entry -> JSONSQLValue in
             let scalar=entry.scalar
             let expression=try JSONSQL.scalar(scalar) ?? stageJSONScalar(scalar,database:database)

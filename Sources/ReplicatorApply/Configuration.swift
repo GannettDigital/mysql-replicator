@@ -31,6 +31,7 @@ public struct ApplyColumn: Codable, Equatable {
     public var defaultValue: String? = nil
     public var extra: String? = nil
     public var generationExpression: String? = nil
+    public var defaultExpression: String? = nil
     /// Exact encoded labels when UTF-8 COLUMN_TYPE cannot represent them.
     public var choiceLabels: [Data]? = nil
     public var choiceDefaultBytes: Data? = nil
@@ -55,13 +56,14 @@ public struct ApplyColumn: Codable, Equatable {
         return same(lhs.name,rhs.name) && same(lhs.type,rhs.type)
             && lhs.nullable == rhs.nullable && lhs.collation == rhs.collation
             && lhs.characterSet == rhs.characterSet && same(lhs.defaultValue,rhs.defaultValue)
+            && same(lhs.defaultExpression,rhs.defaultExpression)
             && lhs.extra == rhs.extra && same(lhs.generationExpression,rhs.generationExpression)
             && lhs.choiceLabels == rhs.choiceLabels && lhs.choiceDefaultBytes == rhs.choiceDefaultBytes && lhs.choiceDefaultOrdinal == rhs.choiceDefaultOrdinal
             && lhs.binaryDefaultBytes == rhs.binaryDefaultBytes
             && lhs.numericDefaultLiteral == rhs.numericDefaultLiteral
             && lhs.inputChoiceBytes == rhs.inputChoiceBytes && lhs.inputDefaultBytes == rhs.inputDefaultBytes
     }
-    var hasDefaultValue: Bool { defaultValue != nil || choiceDefaultBytes != nil || binaryDefaultBytes != nil }
+    var hasDefaultValue: Bool { defaultExpression != nil || defaultValue != nil || choiceDefaultBytes != nil || binaryDefaultBytes != nil }
     var isGenerated: Bool { generationExpression != nil }
     var interpretation: ColumnInterpretation { (try? DMLColumnType(self).interpretation) ?? .signed }
     var width: Int? {
@@ -89,7 +91,13 @@ public struct ApplyColumn: Codable, Equatable {
             try require(parsed.isChoice && hasDefaultValue,"invalid ENUM/SET default metadata")
             try parsed.validate(.unsigned(ordinal))
         }
-        if parsed.base == "json" || parsed.isSpatial { try require(!hasDefaultValue,"JSON/spatial non-NULL defaults are unsupported") }
+        if let expression=defaultExpression {
+            try require(defaultValue == nil && binaryDefaultBytes == nil && choiceDefaultBytes == nil,"ambiguous default metadata")
+            _ = try DDLExpression.canonical(expression)
+        }
+        if parsed.base == "json" || parsed.isSpatial {
+            try require(!hasDefaultValue || defaultExpression != nil,"JSON/spatial non-NULL defaults require a parenthesized expression on MySQL 8.0.13 or later")
+        }
         // 5.7 permits FLOAT/DOUBLE AUTO_INCREMENT. The 8.4 server rejects
         // that DDL itself. Row writes always retain the source's explicit key.
         if extra == "auto_increment" { try require((parsed.integerBits != nil || parsed.floatingWidth != nil) && !nullable,"invalid auto-increment column") }
@@ -108,15 +116,27 @@ public struct ApplyColumn: Codable, Equatable {
     }
 }
 public struct ApplyIndexPart: Codable, Equatable {
-    public let column: String
+    public let column: String?
     public let prefix: Int?
-    public var direction: String = "A"
+    public var direction: String? = "A"
+    public var expression: String? = nil
 }
 public struct ApplyIndex: Codable, Equatable {
     public let name: String
     public let unique: Bool
     public let parts: [ApplyIndexPart]
     public var type: String = "BTREE"
+    public var parser: String? = nil
+    /// Parser-only; resolved against the table's existing index names.
+    var implicitName: Bool? = nil
+    func resolvingName(among indexes:[ApplyIndex]) -> ApplyIndex {
+        guard implicitName == true else { return self }
+        var candidate=name,suffix=2
+        while indexes.contains(where:{SQLIdentifier.equal($0.name,candidate)}) {
+            candidate=name+"_"+String(suffix);suffix += 1
+        }
+        return ApplyIndex(name:candidate,unique:unique,parts:parts,type:type,parser:parser)
+    }
 }
 public struct ApplyTable: Codable, Equatable {
     public let database: String
@@ -157,15 +177,31 @@ public struct ApplyTable: Codable, Equatable {
         try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map { SQLIdentifier.key($0.name) }).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
         for key in secondaryIndexes {
             _ = try quoted(key.name)
-            try require(!SQLIdentifier.equal(key.name,"PRIMARY") && ["BTREE","SPATIAL"].contains(key.type) && (1...16).contains(key.parts.count),"unsupported secondary index")
+            try require(key.implicitName == nil,"unresolved index name")
+            try require(!SQLIdentifier.equal(key.name,"PRIMARY") && ["BTREE","SPATIAL","FULLTEXT"].contains(key.type) && (1...16).contains(key.parts.count),"unsupported secondary index")
+            if let parser=key.parser { _ = try quoted(parser);try require(key.type == "FULLTEXT","parser requires FULLTEXT index") }
+            if key.type == "FULLTEXT" {
+                try require(!key.unique && Set(key.parts.map { SQLIdentifier.key($0.column ?? "") }).count == key.parts.count,"invalid FULLTEXT index")
+                let collations=key.parts.compactMap { part in columns.first(where:{SQLIdentifier.equal($0.name,part.column ?? "")})?.collation }
+                try require(collations.count == key.parts.count && Set(collations).count == 1,"FULLTEXT columns require the same collation")
+            }
             for part in key.parts {
-                guard let column=columns.first(where:{SQLIdentifier.equal($0.name,part.column)}) else { throw ApplyError("index column is absent") }
+                if let expression=part.expression {
+                    try require(part.column == nil && part.prefix == nil && key.type == "BTREE" && ["A","D"].contains(part.direction ?? ""),"invalid functional index metadata")
+                    _ = try DDLExpression.canonical(expression)
+                    continue
+                }
+                guard let column=columns.first(where:{SQLIdentifier.equal($0.name,part.column ?? "")}) else { throw ApplyError("index column is absent") }
                 let type=try DMLColumnType(column)
-                if key.type == "SPATIAL" {
+                if key.type == "FULLTEXT" {
+                    try require(["char","varchar","tinytext","text","mediumtext","longtext"].contains(type.base)
+                        && !["binary","ucs2","utf16","utf16le","utf32"].contains(type.characterSet)
+                        && column.extra != "VIRTUAL GENERATED" && part.prefix == nil && part.direction == nil,"invalid FULLTEXT column or metadata")
+                } else if key.type == "SPATIAL" {
                     try require(!key.unique && key.parts.count == 1 && type.isSpatial && !column.nullable && part.prefix == nil,"spatial index requires one full nonnullable spatial column")
                 } else { try require(!type.isSpatial,"spatial columns require SPATIAL indexes") }
                 try require(column.type != "json","direct JSON indexes are unsupported")
-                try require(part.direction == "A","unsupported descending index")
+                try require(key.type == "FULLTEXT" || ["A","D"].contains(part.direction ?? ""),"unsupported descending index")
                 if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
             }
         }
@@ -305,6 +341,8 @@ public struct ApplyConfiguration: Decodable {
         try require((1...86400).contains(ddlDeadline),"DDL timeout must be 1 to 86400 seconds")
         try (ddlPolicy ?? DDLPolicy()).validate()
         try compatibilityPolicy.validate()
+        try require(!compatibilityPolicy.jsonYearToInteger || replicationProfile == .mysql57To84InnoDB,
+                    "compatibility.jsonYearToInteger requires profile mysql57-to-mysql84-innodb")
         if replicationProfile.transactional {
             try require(!target.explicitTableLocks,"InnoDB profile cannot use explicit table locks")
             try require(compatibilityPolicy.collations.isEmpty,"reverse profile preserves source collations; translation is not supported")

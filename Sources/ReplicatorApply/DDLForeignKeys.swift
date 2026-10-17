@@ -13,8 +13,8 @@ extension DDLParser {
         let first = try identifier()
         let parent = take(".") ? TableName(database:first,table:try identifier()) : TableName(database:table.database,table:first)
         let referenced = try keyParts()
-        try require((columns+referenced).allSatisfy { $0.prefix == nil },"foreign-key prefixes are unsupported")
-        var key = ApplyForeignKey(name:constraint ?? "",database:table.database,table:table.table,columns:columns.map(\.column),referencedDatabase:parent.database,referencedTable:parent.table,referencedColumns:referenced.map(\.column))
+        try require((columns+referenced).allSatisfy { $0.prefix == nil && $0.column != nil },"foreign-key prefixes and expressions are unsupported")
+        var key = ApplyForeignKey(name:constraint ?? "",database:table.database,table:table.table,columns:columns.map { $0.column ?? "" },referencedDatabase:parent.database,referencedTable:parent.table,referencedColumns:referenced.map { $0.column ?? "" })
         var seen = Set<String>()
         while take("ON") {
             let operation = try identifier().uppercased()

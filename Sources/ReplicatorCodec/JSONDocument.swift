@@ -95,6 +95,25 @@ public struct JSONDocument: Equatable {
         try self.init(root:root)
     }
     init(source: Data) throws { try self.init(envelope:JSONDecoder().decode(JSONEnvelope.self,from:source)) }
+    /// Build a target view without changing source bytes retained for replay/recovery.
+    /// The caller must explicitly select the cross-version compatibility policy.
+    public func convertingOpaqueYearsToIntegers() throws -> JSONDocument {
+        let years=typedValues.filter { $0.scalar.type == 13 }
+        guard !years.isEmpty else { return self }
+        var converted=root
+        for entry in years {
+            let bytes=entry.scalar.rawBytes
+            guard !bytes.isEmpty, bytes.count <= 4, bytes.allSatisfy({ (48...57).contains($0) }),
+                  let year=UInt16(String(decoding:bytes,as:UTF8.self)),
+                  year == 0 || (1901...2155).contains(year) else {
+                throw DecoderError(code:2,offset:0,reason:"invalid JSON YEAR bytes at \(entry.path)")
+            }
+            let scalar=JSONTypedScalar(type:1001,value:String(year),rawHex:"",precision:0,scale:0)
+            let path=try JSONPath.parse(entry.path)
+            try converted.change(path[...],operation:0,value:.typed(scalar))
+        }
+        return try JSONDocument(root:converted)
+    }
     public static func == (lhs: Self,rhs: Self) -> Bool { lhs.root.same(rhs.root) }
     /// Caller must also check scalarChecks against target JSON_TYPE results.
     public func matchesTargetText(_ text: String) throws -> Bool {

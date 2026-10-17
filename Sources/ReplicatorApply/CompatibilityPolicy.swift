@@ -1,8 +1,28 @@
 import Foundation
+import ReplicatorCodec
 
-/// Explicit comparison-semantics changes; never a character-set conversion.
+/// Explicit changes to target comparison and value semantics.
 public struct CompatibilityPolicy: Codable, Equatable {
     public var collations: [String:String] = [:]
+    public var jsonYearToInteger: Bool = false
+    public init(collations: [String:String] = [:], jsonYearToInteger: Bool = false) {
+        self.collations=collations; self.jsonYearToInteger=jsonYearToInteger
+    }
+    private enum CodingKeys: String, CodingKey { case collations, jsonYearToInteger }
+    public init(from decoder: Decoder) throws {
+        let values=try decoder.container(keyedBy:CodingKeys.self)
+        collations=try values.decodeIfPresent([String:String].self,forKey:.collations) ?? [:]
+        jsonYearToInteger=try values.decodeIfPresent(Bool.self,forKey:.jsonYearToInteger) ?? false
+    }
+    public func encode(to encoder: Encoder) throws {
+        var values=encoder.container(keyedBy:CodingKeys.self)
+        try values.encode(collations,forKey:.collations)
+        // Keep the encoding of existing strict policies unchanged.
+        if jsonYearToInteger { try values.encode(true,forKey:.jsonYearToInteger) }
+    }
+    func targetJSON(_ source: JSONDocument) throws -> JSONDocument {
+        try jsonYearToInteger ? source.convertingOpaqueYearsToIntegers() : source
+    }
     // Adding a column encoding must not silently expand translation policy.
     private static let translationTargets: Set<UInt32> = [45,46,224]
     func validate() throws {

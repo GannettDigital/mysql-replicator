@@ -77,7 +77,7 @@ and Shift-JIS DDL cases cover names and text/binary defaults. See the
 | CHAR, VARCHAR, TEXT families | All native 5.7 text encodings and collations; CHAR/VARCHAR defaults use native conversion and stored values; see below. CHAR width 0–255 characters; VARCHAR permits width zero and is bounded by charset and native row limits |
 | BINARY, VARBINARY, BLOB families | Exact bytes; BINARY/VARBINARY defaults retain non-UTF-8 and NUL bytes; BINARY width 0–255 and VARBINARY width 0–65535, subject to native row limits |
 | ENUM, SET | Matching ordered encoded labels, including supplementary characters, binary bytes and ENUM ordinal zero |
-| JSON | Ordinary and typed values; partial updates require a full before image. Some legacy opaque types have no exact target SQL constructor; see [JSON limits](../PLAN/JSON_SUPPORT.md#remaining-limits-and-qualification). |
+| JSON | Ordinary and typed values; partial updates require a full before image. Some legacy opaque types have no exact target SQL constructor; see [JSON support and limits](JSON_SUPPORT.md). |
 | Spatial types | GEOMETRY, POINT, LINESTRING, POLYGON, MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION; exact SRID and WKB bytes, with [DDL and index limits](../PLAN/SPATIAL_SUPPORT.md) |
 
 NULL is supported where the column permits it. Primary keys need 1–16 full,
@@ -118,21 +118,41 @@ databases, tables, indexes, generated columns, partitions, views, and routines.
 It is a subset of MySQL SQL. Important exclusions and policies are:
 
 - No engine rewriting. An explicit engine must match the target profile.
-- FULLTEXT, functional, descending, and invisible indexes are not supported.
+- FULLTEXT indexes support CREATE, ADD, DROP and RENAME with parser metadata.
+  Source and target need compatible parser plugins and search settings. See
+  [FULLTEXT scope and tests](../PLAN/FULLTEXT_SUPPORT.md).
+  Functional indexes require an 8.4 target. MySQL 5.7 ignores DESC index
+  direction; 8.4 retains it. Invisible indexes are not supported.
   SPATIAL indexes require one full, nonnullable spatial column.
-- No CHECK constraints, subpartitions, CREATE TABLE SELECT, cross-schema RENAME,
-  or multi-table DROP. Arbitrary table options and cross-family column
-  conversions are not supported.
-- Generated columns use a limited deterministic expression grammar.
+- Cross-schema RENAME and ordered multi-table RENAME are supported. The table
+  keeps its encoding. Multi-table DROP records every affected schema before
+  SQL. A failed DROP can leave a partial target result, especially on 5.7.
+  The applier keeps the DDL pending for DBA review. Statements that cross table
+  filter boundaries are rejected. Source DDL events with a nonzero error code
+  still stop replication. This includes a 5.7 DROP that partially succeeds on
+  the source and records an error. Reproducing that result is not implemented.
+- No CHECK constraints, subpartitions or CREATE TABLE SELECT.
+  Table and column COMMENT, ROW_FORMAT, AUTO_INCREMENT,
+  selected physical/statistics options, and same-engine rebuilds are parsed.
+  The original SQL is saved and sent to the target. Comments and physical
+  options are not part of the saved row schema. The target checks engine limits.
+  MODIFY and CHANGE permit cross-family conversions. The target converts the
+  data under the recorded SQL mode. Version-specific conversion differences
+  still need qualification. Arbitrary table options remain unsupported.
+- Generated columns use a limited deterministic expression grammar, including
+  JSON extraction. Indexes on VIRTUAL generated columns require InnoDB. Indexes
+  on STORED generated columns also work on MyISAM. See [JSON DDL](JSON_SUPPORT.md#json-indexes-and-defaults).
 - Trigger DDL is skipped by default or rejected by policy. Target tables with
   triggers are rejected. Source trigger effects arrive as row changes and remain
   subject to the profile's transaction limits.
 - Event DDL is rejected. Stored routine creation does not execute its body.
 - Temporary tables are not copied. The supported logged DROP TEMPORARY TABLE
   cleanup is skipped; CREATE TEMPORARY TABLE is not a supported apply operation.
-- JSON and spatial non-NULL defaults, spatial BTREE indexes, and MySQL 8.4 column
-  SRID attributes are not supported. Stored spatial bytes can have different
-  function semantics across server versions.
+- MySQL 5.7 targets reject expression defaults and functional indexes. MySQL 8.4
+  targets accept functional indexes and JSON expression defaults, including
+  discovery of existing tables. Spatial defaults are not qualified. Spatial
+  BTREE indexes and MySQL 8.4 column SRID attributes remain unsupported. Stored
+  spatial bytes can have different function semantics across server versions.
 - InnoDB foreign keys use the [documented subset](../PLAN/MYSQL57_FOREIGN_KEYS.md).
   Self-references, cycles, incomplete or nonunique parent keys, generated FK
   columns, partitioned participants, and source events with checks disabled
@@ -148,3 +168,9 @@ Numeric ZEROFILL declarations retain their implicit UNSIGNED attribute and
 integer display widths. Padding affects display, not the stored numeric range.
 YEAR modifiers normalize to native YEAR metadata. See
 [numeric attributes](../PLAN/NUMERIC_ATTRIBUTES.md) for tests and limits.
+
+The remaining JSON opaque subtype and range limits are documented in the
+[JSON transport investigation](../PLAN/JSON_TRANSPORT_INVESTIGATION.md). Native
+row replication can store binary JSON values that ordinary client SQL cannot
+recreate with the same type. The applier retains the source bytes and stops
+before a write when its constructor cannot preserve the value.
