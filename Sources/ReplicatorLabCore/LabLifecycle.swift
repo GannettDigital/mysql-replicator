@@ -112,7 +112,12 @@ enum LabLifecycle {
             source["stopAfterTransactions"]=count; value["source"]=source
             value["stateDirectory"]="/evidence/state-"+label
             for key in ["sourceReconnect","targetReconnect"] { value[key]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60] }
-            if smallInserts { value["batch"]=["maximumInsertRows":4] }
+            if smallInserts {
+                value["batch"]=["maximumInsertRows":4]
+                // The 8,000-row MyISAM group uses one stored function to keep
+                // its source GTID. Allow the generated SQL before connecting.
+                _ = try f.sql(.target,"SET GLOBAL max_allowed_packet=67108864")
+            }
             return value
         }
         func start(_ label: String, _ config: [String:Any], initialize: Bool = true) throws -> String {
@@ -325,7 +330,7 @@ enum LabLifecycle {
                 // MyISAM UPDATE checks its before-image first; the table lock
                 // would block that read rather than an issued mutation.
                 let mutation=f.profile.transactionalTarget ? "UPDATE lifecycle.target_uncertain SET v=v+10 ORDER BY id" : "INSERT INTO lifecycle.target_uncertain VALUES(2,2),(3,3)"
-                let operation=f.profile.transactionalTarget ? "UPDATE" : "INSERT INTO"
+                let operation=f.profile.transactionalTarget ? "UPDATE" : "SELECT `_mysql_replicator_gtid`.`apply_group`() AS"
                 _ = try f.sql(.source,mutation)
                 while try f.sql(.target,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO LIKE '\(operation) %'") != "1" {
                     try require(Date() < deadline,"target mutation was not submitted"); Thread.sleep(forTimeInterval:0.05)
