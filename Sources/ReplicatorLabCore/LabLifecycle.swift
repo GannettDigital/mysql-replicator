@@ -330,7 +330,7 @@ enum LabLifecycle {
                 // MyISAM UPDATE checks its before-image first; the table lock
                 // would block that read rather than an issued mutation.
                 let mutation=f.profile.transactionalTarget ? "UPDATE lifecycle.target_uncertain SET v=v+10 ORDER BY id" : "INSERT INTO lifecycle.target_uncertain VALUES(2,2),(3,3)"
-                let operation=f.profile.transactionalTarget ? "UPDATE" : "SELECT `_mysql_replicator_gtid`.`apply_group`() AS"
+                let operation=f.profile.transactionalTarget ? "UPDATE" : "INSERT INTO"
                 _ = try f.sql(.source,mutation)
                 while try f.sql(.target,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO LIKE '\(operation) %'") != "1" {
                     try require(Date() < deadline,"target mutation was not submitted"); Thread.sleep(forTimeInterval:0.05)
