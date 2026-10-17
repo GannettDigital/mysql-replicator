@@ -218,7 +218,7 @@ final class DecoderTests: XCTestCase, BinlogFixtures {
     }
     func testUnknownEventsAndCompressionAreExplicitFailures() throws {
         let input = frames(try Data(contentsOf: recorded.appendingPathComponent("source-positive.binlog")))
-        for code: UInt8 in [255, 40, 41, 42] {
+        for code: UInt8 in [255, 40, 41] {
             let decoder = try BinlogDecoder(); _ = try decoder.decode(input[0].1, at: 4)
             failure(4) { _ = try decoder.decode(event(code, Data(), at: input[1].0), at: input[1].0) }
         }

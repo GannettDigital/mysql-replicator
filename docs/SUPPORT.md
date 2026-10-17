@@ -26,8 +26,15 @@ starts; it does not enable non-GTID transactions or relax transaction rules. Liv
 capture requires `gtid_mode=ON` and `enforce_gtid_consistency=ON` on the source.
 Replay has the same transaction requirements.
 The decoder does not support every binlog format: XA, compressed transaction
-payloads, and tagged GTIDs remain unsupported. Replay reads raw local binlogs
+payloads remain unsupported. Replay reads raw local binlogs
 without a source connection. It has the same DML and DDL limits as live mode.
+
+`target.preserveSourceGTIDs` defaults to `true`. The target records source GTIDs
+when its version and privileges permit this. A 5.7 target blocks tagged GTIDs.
+With `false`, source GTIDs, including tags, stay only in SQLite. Target GTIDs then
+follow the server's normal assignment. Use SQLite to resume in both cases.
+See [GTID settings, privileges and Cloud SQL limits](GTID_PRESERVATION.md) and
+[tagged GTID tests](../PLAN/TAGGED_GTIDS.md).
 
 MyISAM profiles accept one row statement on one included table per source
 transaction. InnoDB profiles also accept transactions with multiple statements

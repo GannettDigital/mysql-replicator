@@ -19,8 +19,9 @@ profile: mysql57-to-mysql84-innodb
 ```
 
 Both servers require GTID mode ON, enforce_gtid_consistency ON, ROW/FULL logging
-and CRC32 checksums. Target binary logging remains enabled with target-local
-GTIDs. The source GTID checkpoint lives exclusively in SQLite. Connections use
+and CRC32 checksums. Target binary logging remains enabled. The default
+`target.preserveSourceGTIDs: true` retains source GTIDs on the target. SQLite
+remains the source checkpoint. Connections use
 verified TLS by default. To disable TLS, see [connection settings](INSTALL.md#connection-security).
 Do not configure collation translation or explicit table
 locks for this profile. GTID positioning is required.
@@ -72,9 +73,13 @@ CREATE/ALTER/DROP/index/view/routine privileges. View renaming also requires
 SHOW VIEW to read the current definition. Preserving source DEFINER clauses
 may need `SET_ANY_DEFINER` on 8.4; stored functions with binary logging have additional
 server privilege/flag requirements. The disposable harness grants ALL PRIVILEGES
-plus SET_ANY_DEFINER; this is not a least-privilege Cloud SQL recipe. The applier
-does not assign GTID_NEXT. Managed-service
+plus SET_ANY_DEFINER; this is not a least-privilege Cloud SQL recipe.
+GTID preservation assigns `GTID_NEXT` and needs additional privileges. See
+[required privileges and Cloud SQL limits](GTID_PRESERVATION.md). Managed-service
 privileges, network access and failover must still be tested on Cloud SQL.
+For Cloud SQL, set `target.preserveSourceGTIDs: false`. The documented customer
+privileges do not establish permission to assign source GTIDs. SQLite still
+tracks the complete source checkpoint.
 
 ## Transaction and failure behavior
 
@@ -157,12 +162,14 @@ unreferenced tail archive; preserve it with the rest of the state directory.
 `transactionsApplied` counts processed groups, including explicitly skipped ones;
 skips add no applied rows. The audit distinguishes skipped groups from accepted
 commits. Audit history is not automatically pruned; include it in storage planning.
-Recovery currently accepts format-9 or format-10 InnoDB-profile DML only. DDL reconciliation,
+Recovery currently accepts formats 9 through 12 for InnoDB-profile DML only. DDL reconciliation,
 MyISAM recovery and automatic repair remain outside this command's scope.
 
-SQLite state format 10 pins the profile and table-name case setting. Older state
+SQLite state format 12 records the GTID preservation setting. It also retains
+tagged source GTIDs and the profile and table-name
+case settings from format 10. Older state requires `target.preserveSourceGTIDs: false` and
 can upgrade with `source.lowerCaseTableNames: 0`. It cannot adopt mode 1 or a
-different replication profile. Older runtimes reject format 10. Back up the
+different replication profile. Runtimes without format-12 support reject this state. Back up the
 stopped state before upgrading.
 
 ## Demo

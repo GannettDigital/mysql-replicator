@@ -85,6 +85,7 @@ pub struct EventView {
     raw: Bytes,
     error: Bytes,
     fingerprint: Bytes,
+    gtid_tag: Bytes,
 }
 #[repr(C)]
 pub struct ColumnView {
@@ -209,6 +210,7 @@ pub struct Batch {
     raw: Vec<u8>,
     error: Vec<u8>,
     fingerprint: Vec<u8>,
+    gtid_tag: Vec<u8>,
     map_columns: Vec<MapColumn>,
     rows: Vec<[Vec<Cell>; 2]>,
     columns: usize,
@@ -235,6 +237,7 @@ impl Batch {
             raw: vec![],
             error: vec![],
             fingerprint: vec![],
+            gtid_tag: vec![],
             map_columns: vec![],
             rows: vec![],
             columns: 0,
@@ -267,6 +270,7 @@ impl Batch {
             raw: Bytes::new(&self.raw),
             error: Bytes::new(&self.error),
             fingerprint: Bytes::new(&self.fingerprint),
+            gtid_tag: Bytes::new(&self.gtid_tag),
         }
     }
 }
@@ -281,15 +285,22 @@ fn u64le(data: &mut &[u8]) -> Checked<u64> {
 }
 // Bound counts before the upstream PREVIOUS_GTIDS parser's Vec::with_capacity.
 fn check_previous(mut data: &[u8]) -> Checked<()> {
-    let count = u64le(&mut data)?;
-    ensure(
-        count >> 56 == 0,
-        UNSUPPORTED,
-        "tagged previous-GTID sets are unsupported",
-    )?;
+    let header = u64le(&mut data)?;
+    let format = header >> 56;
+    ensure(format <= 1, UNSUPPORTED, "unknown previous-GTID encoding")?;
+    let tagged = format == 1;
+    ensure(!tagged || header & 255 == 1, MALFORMED, "invalid tagged GTID header")?;
+    let count = if tagged { (header >> 8) & 0xffffffffffff } else { header };
     ensure(count <= 64, LIMIT, "previous-GTID SID limit exceeded")?;
     for _ in 0..count {
         take(&mut data, 16)?;
+        if tagged {
+            let mut buf = ParseBuf(data);
+            let length = parsed(mysql_common::misc::read_varlen_uint(&mut buf))?;
+            ensure(length <= 32, LIMIT, "GTID tag length exceeds 32")?;
+            data = buf.0;
+            take(&mut data, length as usize)?;
+        }
         let n = u64le(&mut data)?;
         ensure(n <= 4096, LIMIT, "previous-GTID interval limit exceeded")?;
         take(&mut data, n as usize * 16)?;
@@ -606,7 +617,7 @@ impl Decoder {
         ensure(
             matches!(
                 code,
-                2 | 3 | 4 | 15 | 16 | 19 | 23 | 24 | 25 | 30 | 31 | 32 | 33 | 34 | 35 | 39
+                2 | 3 | 4 | 15 | 16 | 19 | 23 | 24 | 25 | 30 | 31 | 32 | 33 | 34 | 35 | 39 | 42
             ),
             UNSUPPORTED,
             "unsupported binlog event type",
@@ -756,6 +767,7 @@ impl Decoder {
             }
             EventData::GtidEvent(gtid) => {
                 out.detail = gtid.sid().to_vec();
+                out.gtid_tag = gtid.tag().map(|t| t.as_str().as_bytes().to_vec()).unwrap_or_default();
                 ensure(gtid.gno() > 0, MALFORMED, "zero sequence in named GTID")?;
                 out.number = gtid.gno();
                 out.payload_flags = gtid.flags_raw() as u32;
@@ -1150,7 +1162,7 @@ impl Decoder {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_abi_version() -> u32 {
-    13
+    14
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn replicator_codec_capabilities() -> u64 {
@@ -1488,6 +1500,48 @@ mod tests {
     use super::*;
     const FILE: &[u8] =
         include_bytes!("../../tests/ReplicatorLabTests/Fixtures/source-positive.binlog");
+    fn decode_tagged_payload(payload: &[u8]) -> Checked<Batch> {
+        let n = u32::from_le_bytes(FILE[13..17].try_into().unwrap()) as usize;
+        let mut decoder = Decoder::new(1024 * 1024);
+        let profile = Profile::new(false);
+        decoder.decode_filtered(&FILE[4..4+n], 4, &[], false, &profile)?;
+        let mut frame = vec![0u8; 19];
+        frame[4] = 42;
+        let len = (19 + payload.len() + 4) as u32;
+        frame[9..13].copy_from_slice(&len.to_le_bytes());
+        frame.extend_from_slice(payload);
+        frame.extend_from_slice(&crc32fast::hash(&frame).to_le_bytes());
+        decoder.decode_filtered(&frame, (4+n) as u64, &[], false, &profile)
+    }
+    #[test]
+    fn tagged_event_retains_identity_and_rejects_truncation() {
+        use mysql_common::{binlog::events::GtidEvent, packets::Tag, proto::MySerialize};
+        let event = GtidEvent::new_tagged([7u8;16], Tag::new("blue").unwrap(), 1);
+        let mut payload = Vec::new();
+        event.serialize(&mut payload);
+        let decoded = decode_tagged_payload(&payload).unwrap();
+        assert_eq!(decoded.detail, [7u8;16]);
+        assert_eq!(decoded.number, 1);
+        assert_eq!(decoded.gtid_tag, b"blue");
+        assert_eq!(decoded.event_type, 42);
+        for n in 0..payload.len() {assert!(decode_tagged_payload(&payload[..n]).is_err());}
+        payload[0] = 99;
+        assert!(decode_tagged_payload(&payload).is_err());
+    }
+    #[test]
+    fn previous_tagged_sets_are_bounded_before_upstream_allocation() {
+        let mut bytes = ((1u64<<56) | (1<<8) | 1).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[7;16]);
+        bytes.push(8); bytes.extend_from_slice(b"blue");
+        for n in [1u64, 1, 3] {bytes.extend_from_slice(&n.to_le_bytes());}
+        assert!(check_previous(&bytes).is_ok());
+        for n in 0..bytes.len() {assert!(check_previous(&bytes[..n]).is_err());}
+        let mut bad=bytes.clone();bad[24]=66;assert!(check_previous(&bad).is_err());
+        let mut bad=bytes.clone();bad[7]=2;assert!(check_previous(&bad).is_err());
+        let mut bad=bytes.clone();bad[1]=65;assert!(check_previous(&bad).is_err());
+        let mut bad=bytes.clone();bad[0]=0;assert!(check_previous(&bad).is_err());
+        bytes.push(0);assert!(check_previous(&bytes).is_err());
+    }
     #[test]
     fn panic_is_contained_at_the_export_and_requires_replay() {
         let n = u32::from_le_bytes(FILE[13..17].try_into().unwrap()) as usize;

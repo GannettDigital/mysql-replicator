@@ -32,8 +32,11 @@ final class RecoveryStore {
             try require(sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&db,flags,nil) == SQLITE_OK,"cannot open recovery state")
             sql = SQLiteStatementCache(db:db!,timings:.init(),profiling:false)
             let version=try q("PRAGMA user_version")
-            try require(version == [["9"]] || version == [["10"]],"recovery requires state format 9 or 10")
-            if version == [["10"]] {
+            try require(version == [["9"]] || version == [["10"]] || version == [["11"]] || version == [["12"]],"recovery requires state format 9, 10, 11 or 12")
+            if version == [["12"]] {
+                try require(try q("SELECT mode FROM target_gtid_mode WHERE id=1") == [[String(configuration.target.preserveSourceGTIDs)]],"target.preserveSourceGTIDs differs from saved state")
+            } else {try require(!configuration.target.preserveSourceGTIDs,"legacy recovery requires target.preserveSourceGTIDs: false")}
+            if version != [["9"]] {
                 try require(try q("SELECT lower_case_table_names FROM name_case WHERE id=1") == [[String(configuration.source.tableNameCaseSetting)]],"saved table-name case setting differs")
             } else { try require(configuration.source.tableNameCaseSetting == 0,"legacy recovery state requires source.lowerCaseTableNames=0") }
             try require(try q("PRAGMA quick_check") == [["ok"]],"recovery SQLite integrity check failed")
@@ -73,10 +76,9 @@ final class RecoveryStore {
         return set
     }
     private func include(_ gtid: String, in set: inout GTIDSet) throws {
-        let parts = gtid.split(separator:":")
-        try require(parts.count == 2 && UUID(uuidString:String(parts[0])) != nil && UInt64(parts[1]) != nil,"invalid singleton GTID")
-        try require(try !set.covers(GTIDSet(gtid)),"duplicate covered GTID")
-        try set.include(sid:String(parts[0]),sequence:String(parts[1]))
+        let identity=try SourceGTID(parsing:gtid)
+        try require(!set.contains(identity),"duplicate covered GTID")
+        try set.include(identity)
     }
     func inspect() throws -> Recovery.Report {
         let s = try state(), covered = try coverage(s)
@@ -173,6 +175,9 @@ final class RecoveryStore {
                 _ = try q("DELETE FROM groups WHERE status='PENDING'")
             } else {
                 let gtid = report.pending[0].gtid
+                if configuration.target.preserveSourceGTIDs {
+                    _ = try q("INSERT OR IGNORE INTO pending_gtid_markers VALUES(?)",[gtid])
+                }
                 _ = try q("UPDATE row_intents SET status='DONE',completed_at=? WHERE gtid=?",[time,gtid])
                 _ = try q("UPDATE groups SET status='APPLIED',completed_at=? WHERE gtid=?",[time,gtid])
             }

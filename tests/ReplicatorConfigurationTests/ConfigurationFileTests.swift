@@ -5,6 +5,17 @@ import ReplicatorConfiguration
 import ReplicatorCapture
 
 final class ConfigurationFileTests: XCTestCase {
+    func testSourceGTIDPreservationDefaultsToTrueAndCanBeDisabled() throws {
+        let yaml=try example().split(separator:"\n",omittingEmptySubsequences:false)
+            .filter {!$0.trimmingCharacters(in:.whitespaces).hasPrefix("preserveSourceGTIDs:")}
+            .joined(separator:"\n")
+        let config=try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(yaml.utf8))
+        XCTAssertTrue(config.target.preserveSourceGTIDs)
+        let disabled=yaml.replacingOccurrences(of:"target:",with:"target:\n  preserveSourceGTIDs: false\n#")
+        XCTAssertFalse(try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(disabled.utf8)).target.preserveSourceGTIDs)
+        let invalid=yaml.replacingOccurrences(of:"target:",with:"target:\n  preserveSourceGTIDs: invalid\n#")
+        XCTAssertThrowsError(try ConfigurationFile.decode(ApplyConfiguration.self,from:Data(invalid.utf8)))
+    }
     func testConfigurableEventAndTransactionLimitsSurviveResume() throws {
         let original=try example()
         for (event,transaction,valid) in [(67108864,268435456,true),(1073741824,1073741824,true),(1048576,2097152,true),(67108864,1048576,false),(1073741825,1073741825,false)] {

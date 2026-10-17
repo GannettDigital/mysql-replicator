@@ -1,9 +1,10 @@
 import Foundation
 
-/// Capture settings are independent of topology. Historical combinations remain
+/// Capture and target GTID settings are independent of topology. Combinations remain
 /// explicit obligations; they are not inferred from a successful default run.
 enum LabVariant: String, CaseIterable {
     case standard = "default"
+    case withoutSourceGTIDs = "without-source-gtids"
     case positionMinimal = "position-minimal"
     case gtidFull = "gtid-full"
     case lowercaseTables = "lowercase-tables"
@@ -13,7 +14,7 @@ enum LabVariant: String, CaseIterable {
     var metadata: String { self == .positionMinimal ? "MINIMAL" : "FULL" }
     var catalogProfile: String? {
         switch self {
-        case .standard,.lowercaseTables: return nil
+        case .standard,.lowercaseTables,.withoutSourceGTIDs: return nil
         case .positionMinimal: return "swift.position.metadata-minimal"
         case .gtidFull: return "swift.gtid.metadata-full"
         }

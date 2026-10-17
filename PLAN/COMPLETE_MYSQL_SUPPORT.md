@@ -54,8 +54,8 @@ Do not use branch count or code coverage as a MySQL feature-support percentage.
 - MyISAM groups are limited to one row statement on one included table. Native
   GTID rules reject some broader forms. Do not assume that they reject all forms
   which this tool rejects.
-- FULL row images and CRC32 are required. Transaction compression, tagged GTIDs
-  and XA are not implemented. Row-image variants, tagged GTIDs and XA are
+- FULL row images and CRC32 are required. Transaction compression
+  and XA are not implemented. Row-image variants and XA are
   deferred to [future event work](FUTURE_BINLOG_SUPPORT.md).
 
 These are concrete restrictions, not a complete inventory of every MySQL form.
@@ -317,7 +317,11 @@ implementation gaps. Do not change the scope merely to make the percentage 100%.
 
 Deliver stage 1 first, then stage 2 in separate charset, scalar/identifier, and
 JSON changes. Continue with stage 3's table/index and ALTER work. Then continue
-stage 4. The row-image, tagged-GTID and XA parts of stage 5 are future work.
+stage 4. The row-image and XA parts of stage 5 are future work.
+Tagged source GTIDs are implemented. A 5.7 target requires
+`target.preserveSourceGTIDs: false` for tagged events. See
+[tests and remaining checks](TAGGED_GTIDS.md) and
+[target GTID privileges](../docs/GTID_PRESERVATION.md).
 Apply stage 6's acceptance checks to each increment and run
 the full release checks at the end. Use one PR per testable feature family.
 

@@ -9,6 +9,10 @@ Write for data engineers, DBAs, and platform engineers who know MySQL replicatio
 - Use short sentences. Give each sentence one main subject.
 - Use active voice and direct instructions.
 - Use one term for each concept. Explain technical terms when necessary.
+- Prefer standard industry terms and terms defined in the MySQL documentation.
+  Define a project-specific term before you use it. Do not use phrases such as
+  "replication coverage qualified" without a clear definition. State which tests
+  ran, which profiles they used, what passed, and what remains untested.
 - Keep commands, code identifiers, configuration keys, and product names exact.
 - State tested behavior and support limits. Do not remove a limit to simplify the text.
 - Apply this rule to the text you change. Do not rewrite unrelated documents.

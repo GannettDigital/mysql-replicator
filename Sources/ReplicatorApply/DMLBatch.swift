@@ -39,7 +39,7 @@ struct PreparedDMLGroup {
     let group: CompleteTransaction
     let mutations: [Mutation]
     let relayEnd: UInt64
-    var id: String { group.gtid!.sid+":"+group.gtid!.sequence }
+    var id: String { group.gtid!.canonical }
     var wireBytes: Int { group.events.reduce(0) { $0+Int($1.eventSize) } }
 }
 

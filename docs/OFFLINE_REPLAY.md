@@ -90,8 +90,9 @@ fields retain the normal apply YAML shape, but are not used to connect. Source
 `password` and `passwordEnvironment` may be omitted for replay; only the target
 password is resolved. Replay excludes already-covered GTIDs locally, including
 sets with holes, without decoding historical row values against newer schemas.
-SQLite's saved source progress takes precedence on resume. Target-local GTIDs do
-not replace this checkpoint.
+SQLite's saved source progress takes precedence on resume. Target GTIDs do not
+replace this checkpoint. Replay uses the same `target.preserveSourceGTIDs` setting
+as live mode. See [GTID preservation and privileges](GTID_PRESERVATION.md).
 
 Target TCP connections use TLS by default. The default
 `target.tlsVerification: verify-identity` verifies the CA chain and requires

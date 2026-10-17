@@ -8,10 +8,10 @@ import CSQLite
 final class ApplyTests: XCTestCase {
     let sid = "8ba09bde-bc41-11f1-8272-ba06e9024a03"
     var root: URL { URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent() }
-    func config(_ path: String = "/tmp/unused-state", storage: [String:Any]? = nil, applierProfiling: Bool? = nil, collations: [String:String]? = nil, profile: String? = nil, skipErrors: [String:Any]? = nil, mode: String = "gtid", jsonYearToInteger: Bool = false) throws -> ApplyConfiguration {
+    func config(_ path: String = "/tmp/unused-state", storage: [String:Any]? = nil, applierProfiling: Bool? = nil, collations: [String:String]? = nil, profile: String? = nil, skipErrors: [String:Any]? = nil, mode: String = "gtid", jsonYearToInteger: Bool = false, preserveSourceGTIDs:Bool = false) throws -> ApplyConfiguration {
         var object: [String:Any] = ["version":1,"stateDirectory":path,
             "source":["version":1,"host":"source","port":3306,"username":"capture","passwordEnvironment":"SOURCE_PASSWORD","serverHostname":"source","serverID":9001,"sourceUUID":sid,"mode":"gtid","start":["executedGTIDs":sid+":1-10"],"tables":[["database":"poc","table":"items","columns":["signed","utf8","unsigned"]]]],
-            "target":["host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true],
+            "target":["preserveSourceGTIDs":preserveSourceGTIDs,"host":"target57","port":3306,"username":"apply","passwordEnvironment":"TARGET_PASSWORD","serverHostname":"target57","nativeAutoStartDisabled":true],
             "tables":[["database":"poc","table":"items","primaryKey":"id","columns":[["name":"id","type":"int","nullable":false],["name":"value","type":"varchar(100)","nullable":false,"collation":"utf8mb4_unicode_ci"],["name":"quantity","type":"bigint unsigned","nullable":false]]]]]
         object["storage"]=storage
         object["profile"]=profile

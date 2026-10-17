@@ -14,10 +14,11 @@ enum FullRowPredicate {
         return type.sqlKeyColumn(name)+"<=>?"
     }
     static func make(table:ApplyTable,types:[DMLColumnType],values:[DecodedValue],
-                     compatibility:CompatibilityPolicy,bind:(DecodedValue)throws->MySQLData) throws -> JSONSQLValue {
-        try require(values.count == table.keyIndexes.count,"full-row lookup value count differs")
+                     compatibility:CompatibilityPolicy,bind:(DecodedValue)throws->MySQLData, indexes:[Int]? = nil) throws -> JSONSQLValue {
+        let indexes=indexes ?? table.keyIndexes
+        try require(values.count == indexes.count,"full-row lookup value count differs")
         var predicates:[String]=[],binds:[MySQLData]=[]
-        for (index,value) in zip(table.keyIndexes,values) {
+        for (index,value) in zip(indexes,values) {
             let name=try quoted(table.columns[index].name)
             if value == .null {
                 // MySQL 8.4 can treat nullable UNIQUE equality with a bound

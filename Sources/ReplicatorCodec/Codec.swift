@@ -161,7 +161,7 @@ public final class BinlogDecoder {
     public init(maximumEventBytes: UInt32 = BinlogLimits.defaultEventBytes, timings: StageTimings? = nil) throws {
         self.maximumEventBytes=Int(maximumEventBytes)
         self.timings = timings
-        guard Codec.abiVersion == 13, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
+        guard Codec.abiVersion == 14, Codec.capabilities & 5 == 5 else { throw DecoderError(code: 1, offset: 0, reason: "incompatible codec ABI") }
         guard timings == nil || Codec.capabilities & 2 != 0 else { throw DecoderError(code:1,offset:0,reason:"codec lacks profiling capability") }
         let status = profile("decode.swift.context_create") { rc_decoder_create(maximumEventBytes, &context) }
         guard status == 0, context != nil else { throw DecoderError(code: status, offset: 0, reason: "cannot create decoder") }
@@ -297,7 +297,7 @@ public final class BinlogDecoder {
                     control = .rotate(BinlogCoordinate(file: file, position: info.number))
                 case 15: control = .formatDescription
                 case 16: control = .xid(String(info.number))
-                case 33:
+                case 33,42:
                     guard detail.count == 16 else { throw DecoderError(code: 8, offset: offset, reason: "invalid GTID SID from codec") }
                     let sid: String
                     if let cachedSID, cachedSID.bytes == detail { sid=cachedSID.text }
@@ -307,7 +307,9 @@ public final class BinlogDecoder {
                         sid=String(decoding:encoded,as:UTF8.self)
                         cachedSID=(detail,sid)
                     }
-                    control = .gtid(SourceGTID(sid: sid, sequence: String(info.number), flags: info.payload_flags))
+                    let rawTag=bytes(info.gtid_tag)
+                    let tag = try info.event_type == 42 ? SourceGTID.normalizedTag(String(decoding:rawTag,as:UTF8.self)) : nil
+                    control = .gtid(SourceGTID(sid: sid, sequence: String(info.number), flags: info.payload_flags, tag:tag))
                 case 34: control = .anonymousGTID(flags: info.payload_flags)
                 case 35: control = .previousGTIDs
                 default: control = nil
@@ -318,7 +320,7 @@ public final class BinlogDecoder {
             var decoded = profile("decode.swift.event_build") { DecodedEvent(offset: String(offset), eventSize: info.event_size, control: control,
                 rowFlags: [23,24,25,30,31,32,39].contains(info.event_type) ? info.payload_flags : nil, eventType: info.event_type, eventName: String(decoding: bytes(info.name), as: UTF8.self), timestamp: info.timestamp, serverID: info.server_id, nextPosition: info.next_position, flags: info.flags, sha256: digest,
                 tableID: info.column_count == 0 ? nil : String(info.table_id), database: database, table: table,
-                number: [4,16,33].contains(info.event_type) ? String(info.number) : nil,
+                number: [4,16,33,42].contains(info.event_type) ? String(info.number) : nil,
                 detailBase64: detail.isEmpty ? nil : detail.base64EncodedString(), detailText: [2,4,15].contains(info.event_type) ? String(data: detail, encoding: .utf8) : nil,
                 rows: rows, rawBase64: rawBase64) }
             decoded.replicationFiltered = rc_result_is_filtered(result) == 1

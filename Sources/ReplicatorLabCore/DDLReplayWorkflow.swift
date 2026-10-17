@@ -3,7 +3,7 @@ import Foundation
 extension SharedCorrectness.Run {
     /// Replay a live DDL workload from its database baseline. Stop at a saved
     /// transaction boundary, then resume with an unreachable source.
-    func replayDDLWorkflow(_ label:String,stopAfter:Int,from start:Boundary,to end:Boundary) throws {
+    func replayDDLWorkflow(_ label:String,stopAfter:Int,from start:Boundary,to end:Boundary,stopGTIDs:String? = nil) throws {
         let original=f.config
         defer {f.config=original}
         var config=LabIsolatedApply(f).configuration(label+"-replay",at:start,count:stopAfter)
@@ -25,11 +25,13 @@ extension SharedCorrectness.Run {
         }
         _ = try invoke(label+"-fetch","fetch")
         _ = try f.sql(.target,"SET sql_log_bin=0; DROP DATABASE ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+        if f.variant != .withoutSourceGTIDs {_ = try f.sql(.target,f.profile.targetVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(start.gtids)'")}
         // Offline replay uses GTIDs even when the live case uses file/position.
         source["mode"]="gtid"
         source["host"]="127.0.0.1";source["port"]=1
         source.removeValue(forKey:"passwordEnvironment");source.removeValue(forKey:"password")
-        source["stopAfterTransactions"]=stopAfter;f.config["source"]=source
+        if let stopGTIDs {source["stopAfterGTIDs"]=stopGTIDs} else {source["stopAfterTransactions"]=stopAfter}
+        f.config["source"]=source
         let stopped=try invoke(label+"-replay-stop","replay",initialize:true)
         try require(stopped["transactionsApplied"] as? Int == stopAfter,"DDL replay stopped at the wrong transaction")
         if label == "keyless-rows" {
@@ -78,12 +80,13 @@ extension SharedCorrectness.Run {
                 // Preserve the blocked state. This controlled fixture resets
                 // the complete baseline and uses a new replay state.
                 _ = try f.sql(.target,"SET sql_log_bin=0; DROP DATABASE ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+                if f.variant != .withoutSourceGTIDs {_ = try f.sql(.target,f.profile.targetVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(start.gtids)'")}
                 f.config["stateDirectory"]="/evidence/keyless-reconciled-replay"
                 source["stopAfterTransactions"]=7;f.config["source"]=source
                 _ = try invoke(label+"-replay-reconciled","replay",initialize:true)
             }
         }
-        source.removeValue(forKey:"stopAfterTransactions");f.config["source"]=source
+        source.removeValue(forKey:"stopAfterTransactions");source.removeValue(forKey:"stopAfterGTIDs");f.config["source"]=source
         let resumed=try invoke(label+"-replay-resume","replay")
         try require(resumed["appliedGTIDSet"] as? String == end.gtids,"DDL replay checkpoint differs")
         _ = try compare("ddlcompat")

@@ -2,6 +2,18 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testGTIDVariantsSelectOnlyTheirIntendedWorkloads() throws {
+        let rows=try LabScenario.select(tier:"full",family:"gtids",ids:[])
+        XCTAssertEqual(Set(rows.map(\.id)),["ddl-compat-tagged-gtids","ddl-compat-source-gtid-preservation"])
+        let disabled=LabScenario.correctness.filter {$0.reason(.forward,variant:.withoutSourceGTIDs) == nil}
+        XCTAssertEqual(disabled.map(\.id),["ddl-compat-tagged-gtids"])
+        for profile in LabProfile.allCases {
+            XCTAssertTrue(LabLifecycle.fields(profile,variant:.withoutSourceGTIDs).allSatisfy {$0["status"] as? String == "not_applicable"})
+        }
+        let preserved=try XCTUnwrap(rows.first {$0.id == "ddl-compat-source-gtid-preservation"})
+        XCTAssertNil(preserved.reason(.forward))
+        XCTAssertNotNil(preserved.reason(.forward,variant:.gtidFull))
+    }
     func testLegacyFloatingAutoIncrementHasNativeVersionExclusions() throws {
         for fixture in DMLCompatibilityCases.legacyFloatingAutoIncrement {
             for prefix in ["matrix-","bootstrap-matrix-"] {
@@ -81,7 +93,7 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(Set(cases.filter { $0.family == "ddl" || ["ddl-compat-foreign-key-column-swaps","ddl-compat-foreign-key-controls","ddl-compat-foreign-key-ddl","ddl-compat-foreign-key-missing-parent","ddl-compat-foreign-key-parent-keys","ddl-compat-foreign-key-syntax-columns","ddl-compat-foreign-key-cross-database","ddl-compat-foreign-key-generated","ddl-compat-foreign-key-compound-indexes"].contains($0.id) }.map(\.id)),Set(DDLCompatibilityCases.cases.map { $0.test.id }))
+        XCTAssertEqual(Set(cases.filter { $0.family == "ddl" || $0.family == "gtids" || ["ddl-compat-foreign-key-column-swaps","ddl-compat-foreign-key-controls","ddl-compat-foreign-key-ddl","ddl-compat-foreign-key-missing-parent","ddl-compat-foreign-key-parent-keys","ddl-compat-foreign-key-syntax-columns","ddl-compat-foreign-key-cross-database","ddl-compat-foreign-key-generated","ddl-compat-foreign-key-compound-indexes"].contains($0.id) }.map(\.id)),Set(DDLCompatibilityCases.cases.map { $0.test.id }))
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         for (id,family) in [("offline-skip-errors","offline"),("live-skip-errors","policy")] {
             let skipping=try XCTUnwrap(cases.first { $0.id == id })

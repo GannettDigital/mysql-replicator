@@ -73,6 +73,8 @@ replication continues.
 - **Live replication:** start from a GTID set or binlog file position. Stop cleanly
   and resume from the saved replication position. GTID restrictions apply even
   when you use a binlog file position.
+- **Source GTIDs:** preserve them on a target that permits assignment, or track
+  them only in SQLite. See [required privileges and Cloud SQL limits](docs/GTID_PRESERVATION.md).
 - **Offline replay:** fetch binlogs or use a directory of raw files from
   `mysqlbinlog`. Replay does not connect to the source. Stop after a transaction
   count or when the applied GTID set contains `source.stopAfterGTIDs`.

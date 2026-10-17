@@ -195,6 +195,10 @@ enum DMLCompatibilityCases {
             let parts=server.split(separator:":")
             try require(parts.count >= 2,"invalid fixture GTID delta")
             for interval in parts.dropFirst() {
+                if let first=interval.utf8.first,(65...90).contains(first) || (97...122).contains(first) || first == 95 {
+                    try require(interval.utf8.count <= 32 && interval.utf8.allSatisfy {(65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 95},"invalid fixture GTID tag")
+                    continue
+                }
                 let bounds=interval.split(separator:"-")
                 guard let first=Int(bounds[0]),let last=Int(bounds.last!),first>0,last>=first,last-first<10000 else {throw LabError("invalid fixture GTID interval")}
                 count += last-first+1

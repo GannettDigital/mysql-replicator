@@ -12,6 +12,7 @@ final class TargetSession {
     var jsonScratchTables=Set<String>()
     var jsonScratchOrdinal:UInt64=0
     var statementTrace = TargetStatementTrace()
+    var statementSourceGTID: SourceGTID?
     private var foreignKeyChecks: Bool?
     func setForeignKeyChecks(_ enabled: Bool) throws {
         guard foreignKeyChecks != enabled else { return }
@@ -51,6 +52,16 @@ final class TargetSession {
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
     func query(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10, mutation: Bool = false, rawSQL: Data? = nil) throws -> ([MySQLRow],UInt64?) {
+        if mutation, let identity=statementSourceGTID {
+            statementSourceGTID=nil
+            try assignSourceGTID(identity)
+            let result=try query(sql,binds,textProtocol:textProtocol,timeoutSeconds:timeoutSeconds,mutation:mutation,rawSQL:rawSQL)
+            // DDL and MyISAM complete at the statement boundary. An inactive
+            // version comment needs this COMMIT to record its empty transaction.
+            _ = try query("COMMIT",textProtocol:true)
+            try resetSourceGTID()
+            return result
+        }
         try require(rawSQL == nil || (textProtocol && binds.isEmpty),"raw SQL requires the text protocol without bindings")
         try checkConnection()
         let requestBytes = max((rawSQL?.count ?? sql.utf8.count)+1, textProtocol ? 0 : MySQLProtocol.COM_STMT_EXECUTE.payloadSize(values:binds))
@@ -77,7 +88,11 @@ final class TargetSession {
             switch e {
             case .duplicateEntry: throw ApplyError("target SQL error 1062 (duplicate key)",code:.duplicateKey,mysqlErrorNumber:1062,sqlState:"23000")
             case .invalidSyntax: throw ApplyError("target SQL syntax error")
-            case .server(let packet): throw ApplyError("target SQL error \(packet.errorCode), state \(packet.sqlState ?? "unknown")",code:packet.errorCode == 1062 ? .duplicateKey : .targetSQL,mysqlErrorNumber:Int(packet.errorCode.rawValue),sqlState:packet.sqlState)
+            case .server(let packet):
+                if packet.errorCode == 1644 && ["target before-image mismatch or missing row","unexpected target affected-row count","target after-image mismatch"].contains(packet.errorMessage) {
+                    throw ApplyError(packet.errorMessage)
+                }
+                throw ApplyError("target SQL error \(packet.errorCode), state \(packet.sqlState ?? "unknown")",code:packet.errorCode == 1062 ? .duplicateKey : .targetSQL,mysqlErrorNumber:Int(packet.errorCode.rawValue),sqlState:packet.sqlState)
             default: throw ApplyError("target connection/protocol failure; SQL outcome may be uncertain")
             }
         } catch { throw ApplyError("target transport failure; SQL outcome may be uncertain") }
@@ -116,11 +131,18 @@ final class TargetSession {
         try require(ownership == "1","target writer ownership is indeterminate")
         try nativeExclusion()
         try contract.configure(self)
+        if config.target.preserveSourceGTIDs {
+            // This checks the same privilege used for ordinary explicit GTIDs,
+            // without claiming or consuming a source transaction.
+            try preflightSourceGTIDs()
+        }
         _ = try query("SET SESSION autocommit=1")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
-
+        if config.target.preserveSourceGTIDs && !contract.transactional {
+            try preflightMyISAMGTIDSupport()
+        }
     }
     func resetDMLSession() throws {
         _ = try query("SET SESSION timestamp=DEFAULT")
@@ -497,7 +519,7 @@ final class TargetSession {
     /// those fields to the FULL source image before completing the intent. This
     /// also catches mismatched expressions in an externally prepared snapshot;
     /// TABLE_MAP contains types but does not describe generated expressions.
-    private func verifyGeneratedValues(_ table: ApplyTable,after: [DecodedValue],plan: DMLSQLPlan) throws {
+    func verifyGeneratedValues(_ table: ApplyTable,after: [DecodedValue],plan: DMLSQLPlan) throws {
         let generated=plan.generatedIndexes
         guard !generated.isEmpty else { return }
         try profile("target.generated_check") {
@@ -505,7 +527,7 @@ final class TargetSession {
             try require(exactImage(generated.map{actual[$0]},generated.map{after[$0]}),"target generated-column values differ from source image")
         }
     }
-    private func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {
+    func sqlPlan(_ table: ApplyTable) throws -> DMLSQLPlan {
         try profile("target.sql_plan") {
             guard let plan = validatedPlans[table.identity], plan.table == table else {
                 throw ApplyError("missing validated target SQL plan")

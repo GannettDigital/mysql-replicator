@@ -121,7 +121,7 @@ final class CaptureTests: XCTestCase {
         let request = try DumpStart.gtid(set).packet(serverID:9001,nonBlocking:false)
         let header = Data([0x1e,0,0,0x29,0x23,0,0]) + le(UInt32(0)) + le(UInt64(4)) + le(UInt32(expected.count))
         XCTAssertEqual(Data(request.payload.readableBytesView),header+expected)
-        for bad in [sid+":0",sid+":2-1",sid+":9223372036854775807",sid+":tag:1",sid+":1,"+sid+":2",sid+":",",",sid+":1-"] {
+        for bad in [sid+":0",sid+":2-1",sid+":9223372036854775807",sid+":bad-tag:1",sid+":1,"+sid+":2",sid+":",",",sid+":1-"] {
             XCTAssertThrowsError(try GTIDSet(bad),bad)
         }
     }

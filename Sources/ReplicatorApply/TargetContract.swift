@@ -74,9 +74,9 @@ extension InnoDBTargetContract {
     var gtidMode: String { "ON" }
     var gtidConsistency: String { "ON" }
     func configure(_ target: TargetSession) throws {
-        // Avoid a privileged GTID_NEXT assignment on managed targets. These
-        // writes generate target-local GTIDs; upstream progress lives in SQLite.
-        try require(try target.scalar("SELECT @@SESSION.GTID_NEXT AS v") == "AUTOMATIC","target session requires automatic local GTIDs")
+        // Start from a clean session. The shared GTID adapter assigns explicit
+        // source identities only when target.preserveSourceGTIDs is true.
+        try require(try target.scalar("SELECT @@SESSION.GTID_NEXT AS v") == "AUTOMATIC","target session must start with GTID_NEXT=AUTOMATIC")
         _ = try target.query("SET SESSION foreign_key_checks=1,unique_checks=1")
         if let sql = NativeReplicationRules(profile:target.config.replicationProfile).foreignKeySessionSQL {
             _ = try target.query(sql)
