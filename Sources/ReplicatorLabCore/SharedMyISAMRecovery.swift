@@ -79,7 +79,12 @@ extension SharedCorrectness.Run {
                 edgeResult["rowsApplied"] as? Int == 5 && h.rows("target57") == Fixture.final,
                 "multirow/key-change application differs")
             let edgeReads = (edgeResult["stageTimings"] as? [String: [String: Any]])?["target.read"]?["count"] as? Int
-            try require(edgeReads == 4, "expected three UPDATE/DELETE reads and one new-key absence check")
+            // With preserved GTIDs, the multi-row DELETE checks run inside
+            // the target stored function. Only the UPDATE reads cross the client.
+            let preservesGTIDs =
+                (configs["multirow"]?["target"] as? [String: Any])?["preserveSourceGTIDs"] as? Bool ?? true
+            try require(
+                edgeReads == (preservesGTIDs ? 2 : 4), "unexpected client reads for multirow/key-change application")
             let edgeEnd = try h.boundary("source")
             _ = try h.sql("native", f.profile.nativeVersion.startReplica)
             let wait = try h.sql(
