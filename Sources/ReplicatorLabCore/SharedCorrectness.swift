@@ -375,7 +375,7 @@ public enum SharedCorrectness {
                     if f.profile.hasOptionalMetadata {
                         // These DDL workloads write ENUM/SET values. Their label
                         // validation requires FULL metadata even with position capture.
-                        let fullMetadataCases: Set<String> = ["ddl-compat-types", "ddl-compat-query-encodings"]
+                        let fullMetadataCases: Set<String> = ["ddl-compat-types", "ddl-compat-query-encodings", "ddl-compat-charset-conversion"]
                         let metadata=fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
                         _ = try f.sql(.source,"SET GLOBAL binlog_row_metadata="+metadata)
                     }

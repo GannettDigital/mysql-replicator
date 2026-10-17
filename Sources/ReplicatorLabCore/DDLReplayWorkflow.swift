@@ -25,6 +25,8 @@ extension SharedCorrectness.Run {
         }
         _ = try invoke(label+"-fetch","fetch")
         _ = try f.sql(.target,"SET sql_log_bin=0; DROP DATABASE ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
+        // Offline replay uses GTIDs even when the live case uses file/position.
+        source["mode"]="gtid"
         source["host"]="127.0.0.1";source["port"]=1
         source.removeValue(forKey:"passwordEnvironment");source.removeValue(forKey:"password")
         source["stopAfterTransactions"]=stopAfter;f.config["source"]=source
