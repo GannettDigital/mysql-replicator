@@ -26,6 +26,8 @@ extension SharedCorrectness.Run {
         _ = try invoke(label+"-fetch","fetch")
         _ = try f.sql(.target,"SET sql_log_bin=0; DROP DATABASE ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
         if f.variant != .withoutSourceGTIDs {_ = try f.sql(.target,f.profile.targetVersion.resetBinlogs+"; SET GLOBAL gtid_purged='\(start.gtids)'")}
+        // Offline replay uses GTIDs even when the live case uses file/position.
+        source["mode"]="gtid"
         source["host"]="127.0.0.1";source["port"]=1
         source.removeValue(forKey:"passwordEnvironment");source.removeValue(forKey:"password")
         if let stopGTIDs {source["stopAfterGTIDs"]=stopGTIDs} else {source["stopAfterTransactions"]=stopAfter}
