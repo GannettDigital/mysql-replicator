@@ -107,7 +107,7 @@ enum DDLCompatibilityCases {
         ]),
         .init("routines","Create compound stored procedure and function without executing their bodies",[
             .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)"),
-            .init("DELIMITER $$\nCREATE PROCEDURE ddlcompat.p(IN k INT) SQL SECURITY INVOKER BEGIN DECLARE v INT; SET v=k+1; INSERT INTO ddlcompat.t VALUES(k,v); END$$\nDELIMITER ;",[.init("SELECT COUNT(*) FROM ddlcompat.t","0")]),
+            .init("CREATE PROCEDURE ddlcompat.p(IN k INT) SQL SECURITY INVOKER BEGIN DECLARE v INT; SET v=k+1; INSERT INTO ddlcompat.t VALUES(k,v); END",[.init("SELECT COUNT(*) FROM ddlcompat.t","0")]),
             .init("CREATE FUNCTION ddlcompat.f(k INT) RETURNS INT DETERMINISTIC NO SQL SQL SECURITY INVOKER RETURN k+1",[.init("SELECT ddlcompat.f(7)","8")]),
             .init("CALL ddlcompat.p(1)",[.init("SELECT * FROM ddlcompat.t","1\t2")]),
             .init("DROP PROCEDURE ddlcompat.p"),

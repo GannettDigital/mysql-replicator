@@ -154,7 +154,11 @@ extension TargetSession {
         return JSONSQL.document(document,scalars:scalars)
     }
     func verifyJSONTypes(_ document:JSONDocument,column:String,table:ApplyTable,key:[DecodedValue]) throws {
-        let predicate=try table.primaryKeyColumns.map { try quoted($0)+"=?" }.joined(separator:" AND ")
+        let predicate=try table.keyIndexes.map { index in
+            let column=table.columns[index]
+            let type=try DMLColumnType(column)
+            return try type.sqlKeyColumn(quoted(column.name))+"="+type.sqlValue("?")
+        }.joined(separator:" AND ")
         let name=try quoted(column),sqlName=try table.sqlName
         let checks=document.scalarChecks
         // Bound SELECT width and parameter count. Strings in JSON paths remain binds.

@@ -2,6 +2,19 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testLegacyFloatingAutoIncrementHasNativeVersionExclusions() throws {
+        for fixture in DMLCompatibilityCases.legacyFloatingAutoIncrement {
+            for prefix in ["matrix-","bootstrap-matrix-"] {
+                let scenario=try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix+fixture.id })
+                for profile in LabProfile.allCases {
+                    let eligible=profile == .mysql57InnoDB || profile == .mysql57MyISAM
+                    XCTAssertEqual(fixture.applies(to:profile),eligible)
+                    XCTAssertEqual(scenario.reason(profile) == nil,eligible)
+                    if !eligible { XCTAssertTrue(scenario.reason(profile)!.contains("1063")) }
+                }
+            }
+        }
+    }
     func testMySQL57MyISAMReusesCapabilitiesAndSharedScenarios() throws {
         let profile=LabProfile.mysql57MyISAM
         XCTAssertEqual(profile.sourceVersion,.mysql57)
@@ -35,7 +48,7 @@ final class LabProfileTests: XCTestCase {
         XCTAssertFalse(profile.supportsPositionCapture)
         XCTAssertEqual(profile.service(.source),"source")
         XCTAssertEqual(profile.service(.target),"target57")
-        for scenario in LabScenario.correctness {
+        for scenario in LabScenario.correctness where scenario.profileExclusions.isEmpty {
             XCTAssertEqual(scenario.reason(profile),scenario.reason(.reverse),scenario.id)
         }
         XCTAssertEqual(LabLifecycle.fields(profile).compactMap { $0["status"] as? String },
@@ -68,7 +81,7 @@ final class LabProfileTests: XCTestCase {
     }
     func testSharedCatalogHasStableUniqueIDsAndSmokeCoversCoreFamilies() throws {
         let cases=LabScenario.correctness
-        XCTAssertEqual(cases.count,65+2*DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
+        XCTAssertEqual(cases.count,62+2*DMLCompatibilityCases.cases.count+DMLCompatibilityCases.rejections.count)
         XCTAssertEqual(Set(cases.map(\.id)).count,cases.count)
         for (id,family) in [("offline-skip-errors","offline"),("live-skip-errors","policy")] {
             let skipping=try XCTUnwrap(cases.first { $0.id == id })

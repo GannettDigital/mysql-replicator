@@ -12,8 +12,31 @@ enum DMLCompatibilityCases {
         var orderBy: String = "id"
         var rowMetadata: String? = nil
         var source84OnlyReason: String? = nil
+        var profileExclusions: [LabProfile:String] = [:]
+        func applies(to profile: LabProfile) -> Bool {
+            profileExclusions[profile] == nil && (source84OnlyReason == nil || profile.sourceVersion == .mysql84)
+        }
     }
     static let cases: [Case] = [
+        characterCollations,
+        nativeEncodings,
+        exactChoices,
+        choiceBoundaries,
+        binaryChoices,
+        legacyBinarySet,
+        decimalDefaults,
+        binaryDefaults,
+        textDefaults,
+        zeroWidth,
+        Case(id:"encodings",definition:"id VARCHAR(12) CHARACTER SET latin1 COLLATE latin1_swedish_ci PRIMARY KEY,c CHAR(4) CHARACTER SET latin1 COLLATE latin1_bin,v VARCHAR(20) CHARACTER SET latin1 COLLATE latin1_bin,t TEXT CHARACTER SET latin1 COLLATE latin1_bin,a VARCHAR(20) CHARACTER SET ascii COLLATE ascii_general_ci,u VARCHAR(20) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT '中',b CHAR(4) CHARACTER SET binary,doc JSON",phases:[
+            .init(sql:"INSERT INTO poc.matrix_encodings VALUES(CONVERT(0xE9 USING latin1),CONVERT(0xE92020 USING latin1),CONVERT(0x0080FF20 USING latin1),CONVERT(0xE980FF00 USING latin1),CONVERT(0x410020 USING ascii),DEFAULT,0xFF20,JSON_OBJECT('n',CAST('1.25' AS DECIMAL(3,2)))),('second',NULL,'',NULL,'','',NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_encodings WHERE id=CONVERT(0xC9 USING latin1) AND HEX(c)='E9' AND HEX(v)='0080FF20' AND HEX(t)='E980FF00' AND HEX(a)='410020' AND HEX(u)='E4B8AD' AND HEX(b)='FF200000' AND JSON_TYPE(JSON_EXTRACT(doc,'$.n'))='DECIMAL'"),
+            .init(sql:"UPDATE poc.matrix_encodings SET id=CONVERT(0xC958 USING latin1),v=CONVERT(0xFF00E9 USING latin1),a='Next',u=CONVERT(0xC3A9 USING utf8),doc=JSON_OBJECT('n',CAST('2.50' AS DECIMAL(3,2))) WHERE id=CONVERT(0xC9 USING latin1)",check:"SELECT COUNT(*)=1 FROM poc.matrix_encodings WHERE id=CONVERT(0xE978 USING latin1) AND HEX(id)='C958' AND HEX(v)='FF00E9' AND a='next' AND HEX(u)='C3A9' AND JSON_TYPE(JSON_EXTRACT(doc,'$.n'))='DECIMAL'"),
+            .init(sql:"ALTER TABLE poc.matrix_encodings ADD extra CHAR(3) CHARACTER SET ascii DEFAULT 'x'; UPDATE poc.matrix_encodings SET extra='Z  ',t=CONVERT(0xE900FF USING latin1) WHERE id=CONVERT(0xE958 USING latin1)",check:"SELECT COUNT(*)=1 FROM poc.matrix_encodings WHERE id=CONVERT(0xC958 USING latin1) AND HEX(extra)='5A' AND HEX(t)='E900FF'"),
+            .init(sql:"DELETE FROM poc.matrix_encodings WHERE id=CONVERT(0xE978 USING latin1)",check:"SELECT COUNT(*)=1 AND SUM(id='second')=1 AND SUM(c IS NULL)=1 FROM poc.matrix_encodings")]),
+        Case(id:"widestrings",definition:"id INT PRIMARY KEY,v VARCHAR(20000) CHARACTER SET latin1 COLLATE latin1_bin,b VARBINARY(20000)",phases:[
+            .init(sql:"INSERT INTO poc.matrix_widestrings VALUES(1,REPEAT(CONVERT(0xE9 USING latin1),18000),REPEAT(0xFF00,9000))",check:"SELECT COUNT(*)=1 FROM poc.matrix_widestrings WHERE OCTET_LENGTH(v)=18000 AND OCTET_LENGTH(b)=18000 AND HEX(RIGHT(v,1))='E9' AND HEX(RIGHT(b,2))='FF00'"),
+            .init(sql:"UPDATE poc.matrix_widestrings SET v=CONVERT(0x00FF USING latin1),b=0xFF WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_widestrings WHERE HEX(v)='00FF' AND HEX(b)='FF'"),
+            .init(sql:"DELETE FROM poc.matrix_widestrings WHERE id=1",check:"SELECT COUNT(*)=0 FROM poc.matrix_widestrings")]),
         Case(id:"spatial",definition:"id INT PRIMARY KEY,g GEOMETRY,p POINT NOT NULL,l LINESTRING,poly POLYGON,mp MULTIPOINT,ml MULTILINESTRING,mpl MULTIPOLYGON,gc GEOMETRYCOLLECTION,SPATIAL INDEX sp(p)",phases:[
             .init(sql:"INSERT INTO poc.matrix_spatial VALUES(1,ST_GeomFromText('POINT(1 2)'),ST_GeomFromText('POINT(3 4)'),ST_GeomFromText('LINESTRING(0 0,1 1)'),ST_GeomFromText('POLYGON((0 0,0 2,2 2,2 0,0 0))'),ST_GeomFromText('MULTIPOINT(0 0,1 2)'),ST_GeomFromText('MULTILINESTRING((0 0,1 1),(2 2,3 3))'),ST_GeomFromText('MULTIPOLYGON(((0 0,0 2,2 2,2 0,0 0)))'),ST_GeomFromText('GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(0 0,1 1))')),(2,NULL,ST_GeomFromText('POINT(3 4)',4326),NULL,NULL,NULL,NULL,NULL,GeometryCollection())",check:"SELECT COUNT(*)=2 AND SUM(g IS NULL)=1 AND SUM(ST_SRID(p)=4326)=1 AND SUM(ST_NumGeometries(gc)=0)=1 FROM poc.matrix_spatial"),
             .init(sql:"UPDATE poc.matrix_spatial SET id=10,g=ST_GeomFromText('GEOMETRYCOLLECTION(POINT(5 6))'),l=ST_GeomFromText('LINESTRING(-1 -2,3 4)'),gc=GeometryCollection() WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_spatial WHERE id=10 AND ST_NumGeometries(g)=1 AND ST_NumGeometries(gc)=0"),
@@ -34,6 +57,20 @@ enum DMLCompatibilityCases {
             .init(sql:"SET SESSION binlog_row_value_options='PARTIAL_JSON'; UPDATE poc.matrix_jsonpartial SET doc=JSON_SET(doc,'$.a[1]',CAST('123.45' AS DECIMAL(5,2)),'$.d',CAST('2024-02-29' AS DATE)) WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_jsonpartial WHERE JSON_TYPE(JSON_EXTRACT(doc,'$.a[1]'))='DECIMAL' AND JSON_UNQUOTE(JSON_EXTRACT(doc,'$.a[1]'))='123.45' AND JSON_TYPE(JSON_EXTRACT(doc,'$.d'))='DATE'",expectsJSONDiff:true),
             .init(sql:"SET SESSION binlog_row_value_options='PARTIAL_JSON'; UPDATE poc.matrix_jsonpartial SET doc=JSON_REMOVE(doc,'$.a[0]') WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_jsonpartial WHERE JSON_LENGTH(JSON_EXTRACT(doc,'$.a'))=2 AND JSON_TYPE(JSON_EXTRACT(doc,'$.a[0]'))='DECIMAL'",expectsJSONDiff:true),
             .init(sql:"DELETE FROM poc.matrix_jsonpartial",check:"SELECT COUNT(*)=0 FROM poc.matrix_jsonpartial")],source84OnlyReason:"Partial JSON row events require an 8.0 or later source; 5.7 writes complete JSON documents."),
+        Case(id:"floatbounds",definition:"id FLOAT(8,2) PRIMARY KEY,v FLOAT(8,2),u FLOAT(8,2) UNSIGNED",phases:[
+            .init(sql:"INSERT INTO poc.matrix_floatbounds VALUES(999999.99,999999.99,999999.99),(-999999.99,-999999.99,0)",check:"SELECT COUNT(*)=2 AND SUM(id)=0 AND SUM(v)=0 AND SUM(u)=1000000 FROM poc.matrix_floatbounds"),
+            .init(sql:"UPDATE poc.matrix_floatbounds SET id=1,v=-999999.99,u=999999.99 WHERE id>0",check:"SELECT COUNT(*)=1 FROM poc.matrix_floatbounds WHERE id=1 AND v+0e0=-1000000e0 AND u+0e0=1000000e0"),
+            .init(sql:"DELETE FROM poc.matrix_floatbounds WHERE id<0",check:"SELECT COUNT(*)=1 AND MIN(id)=1 FROM poc.matrix_floatbounds")]),
+        Case(id:"zerofill",definition:"id INT ZEROFILL PRIMARY KEY,a TINYINT(6) ZEROFILL DEFAULT 7,b DECIMAL(8,2) ZEROFILL DEFAULT 1.25,c FLOAT ZEROFILL DEFAULT 1.25,d DOUBLE(10,2) ZEROFILL DEFAULT 1.235,e INT(0) ZEROFILL,f BIGINT ZEROFILL,y YEAR ZEROFILL",phases:[
+            .init(sql:"INSERT INTO poc.matrix_zerofill(id) VALUES(0),(1),(2)",check:"SELECT COUNT(*)=3 AND SUM(a)=21 AND SUM(b)=3.75 FROM poc.matrix_zerofill"),
+            .init(sql:"UPDATE poc.matrix_zerofill SET id=4294967295,a=255,b=999999.99,c=0.125,d=9.875,e=4294967295,f=18446744073709551615,y=2155 WHERE id=0",check:"SELECT COUNT(*)=1 FROM poc.matrix_zerofill WHERE id=4294967295 AND a=255 AND b=999999.99 AND d=9.88 AND f=18446744073709551615 AND y=2155"),
+            .init(sql:"ALTER TABLE poc.matrix_zerofill MODIFY a TINYINT(8) ZEROFILL DEFAULT 9, ADD g MEDIUMINT ZEROFILL DEFAULT 42; UPDATE poc.matrix_zerofill SET a=DEFAULT,g=16777215 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_zerofill WHERE id=1 AND a=9 AND g=16777215"),
+            .init(sql:"DELETE FROM poc.matrix_zerofill WHERE id IN (1,4294967295)",check:"SELECT COUNT(*)=1 AND MIN(id)=2 FROM poc.matrix_zerofill")]),
+        Case(id:"fixedfloating",definition:"id DOUBLE(10,2) PRIMARY KEY,a FLOAT(10,2) DEFAULT 1.235,b DOUBLE(20,6) DEFAULT -1.23456789,c FLOAT(30,20) DEFAULT 0.1,d DOUBLE(200,0) DEFAULT 1e199,u FLOAT(10,2) UNSIGNED",phases:[
+            .init(sql:"INSERT INTO poc.matrix_fixedfloating(id,u) VALUES(1,0),(2,1.235),(3,NULL); INSERT INTO poc.matrix_fixedfloating VALUES(4,NULL,NULL,NULL,NULL,NULL)",check:"SELECT COUNT(*)=4 AND SUM(a IS NULL)=1 AND SUM(b=-1.234568)=3 FROM poc.matrix_fixedfloating"),
+            .init(sql:"UPDATE poc.matrix_fixedfloating SET id=10.255,a=-99999.125,b=0.0000001,c=-0.00001,d=-1e199,u=9999.999 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixedfloating WHERE id=10.26 AND a<0 AND b=0 AND c<0 AND d=-1e199 AND u=10000"),
+            .init(sql:"ALTER TABLE poc.matrix_fixedfloating ADD e DOUBLE(10,2) DEFAULT 9.875, MODIFY a FLOAT(12,3) DEFAULT -1.2345; UPDATE poc.matrix_fixedfloating SET a=DEFAULT,e=DEFAULT WHERE id=2",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixedfloating WHERE id=2 AND a< -1.23 AND a> -1.24 AND e=9.88"),
+            .init(sql:"DELETE FROM poc.matrix_fixedfloating WHERE id IN (2,3,10.26)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixedfloating WHERE id=4 AND a IS NULL AND b IS NULL")]),
         Case(id:"floating",definition:"id DOUBLE PRIMARY KEY,a FLOAT,b DOUBLE,c FLOAT UNSIGNED DEFAULT 1.23456789",phases:[
             .init(sql:"INSERT INTO poc.matrix_floating VALUES(0,0,0,0),(1,0.1,0.1,0.125),(2,-0.1,-0.1,NULL),(3,1.1754943508222875e-38,2.2250738585072014e-308,1),(4,NULL,NULL,NULL)",check:"SELECT COUNT(*)=5 AND SUM(a IS NULL)=1 AND SUM(c IS NULL)=2 FROM poc.matrix_floating"),
             .init(sql:"UPDATE poc.matrix_floating SET id=10.25,a=1.401298464324817e-45,b=4.9406564584124654e-324,c=DEFAULT WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=10.25 AND a>0 AND a<1e-40 AND b>0 AND b<1e-310 AND c>1.23456 AND c<1.23458"),
@@ -53,8 +90,12 @@ enum DMLCompatibilityCases {
             .init(sql:"INSERT INTO poc.matrix_fixed VALUES(1,CONVERT(0xF09F988065CC812020 USING utf8mb4),0x00FF),(2,'',X''),(3,NULL,NULL)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND HEX(c)='F09F988065CC81' AND HEX(b)='00FF000000000000'"),
             .init(sql:"UPDATE poc.matrix_fixed SET c=REPEAT('x',255),b=0x0102030405060708 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=1 AND CHAR_LENGTH(c)=255 AND HEX(b)='0102030405060708'"),
             .init(sql:"DELETE FROM poc.matrix_fixed WHERE id IN (1,3)",check:"SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=2 AND HEX(b)='0000000000000000'")]),
-        // COLUMN_TYPE loses supplementary-plane ENUM/SET labels on both versions.
-        // Keep BMP Unicode here; the reverse DDL refusal suite covers that limit.
+        // The exactchoices case separately checks lossy native metadata.
+        Case(id:"enumzero",definition:"id ENUM('','one','two') PRIMARY KEY,e ENUM('','yes','no'),v INT UNSIGNED",phases:[
+            .init(sql:"SET SESSION sql_mode=''; INSERT INTO poc.matrix_enumzero VALUES(0,1,0),(1,0,1),(2,NULL,2)",check:"SELECT COUNT(*)=3 AND SUM(id+0=0)=1 AND SUM(id+0=1)=1 AND SUM(e+0=0)=1 AND SUM(e IS NULL)=1 FROM poc.matrix_enumzero"),
+            .init(sql:"SET SESSION sql_mode=''; UPDATE poc.matrix_enumzero SET e=0,v=10 WHERE id+0=0; UPDATE poc.matrix_enumzero SET e=1,v=11 WHERE id+0=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_enumzero WHERE id+0=0 AND e+0=0 AND v=10"),
+            .init(sql:"DELETE FROM poc.matrix_enumzero WHERE id+0=0",check:"SELECT COUNT(*)=2 AND SUM(id+0=0)=0 FROM poc.matrix_enumzero"),
+            .init(sql:"SET SESSION sql_mode=''; UPDATE poc.matrix_enumzero SET id=0,e=0,v=20 WHERE id+0=2",check:"SELECT COUNT(*)=1 FROM poc.matrix_enumzero WHERE id+0=0 AND e+0=0 AND v=20")],orderBy:"id+0",rowMetadata:"FULL"),
         Case(id:"choices",definition:"id INT PRIMARY KEY,e ENUM('','one','it''s','x,y','é'),s SET('a','b','c')",phases:[
             .init(sql:"INSERT INTO poc.matrix_choices VALUES(1,1,0),(2,2,7),(3,'it''s','a,c'),(4,NULL,NULL),(5,'é','b')",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=1 AND e+0=1 AND s+0=0"),
             .init(sql:"UPDATE poc.matrix_choices SET e='x,y',s=6 WHERE id=3",check:"SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=3 AND e+0=4 AND s+0=6"),
@@ -116,7 +157,7 @@ enum DMLCompatibilityCases {
             .init(sql:"SET timestamp=1700000000.123456; INSERT INTO poc.matrix_defaults(s) VALUES(DEFAULT),('explicit')",check:"SELECT COUNT(*)=2 AND SUM(id)=3 AND SUM(v)=14 FROM poc.matrix_defaults"),
             .init(sql:"SET timestamp=1700000001.654321; UPDATE poc.matrix_defaults SET v=9 WHERE id=1",check:"SELECT COUNT(*)=1 FROM poc.matrix_defaults WHERE id=1 AND v=9 AND ts='2023-11-14 22:13:21.654321'"),
             .init(sql:"INSERT INTO poc.matrix_defaults(id,v,s,ts) VALUES(0,0,'zero',NULL),(20,20,'explicit',NULL)",check:"SELECT COUNT(*)=4 AND MIN(id)=0 AND MAX(id)=20 FROM poc.matrix_defaults")])
-    ]
+    ] + legacyFloatingAutoIncrement
 
     struct Rejection {
         let id: String
@@ -130,7 +171,6 @@ enum DMLCompatibilityCases {
         var postWriteCheck: String? = nil
     }
     static let rejections: [Rejection] = [
-        .init(id:"enum-error-value",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,0)",reason:"ENUM/SET value out of range",sourceSession:"SET SESSION sql_mode='';"),
         .init(id:"enum-minimal",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,'a')",reason:"requires source binlog_row_metadata=FULL",rowMetadata:"MINIMAL"),
         .init(id:"enum-order",sourceDefinition:"id INT PRIMARY KEY,v ENUM('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v ENUM('b','a') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,'a')",reason:"labels or order differ"),
         .init(id:"set-order",sourceDefinition:"id INT PRIMARY KEY,v SET('a','b') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",targetDefinition:"id INT PRIMARY KEY,v SET('b','a') CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",values:"(1,'a')",reason:"labels or order differ"),
@@ -139,8 +179,7 @@ enum DMLCompatibilityCases {
         .init(id:"decimal-sign",sourceDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2) UNSIGNED",targetDefinition:"id INT PRIMARY KEY,v DECIMAL(10,2)",values:"(1,1.23)",reason:"signedness"),
         .init(id:"time-precision",sourceDefinition:"id INT PRIMARY KEY,v TIME(6)",targetDefinition:"id INT PRIMARY KEY,v TIME(3)",values:"(1,'12:34:56.123456')",reason:"precision"),
         .init(id:"blob-width",sourceDefinition:"id INT PRIMARY KEY,v MEDIUMBLOB",targetDefinition:"id INT PRIMARY KEY,v BLOB",values:"(1,0x00FF)",reason:"type"),
-        .init(id:"generated",sourceDefinition:"id INT PRIMARY KEY,v INT",targetDefinition:"id INT PRIMARY KEY,v INT AS (id+1) STORED",values:"(1,3)",reason:"target generated-column values differ",postWriteCheck:"COUNT(*)=1 AND MIN(id)=1 AND MIN(v)=2"),
-        .init(id:"float-fixed-scale",sourceDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",targetDefinition:"id INT PRIMARY KEY,v FLOAT(10,2)",values:"(1,1.25)",reason:"fixed-scale floating-point")
+        .init(id:"generated",sourceDefinition:"id INT PRIMARY KEY,v INT",targetDefinition:"id INT PRIMARY KEY,v INT AS (id+1) STORED",values:"(1,3)",reason:"target generated-column values differ",postWriteCheck:"COUNT(*)=1 AND MIN(id)=1 AND MIN(v)=2")
     ]
 
     static func transactionCount(_ set: String) throws -> Int {

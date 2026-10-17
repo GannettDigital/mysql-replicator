@@ -5,6 +5,59 @@ import Foundation
 @testable import ReplicatorCapture
 
 extension ResumeTests {
+    func testWideEncodedTextSurvivesRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["varchar(4)","char(4)"],codes:[15,254],metadata:[16,0,254,16],
+            payload:Data([4,0x20,0x20,0,0,8,0,0,0x20,0x20,0,0,0,32]),
+            expected:[.binary(Data([0x20,0x20,0,0])),.binary(Data([0,0,0x20,0x20]))],
+            collations:["utf16_bin","utf32_bin"],characterSets:["utf16","utf32"])
+    }
+    func testAdditionalCollationsSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["varchar(4)","char(4)"],codes:[15,254],metadata:[16,0,254,4],
+            payload:Data([2,0xc3,0xa9,4,0xe9,0,32,32]),
+            expected:[.text("é"),.binary(Data([0xe9,0]))],
+            collations:["utf8mb4_unicode_520_ci","latin1_general_cs"],characterSets:["utf8mb4","latin1"])
+    }
+    func testEncodedTextKeyAndValueSurviveRelayInspectionAndRestart() throws {
+        // latin1 key bytes are not valid UTF-8. ASCII CHAR keeps NUL and trims
+        // spaces. Recovery must reconstruct both from the relay and saved schema.
+        try scalarRecovery(types:["varchar(4)","char(4)"],codes:[15,254],metadata:[4,0,254,4],
+            payload:Data([3,0xe9,0x80,0xff,4,65,0,32,32]),
+            expected:[.binary(Data([0xe9,0x80,0xff])),.binary(Data([65,0]))],
+            collations:["latin1_swedish_ci","ascii_bin"],characterSets:["latin1","ascii"])
+    }
+
+    func testZeroWidthValuesSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["int","varchar(0)"],codes:[3,15],metadata:[0,0],payload:Data([1,0,0,0,0]),expected:[.signed(1),.text("")],collations:[nil,"utf8mb4_bin"],characterSets:[nil,"utf8mb4"])
+        try scalarRecovery(types:["int","varchar(0)"],codes:[3,15],metadata:[0,0],payload:Data([1,0,0,0,0]),expected:[.signed(1),.binary(Data())],collations:[nil,"utf16_bin"],characterSets:[nil,"utf16"])
+        try scalarRecovery(types:["int","varbinary(0)"],codes:[3,15],metadata:[0,0],payload:Data([1,0,0,0,0]),expected:[.signed(1),.binary(Data())])
+    }
+    func testBinaryDefaultsSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["binary(4)","varbinary(4)"],codes:[254,15],metadata:[254,4,4,0],
+            payload:Data([4,255,0,1,0,3,255,0,2]),
+            expected:[.binary(Data([255,0,1,0])),.binary(Data([255,0,2]))],
+            binaryDefaults:[Data([255,0,1,0]),Data([255,0,2])])
+    }
+    func testBinaryChoiceLabelsSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["enum(X'ff',X'61')","set(X'80',X'62')"],codes:[254,254],metadata:[247,1,248,1],
+            payload:Data([2,3]),expected:[.unsigned(2),.unsigned(3)],
+            collations:["binary","binary"],characterSets:["binary","binary"],
+            choiceLabels:[[Data([0xff]),Data([0x61])],[Data([0x80]),Data([0x62])]])
+    }
+    func testEncodedChoiceLabelsSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["enum('é','ÿ')","set('中','†')"],codes:[254,254],metadata:[247,1,248,1],
+            payload:Data([2,3]),expected:[.unsigned(2),.unsigned(3)],
+            collations:["latin1_bin","utf16_bin"],characterSets:["latin1","utf16"],
+            choiceLabels:[[Data([0xe9]),Data([0xff])],[Data([0x4e,0x2d]),Data([0x20,0x20])]])
+    }
+    func testEnumZeroAndEmptyLabelSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["enum('','a')","enum('','b')"],codes:[254,254],metadata:[247,1,247,1],
+                           payload:Data([0,1]),expected:[.unsigned(0),.unsigned(1)],
+                           collations:["utf8mb4_bin","utf8mb4_bin"])
+    }
+    func testZerofillSchemaAndNumericValuesSurviveRelayInspectionAndRestart() throws {
+        try scalarRecovery(types:["int(10) unsigned zerofill","decimal(8,2) unsigned zerofill"],codes:[3,246],metadata:[8,2],
+                           payload:Data([1,0,0,0,0x80,0,1,25]),expected:[.unsigned(1),.decimal("1.25")])
+    }
     func testBitKeyAndValueSurviveRelayInspectionAndRestart() throws {
         try scalarRecovery(types:["bit(64)","bit(9)"],codes:[16,16],metadata:[0,8,1,1],
                            payload:Data(repeating:255,count:8)+Data([1,255]),
@@ -17,6 +70,13 @@ extension ResumeTests {
             try scalarRecovery(types:["double","float"],codes:[5,4],metadata:[8,4],
                                payload:data,expected:[.float64(key),.float32(value)])
         }
+    }
+    func testFixedScaleValuesSurviveRelayInspectionAndRestart() throws {
+        let key=Double(-1.234568).bitPattern,value=Float(1.24).bitPattern
+        var k=key.littleEndian,v=value.littleEndian
+        let data=withUnsafeBytes(of:&k) { Data($0) }+withUnsafeBytes(of:&v) { Data($0) }
+        try scalarRecovery(types:["double(20,6)","float(10,2)"],codes:[5,4],metadata:[8,4],
+                           payload:data,expected:[.float64(key),.float32(value)])
     }
     func testJSONSurvivesRelayInspectionAndRestart() throws {
         // JSON UINT64 maximum, not representable through a Double conversion.
@@ -32,7 +92,7 @@ extension ResumeTests {
         try scalarRecovery(types:["int","json"],codes:[3,245],metadata:[4],payload:payload,
             expected:[.signed(1),.json(expected)])
     }
-    private func scalarRecovery(types:[String],codes:[UInt8],metadata:[UInt8],payload:Data,expected:[DecodedValue]) throws {
+    private func scalarRecovery(types:[String],codes:[UInt8],metadata:[UInt8],payload:Data,expected:[DecodedValue],collations:[String?]=[nil,nil],characterSets:[String?]=[nil,nil],choiceLabels:[[Data]?]=[nil,nil],binaryDefaults:[Data?]=[nil,nil]) throws {
 
         let path=try directory(), configuration=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue)
         let input=try Data(contentsOf:helper.root.appendingPathComponent("tests/ReplicatorLabTests/Fixtures/source-positive.binlog"))
@@ -51,7 +111,7 @@ extension ResumeTests {
             result.append(le(crc ^ 0xffffffff)); return result
         }
         let original=try helper.groups()[0]
-        let table=ApplyTable(database:"poc",table:"scalars",columns:[ApplyColumn(name:"id",type:types[0],nullable:false,collation:nil),ApplyColumn(name:"v",type:types[1],nullable:true,collation:nil)],primaryKey:"id")
+        let table=ApplyTable(database:"poc",table:"scalars",columns:[ApplyColumn(name:"id",type:types[0],nullable:false,collation:collations[0],characterSet:characterSets[0],choiceLabels:choiceLabels[0],binaryDefaultBytes:binaryDefaults[0]),ApplyColumn(name:"v",type:types[1],nullable:true,collation:collations[1],characterSet:characterSets[1],choiceLabels:choiceLabels[1],binaryDefaultBytes:binaryDefaults[1])],primaryKey:"id")
         let begin=original.events.first { $0.eventType == 2 }!
         let gtid=original.events.first { $0.eventType == 33 }!
         let xid=original.events.last!
@@ -86,10 +146,17 @@ extension ResumeTests {
         let report=try Recovery.inspect(configuration:configuration)
         XCTAssertEqual(report.pending.first?.rows.first?.afterKey,[expected[0]])
         XCTAssertEqual(report.pending.first?.rows.first?.after,expected)
-        XCTAssertEqual(report.pending.first?.rows.first?.schema.columns.map(\.type),types)
+        XCTAssertEqual(report.pending.first?.rows.first?.schema,table)
         _ = try Recovery.resolve(configuration:configuration,action:.retry,gtids:helper.sid+":11",reason:"unit fixture issued no SQL")
         let resumed=try StateStore(configuration:configuration,initialize:false)
         XCTAssertEqual(resumed.gtids,helper.sid+":1-10")
         XCTAssertEqual(resumed.transactions,0)
+        let restored=try XCTUnwrap(resumed.currentSchemas.first)
+        XCTAssertEqual(restored,table)
+        let plan=try DMLSQLPlan(restored)
+        for column in restored.columns where column.interpretation.isEncodedText {
+            XCTAssertTrue(plan.insert.contains("CONVERT(? USING "+column.characterSet!+")"))
+        }
+        if restored.columns[0].interpretation.isEncodedText, let charset=characterSets[0] { XCTAssertTrue(plan.delete.contains("`id`=CONVERT(? USING "+charset+")")) }
     }
 }

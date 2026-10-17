@@ -38,12 +38,11 @@ table-map metadata, so the destination schema supplies missing signedness,
 encoding and ENUM/SET definitions. Independent destination writes or schema
 changes invalidate this assumption.
 
-The supported scalar types, collations and primary-key requirements remain the
-existing applier subset. This does not imply support for every 5.7 type. In
-particular, text is limited to the supported utf8mb4 collations. DDL ENUM/SET labels
-outside the Unicode BMP are rejected: MySQL COLUMN_TYPE metadata replaces them
-with `?`, preventing reliable definition verification. Ordinary utf8mb4 text can
-still contain supplementary characters such as emoji. Composite keys,
+See [current support](SUPPORT.md) for scalar types, native 5.7 charsets and
+collations, and primary-key requirements. ENUM/SET discovery reads exact labels
+through temporary target columns. This includes non-UTF-8 and supplementary
+labels. The target account needs `CREATE TEMPORARY TABLES` on replicated databases.
+Composite keys,
 PK updates, multiple source statements and multiple tables per transaction are
 supported in this profile. Target triggers are rejected. InnoDB foreign keys
 support complete primary/unique parent keys, composite references, RESTRICT/NO

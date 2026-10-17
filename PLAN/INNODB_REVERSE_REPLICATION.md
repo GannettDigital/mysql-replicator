@@ -238,9 +238,9 @@ does not expand foreign-key/cascade support or the downstream MyISAM contract.
 
 Additional gaps exposed by shared fixtures:
 
-- MySQL COLUMN_TYPE loses supplementary-plane ENUM/SET labels. Dynamic DDL now
-  rejects them before issuing SQL. Positive ENUM coverage uses quoted/BMP Unicode
-  labels; supplementary UTF-8 remains covered in ordinary text columns.
+- MySQL COLUMN_TYPE loses supplementary-plane ENUM/SET labels. Beta.6 now reads
+  exact labels through temporary target columns. See [the metadata design](ENUM_LABEL_METADATA.md)
+  for this replacement of the earlier refusal.
 - The comparison oracle accounts for partition identifier quoting and view-only
   placeholder rows in information_schema.PARTITIONS, and uses explicit utf8mb4
   client/results encoding. These presentation differences do not normalize data.

@@ -1,8 +1,8 @@
 # BIT support
 
-Status: implementation and unit tests complete. Shared integration cases are
-added but have not run. Run them with the other missing-type increments before
-release qualification.
+Status: implementation and unit tests complete. Shared integration cases exist
+for all four profiles. Use the exact commit's full-CI results for release
+qualification; the initial unit-only results below are historical.
 
 ## Behavior
 
@@ -57,8 +57,9 @@ four profiles without starting containers (`/tmp/beta5-bit-selection.json`).
 The shared catalog now includes `matrix-bits` and `bootstrap-matrix-bits` for all
 four profiles. These cases cover replicated CREATE and existing-table discovery.
 They also cover ADD/MODIFY, defaults, primary-key changes, and values above
-Int64.max. Integration execution is deferred at the user's request.
-After the missing-type work is complete, include these cases in the full run.
+Int64.max. Full CI includes these cases. The local results listed above cover
+unit tests and offline selection, not database integration. Review the full-CI
+results for integration qualification.
 
-FLOAT/DOUBLE and JSON remain the next separate increments. Spatial types need
-a separate design review.
+[FLOAT/DOUBLE](FLOATING_POINT_SUPPORT.md), [JSON](JSON_SUPPORT.md), and
+[spatial support](SPATIAL_SUPPORT.md) are implemented as separate increments.

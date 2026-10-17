@@ -24,39 +24,82 @@ func quoted(_ name: String) throws -> String {
 }
 public struct ApplyColumn: Codable, Equatable {
     public var name: String
-    public let type: String
+    public var type: String
     public var nullable: Bool
-    public let collation: String?
+    public var collation: String?
     public var characterSet: String? = nil
     public var defaultValue: String? = nil
     public var extra: String? = nil
     public var generationExpression: String? = nil
+    /// Exact encoded labels when UTF-8 COLUMN_TYPE cannot represent them.
+    public var choiceLabels: [Data]? = nil
+    public var choiceDefaultBytes: Data? = nil
+    /// Exact BINARY/VARBINARY defaults that cannot be represented as UTF-8.
+    public var binaryDefaultBytes: Data? = nil
+    public var choiceDefaultOrdinal: UInt64? = nil
+    /// Parser-only distinction: DEFAULT 2 is not DEFAULT '2'. Cleared at resolution.
+    var numericDefaultLiteral: Bool? = nil
+    public static func == (lhs:Self,rhs:Self) -> Bool {
+        // Swift String equality merges canonically equivalent Unicode. MySQL
+        // binary collations and encoded label metadata do not merge those bytes.
+        func same(_ left:String?,_ right:String?) -> Bool {
+            switch (left,right) {
+            case (nil,nil): return true
+            case (.some(let a),.some(let b)): return a.utf8.elementsEqual(b.utf8)
+            default: return false
+            }
+        }
+        return same(lhs.name,rhs.name) && same(lhs.type,rhs.type)
+            && lhs.nullable == rhs.nullable && lhs.collation == rhs.collation
+            && lhs.characterSet == rhs.characterSet && same(lhs.defaultValue,rhs.defaultValue)
+            && lhs.extra == rhs.extra && same(lhs.generationExpression,rhs.generationExpression)
+            && lhs.choiceLabels == rhs.choiceLabels && lhs.choiceDefaultBytes == rhs.choiceDefaultBytes && lhs.choiceDefaultOrdinal == rhs.choiceDefaultOrdinal
+            && lhs.binaryDefaultBytes == rhs.binaryDefaultBytes
+            && lhs.numericDefaultLiteral == rhs.numericDefaultLiteral
+    }
+    var hasDefaultValue: Bool { defaultValue != nil || choiceDefaultBytes != nil || binaryDefaultBytes != nil }
     var isGenerated: Bool { generationExpression != nil }
-    var interpretation: ColumnInterpretation { (try? DMLColumnType(type).interpretation) ?? .signed }
+    var interpretation: ColumnInterpretation { (try? DMLColumnType(self).interpretation) ?? .signed }
     var width: Int? {
-        guard let parsed=try? DMLColumnType(type) else { return nil }
+        guard let parsed=try? DMLColumnType(self) else { return nil }
         if parsed.base == "varchar" || parsed.base == "varbinary" { return parsed.arguments[0] }
         return parsed.maximumBytes
     }
     func validate() throws {
         _ = try quoted(name)
-        let parsed = try DMLColumnType(type)
+        let parsed = try DMLColumnType(self)
         if let expression = generationExpression {
-            try require(["VIRTUAL GENERATED","STORED GENERATED"].contains(extra ?? "") && defaultValue == nil,"invalid generated column metadata")
+            try require(["VIRTUAL GENERATED","STORED GENERATED"].contains(extra ?? "") && !hasDefaultValue,"invalid generated column metadata")
             _ = try DDLExpression.canonical(expression)
         } else {
             try require(extra == nil || extra == "auto_increment" || ((parsed.base == "datetime" || parsed.base == "timestamp") && extra!.range(of:#"^on update CURRENT_TIMESTAMP(?:\([0-6]\))?$"#,options:.regularExpression) != nil), "unsupported column EXTRA attribute")
         }
-        if parsed.base == "json" || parsed.isSpatial { try require(defaultValue == nil,"JSON/spatial non-NULL defaults are unsupported") }
-        if extra == "auto_increment" { try require(parsed.integerBits != nil && !nullable,"invalid auto-increment column") }
+        try require(numericDefaultLiteral == nil,"unresolved native default literal")
+        if let bytes=binaryDefaultBytes {
+            try require(["binary","varbinary"].contains(parsed.base) && defaultValue == nil,"invalid binary default metadata")
+            try parsed.validate(.binary(bytes))
+        }
+        if choiceDefaultBytes != nil { try require(parsed.isChoice && parsed.characterSet == "binary" && defaultValue == nil,"invalid binary choice default metadata") }
+        if let ordinal = choiceDefaultOrdinal {
+            try require(parsed.isChoice && hasDefaultValue,"invalid ENUM/SET default metadata")
+            try parsed.validate(.unsigned(ordinal))
+        }
+        if parsed.base == "json" || parsed.isSpatial { try require(!hasDefaultValue,"JSON/spatial non-NULL defaults are unsupported") }
+        // 5.7 permits FLOAT/DOUBLE AUTO_INCREMENT. The 8.4 server rejects
+        // that DDL itself. Row writes always retain the source's explicit key.
+        if extra == "auto_increment" { try require((parsed.integerBits != nil || parsed.floatingWidth != nil) && !nullable,"invalid auto-increment column") }
         if parsed.isText {
-            try require(characterSet == nil || characterSet == "utf8mb4", "unsupported discovered character set; no charset conversion is performed")
-            try require(["utf8mb4_bin","utf8mb4_unicode_ci","utf8mb4_general_ci"].contains(collation ?? ""), "unsupported varchar collation")
+            guard let encoding=(parsed.isChoice && collation == "binary" ? CharacterSetRegistry.collation(id:63) : CharacterSetRegistry.columnCollation(named:collation ?? "")) else { throw ApplyError("unsupported text collation") }
+            try require(characterSet == nil || CharacterSetRegistry.canonicalCharset(characterSet!) == encoding.characterSet,"column charset/collation mismatch")
+            if parsed.isChoice && !["utf8mb4","utf8mb3"].contains(encoding.characterSet) {
+                try require(choiceLabels != nil,"non-UTF8 ENUM/SET requires exact encoded label metadata")
+            }
+            if parsed.base == "varchar" { try require(parsed.maximumBytes! <= 65535,"VARCHAR byte width exceeds native limit") }
         } else { try require(collation == nil && characterSet == nil, "encoding on non-text column") }
     }
     func validate(_ value: DecodedValue) throws {
         if value == .null { try require(nullable, "NULL in nonnullable column"); return }
-        try DMLColumnType(type).validate(value)
+        try DMLColumnType(self).validate(value)
     }
 }
 public struct ApplyIndexPart: Codable, Equatable {
@@ -112,7 +155,7 @@ public struct ApplyTable: Codable, Equatable {
             try require(key.name.uppercased() != "PRIMARY" && ["BTREE","SPATIAL"].contains(key.type) && (1...16).contains(key.parts.count),"unsupported secondary index")
             for part in key.parts {
                 guard let column=columns.first(where:{$0.name == part.column}) else { throw ApplyError("index column is absent") }
-                let type=try DMLColumnType(column.type)
+                let type=try DMLColumnType(column)
                 if key.type == "SPATIAL" {
                     try require(!key.unique && key.parts.count == 1 && type.isSpatial && !column.nullable && part.prefix == nil,"spatial index requires one full nonnullable spatial column")
                 } else { try require(!type.isSpatial,"spatial columns require SPATIAL indexes") }
@@ -125,7 +168,7 @@ public struct ApplyTable: Codable, Equatable {
         try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{primaryKeyColumns.contains($0.name)},"auto-increment requires a primary-key column")
         for name in primaryKeyColumns {
             guard let key = columns.first(where:{$0.name == name}) else { throw ApplyError("missing primary key column") }
-            let type = try DMLColumnType(key.type)
+            let type = try DMLColumnType(key)
             try require(!key.nullable && !key.isGenerated && !type.isSpatial && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob") && type.base != "json","primary key requires full nonnullable supported base scalar columns")
         }
     }

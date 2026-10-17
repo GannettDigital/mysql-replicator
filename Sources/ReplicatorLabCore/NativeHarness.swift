@@ -56,12 +56,12 @@ public final class NativeHarness {
                   "native_observed_outcome": "unknown", "swift_apply": "pending",
                   "native_engine": config.nativeEngine, "native_init_automatic": config.initAutomatic]
     }
-    func compose(_ args: [String], timeout: TimeInterval = 120, checked: Bool = true, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
+    func compose(_ args: [String], timeout: TimeInterval = 120, checked: Bool = true, input:Data? = nil, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
         try runner.run(["docker", "compose", "-f", root.appendingPathComponent("compose.yaml").path, "-p", project] + composeOverlays.flatMap { ["-f", $0] } + args,
                        environment: ["FIXTURE_SOURCE_GTID_MODE": "ON", "FIXTURE_SOURCE_GTID_CONSISTENCY": "ON",
                                      "FIXTURE_NATIVE_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_NATIVE_GTID_CONSISTENCY": "WARN",
                                      "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN"].merging(composeEnvironment) { _, new in new },
-                       timeout: timeout, checked: checked, onOutput: onOutput)
+                       input:input, timeout: timeout, checked: checked, onOutput: onOutput)
     }
     func sql(_ service: String, _ statement: String, headers: Bool = false, preserveWhitespace: Bool = false) throws -> String {
         let result = try sqlCommand(service, statement, headers: headers)
@@ -71,6 +71,13 @@ public final class NativeHarness {
         }
         return result.text
     }
+    /// Execute a mysql client script, including DELIMITER commands.
+    func sqlScript(_ service: String, _ script: String) throws -> String {
+        try sqlCommand(service, script, headers: false, script: true).text
+    }
+    func sqlBytes(_ service:String,_ statement:String) throws -> Data {
+        try sqlCommand(service,statement,headers:false).stdout
+    }
     func sqlBatch(_ service: String, _ queries: [LabSQLBatch.Query]) throws -> [String: String] {
         guard !queries.isEmpty else { return [:] }
         let batch = LabSQLBatch(queries: queries)
@@ -79,7 +86,7 @@ public final class NativeHarness {
         let result = try sqlCommand(service, batch.statement, headers: false)
         return try batch.decode(String(decoding: result.stdout, as: UTF8.self))
     }
-    private func sqlCommand(_ service: String, _ statement: String, headers: Bool) throws -> CommandResult {
+    private func sqlCommand(_ service: String, _ statement: String, headers: Bool, script: Bool = false) throws -> CommandResult {
         let started = ProcessInfo.processInfo.systemUptime
         sqlCalls += 1
         var succeeded = false
@@ -87,10 +94,12 @@ public final class NativeHarness {
             sqlSeconds += ProcessInfo.processInfo.systemUptime - started
             if !succeeded { sqlFailures += 1 }
         }
-        let prefix = service == "source" ? "" : "SET @@SESSION.GTID_NEXT = 'AUTOMATIC'; "
+        let input = try LabSQLInput(statement, resetGTID: service != "source", script: script)
         let result = try compose(["exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", service,
-                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw",
-                            headers ? "--column-names" : "--skip-column-names", "-e", prefix + statement])
+                            "mysql", "--no-defaults", "-uroot", "--batch", "--raw", "--binary-mode",
+                            "--default-character-set=utf8mb4",
+                            headers ? "--column-names" : "--skip-column-names"] + input.arguments,
+                            input: input.bytes)
         succeeded = true
         return result
     }

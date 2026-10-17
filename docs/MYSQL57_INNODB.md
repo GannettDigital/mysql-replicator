@@ -3,7 +3,7 @@
 Select `profile: mysql57-to-mysql57-innodb` in the [live](../examples/run.minimal.yaml)
 or [replay](../examples/replay.minimal.yaml) configuration. The lab uses MySQL
 5.7.42 for the source, native reference and external target.
-This profile is available in source builds. It is not in beta.3 binaries.
+This profile is included in beta.4 and later releases. It is not in beta.3 binaries.
 
 Prepare the source with ROW binlogs, FULL row images, GTID mode ON and enforced
 GTID consistency. Use `source.mode: gtid`. Set `source.start.executedGTIDs` to the

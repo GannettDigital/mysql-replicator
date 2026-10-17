@@ -99,6 +99,9 @@ extension TargetSession {
             guard let parent else {throw ApplyError("missing inherited DDL encoding")}
             return parent
         }
+        let server: CharacterSetRegistry.Server = contract.versionPrefix == "5.7." ? .mysql57 : .mysql84
+        let charset=charset.map { CharacterSetRegistry.charsetName($0,on:server) }
+        let collation=collation.map { CharacterSetRegistry.collationName($0,on:server) }
         let rows:[MySQLRow]
         if let collation {
             rows=try query("SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE COLLATION_NAME=?",[.init(string:collation)]).0
@@ -115,13 +118,29 @@ extension TargetSession {
         try require(charset==nil || charset==found,"DDL charset/collation mismatch: characterSet=\(charset ?? "inferred"), collation=\(name), collation characterSet=\(found)")
         return DDLEncoding(characterSet:found,collation:name)
     }
-    func resolveColumn(_ column:ApplyColumn,parent:DDLEncoding,context:QuerySessionContext) throws -> ApplyColumn {
+    func resolveColumn(_ column:ApplyColumn,parent:DDLEncoding,context:QuerySessionContext,database:String) throws -> ApplyColumn {
         var result=column
         if try DMLColumnType(column.type).isText {
             let encoding=try resolveEncoding(charset:column.characterSet,collation:column.collation,parent:parent,context:context)
+            if try encoding.characterSet == "binary" && !DMLColumnType(column.type).isChoice {
+                let type=try DMLColumnType(column.type)
+                guard let base=["char":"binary","varchar":"varbinary","tinytext":"tinyblob","text":"blob","mediumtext":"mediumblob","longtext":"longblob"][type.base] else { throw ApplyError("unsupported binary charset column") }
+                let definition=base+(type.arguments.isEmpty ? "" : "("+type.arguments.map(String.init).joined(separator:",")+")")
+                var binary=ApplyColumn(name:column.name,type:definition,nullable:column.nullable,collation:nil,defaultValue:column.defaultValue,extra:column.extra,generationExpression:column.generationExpression)
+                binary.binaryDefaultBytes=column.binaryDefaultBytes
+                binary.numericDefaultLiteral=column.numericDefaultLiteral
+                return try resolveBinaryDefault(binary,database:database,sqlMode:context.sqlMode)
+            }
             result.characterSet=encoding.characterSet
-            result=ApplyColumn(name:column.name,type:column.type,nullable:column.nullable,collation:encoding.collation,characterSet:encoding.characterSet,defaultValue:column.defaultValue,extra:column.extra,generationExpression:column.generationExpression)
+            result.collation = encoding.collation
+            if try DMLColumnType(result).isChoice {
+                result = try resolveChoiceColumn(result,database:database,sqlMode:context.sqlMode)
+            } else if try ["char","varchar"].contains(DMLColumnType(result).base) {
+                result = try resolveTextDefault(result,database:database,sqlMode:context.sqlMode)
+            }
         }
+        if try ["binary","varbinary"].contains(DMLColumnType(result).base) { result = try resolveBinaryDefault(result,database:database,sqlMode:context.sqlMode) }
+        if result.numericDefaultLiteral != nil { result = try resolveDecimalDefault(result,database:database,sqlMode:context.sqlMode) }
         try result.validate();return result
     }
     func prepareDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64? = nil) throws -> PreparedDDL {
@@ -144,7 +163,7 @@ extension TargetSession {
         try contract.configureDDL(self,context:context)
         // Restore expression/literal semantics from the source query context.
         // DDL stays a drained, journaled barrier even for stored objects.
-        try require([8,33,45,46,83,192,224,255].contains(context.clientCharset),"unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
+        try require(CharacterSetRegistry.collation(id:context.clientCharset) != nil,"unsupported DDL client charset: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
         if let timestamp { _ = try query("SET SESSION timestamp=\(timestamp).\(String(format:"%06u",context.microseconds))") }
         switch statement {
         case .createDatabase(let definition),.alterDatabase(let definition):
@@ -204,7 +223,7 @@ extension TargetSession {
             }
             let parent=try databaseEncoding(name.database)
             let encoding=try resolveEncoding(charset:table.defaultCharacterSet,collation:table.defaultCollation,parent:parent,context:context)
-            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context)},primaryKeyColumns:table.primaryKeyColumns,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation,secondaryIndexes:table.secondaryIndexes,partitions:table.partitions,foreignKeys:table.foreignKeys)
+            after=ApplyTable(database:table.database,table:table.table,columns:try table.columns.map {try resolveColumn($0,parent:encoding,context:context,database:table.database)},primaryKeyColumns:table.primaryKeyColumns,defaultCharacterSet:encoding.characterSet,defaultCollation:encoding.collation,secondaryIndexes:table.secondaryIndexes,partitions:table.partitions,foreignKeys:table.foreignKeys)
         case .createLike:
             if let before {after=before}
             else {
@@ -213,7 +232,7 @@ extension TargetSession {
             }
         case .add(_,let column,let placement):
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
-            let column=try resolveColumn(column,parent:encoding,context:context)
+            let column=try resolveColumn(column,parent:encoding,context:context,database:name.database)
             var columns=before!.columns
             try require(!columns.contains(where:{$0.name==column.name}),"DDL ADD column already exists")
             switch placement {
@@ -226,7 +245,7 @@ extension TargetSession {
             after=before!.replacing(columns:columns)
         case .modify(_,let column,let placement):
             let encoding=DDLEncoding(characterSet:before!.defaultCharacterSet!,collation:before!.defaultCollation!)
-            let resolved=try resolveColumn(column,parent:encoding,context:context)
+            let resolved=try resolveColumn(column,parent:encoding,context:context,database:name.database)
             after=try before!.modifying(resolved,placement:placement)
         case .indexes(_,let change):
             after=try change.applying(to:before!)

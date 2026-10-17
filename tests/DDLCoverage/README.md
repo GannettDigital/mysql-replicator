@@ -375,3 +375,22 @@ omitted cases never supply assertions. Wildcard-filter/checkpoint cases remain
 non-DDL-grammar regressions, so their passes do not inflate DDL coverage.
 The registry contains 185 declarations and 63 DDL scenarios. Logical catalog IDs
 remain stable even when their original CLI runner is gone.
+
+## Beta.6 support audit
+
+`support.json` extends this inventory with type, DML, event, policy and remaining
+DDL requirements. `schema/support.schema.json` defines its strict format. The
+existing check and report commands validate and display these requirements.
+They use the four current `LabProfile` IDs and the shared correctness case IDs.
+
+The audit is partial. Each requirement lists its planned stage, native behavior,
+conditions, implementation files, required assertions and candidate tests.
+Native references use the repository pins in `upstream.json`. Candidate tests
+are review pointers, not qualification bindings. DDL evidence import does not
+qualify these new requirements. The support report always shows them as
+`unverified` until an assertion evidence importer is implemented.
+
+`eligible` identifies positive-support work. `needs_native_review` keeps an
+unresolved compatibility question visible. `excluded` is reserved for native
+restrictions, target limits and explicit safety policies. Keep negative tests
+for these exclusions. See the [beta.6 work plan](../../PLAN/beta.6.md).

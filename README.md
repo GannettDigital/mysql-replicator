@@ -59,7 +59,9 @@ storage engine. The test suite checks these four combinations:
 | [`mysql57-to-mysql57-innodb`](docs/MYSQL57_INNODB.md) | MySQL 5.7 InnoDB | MySQL 5.7 InnoDB | Supported with [limits](PLAN/MYSQL57_FOREIGN_KEYS.md) |
 
 Set `profile` in your YAML configuration to select a profile. Other combinations
-are not tested. See [DML support](PLAN/DML_APPLY.md) and
+are not tested. This page describes the current source tree; check the release
+notes for the binary you install. See [support and remaining limits](docs/SUPPORT.md),
+[DML support](PLAN/DML_APPLY.md), and
 [DDL support](PLAN/DDL_COMPATIBILITY.md) for the supported operations and limits.
 
 Copy the initial data with an external tool. If a write fails or the tool cannot
@@ -69,7 +71,8 @@ replication continues.
 ## Features
 
 - **Live replication:** start from a GTID set or binlog file position. Stop cleanly
-  and resume from the saved replication position.
+  and resume from the saved replication position. GTID restrictions apply even
+  when you use a binlog file position.
 - **Offline replay:** fetch binlogs or use a directory of raw files from
   `mysqlbinlog`. Replay does not connect to the source. Stop after a transaction
   count or when the applied GTID set contains `source.stopAfterGTIDs`.
@@ -214,7 +217,10 @@ replication positions and the expected behavior after errors. Selected tests use
 These comparisons exclude server-specific values, such as server IDs.
 Some tests use additional helper containers.
 
-| Area | Tested cases |
+The table lists cases in the suite. Use the CI report for the exact commit to
+check which profiles and variants passed.
+
+| Area | Cases in the suite |
 | --- | --- |
 | Row changes | INSERT, UPDATE, DELETE, multiple rows, primary-key changes, upsert, REPLACE, IGNORE, INSERT SELECT, joined updates/deletes, and LOAD DATA as row events |
 | Data types | Signed/unsigned integers, DECIMAL, date/time types, CHAR/VARCHAR, binary strings, TEXT/BLOB families, ENUM, SET, BIT, FLOAT/DOUBLE, JSON, spatial types, and NULL values |
@@ -230,7 +236,11 @@ the [DML requirements](PLAN/DML_APPLY.md). See the type-specific limits for
 [FLOAT/DOUBLE](PLAN/FLOATING_POINT_SUPPORT.md), and
 [spatial columns](PLAN/SPATIAL_SUPPORT.md). JSON has some legacy opaque-value
 transport gaps. Spatial values retain their stored SRID and coordinate bytes;
-this does not make spatial function behavior equal across MySQL versions. Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
+this does not make spatial function behavior equal across MySQL versions.
+Text supports selected utf8mb4, utf8mb3, latin1 and ASCII collations. Fixed-scale FLOAT/DOUBLE,
+FULLTEXT indexes, and some other MySQL features remain unsupported. See the
+[support summary](docs/SUPPORT.md) for the remaining restrictions.
+Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
 [DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),
 and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
 

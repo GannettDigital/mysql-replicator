@@ -117,7 +117,7 @@ final class DDLUpstreamInspectionTests: XCTestCase {
             let original = try DDLCoverage.load(directory: catalog)
             let repository = DDLUpstream.Repository(id: "mysql", url: "https://example.invalid/mysql", revision: revision, localPath: "fixture")
             let inventory = DDLCoverage.Inventory(catalog: original.catalog, profiles: original.profiles,
-                upstream: .init(schemaVersion: 1, repositories: [repository], references: [], candidates: []))
+                upstream: .init(schemaVersion: 1, repositories: [repository], references: [], candidates: []), support: original.support)
             let first = try DDLUpstreamInspection.scan(inventory, repository: repository, checkout: checkout)
             let second = try DDLUpstreamInspection.scan(inventory, repository: repository, checkout: checkout)
             XCTAssertEqual(try JSONSerialization.data(withJSONObject: first, options: [.sortedKeys]),

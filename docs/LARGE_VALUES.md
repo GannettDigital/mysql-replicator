@@ -79,7 +79,9 @@ on the source, native replica, and external target. It checks:
 - INSERT, UPDATE, DELETE, and target reads of large row images.
 - Restart from saved state and offline replay without a source connection.
 - Rejection at a configured event limit and at the target packet limit.
-- Pending-row inspection and retry after the target packet limit is increased.
+- InnoDB pending-row inspection and explicit retry after the target packet limit
+  is increased. MyISAM checks refusal of an unsafe restart and manual
+  reconciliation in separate test state; it does not use InnoDB recovery commands.
 
 Unit tests also check exact protocol packet boundaries, sequence-number wrap,
 and malformed input. These tests do not qualify 1 GiB values or unbounded

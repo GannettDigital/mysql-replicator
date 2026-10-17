@@ -107,14 +107,14 @@ final class TargetSession {
         _ = try query("SET SESSION autocommit=1")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
-        _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
+        _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
 
     }
     func resetDMLSession() throws {
         _ = try query("SET SESSION timestamp=DEFAULT")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
-        _ = try query("SET SESSION sql_mode='STRICT_ALL_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION,NO_BACKSLASH_ESCAPES'")
+        _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
     }
     private(set) var insertByteLimit = 1024*1024
     var discovered: [String:ApplyTable] = [:]
@@ -154,13 +154,7 @@ final class TargetSession {
             let keys = try query("SELECT COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",binds).0
             try require((1...16).contains(keys.count),"discovered target requires a primary key with 1 to 16 columns")
             var table = ApplyTable(database:database,table:name,columns:try columns.map { row in
-                guard let n = row.column("COLUMN_NAME")?.string, let t = row.column("COLUMN_TYPE")?.string else {throw ApplyError("incomplete target metadata")}
-                var column=ApplyColumn(name:n,type:normalizeType(t),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
-                column.characterSet=row.column("CHARACTER_SET_NAME")?.string
-                column.defaultValue=try contract.columnDefault(row.column("COLUMN_DEFAULT")?.string,type:t)
-                column.extra=contract.columnExtra(row.column("EXTRA")?.string,defaultValue:row.column("COLUMN_DEFAULT")?.string,type:t)
-                column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }
-                return column
+                try readColumn(row,table:TableName(database:database,table:name))
             },primaryKeyColumns:keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
             let encoding=try tableEncoding(TableName(database:database,table:name))
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
@@ -177,8 +171,33 @@ final class TargetSession {
             return table
         }
     }
+    private func readColumn(_ row:MySQLRow,table:TableName) throws -> ApplyColumn {
+        guard let name=row.column("COLUMN_NAME")?.string,let type=row.column("COLUMN_TYPE")?.string else { throw ApplyError("incomplete target metadata") }
+        var column=ApplyColumn(name:name,type:normalizeType(type),nullable:row.column("IS_NULLABLE")?.string == "YES",collation:row.column("COLLATION_NAME")?.string)
+        column.characterSet=row.column("CHARACTER_SET_NAME")?.string
+        let binary=type.hasPrefix("binary(") || type.hasPrefix("varbinary(")
+        if binary {
+            if row.column("COLUMN_DEFAULT")?.buffer != nil { column = try discoverBinaryDefault(column,table:table) }
+        } else if type.hasPrefix("char(") || type.hasPrefix("varchar(") {
+            if row.column("COLUMN_DEFAULT")?.buffer != nil { column = try discoverTextDefault(column,table:table) }
+        } else { column.defaultValue=try contract.columnDefault(row.column("COLUMN_DEFAULT")?.string,type:type) }
+        column.extra=contract.columnExtra(row.column("EXTRA")?.string,defaultValue:row.column("COLUMN_DEFAULT")?.string,type:type)
+        column.generationExpression=try row.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }
+        if type.hasPrefix("enum(") || type.hasPrefix("set(") {
+            // 8.4 reports binary ENUM/SET with NULL charset/collation; 5.7
+            // reports the explicit binary charset. Normalize that presentation.
+            if column.collation == nil || column.collation == "binary" {
+                column.characterSet="binary";column.collation="binary"
+                if let value=row.column("COLUMN_DEFAULT")?.buffer { column.choiceDefaultBytes=Data(value.readableBytesView) }
+                column.defaultValue=nil
+            }
+            return try discoverChoiceColumn(column,table:table)
+        }
+        return column
+    }
     private func normalizeType(_ type: String) -> String {
         if type == "geomcollection" { return "geometrycollection" }
+        if type.hasSuffix(" zerofill") { return type }
         return type.replacingOccurrences(of:#"^(tinyint|smallint|mediumint|int|bigint|year)\([0-9]+\)"#,with:"$1",options:.regularExpression)
     }
     func readIndexes(database:String,name:String,primaryKey:[String]) throws -> [ApplyIndex] {
@@ -228,7 +247,7 @@ final class TargetSession {
         let columns = try query("SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",binds).0
         try require(columns.count == t.columns.count,"target schema column count differs")
         for (r,c) in zip(columns,t.columns) {
-            try require(r.column("COLUMN_NAME")?.string == c.name && normalizeType(r.column("COLUMN_TYPE")?.string ?? "") == c.type && (r.column("IS_NULLABLE")?.string == "YES") == c.nullable && r.column("COLLATION_NAME")?.string == c.collation && r.column("CHARACTER_SET_NAME")?.string == c.characterSet && contract.columnExtra(r.column("EXTRA")?.string,defaultValue:r.column("COLUMN_DEFAULT")?.string,type:c.type) == c.extra && (try contract.columnDefault(r.column("COLUMN_DEFAULT")?.string,type:c.type)) == c.defaultValue && (try r.column("GENERATION_EXPRESSION")?.string.flatMap { $0.isEmpty ? nil : try DDLExpression.canonical($0) }) == c.generationExpression,"target schema differs from historical manifest")
+            try require(try readColumn(r,table:TableName(database:t.database,table:t.table)) == c,"target schema differs from historical manifest")
         }
         try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
@@ -334,9 +353,11 @@ final class TargetSession {
                 case .signed: guard let n = value.int64 else { throw ApplyError("invalid target integer") }; return .signed(n)
                 case .unsigned: guard let n = value.uint64 else { throw ApplyError("invalid target unsigned integer") }; return .unsigned(n)
                 case .utf8: guard let text = value.string else { throw ApplyError("invalid target UTF-8") }; return .text(text)
-                case .binary: return .binary(Data(value.buffer!.readableBytesView))
+                case .binary,.encodedText,.encodedText16BE,.encodedText16LE,.encodedText32BE: return .binary(Data(value.buffer!.readableBytesView))
                 case .decimal:
-                    guard let s=value.string else {throw ApplyError("invalid target decimal")}; let result=DecodedValue.decimal(s); try type.validate(result); return result
+                    guard let s=value.string else {throw ApplyError("invalid target decimal")}
+                    let text=type.zerofill ? try normalizedDefault(s,type:type)! : s
+                    let result=DecodedValue.decimal(text); try type.validate(result); return result
                 case .temporal:
                     guard let s=value.string else {throw ApplyError("invalid target temporal value")}; return .temporal(try type.canonicalTemporal(s))
                 }
@@ -375,7 +396,7 @@ final class TargetSession {
         if row.operation == "insert" && expressions.contains(where: { $0.sql != "?" }) { sql=plan.insertSQL(expressions:[expressions.map(\.sql)]) }
         if row.operation == "update" && expressions.contains(where: { $0.sql != "?" }) { sql=plan.updateSQL(expressions:Array(expressions.prefix(plan.writeIndexes.count)).map(\.sql)) }
         let binds=expressions.flatMap(\.binds)
-        let result = try query(sql,binds,mutation:true)
+        let result = try writeQuery(sql,binds,plan:plan,after:row.after.map { [$0] } ?? [])
         let expected: UInt64 = row.operation == "update" && exactImage(row.before,row.after) ? 0 : 1
         try require(result.1 == expected,"unexpected target affected-row count")
         if let after=row.after { try verifyGeneratedValues(t,after:after,plan:plan) }
@@ -395,12 +416,29 @@ final class TargetSession {
             let expressions=try profile("target.bind") { try mutations.map { mutation in try plan.writeIndexes.map { try prepareJSONValue(mutation.row.after![$0],database:first.table.database) } } }
             let binds=expressions.flatMap { $0.flatMap(\.binds) }
             let sql=expressions.allSatisfy { $0.allSatisfy { $0.sql == "?" } } ? plan.insertSQL(rows:mutations.count) : plan.insertSQL(expressions:expressions.map { $0.map(\.sql) })
-            let result = try query(sql,binds,mutation:true)
+            let result = try writeQuery(sql,binds,plan:plan,after:mutations.map { $0.row.after! })
             try require(result.1 == UInt64(mutations.count),"unexpected multi-row INSERT affected-row count")
             if !plan.generatedIndexes.isEmpty {
                 for mutation in mutations { try verifyGeneratedValues(first.table,after:mutation.row.after!,plan:plan) }
             }
         }
+    }
+    private func writeQuery(_ sql: String, _ binds: [MySQLData], plan: DMLSQLPlan,
+                            after: [[DecodedValue]]) throws -> ([MySQLRow],UInt64?) {
+        guard !plan.enumIndexes.isEmpty else { return try query(sql,binds,mutation:true) }
+        let zero=after.contains { image in plan.enumIndexes.contains { image[$0] == .unsigned(0) } }
+        return try EnumZeroWrite.withMode(required:zero,
+            setMode:{ _ = try self.query("SET SESSION sql_mode='\($0)'") },
+            discardConnection:{ try? self.connection.close().wait() }) {
+                let result=try self.query(sql,binds,mutation:true)
+                if zero {
+                    for image in after {
+                        let actual=try self.read(plan.table,key:plan.keyIndexes.map { image[$0] },expected:image)
+                        try require(exactImage(actual,image),"target after-image differs after ENUM zero write")
+                    }
+                }
+                return result
+            }
     }
     /// Generated values are computed by the target, not bound by us. Compare
     /// those fields to the FULL source image before completing the intent. This

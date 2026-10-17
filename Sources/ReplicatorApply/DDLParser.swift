@@ -5,6 +5,8 @@ import Foundation
 struct DDLParser {
     var tokens: [DDLToken]
     var index = 0
+    var numericDefault = false
+    var byteDefault:Data? = nil
     var engine = "MyISAM"
     let realAsFloat: Bool
     let database: String?
@@ -45,6 +47,13 @@ struct DDLParser {
         throw ApplyError("unbalanced DDL parentheses")
     }
     mutating func defaultValue(bit: Bool = false) throws -> String? {
+        numericDefault = false;byteDefault=nil
+        if index < tokens.count && !bit {
+            let length=["X","B"].contains(tokens[index].keyword) ? 2 : 1
+            if index+length <= tokens.count,let value=try SQLByteLiteral.parse(Array(tokens[index..<index+length])) {
+                index += length;byteDefault=value;return nil
+            }
+        }
         if take("NULL") { return nil }
         if bit, take("B") {
             guard index < tokens.count, let digits=tokens[index].literal,
@@ -78,6 +87,7 @@ struct DDLParser {
             value += tokens[index].text; index += 1
         }
         try require(value.range(of:#"^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$"#,options:.regularExpression) != nil,"invalid numeric default")
+        numericDefault = true
         return sign+value
     }
     mutating func column() throws -> (ApplyColumn,Bool) {
@@ -88,16 +98,19 @@ struct DDLParser {
         if base == "integer" { base = "int" }
         if base == "numeric" || base == "dec" { base = "decimal" }
         var type = base
+        var integerDisplayWidth: Int?
         if ["enum","set"].contains(base) {
-            let labels = try parenthesized()
-            try require(!labels.isEmpty && labels.enumerated().allSatisfy { $0.offset % 2 == 0 ? $0.element.literal != nil : $0.element.keyword == "," } && labels.count % 2 == 1,"invalid ENUM/SET labels")
-            try require(labels.allSatisfy { $0.literal?.unicodeScalars.allSatisfy { $0.value <= 0xffff } ?? true },"DDL ENUM/SET supplementary-plane labels cannot be verified from MySQL COLUMN_TYPE metadata")
-            // information_schema escapes backslash/control bytes independently
-            // of the creation session's NO_BACKSLASH_ESCAPES mode.
-            type += "("+labels.map { token in
-                guard let value = token.literal else { return "," }
-                return "'"+value.replacingOccurrences(of:"\\",with:"\\\\").replacingOccurrences(of:"\0",with:"\\0").replacingOccurrences(of:"\n",with:"\\n").replacingOccurrences(of:"\r",with:"\\r").replacingOccurrences(of:"'",with:"''")+"'"
-            }.joined()+")"
+            let tokens=try parenthesized()
+            var groups:[[DDLToken]]=[[]]
+            for token in tokens {
+                if token.keyword == "," { groups.append([]) } else { groups[groups.count-1].append(token) }
+            }
+            let labels=try groups.map { group -> String in
+                if group.count == 1,let literal=group[0].literal { return ChoiceMetadata.literal(literal) }
+                guard let bytes=try SQLByteLiteral.parse(group) else { throw ApplyError("invalid ENUM/SET label literal") }
+                return SQLByteLiteral.sql(bytes)
+            }
+            type += "("+labels.joined(separator:",")+")"
         } else if take("(") {
             var values = [try number()]
             if take(",") { values.append(try number()) }; try expect(")")
@@ -106,13 +119,28 @@ struct DDLParser {
                 base = values[0] <= 24 ? "float" : "double"; type = base
             } else if ["tinyint","smallint","mediumint","int","bigint","year"].contains(base) {
                 try require(values.count == 1 && (base != "year" || values[0] == 4),"unsupported display width")
+                integerDisplayWidth = values[0]
             } else {
                 if base == "decimal" && values.count == 1 { values.append(0) }
                 if !(["time","datetime","timestamp"].contains(base) && values == [0]) { type += "("+values.map(String.init).joined(separator:",")+")" }
             }
         } else if base == "decimal" { type += "(10,0)" }
         else if base == "char" || base == "binary" || base == "bit" { type += "(1)" }
-        if take("UNSIGNED") { type += " unsigned" }
+        var unsigned=false, zerofill=false
+        while true {
+            if take("UNSIGNED") { unsigned=true }
+            else if take("ZEROFILL") { unsigned=true; zerofill=true }
+            else if take("SIGNED") { continue }
+            else { break }
+        }
+        if base != "year" {
+            if zerofill, let defaultWidth=["tinyint":3,"smallint":5,"mediumint":8,"int":10,"bigint":20][base] {
+                let width=integerDisplayWidth.flatMap { $0 == 0 ? nil : $0 } ?? defaultWidth
+                type=base+"(\(width))"
+            }
+            if unsigned { type += " unsigned" }
+            if zerofill { type += " zerofill" }
+        }
         let parsed: DMLColumnType
         do { parsed = try DMLColumnType(type) }
         catch { throw ApplyError("unsupported DDL column type: \(type)",code:.unsupportedColumnType) }
@@ -124,7 +152,20 @@ struct DDLParser {
             if take("NOT") { try expect("NULL"); column.nullable = false; attribute = "nullability" }
             else if take("NULL") { column.nullable = true; attribute = "nullability" }
             else if take("PRIMARY") { try expect("KEY"); primary = true; attribute = "primary" }
-            else if take("DEFAULT") { column.defaultValue = try defaultValue(bit:parsed.bitWidth != nil); attribute = "default" }
+            else if take("DEFAULT") {
+                column.defaultValue = try defaultValue(bit:parsed.bitWidth != nil)
+                column.numericDefaultLiteral = (parsed.isChoice || ["decimal","binary","varbinary"].contains(parsed.base)) && column.defaultValue != nil ? numericDefault : nil
+                if ["char","varchar"].contains(parsed.base) && numericDefault { column.numericDefaultLiteral=true }
+                try require(byteDefault == nil || parsed.isChoice || ["binary","varbinary","char","varchar"].contains(parsed.base),"binary defaults require separate support for this type")
+                if parsed.isChoice { column.choiceDefaultBytes=byteDefault }
+                else { column.binaryDefaultBytes=byteDefault }
+                if ["binary","varbinary"].contains(parsed.base) && !numericDefault {
+                    column.binaryDefaultBytes = byteDefault ?? column.defaultValue.map { Data($0.utf8) }
+                    column.defaultValue=nil
+                    column.numericDefaultLiteral=nil
+                }
+                attribute = "default"
+            }
             else if take("AUTO_INCREMENT") { column.extra = "auto_increment"; column.nullable = false; attribute = "extra" }
             else if take("ON") { try expect("UPDATE"); guard let value = try defaultValue(), value.hasPrefix("CURRENT_TIMESTAMP") else { throw ApplyError("unsupported ON UPDATE expression") }; column.extra = "on update "+value; attribute = "extra" }
             else if take("CHARACTER") { try expect("SET"); column.characterSet = try identifier().lowercased(); charsetEnd = tokens[index-1].range?.upperBound; attribute = "charset" }
@@ -138,15 +179,14 @@ struct DDLParser {
         }
         if let collation = charsetDefault(column.characterSet,collation:column.collation,at:charsetEnd) { column = withCollation(column,collation) }
         if primary { column.nullable = false }
-        try require(!seen.contains("default") || column.defaultValue != nil || column.nullable,"DEFAULT NULL on nonnullable DDL column")
+        try require(!seen.contains("default") || column.hasDefaultValue || column.nullable,"DEFAULT NULL on nonnullable DDL column")
         try require(!column.isGenerated || !seen.contains("default"),"generated columns cannot have defaults")
-        column.defaultValue = try normalizedDefault(column.defaultValue,type:parsed)
-        if !parsed.isText { try column.validate() }
+        if column.numericDefaultLiteral == nil { column.defaultValue = try normalizedDefault(column.defaultValue,type:parsed) }
+        if !parsed.isText && column.numericDefaultLiteral == nil && column.binaryDefaultBytes == nil { try column.validate() }
         return (column,primary)
     }
     private func withCollation(_ c: ApplyColumn,_ collation: String) -> ApplyColumn {
-        var copy = ApplyColumn(name:c.name,type:c.type,nullable:c.nullable,collation:collation,characterSet:c.characterSet,defaultValue:c.defaultValue,extra:c.extra)
-        copy.generationExpression = c.generationExpression; return copy
+        var copy = c; copy.collation = collation; return copy
     }
     mutating func placement() throws -> ColumnPlacement? {
         if take("FIRST") { return .first }; if take("AFTER") { return .after(try identifier()) }; return nil
@@ -319,7 +359,7 @@ struct DDLParser {
             if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") || isNext("SPATIAL") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
             if take("PARTITION") { return .partition(.add(try partitionItems(method:"",expression:""))) }
             _ = take("COLUMN"); let (c,primary) = try column(); try require(!primary,"ADD inline primary key is unsupported; use ADD PRIMARY KEY")
-            try require(c.nullable || c.defaultValue != nil || c.isGenerated,"ADD NOT NULL requires an explicit default or generated expression")
+            try require(c.nullable || c.hasDefaultValue || c.isGenerated,"ADD NOT NULL requires an explicit default or generated expression")
             return .add(c,try placement() ?? .last)
         }
         if isNext("MODIFY") || isNext("CHANGE") {
@@ -337,7 +377,7 @@ struct DDLParser {
         }
         if take("ALTER") {
             _ = take("COLUMN"); let column = try identifier()
-            if take("SET") { try expect("DEFAULT"); return .defaultValue(column,try defaultValue()) }
+            if take("SET") { try expect("DEFAULT"); let value = try defaultValue(); return .defaultValue(column,value,numeric:numericDefault,bytes:byteDefault) }
             try expect("DROP"); try expect("DEFAULT"); return .defaultValue(column,nil)
         }
         if take("RENAME") { try require(take("INDEX") || take("KEY"),"unsupported ALTER RENAME operation"); let old = try identifier(); try expect("TO"); return .indexes(.rename(old,try identifier())) }

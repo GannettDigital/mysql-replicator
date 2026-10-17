@@ -10,7 +10,7 @@ struct DMLTablePlan {
     init(_ table: ApplyTable,compatibility: CompatibilityPolicy = .init()) throws {
         self.compatibility = compatibility
         self.table = table
-        columnTypes = try table.columns.map { try DMLColumnType($0.type) }
+        columnTypes = try table.columns.map { try DMLColumnType($0) }
     }
 
     func validate(_ values: [DecodedValue]) throws {
@@ -34,7 +34,7 @@ struct DMLTablePlan {
                 if let labels = w.labels { try require(labels == type.labels,"source/target ENUM/SET labels or order differ") }
             }
             if type.isText && !(legacyMetadata && w.collation == 0) {
-                try require(compatibility.targetID(w.collation) == CompatibilityPolicy.collationIDs[c.collation ?? ""],"source collation ID \(w.collation) does not match target \(c.collation ?? "missing") under configured compatibility.collations")
+                try require(compatibility.targetID(w.collation) == (type.isChoice && c.collation == "binary" ? 63 : CharacterSetRegistry.columnCollation(named:c.collation ?? "")?.id),"source collation ID \(w.collation) does not match target \(c.collation ?? "missing") under configured compatibility.collations")
             }
             if let sourceName = w.name { try require(sourceName == c.name && w.primaryKey == table.primaryKeyColumns.contains(c.name),"source/target column name or primary key differs") }
         }

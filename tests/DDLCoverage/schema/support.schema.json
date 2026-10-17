@@ -1,0 +1,212 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "inventory_revision": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "review_state": {
+      "type": "string",
+      "enum": [
+        "partial"
+      ]
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "family": {
+            "type": "string",
+            "enum": [
+              "values",
+              "ddl",
+              "rows",
+              "events",
+              "recovery"
+            ]
+          },
+          "stage": {
+            "type": "integer",
+            "enum": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "tool_gap",
+              "native_restriction",
+              "target_limit",
+              "safety_policy",
+              "untested"
+            ]
+          },
+          "eligibility": {
+            "type": "string",
+            "enum": [
+              "eligible",
+              "excluded",
+              "needs_native_review"
+            ]
+          },
+          "implementation": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "subset",
+              "implemented",
+              "not_applicable"
+            ]
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "source_behavior": {
+            "type": "string",
+            "minLength": 1
+          },
+          "native_behavior": {
+            "type": "string",
+            "minLength": 1
+          },
+          "current_behavior": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acceptance": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assertions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "candidate_cases": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          },
+          "code_references": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "native_references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "repository",
+                "path",
+                "symbol"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "family",
+          "stage",
+          "classification",
+          "eligibility",
+          "implementation",
+          "profiles",
+          "variants",
+          "conditions",
+          "source_behavior",
+          "native_behavior",
+          "current_behavior",
+          "acceptance",
+          "assertions",
+          "candidate_cases",
+          "code_references",
+          "native_references"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "inventory_revision",
+    "review_state",
+    "requirements"
+  ],
+  "additionalProperties": false
+}

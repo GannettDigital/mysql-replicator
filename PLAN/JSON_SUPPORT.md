@@ -128,7 +128,7 @@ discovery:
 
 Ordinary and typed cases apply to all four profiles. Bootstrap cases restart the
 applier between phases. The former `matrix-reject-json-opaque` case is removed;
-DECIMAL is now a positive case. The former JSON DDL refusal uses GEOMETRY.
+DECIMAL is now a positive case. Filter refusal fixtures now use an explicit engine outside the selected target profile. GEOMETRY is now a supported type.
 
 Database qualification now runs the selected live, bootstrap and partial-update
 cases. The large-value case also checks source-free replay, clean restart and

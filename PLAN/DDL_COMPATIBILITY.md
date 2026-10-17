@@ -1,22 +1,29 @@
 # MySQL 5.7 DDL compatibility
 
-This increment broadens ordered DDL application for an 8.4 ROW/FULL source and a
-5.7 MyISAM target. It retains the original SQL, journals an intent before
-issuing target SQL, validates resulting metadata, and advances the GTID only after the
-operation succeeds. Disconnects or errors after submission remain uncertain
-and block; this does not introduce automatic DDL replay or crash recovery.
+This guide describes the shared DDL grammar and the forward profile's
+8.4 → 5.7 compatibility rules. The selected profile supplies the target engine
+and version rules. See the [support summary](../docs/SUPPORT.md) and the
+[InnoDB profile guide](../docs/REVERSE_REPLICATION.md) for profile differences.
+
+The applier retains the original SQL except for explicitly configured compatibility
+rewrites. It journals an intent before target SQL, validates resulting metadata,
+and advances the GTID only after the operation succeeds. Disconnects or errors
+after submission can leave an uncertain result and block. This does not add
+automatic DDL replay or crash recovery.
 
 ## Supported additions
 
 - CREATE/ADD/MODIFY/CHANGE definitions for the existing DML types: integer
   widths, DECIMAL, DATE/YEAR/TIME/DATETIME/TIMESTAMP, CHAR/VARCHAR,
-  BINARY/VARBINARY, TEXT/BLOB families, ENUM and SET. ENUM/SET DML still requires
+  BINARY/VARBINARY, TEXT/BLOB families, ENUM, SET, BIT, FLOAT/DOUBLE, JSON,
+  and spatial types. See the [current limits](../docs/SUPPORT.md) and type guides.
+  ENUM/SET DML still requires
   source `binlog_row_metadata=FULL` to validate ordered labels in the forward profile.
-  DDL rejects ENUM/SET labels outside the Unicode BMP before target execution:
-  MySQL's COLUMN_TYPE metadata replaces these characters with `?`, so definition
-  equality cannot be verified reliably. CHAR/VARCHAR/TEXT emoji data is unaffected.
+  ENUM/SET metadata now uses native temporary columns to preserve exact labels,
+  including supplementary characters. See [the metadata design](ENUM_LABEL_METADATA.md).
+  COLUMN_TYPE alone can replace these characters with `?`.
 - Literal and NULL defaults, CURRENT_TIMESTAMP defaults/ON UPDATE, integer
-  AUTO_INCREMENT, inline secondary BTREE indexes, ALTER SET/DROP DEFAULT,
+  AUTO_INCREMENT, inline secondary BTREE and SPATIAL indexes, ALTER SET/DROP DEFAULT,
   common comma-separated column/index operations, and replacement primary keys.
   Tables must retain a supported nonnullable primary key. ADD NOT NULL requires
   an explicit default or generated expression. Column removal updates the

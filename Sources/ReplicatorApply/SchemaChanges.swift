@@ -67,7 +67,7 @@ extension TargetSession {
                 guard let i = result.foreignKeys.firstIndex(where: { $0.child == result.identity && $0.name.lowercased() == name.lowercased() }) else { throw ApplyError("DROP foreign key is absent") }
                 result.foreignKeys.remove(at:i)
             case .add(let definition,let placement):
-                let column = try resolveColumn(definition,parent:encoding,context:context)
+                let column = try resolveColumn(definition,parent:encoding,context:context,database:table.database)
                 try require(!result.columns.contains{$0.name == column.name},"DDL ADD column already exists")
                 var columns = result.columns
                 switch placement {
@@ -79,7 +79,7 @@ extension TargetSession {
                 }
                 result = result.replacing(columns:columns)
             case .modify(let old,let definition,let placement):
-                var column = try resolveColumn(definition,parent:encoding,context:context)
+                var column = try resolveColumn(definition,parent:encoding,context:context,database:table.database)
                 guard let i = result.columns.firstIndex(where:{$0.name == old}) else { throw ApplyError("MODIFY/CHANGE column is absent") }
                 let oldType = try DMLColumnType(result.columns[i].type), newType = try DMLColumnType(column.type)
                 try require((oldType.bitWidth == nil) == (newType.bitWidth == nil),"cross-family BIT MODIFY/CHANGE is unsupported")
@@ -110,11 +110,32 @@ extension TargetSession {
                     return parts.isEmpty ? nil : ApplyIndex(name:key.name,unique:key.unique,parts:parts,type:key.type)
                 }
                 result = result.replacing(columns:result.columns.filter{$0.name != name},indexes:indexes,primaryKey:result.primaryKeyColumns.filter{$0 != name})
-            case .defaultValue(let name,let value):
+            case .defaultValue(let name,let value,let numeric,let bytes):
                 guard let i = result.columns.firstIndex(where:{$0.name == name}) else { throw ApplyError("ALTER DEFAULT column is absent") }
                 var columns = result.columns
                 try require(!columns[i].isGenerated,"generated column cannot have a default")
-                columns[i].defaultValue = try normalizedDefault(value,type:DMLColumnType(columns[i].type))
+                let type=try DMLColumnType(columns[i].type)
+                let binary=["binary","varbinary"].contains(type.base),text=["char","varchar"].contains(type.base)
+                try require(bytes == nil || type.isChoice || binary || text,"binary defaults require separate support for this type")
+                columns[i].choiceDefaultBytes=type.isChoice ? bytes : nil
+                columns[i].binaryDefaultBytes=binary || text ? bytes : nil
+                if binary {
+                    columns[i].numericDefaultLiteral = value != nil && numeric ? true : nil
+                    columns[i].defaultValue=value
+                    columns[i] = try resolveBinaryDefault(columns[i],database:table.database,sqlMode:context.sqlMode)
+                } else if text {
+                    columns[i].numericDefaultLiteral = value != nil && numeric ? true : nil
+                    columns[i].defaultValue=value
+                    columns[i] = try resolveTextDefault(columns[i],database:table.database,sqlMode:context.sqlMode)
+                } else if type.base == "decimal",value != nil {
+                    columns[i].defaultValue=value
+                    columns[i].numericDefaultLiteral=numeric
+                    columns[i] = try resolveDecimalDefault(columns[i],database:table.database,sqlMode:context.sqlMode)
+                } else { columns[i].defaultValue = try normalizedDefault(value,type:type) }
+                if try DMLColumnType(columns[i]).isChoice {
+                    columns[i].numericDefaultLiteral = numeric ? true : nil
+                    columns[i] = try resolveChoiceColumn(columns[i],database:table.database,sqlMode:context.sqlMode)
+                }
                 result = result.replacing(columns:columns)
             case .indexes(let change): result = try change.applying(to:result)
             case .primaryKey(let names):

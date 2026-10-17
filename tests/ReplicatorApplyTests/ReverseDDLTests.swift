@@ -38,13 +38,12 @@ final class ReverseDDLTests: XCTestCase {
             XCTAssertTrue(String(describing:$0).contains("foreign keys are unsupported"))
         }
     }
-    func testSupplementaryEnumAndSetLabelsRejectBeforeExecution() throws {
+    func testSupplementaryEnumAndSetLabelsKeepExactParserBytes() throws {
         for type in ["ENUM","SET"] {
             for profile in ReplicationProfile.allCases {
                 let query=QueryControl(database:"poc",sql:Data("CREATE TABLE t(id INT PRIMARY KEY,v \(type)('🙂'))".utf8),errorCode:0,statusVariables:Data())
-                XCTAssertThrowsError(try DDLStatement.parse(query,profile:profile)) {
-                    XCTAssertTrue(String(describing:$0).contains("supplementary-plane labels"))
-                }
+                guard case .create(let table,_)=try DDLStatement.parse(query,profile:profile) else { return XCTFail("missing CREATE") }
+                XCTAssertEqual(try DMLColumnType(table.columns[1]).labels,[Data("🙂".utf8)])
             }
         }
     }
@@ -60,12 +59,15 @@ final class ReverseDDLTests: XCTestCase {
         XCTAssertThrowsError(try DDLPolicy().skippedQuery(query("DROP TEMPORARY TABLE a"),profile:.mysql57To84InnoDB))
         XCTAssertThrowsError(try DDLPolicy().skippedQuery(query("DROP TEMPORARY TABLE IF EXISTS a; DROP TABLE b"),profile:.mysql57To84InnoDB))
     }
-    func testMySQL84BinaryDefaultMetadata() throws {
-        XCTAssertEqual(try TargetColumnMetadata.defaultValue("0x6869",type:"binary(5)",mysql84:true),"hi\0\0\0")
-        XCTAssertEqual(try TargetColumnMetadata.defaultValue("0x6869",type:"varbinary(5)",mysql84:true),"hi")
+    func testBinaryDefaultsCannotUseTruncatedDisplayMetadata() throws {
+        for mysql84 in [false,true] {
+            for type in ["binary(5)","varbinary(5)"] {
+                XCTAssertThrowsError(try TargetColumnMetadata.defaultValue("0xFF",type:type,mysql84:mysql84))
+                XCTAssertThrowsError(try TargetColumnMetadata.defaultValue("",type:type,mysql84:mysql84))
+                XCTAssertNil(try TargetColumnMetadata.defaultValue(nil,type:type,mysql84:mysql84))
+            }
+        }
         XCTAssertEqual(try TargetColumnMetadata.defaultValue("0x6869",type:"varchar(20)",mysql84:true),"0x6869")
-        XCTAssertEqual(try TargetColumnMetadata.defaultValue("0x68",type:"binary(4)",mysql84:false),"0x68")
-        XCTAssertThrowsError(try TargetColumnMetadata.defaultValue("0x1",type:"binary(4)",mysql84:true))
     }
     func testSQLModeMatchesNativeObsoleteMaskWithoutDiscardingUnknownBits() {
         let contract=MySQL84InnoDBContract()

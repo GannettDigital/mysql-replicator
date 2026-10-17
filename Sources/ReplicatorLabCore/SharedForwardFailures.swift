@@ -66,7 +66,7 @@ extension SharedCorrectness.Run {
                         // No ddlPolicy override: exercise the default skip policy.
                         let client=try start(test,configuration(test.id,at:before,count:8)); try waitForReader(client)
                         _ = try h.sql("native","START REPLICA")
-                        _ = try h.sql("source",session+"\nDELIMITER $$\nCREATE DEFINER=CURRENT_USER TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW BEGIN SET NEW.n=NEW.n+10; SET NEW.n=NEW.n+1; END$$\nDELIMITER ;")
+                        _ = try h.sqlScript("source",session+"\nDELIMITER $$\nCREATE DEFINER=CURRENT_USER TRIGGER ddlcompat.tr BEFORE INSERT ON ddlcompat.t FOR EACH ROW BEGIN SET NEW.n=NEW.n+10; SET NEW.n=NEW.n+1; END$$\nDELIMITER ;")
                         try compatibilityBarrier(client,1)
                         try require(h.sql("native","SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='ddlcompat'")=="1","native did not create the trigger")
                         try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='ddlcompat'")=="0","skip created a target trigger")
@@ -240,11 +240,11 @@ extension SharedCorrectness.Run {
                     try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME IN ('\(label)','after_\(label)')")=="0","rejected or following DDL was applied")
                     try reporter.pass(label)
                 }
-                // A valid source DDL outside the grammar stops before mutation.
+                // An explicit engine outside the target contract stops before mutation.
                 let unsupported=try start(DDLCoverageCases.unsupported,configuration("ddl-unsupported",at:try h.boundary("source"),count:1));try waitForReader(unsupported)
-                _ = try h.sql("source","ALTER TABLE poc.items ADD unsupported DOUBLE(10,2) NULL")
-                _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"unsupported DDL column type")
-                try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='items' AND COLUMN_NAME='unsupported'") == "0","unsupported DDL mutated target")
+                _ = try h.sql("source","CREATE TABLE poc.unsupported(id INT PRIMARY KEY) ENGINE=InnoDB")
+                _ = try finish(unsupported,"ddl-unsupported",success:false,reason:"outside the MyISAM DDL contract")
+                try require(h.sql("target57","SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='unsupported'") == "0","unsupported DDL mutated target")
                 try require(state("ddl-unsupported","SELECT lifecycle||'|'||transactions_applied FROM state") == "BLOCKED|0","unsupported DDL advanced checkpoint")
                 try reporter.pass("ddl-unsupported")
                 // A target SQL error leaves a pending DDL intent, never applied.

@@ -77,7 +77,7 @@ final class DDLCoverageEvidenceTests: XCTestCase {
         }
         let report=try DDLCoverageEvidence.report(inventory,bundles:bundles)
         let summary=report["assertion_summary"] as! [String:Int]
-        XCTAssertEqual(summary["required"],730)
+        XCTAssertEqual(summary["required"],728) // Latin1 now has three positive obligations, replacing four refusal obligations.
         XCTAssertEqual(summary["passed"],68) // All previously evidenced obligations, two variants.
         let rows=report["scenarios"] as! [[String:Any]]
         XCTAssertEqual(rows.filter { $0["qualification"] as? String == "partial" }.count,14)
