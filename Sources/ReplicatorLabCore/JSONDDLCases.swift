@@ -172,6 +172,7 @@ extension SharedCorrectness.Run {
             }
             _ = try invoke("json-ddl-fetch", "fetch")
             _ = try f.sql(.target, base + enhanced)
+            try isolated.resetTargetGTIDs(at: start)
             f.config["stateDirectory"] = "/evidence/json-ddl-replay"
             source["host"] = "127.0.0.1"
             source["port"] = 1
