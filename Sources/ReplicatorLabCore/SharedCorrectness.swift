@@ -417,8 +417,9 @@ public enum SharedCorrectness {
                         try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'") == "1","DROP DATABASE left current schemas")
                     }
                     if test.test.id == "ddl-compat-multi-table" {
+                        let ids=try ddlGTIDs(saved,from:begin,to:end)
                         try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='otherdb' AND json_extract(schema_json,'$.table') IN ('moved','copy')") == "0","multi-table DROP left current schemas")
-                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE target_sql LIKE 'DROP TABLE %' AND source_sql=target_sql AND status='DONE' AND json_array_length(transitions_json)=3") == "1","multi-table DROP lost its complete transition record")
+                        try require(state(saved,"SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE gtid IN (\(ids)) AND target_sql LIKE 'DROP TABLE %' AND source_sql=target_sql AND status='DONE' AND json_array_length(transitions_json)=3") == "1","multi-table DROP lost its complete transition record")
                     }
                     if test.test.id == "ddl-compat-cross-schema-relationships" {
                         try require(state(saved,"SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database') IN ('ddlcompat','otherdb')") == "0","relationship DROP left current schemas")
