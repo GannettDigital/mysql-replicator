@@ -101,6 +101,8 @@ public enum ConfigurationOptions {
         "supportBundle.output": "Optional manual path. Must be new and outside stateDirectory.",
         "target": "Dedicated replica connection and session settings.",
         "target.caFile": "Required for verify-ca; otherwise may be omitted for system trust roots.",
+        "target.transport":
+            "DML transport: sql (default) or binlog. BINLOG requires additional privileges and a new state directory; see docs/BINLOG_TRANSPORT.md.",
         "target.explicitTableLocks": "Optional LOCK TABLES; must stay false for the InnoDB profile.",
         "target.host": "Dedicated target matching the selected profile.",
         "target.nativeAutoStartDisabled": "Required attestation that native replication will not auto-start.",

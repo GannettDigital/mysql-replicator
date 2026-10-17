@@ -135,7 +135,7 @@ Write order remains the captured source order in both cases.
 
 ## State and recovery
 
-State format 13 records `preserveSourceGTIDs` and the table filters. Format 12 introduced the GTID setting. Resume and recovery must use the
+State format 14 records `preserveSourceGTIDs`, the table filters, and the DML transport. Format 12 introduced the GTID setting. Resume and recovery must use the
 same value. Older state used target-assigned GTIDs and requires explicit `false`
 to upgrade. Enabling preservation needs a new, verified baseline. The applier
 does not backfill source history from before that baseline or erase target GTIDs.

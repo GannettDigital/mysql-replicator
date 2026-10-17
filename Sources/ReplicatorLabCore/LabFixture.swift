@@ -3,6 +3,7 @@ import Foundation
 /// Shared disposable topology. Physical service names are resolved at this boundary.
 final class LabFixture {
     let profile: LabProfile
+    let dmlTransport: String
     let variant: LabVariant
     let codeCoverage: Bool
     let h: NativeHarness
@@ -19,8 +20,9 @@ final class LabFixture {
     init(
         root: URL, category: String = "reverse-suite", identifier: String = runID(),
         image: String = "mysql-replicator-packaging:reverse", profile: LabProfile = .reverse,
-        codeCoverage: Bool = false, variant: LabVariant = .standard
+        codeCoverage: Bool = false, variant: LabVariant = .standard, dmlTransport: String = "sql"
     ) {
+        self.dmlTransport = dmlTransport
         self.profile = profile
         self.codeCoverage = codeCoverage
         self.variant = variant
@@ -155,7 +157,8 @@ final class LabFixture {
                 "sourceUUID": uuid, "mode": variant.mode, "start": variant.start(baseline), "stopAfterTransactions": 2,
             ],
             "target": [
-                "preserveSourceGTIDs": variant != .withoutSourceGTIDs, "host": profile.service(.target), "port": 3306,
+                "transport": dmlTransport, "preserveSourceGTIDs": variant != .withoutSourceGTIDs,
+                "host": profile.service(.target), "port": 3306,
                 "username": "apply_fixture", "passwordEnvironment": "TARGET_PASSWORD",
                 "serverHostname": profile.service(.target), "caFile": "/evidence/tls/ca.pem",
                 "nativeAutoStartDisabled": true,

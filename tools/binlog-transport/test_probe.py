@@ -5,6 +5,7 @@ import uuid
 import zlib
 
 from probe import apply_script, events, row_images, transaction_groups
+from behavior_probe import rejection_matches, script
 
 
 def frame(kind, body=b"", flags=0):
@@ -65,6 +66,27 @@ class ProbeTests(unittest.TestCase):
         for body in [header + b"\x02" + fields, header + b"\0" + fields[:-1]]:
             with self.subTest(body=body), self.assertRaises(ValueError):
                 row_images([frame(30, body)])
+
+    def test_boundary_probe_has_no_intervening_queries(self):
+        group = dict(gtid="11111111-1111-1111-1111-111111111111:42",
+                     frames=[frame(19, b"map"), frame(30, b"row")])
+        sql = script(frame(15), group, "5.7", split=True, rollback=True)
+        self.assertEqual(sql.count("BINLOG '"), 3)
+        self.assertNotIn("SELECT", sql[:sql.index("ROLLBACK;")])
+        self.assertIn("pseudo_slave_mode=1", sql)
+        automatic = script(frame(15), group, "8.4", preserve=False)
+        self.assertIn("pseudo_replica_mode=0", automatic)
+        self.assertNotIn(group["gtid"], automatic)
+        self.assertIn("';\nSET SESSION GTID_NEXT='AUTOMATIC';\nBEGIN;", automatic)
+
+    def test_rejection_checks_distinguish_setup_errors_and_packet_disconnects(self):
+        self.assertTrue(rejection_matches("gtid-event", "ERROR 1730"))
+        self.assertFalse(rejection_matches("gtid-event", "ERROR 1782"))
+        self.assertTrue(rejection_matches("missing-format", "ERROR 1609"))
+        self.assertTrue(rejection_matches("packet-limit", "ERROR 1153"))
+        self.assertFalse(rejection_matches("packet-limit", "ERROR 2006"))
+        self.assertTrue(rejection_matches("packet-limit", "ERROR 2006",
+            "Got a packet bigger than 'max_allowed_packet' bytes"))
 
 
 if __name__ == "__main__":

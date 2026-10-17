@@ -60,11 +60,11 @@ enum LabLifecycle {
         var completed: Set<String> = []
         init(
             root: URL, profile: LabProfile, category: String, image: String, codeCoverage: Bool = false,
-            variant: LabVariant = .standard
+            variant: LabVariant = .standard, dmlTransport: String = "sql"
         ) {
             f = LabFixture(
                 root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage,
-                variant: variant)
+                variant: variant, dmlTransport: dmlTransport)
             reporter = QualificationReporter(output: f.output, log: f.stage)
         }
         func execute() throws {

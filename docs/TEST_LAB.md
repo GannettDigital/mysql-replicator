@@ -4,6 +4,11 @@ Use `swift run replicator-lab --help` to list commands. Each command and demo
 action has its own `--help`. Help does not start containers. See
 [command help](COMMAND_LINE.md#test-lab-commands).
 
+Use `--dml-transport binlog` to run selected shared correctness or lifecycle
+cases through the opt-in BINLOG path. The default is `sql`. Profiles and case
+selection stay the same. The report records `dml_transport`. Read the
+[BINLOG transport limits](BINLOG_TRANSPORT.md) before selecting cases.
+
 Shared fixtures enable automatic support bundles when the applier enters
 `BLOCKED`. They use `format: directory` so you can read the files without extraction.
 After a test, look in its `support-bundles/` artifact directory. Start with

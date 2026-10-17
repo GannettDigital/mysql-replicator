@@ -4,6 +4,14 @@ import XCTest
 
 final class LabCommandLineTests: XCTestCase {
     let profile = "mysql84-to-mysql57-myisam"
+    func testBinlogTransportIsAnExplicitSharedTestOption() throws {
+        XCTAssertEqual(
+            try ReplicatorLabCommandLine.parse(["test", "--dml-transport", "binlog", "--case", "positive"]),
+            .run(command: "test", arguments: ["--dml-transport", "binlog", "--case", "positive"]))
+        XCTAssertThrowsError(try ReplicatorLabCommandLine.parse(["test", "--dml-transport", "invalid"]))
+        XCTAssertThrowsError(
+            try ReplicatorLabCommandLine.parse(["test", "--suite", "demo", "--dml-transport", "binlog"]))
+    }
     func testHelpForEveryCommandNeedsNoRepositoryOrDatabase() throws {
         var paths: [[String]] = [
             [], ["test"], ["benchmark"], ["demo"], ["ddl-catalog"],

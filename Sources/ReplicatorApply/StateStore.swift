@@ -146,8 +146,9 @@ final class StateStore {
             try execute("PRAGMA temp_store=MEMORY")
             try execute("PRAGMA wal_autocheckpoint=0")
             installWALTracking()
-            try execute("PRAGMA user_version=13")
+            try execute("PRAGMA user_version=14")
             try pinFilters(c, initializing: true)
+            try createTransportJournal(c.target.transport)
             try createGTIDModeJournal(c.target.preserveSourceGTIDs)
             try createProfileJournal()
             try createNameCaseJournal()
@@ -265,7 +266,18 @@ final class StateStore {
         }
         sqlite3_busy_timeout(db, 1000)
         let version = try number("PRAGMA user_version")
-        try require([4, 5, 6, 7, 8, 9, 10, 11, 12, 13].contains(version), "unsupported saved state version")
+        try require([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].contains(version), "unsupported saved state version")
+        if version >= 14 {
+            try require(
+                try query("SELECT mode,program_version FROM target_transport WHERE id=1")
+                    == [[c.target.transport.rawValue, String(BinlogEventProgram.formatVersion)]],
+                "target.transport or BINLOG program version differs from saved state; use the recorded transport")
+        } else {
+            try require(
+                c.target.transport == .sql,
+                "legacy state uses SQL transport; BINLOG transport requires a new verified baseline and state directory"
+            )
+        }
         if version >= 13 {
             let saved = try query("SELECT policy FROM replication_filters WHERE id=1")
             try require(
@@ -534,8 +546,22 @@ final class StateStore {
         }
         try pinFilters(c, initializing: false)
         if version < 13 { try execute("PRAGMA user_version=13") }
+        if version < 14 {
+            try atomic {
+                try createTransportJournal(c.target.transport)
+                try execute("PRAGMA user_version=14")
+            }
+        }
         try openCounters()
         ready = true
+    }
+    private func createTransportJournal(_ transport: TargetTransport) throws {
+        try execute(
+            "CREATE TABLE IF NOT EXISTS target_transport(id INTEGER PRIMARY KEY CHECK(id=1),mode TEXT NOT NULL,program_version INTEGER NOT NULL)"
+        )
+        try execute(
+            "INSERT OR REPLACE INTO target_transport VALUES(1,?,?)",
+            [transport.rawValue, String(BinlogEventProgram.formatVersion)])
     }
     private func createGTIDModeJournal(_ preserveSourceGTIDs: Bool) throws {
         try execute(

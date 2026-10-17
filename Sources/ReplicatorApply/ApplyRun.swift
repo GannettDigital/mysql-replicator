@@ -214,6 +214,10 @@ public enum ApplyRun {
                         capacity: configuration.batchPolicy.overlapPreparation
                             ? configuration.batchPolicy.maximumPreparedBatches : 1)
                     executionQueue = executor
+                    var binlogCapture = BinlogGroupCapture(
+                        maximumRawBytes: Int(
+                            configuration.source.maximumTransactionBytes ?? BinlogLimits.defaultTransactionBytes))
+                    let packetLimit = target.packetByteLimit
                     let byteLimit = target.insertByteLimit
                     let executionStop = CaptureCancellation(parent: cancellation)
                     func checkSourceFailure() throws {
@@ -308,6 +312,7 @@ public enum ApplyRun {
                         if !cancellation.isCancelled { try batch.flushIfExpired() }
                         try maintainExecution()
                         try timings.measure("relay.append") { try state.append(record) }
+                        if configuration.target.transport == .binlog { binlogCapture.append(record) }
                         if let decoded = record.event {
                             if case .gtid = decoded.control { consumerPending = true }
                             if decoded.eventType == 19 && !decoded.replicationFiltered {
@@ -334,7 +339,10 @@ public enum ApplyRun {
                         }
                     }
                     func transaction(_ group: CompleteTransaction) throws {
-                        defer { consumerPending = false }
+                        defer {
+                            consumerPending = false
+                            binlogCapture.resetGroup()
+                        }
                         if group.outcome == .statement {
                             try barrier()
                             target.statementTrace = .init()
@@ -427,10 +435,19 @@ public enum ApplyRun {
                             }
                         }
                         let mutations: [Mutation]
+                        var binlog: BinlogEventProgram?
                         do {
                             mutations = try state.profile("dml.plan") {
                                 try DMLPlan.make(
                                     group, tables: planningCache.tables, transactional: profile.transactional)
+                            }
+                            if configuration.target.transport == .binlog && !mutations.isEmpty {
+                                binlog = try timings.measure("apply.binlog.prepare") {
+                                    try binlogCapture.prepare(
+                                        group, mutations: mutations,
+                                        maximumPacketBytes: packetLimit, transactional: profile.transactional,
+                                        preserveSourceGTIDs: configuration.target.preserveSourceGTIDs)
+                                }
                             }
                         } catch {
                             try barrier()
@@ -456,7 +473,8 @@ public enum ApplyRun {
                             return
                         }
                         try batch.append(
-                            PreparedDMLGroup(group: group, mutations: mutations, relayEnd: state.relayLength))
+                            PreparedDMLGroup(
+                                group: group, mutations: mutations, relayEnd: state.relayLength, binlog: binlog))
                     }
                     while true {
                         if drain.isCancelled {

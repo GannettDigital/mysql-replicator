@@ -112,7 +112,7 @@ extension ResumeTests {
         )
         let store = try StateStore(configuration: c, initialize: false)
         XCTAssertEqual(store.transactions, 0)
-        XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"), "PRAGMA user_version"), [["13"]])
+        XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"), "PRAGMA user_version"), [["14"]])
         XCTAssertEqual(
             try helper.sqlite(path.appendingPathComponent("state.sqlite"), "SELECT COUNT(*) FROM ddl_skips"), [["0"]])
     }

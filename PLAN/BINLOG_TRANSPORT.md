@@ -1,15 +1,16 @@
 # Beta.7: apply row events with BINLOG
 
-Status: native-code review and a disposable-server probe. The production
-applier still uses SQL DML. No beta.6 branch was changed for this work.
+Status: opt-in BINLOG execution is connected to the apply loop. SQL remains the
+default. Focused unit and shared lab tests check this first implementation. No beta.6 branch was changed for this work.
 
 ## Purpose
 
 Add a second target execution mode. Keep SQL as the default. The new mode sends
 base64-encoded row events with the MySQL `BINLOG` statement. It can avoid building
 INSERT/UPDATE/DELETE SQL and can retain binary JSON values that SQL text cannot
-represent exactly. It can also avoid the stored-function workaround used for
-some preserved-GTID MyISAM groups.
+represent exactly. It can avoid the stored-function workaround for large
+single-statement MyISAM groups. It does not yet solve source GTID preservation
+for MyISAM groups that contain multiple source statements.
 
 The goal is an elapsed time of at most 1.5 times the matching native replica on
 the agreed workloads. This is a measurement target, not a current result.
@@ -106,9 +107,145 @@ replication benchmarks. They do not prove recovery, filters, error skips, schema
 conversion, or all MySQL types. The probe uses FULL row images, CRC32, compatible
 schemas, no compression, and root on disposable servers.
 
+## Request boundaries and failure behavior
+
+`tools/binlog-transport/behavior_probe.py` reuses the captured synthetic events.
+It starts one disposable target per profile. It uses the client `--force` option
+to inspect a session after an error. This is deliberate test behavior. The
+production executor must stop at the first error.
+
+The boundary checks produced these results on all four profiles:
+
+| Experiment | InnoDB target | MyISAM target |
+| --- | --- | --- |
+| Send each table-map and row event in a separate request | No rows applied; no SQL error | No rows applied; no SQL error |
+| Commit after those empty requests | Source GTID recorded | Source GTID recorded |
+| Insert 32 rows with a pre-existing row at key 32 | Error 1062; no new rows remain | Error 1062; 31 new rows remain |
+| Roll back after that duplicate error | Source GTID absent | Source GTID present; partial writes remain |
+| Put three source row statements in one request under one explicit GTID | All three statements apply | First statement applies; error 1837 at the next statement |
+
+The multi-statement experiment combines the captured INSERT, UPDATE, and DELETE
+events under one explicit GTID. It retains their original statement-end flags.
+
+Splitting failed even without SQL status queries between the requests. The native
+`mysql_client_binlog_statement` function calls `slave_close_thread_tables` at the
+end of each request. The saved FDE remains available, but a table map from a
+previous request is not sufficient to apply the next row event. Do not use a
+successful SQL reply or a recorded target GTID as proof that raw events were
+assembled correctly.
+
+MyISAM completes an explicit GTID at the first source statement end. Putting all
+events in one BINLOG request does not change this behavior. The first builder
+rejects a multi-statement MyISAM group when source GTID preservation is enabled.
+It makes this check before any target write. Broader MyISAM execution needs more
+design and tests. Do not clear statement-end flags as an untested workaround.
+
+Applying an FDE changes the session's internal GTID state. Without source GTID
+preservation, explicitly set `GTID_NEXT='AUTOMATIC'` **after** the FDE. Omitting
+this step caused error 1782 on targets with `gtid_mode=ON`. With the reset, the
+32-row group applies on all four profiles. InnoDB targets assign a local GTID;
+the tested MyISAM targets use `OFF_PERMISSIVE` and do not assign one. SQLite must
+still track the source identity in either case.
+
+A database-level account without the BINLOG privilege fails with error 1227.
+A missing FDE fails with error 1609. A raw GTID event fails with error 1730.
+A request above `max_allowed_packet` fails with error 1153, or disconnects with
+client error 2006 and a packet-limit message in the server log. These fixture rows
+are not written. The probes use native
+`STRICT` execution mode. The production preflight must check this setting.
+
+Evidence directories:
+
+- `failure-boundaries/`: initial results, including the failed split assumption.
+- `failure-boundaries-confirmed/`: confirms splitting without intervening queries;
+  retains the newly found automatic-GTID and multi-statement failures.
+- `session-and-rejections/`: tests the explicit AUTOMATIC reset, expected MyISAM
+  multi-statement rejection, missing FDE, privileges, and packet limits.
+- `rejected-event-type/`: repeats only the GTID-event rejection after the session
+  reset. The earlier GTID-event check on InnoDB stopped at error 1782 before it
+  reached the event-type validator.
+
+`validated-observations.json` links 40 checked observations to these original
+reports. It also includes intentional native failures, as specified above. All
+four restricted-account checks returned error 1227. The probe containers were
+removed after collection. No full correctness or performance suite ran.
+
+These are native-server probes. There is no applier support bundle for them.
+The generated SQL, stderr, server logs, and target binlogs are the failure records.
+
+## Implemented request builder
+
+`Sources/ReplicatorApply/BinlogEventProgram.swift` prepares separate FDE and row
+requests. It keeps the original event bytes and creates base64 only when asked
+for SQL. It checks these conditions before execution:
+
+- Event lengths and CRC32, including the mutable FDE in-use flag.
+- Version 4 events, common-header length, and supported post-header lengths.
+- FULL version 2 INSERT/UPDATE/DELETE images and table maps.
+- Table-map references within each statement and a final `STMT_END_F` flag.
+- A raw-byte budget and a packet budget for base64, SQL syntax, and COM_QUERY.
+- The MyISAM multi-statement restriction when source GTIDs must be preserved.
+
+Each prepared group has one row request. If it does not fit the packet budget,
+preparation fails. The builder does not split a source statement, rewrite events,
+or substitute an FDE. The existing codec and schema checks must validate row
+values and target compatibility. This builder does not replace those checks.
+
+The focused request-builder Swift suite has 13 tests. It includes damaged and
+truncated events, map reuse, missing statement ends, UPDATE before/after bitmaps,
+packet boundaries, and the MyISAM restriction. Seven Python unit tests cover the
+probe helpers.
+
+The apply loop now carries the prepared program through the existing durable
+queue. State format 14 binds `target.transport` and program version 1. Existing
+SQL state migrates without changing transport. Recovery checks the same binding.
+A connection-local FDE cache resets on reconnect. InnoDB uses explicit BEGIN,
+COMMIT, and confirmed rollback before an allowed duplicate-key skip. MyISAM
+failures retain all unacknowledged row intents. No SQL fallback is attempted.
+
+The first implementation rejects partially filtered groups and generated columns.
+It preserves entirely filtered groups and the existing empty-GTID path. DDL stays
+on the SQL path. The shared lab accepts `--dml-transport binlog` for correctness
+and lifecycle tests. See [operator instructions](../docs/BINLOG_TRANSPORT.md).
+Broader type, filter, and performance checks remain in the delivery stages below.
+
+## First shared apply tests
+
+The following checks passed on 2026-10-17 UTC:
+
+- 79 focused Swift tests for framing, configuration, execution outcomes, GTIDs,
+  state migration, and recovery. Logs: `artifacts/binlog-focused-tests.log` and
+  `artifacts/binlog-recovery-tests.log`.
+- Seven Python probe-helper tests.
+- `positive` on 8.4 → 5.7 MyISAM and 5.7 → 8.4 InnoDB, with BINLOG transport.
+  These cases compare rows, binlog operations, source GTIDs, and SQLite state.
+- `offline-replay` on 5.7 → 8.4 InnoDB, with BINLOG transport. This case covers
+  DDL and DML, rotation, stop/resume, and external mysqlbinlog archives. Replay
+  runs without source credentials and produces a support bundle.
+- `live-skip-errors` on 5.7 → 8.4 InnoDB, with BINLOG transport. The duplicate
+  group rolls back in full. Later groups apply. Skip counters survive restart,
+  with and without individual skip records in SQLite.
+
+Shared results are in these local files:
+
+- `artifacts/lab/20261017T060531Z-255ccb55/result.json` (forward positive).
+- `artifacts/lab/20261017T060809Z-ff3cc4e2/result.json` (reverse positive).
+- `artifacts/lab/20261017T060953Z-db3be7ea/result.json` (offline replay).
+- `artifacts/lab/20261017T061232Z-596419bb/result.json` (live error skips).
+
+The first forward test exposed a stale GTID assertion in the shared case. It
+expected no target GTIDs even with preservation enabled. The assertion now
+compares source and target GTID deltas. The original failed result remains at
+`artifacts/lab/20261017T060057Z-c293c398/result.json`. The applier completed that
+run, so it did not create an automatic failure bundle.
+
+These runs do not establish full type support or performance. Live reconnect
+and the full test matrix have not run with BINLOG transport. Unit tests check
+connection-local FDE state, pre-write connection loss, and lost COMMIT replies.
+
 ## Implementation structure
 
-Proposed configuration, not implemented:
+Implemented configuration:
 
 ```yaml
 target:
@@ -181,9 +318,9 @@ alone does not prove complete MyISAM application.
 
 ## Open questions before production enablement
 
-- Can multiple BINLOG requests safely carry one source statement and one GTID
-  on MyISAM, or must the complete statement fit one request?
-- Which SQL error code survives native row-apply failure? Check this before
+- How can BINLOG preserve one source GTID for multiple MyISAM statements?
+  The direct path fails with error 1837 after the first statement.
+- A duplicate-key failure retains error 1062. Check other error classes before
   connecting existing numeric skip policies to this path.
 - Does strict native row lookup have the same intended duplicate and keyless
   behavior as the current executor? Compare affected rows, not only exit codes.

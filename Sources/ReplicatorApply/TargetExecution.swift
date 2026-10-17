@@ -7,6 +7,9 @@ extension TargetSession {
         _ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
         maximumInsertBytes: Int, checkSourceFailure: @escaping () throws -> Void
     ) -> DMLExecution.Outcome {
+        if config.target.transport == .binlog {
+            return executeBinlog(groups, cancellation: cancellation, checkSourceFailure: checkSourceFailure)
+        }
         if config.target.preserveSourceGTIDs {
             return executePreservingGTIDs(
                 groups, cancellation: cancellation, maximumInsertBytes: maximumInsertBytes,

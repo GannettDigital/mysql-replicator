@@ -48,6 +48,7 @@ struct PreparedDMLGroup {
     let group: CompleteTransaction
     let mutations: [Mutation]
     let relayEnd: UInt64
+    var binlog: BinlogEventProgram? = nil
     var id: String { group.gtid!.canonical }
     var wireBytes: Int { group.events.reduce(0) { $0 + Int($1.eventSize) } }
 }

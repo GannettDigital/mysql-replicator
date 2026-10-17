@@ -41,12 +41,12 @@ public enum SharedCorrectness {
         init(
             root: URL, profile: LabProfile = .reverse, selected: Set<String>? = nil,
             category: String = "reverse-correctness", image: String = "mysql-replicator-packaging:reverse",
-            codeCoverage: Bool = false, variant: LabVariant = .standard
+            codeCoverage: Bool = false, variant: LabVariant = .standard, dmlTransport: String = "sql"
         ) {
             self.selected = selected
             f = LabFixture(
                 root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage,
-                variant: variant)
+                variant: variant, dmlTransport: dmlTransport)
             applier = LabApplier(f)
             reporter = QualificationReporter(output: f.output, log: f.stage)
         }
@@ -1203,7 +1203,7 @@ public enum SharedCorrectness {
                         try require(
                             (schema?["columns"] as? [[String: Any]])?.count == 4
                                 && schema?["secondaryIndexes"] is [[String: Any]], "extended schema metadata missing")
-                        try require(state(saved, "PRAGMA user_version") == "13", "state version gate differs")
+                        try require(state(saved, "PRAGMA user_version") == "14", "state version gate differs")
                         return ["intent": intent, "schema": schema ?? [:], "following_row_intents": references]
                             as [String: Any]
                     }

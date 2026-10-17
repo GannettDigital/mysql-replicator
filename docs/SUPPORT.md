@@ -335,6 +335,6 @@ includes it. For example, include `app.%` wins over ignore `app.audit`.
 Use explicit include patterns when you need only a subset of tables.
 Database DDL matches `database.`; `app.%` includes database DDL, while `app.t`
 does not. Partial database DROP, mixed-scope DDL, and foreign keys across filter
-boundaries still stop apply. State format 13 records both filter lists. Older binaries reject this format. Resuming with
+boundaries still stop apply. State format 14 records both filter lists and the DML transport. Older binaries reject this format. Resuming with
 different filters requires a new baseline. Older state can adopt its configured
 ignore list but cannot introduce an include list without a new baseline.

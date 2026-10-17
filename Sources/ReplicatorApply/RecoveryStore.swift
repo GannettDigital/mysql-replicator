@@ -48,8 +48,16 @@ final class RecoveryStore {
             let version = try q("PRAGMA user_version")
             try require(
                 version == [["9"]] || version == [["10"]] || version == [["11"]] || version == [["12"]]
-                    || version == [["13"]], "recovery requires state format 9 through 13")
-            if version == [["12"]] || version == [["13"]] {
+                    || version == [["13"]] || version == [["14"]], "recovery requires state format 9 through 14")
+            if version == [["14"]] {
+                try require(
+                    try q("SELECT mode,program_version FROM target_transport WHERE id=1")
+                        == [[configuration.target.transport.rawValue, String(BinlogEventProgram.formatVersion)]],
+                    "target.transport or BINLOG program version differs from saved state")
+            } else {
+                try require(configuration.target.transport == .sql, "legacy recovery requires SQL transport")
+            }
+            if version == [["12"]] || version == [["13"]] || version == [["14"]] {
                 try require(
                     try q("SELECT mode FROM target_gtid_mode WHERE id=1") == [
                         [String(configuration.target.preserveSourceGTIDs)]

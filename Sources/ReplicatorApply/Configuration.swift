@@ -416,7 +416,10 @@ extension ApplyTable {
             }, partitions: partitions ?? self.partitions, foreignKeys: foreignKeys)
     }
 }
+public enum TargetTransport: String, Decodable { case sql, binlog }
+
 public struct TargetConfiguration: Decodable {
+    public let transport: TargetTransport
     /// Keep the source identity in the target binlog unless explicitly disabled.
     public let preserveSourceGTIDs: Bool
     public let host: String?
@@ -435,10 +438,12 @@ public struct TargetConfiguration: Decodable {
     public let nativeAutoStartDisabled: Bool
     enum CodingKeys: String, CodingKey {
         case host, port, unixSocket, requireTLS, tlsVerification, username, passwordEnvironment, password,
-            serverHostname, caFile, nativeAutoStartDisabled, targetUUID, explicitTableLocks, preserveSourceGTIDs
+            serverHostname, caFile, nativeAutoStartDisabled, targetUUID, explicitTableLocks, preserveSourceGTIDs,
+            transport
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        transport = try c.decodeIfPresent(TargetTransport.self, forKey: .transport) ?? .sql
         preserveSourceGTIDs = try c.decodeIfPresent(Bool.self, forKey: .preserveSourceGTIDs) ?? true
         guard !c.contains(.targetUUID) else {
             throw ApplyError("remove targetUUID from config; target identity is discovered from the verified node")
@@ -514,6 +519,12 @@ public struct ApplyConfiguration: Decodable {
         )
         _ = try source.validate(connection: !offline)
         try target.validate()
+        if target.transport == .binlog {
+            try require(!target.explicitTableLocks, "BINLOG transport cannot use explicit table locks")
+            try require(
+                !compatibilityPolicy.jsonYearToInteger,
+                "BINLOG transport does not implement compatibility.jsonYearToInteger; use SQL transport")
+        }
         try require(target.nativeAutoStartDisabled, "operator must disable automatic native replication start")
         try require(
             (UInt64(1_048_576)...UInt64(1_073_741_824)).contains(maximumRelayBytes ?? 268_435_456),

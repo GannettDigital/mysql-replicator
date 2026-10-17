@@ -40,12 +40,33 @@ extension SharedCorrectness.Run {
                     at: directory.appendingPathComponent("operations.json"),
                     to: directory.appendingPathComponent("positive-operations.json"))
             }
-            if !f.profile.transactionalTarget {
+            let sourceDelta = try f.sql(
+                .source,
+                "SELECT GTID_SUBTRACT('\(end.gtids)','\(starts[.source]!.gtids)')")
+            let targetDelta = try f.sql(
+                .target,
+                "SELECT GTID_SUBTRACT(@@GLOBAL.gtid_executed,'\(starts[.target]!.gtids)')")
+            let preserves = (config["target"] as? [String: Any])?["preserveSourceGTIDs"] as? Bool ?? true
+            if preserves {
                 try require(
-                    f.sql(.target, "SELECT @@GLOBAL.gtid_executed").isEmpty, "applier injected source GTIDs into target"
-                )
+                    f.sql(
+                        .target,
+                        "SELECT GTID_SUBSET('\(sourceDelta)','\(targetDelta)') AND GTID_SUBSET('\(targetDelta)','\(sourceDelta)')"
+                    ) == "1",
+                    "target did not preserve exactly the applied source GTIDs")
+            } else {
+                try require(
+                    f.sql(.target, "SELECT GTID_SUBTRACT('\(sourceDelta)','\(targetDelta)')") == sourceDelta,
+                    "target retained source GTIDs with preservation disabled")
+            }
+            if !f.profile.transactionalTarget && f.dmlTransport == "sql" {
                 let reads = (result["stageTimings"] as? [String: [String: Any]])?["target.read"]?["count"] as? Int
                 try require(reads == 3, "basic DML repeated existence reads")
+            }
+            if f.dmlTransport == "binlog" {
+                let writes =
+                    (result["stageTimings"] as? [String: [String: Any]])?["target.binlog.rows"]?["count"] as? Int
+                try require(writes == 4, "basic DML did not use four BINLOG row requests")
             }
             let saved = try isolated.state(
                 "positive",

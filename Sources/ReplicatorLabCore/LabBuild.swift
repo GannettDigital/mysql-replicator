@@ -43,6 +43,7 @@ public enum LabBuild {
 struct LabTestOptions {
     var profiles = LabProfile.allCases
     var suite = "correctness", tier = "full"
+    var dmlTransport = "sql"
     var family: String?
     var variants: [LabVariant] = [.standard]
     var ids: Set<String> = []
@@ -73,6 +74,7 @@ struct LabTestOptions {
                     guard let variant = LabVariant(rawValue: value) else { throw LabError("unknown variant: " + value) }
                     variants = [variant]
                 }
+            case "--dml-transport": dmlTransport = value
             case "--profile":
                 if value == "all" {
                     profiles = LabProfile.allCases
@@ -97,6 +99,10 @@ struct LabTestOptions {
         try require(
             ["correctness", "demo"].contains(suite) || (family == nil && ids.isEmpty),
             "--case and --family select correctness or demo scenarios")
+        try require(["sql", "binlog"].contains(dmlTransport), "DML transport must be sql or binlog")
+        try require(
+            dmlTransport == "sql" || ["correctness", "lifecycle"].contains(suite),
+            "--dml-transport binlog selects the shared correctness or lifecycle suite")
         let sharedRecovery = suite == "recovery" && profiles.allSatisfy { !$0.transactionalTarget }
         try require(
             !coverage || sharedRecovery || ["correctness", "lifecycle", "demo"].contains(suite),

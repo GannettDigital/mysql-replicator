@@ -15,7 +15,8 @@ final class ApplyTests: XCTestCase {
     func config(
         _ path: String = "/tmp/unused-state", storage: [String: Any]? = nil, applierProfiling: Bool? = nil,
         collations: [String: String]? = nil, profile: String? = nil, skipErrors: [String: Any]? = nil,
-        mode: String = "gtid", jsonYearToInteger: Bool = false, preserveSourceGTIDs: Bool = false
+        mode: String = "gtid", jsonYearToInteger: Bool = false, preserveSourceGTIDs: Bool = false,
+        transport: String = "sql"
     ) throws -> ApplyConfiguration {
         var object: [String: Any] = [
             "version": 1, "stateDirectory": path,
@@ -26,7 +27,8 @@ final class ApplyTests: XCTestCase {
                 "tables": [["database": "poc", "table": "items", "columns": ["signed", "utf8", "unsigned"]]],
             ],
             "target": [
-                "preserveSourceGTIDs": preserveSourceGTIDs, "host": "target57", "port": 3306, "username": "apply",
+                "transport": transport, "preserveSourceGTIDs": preserveSourceGTIDs, "host": "target57", "port": 3306,
+                "username": "apply",
                 "passwordEnvironment": "TARGET_PASSWORD", "serverHostname": "target57", "nativeAutoStartDisabled": true,
             ],
             "tables": [

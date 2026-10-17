@@ -6,6 +6,22 @@ import XCTest
 @testable import ReplicatorApply
 
 final class ConfigurationFileTests: XCTestCase {
+    func testBinlogTransportIsOptInAndRejectsConflictingSettings() throws {
+        let text = try example()
+        let original = try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(text.utf8))
+        XCTAssertEqual(original.target.transport, .sql)
+        let binlog = text.replacingOccurrences(of: "transport: sql", with: "transport: binlog")
+        let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(binlog.utf8))
+        XCTAssertEqual(config.target.transport, .binlog)
+        try config.validate()
+        let locked = binlog.replacingOccurrences(of: "explicitTableLocks: false", with: "explicitTableLocks: true")
+        XCTAssertThrowsError(try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(locked.utf8)).validate())
+        let invalid = text.replacingOccurrences(of: "transport: sql", with: "transport: invalid")
+        XCTAssertThrowsError(try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(invalid.utf8)))
+        let absent = text.split(separator: "\n").filter { !$0.contains("transport: sql") }.joined(separator: "\n")
+        XCTAssertEqual(
+            try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(absent.utf8)).target.transport, .sql)
+    }
     func testSourceGTIDPreservationDefaultsToTrueAndCanBeDisabled() throws {
         let yaml = try example().split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("preserveSourceGTIDs:") }

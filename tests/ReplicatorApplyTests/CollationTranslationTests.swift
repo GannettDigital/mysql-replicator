@@ -204,7 +204,7 @@ extension ResumeTests {
         XCTAssertEqual(try helper.sqlite(legacy.appendingPathComponent("state.sqlite"), "PRAGMA user_version"), [["7"]])
         do { _ = try StateStore(configuration: strict, initialize: false) }
         XCTAssertEqual(
-            try helper.sqlite(legacy.appendingPathComponent("state.sqlite"), "PRAGMA user_version"), [["13"]])
+            try helper.sqlite(legacy.appendingPathComponent("state.sqlite"), "PRAGMA user_version"), [["14"]])
         XCTAssertEqual(
             try helper.sqlite(legacy.appendingPathComponent("state.sqlite"), "SELECT policy_json FROM compatibility"),
             [["{\"collations\":{}}"]])

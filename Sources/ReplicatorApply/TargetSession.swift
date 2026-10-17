@@ -13,6 +13,7 @@ final class TargetSession {
     var jsonScratchOrdinal: UInt64 = 0
     var statementTrace = TargetStatementTrace()
     var statementSourceGTID: SourceGTID?
+    var binlogContext = BinlogFormatContext()
     private var foreignKeyChecks: Bool?
     func setForeignKeyChecks(_ enabled: Bool) throws {
         guard foreignKeyChecks != enabled else { return }
@@ -200,6 +201,7 @@ final class TargetSession {
         try require(ownership == "1", "target writer ownership is indeterminate")
         try nativeExclusion()
         try contract.configure(self)
+        if config.target.transport == .binlog { try preflightBinlog() }
         if config.target.preserveSourceGTIDs {
             // This checks the same privilege used for ordinary explicit GTIDs,
             // without claiming or consuming a source transaction.
@@ -209,7 +211,7 @@ final class TargetSession {
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
-        if config.target.preserveSourceGTIDs && !contract.transactional {
+        if config.target.transport == .sql && config.target.preserveSourceGTIDs && !contract.transactional {
             try preflightMyISAMGTIDSupport()
         }
     }

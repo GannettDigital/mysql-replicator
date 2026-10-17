@@ -74,6 +74,8 @@ private struct Test: LabRequestCommand {
     @Option(help: "One profile or all. Default: all.") var profile: String?
     @Option(help: "correctness, lifecycle, recovery, demo, native, or all. Default: correctness.") var suite: String?
     @Option(help: "full or smoke. Prefer --case to select named cases. Default: full.") var tier: String?
+    @Option(help: "DML transport: sql (default) or binlog. Applies to correctness and lifecycle.") var dmlTransport:
+        String?
     @Option(help: "Select one test family. Use --list to inspect the inventory.") var family: String?
     @Option(name: .customLong("case"), help: "Select a case ID. Repeat this option to select more cases.") var cases:
         [String] = []
@@ -87,6 +89,7 @@ private struct Test: LabRequestCommand {
         arguments += option("profile", profile)
         arguments += option("suite", suite)
         arguments += option("tier", tier)
+        arguments += option("dml-transport", dmlTransport)
         arguments += option("family", family)
         for value in cases { arguments += option("case", value) }
         arguments += option("variant", variant)

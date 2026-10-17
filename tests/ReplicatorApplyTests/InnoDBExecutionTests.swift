@@ -325,7 +325,7 @@ extension ResumeTests {
             let store = try StateStore(configuration: c, initialize: false)
             XCTAssertEqual(store.transactions, 1)
         }
-        XCTAssertEqual(try helper.sqlite(db, "PRAGMA user_version"), [["13"]])
+        XCTAssertEqual(try helper.sqlite(db, "PRAGMA user_version"), [["14"]])
         XCTAssertEqual(try helper.sqlite(db, "SELECT * FROM state"), before)
         XCTAssertEqual(
             try helper.sqlite(db, "SELECT profile FROM replication_profile"),

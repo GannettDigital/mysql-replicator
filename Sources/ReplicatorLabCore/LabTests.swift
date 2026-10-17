@@ -36,6 +36,7 @@ public enum LabTests {
                 }
             }
         }
+        for index in rows.indices { rows[index]["dml_transport"] = options.dmlTransport }
         if options.list {
             try printJSON([
                 "schema_version": 1, "selection": options.suite, "tier": options.tier,
@@ -51,7 +52,8 @@ public enum LabTests {
             "schema_version": 1, "suite": options.suite, "tier": options.tier,
             "scope": "Selected scenario obligations; not complete MySQL feature qualification", "result": "running",
             "build_inputs_digest": try DDLCoverageEvidence.digest(inputs), "code_coverage": options.coverage,
-            "requested_cases": options.ids.sorted(), "requested_family": options.family ?? "all",
+            "dml_transport": options.dmlTransport, "requested_cases": options.ids.sorted(),
+            "requested_family": options.family ?? "all",
             "profiles": options.profiles.map { ["id": $0.rawValue, "topology": $0.topology] as [String: Any] },
         ]
         func save() throws {
@@ -119,14 +121,16 @@ public enum LabTests {
                             if suite != "lifecycle" {
                                 let run = SharedCorrectness.Run(
                                     root: root, profile: profile, selected: selected, category: category, image: image!,
-                                    codeCoverage: options.coverage, variant: variant)
+                                    codeCoverage: options.coverage, variant: variant, dmlTransport: options.dmlTransport
+                                )
                                 reporter = run.reporter
                                 output = run.f.output
                                 execute = { try run.execute(build: false, slice: "all") }
                             } else {
                                 let run = LabLifecycle.Run(
                                     root: root, profile: profile, category: category, image: image!,
-                                    codeCoverage: options.coverage, variant: variant)
+                                    codeCoverage: options.coverage, variant: variant, dmlTransport: options.dmlTransport
+                                )
                                 reporter = run.reporter
                                 output = run.f.output
                                 execute = { try run.execute() }
