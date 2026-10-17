@@ -115,9 +115,6 @@ enum LabLifecycle {
             if smallInserts {
                 value["batch"]=["maximumInsertRows":4]
                 value["ddlTimeoutSeconds"]=60
-                // The 8,000-row MyISAM group uses one stored function to keep
-                // its source GTID. Allow the generated SQL before connecting.
-                _ = try f.sql(.target,"SET GLOBAL max_allowed_packet=67108864")
             }
             return value
         }
@@ -203,8 +200,42 @@ enum LabLifecycle {
                 Thread.sleep(forTimeInterval:0.02)
             }
         }
+        var batchSize: Int { f.profile.transactionalTarget ? 8000 : 128 }
+        var batchTransactions: Int { f.profile.transactionalTarget ? 1 : 2 }
+        var batchRows: Int { batchSize+batchTransactions-1 }
+        var batchSum: Int { batchSize*(batchSize+1)/2 }
+        func withActiveBatch(_ table: String, client: String, interrupt: () throws -> Void) throws {
+            if f.profile.transactionalTarget {
+                try insertBatch(table)
+                try waitPartial(table,client:client)
+                try interrupt()
+                return
+            }
+            // Prime the schema cache before locking the target table. The next
+            // group exceeds maximumInsertRows and uses the GTID helper function.
+            _ = try f.sql(.source,"INSERT INTO lifecycle.\(table) VALUES(0,0)")
+            try waitProgress(client) { $0["transactionsApplied"] as? Int == 1 }
+            _ = try f.h.compose(["exec","-d","-e","MYSQL_PWD=fixture-root-only",f.profile.service(.target),"mysql","--no-defaults","-uroot","-e","LOCK TABLES lifecycle.\(table) WRITE; DO SLEEP(120)"])
+            let deadline=Date().addingTimeInterval(30)
+            var blocker=""
+            defer { if Int(blocker) != nil { _ = try? f.sql(.target,"KILL CONNECTION "+blocker) } }
+            repeat {
+                blocker=try f.sql(.target,"SELECT ID FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(120)'")
+                if Int(blocker) != nil { break }
+                try require(Date() < deadline,"batch blocker did not start")
+                Thread.sleep(forTimeInterval:0.05)
+            } while true
+            try insertBatch(table)
+            // Interrupt after the target request is issued. A table lock makes
+            // this observable without relying on a slow or very large workload.
+            while try f.sql(.target,"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO='SELECT `_mysql_replicator_gtid`.`apply_group`() AS applied'") != "1" {
+                try require(Date() < deadline,"GTID group was not submitted to the locked table")
+                Thread.sleep(forTimeInterval:0.05)
+            }
+            try interrupt()
+        }
         func insertBatch(_ table: String) throws {
-            let sql="INSERT INTO lifecycle.\(table) VALUES "+(1...8000).map { "(\($0),\($0))" }.joined(separator:",")
+            let sql="INSERT INTO lifecycle.\(table) VALUES "+(1...batchSize).map { "(\($0),\($0))" }.joined(separator:",")
             _ = try f.sql(.source,sql)
         }
         func sourceCases() throws {
@@ -235,15 +266,15 @@ enum LabLifecycle {
                 try checkpoint(label,"STOPPED",5,5)
             }
             try scenario("source-reconnect-batch") {
-                let label="source-reconnect-batch", client=try start(label,config(label,count:2,smallInserts:true))
-                try waitReader(client); try insertBatch("source_batch"); try waitPartial("source_batch",client:client)
-                try killConnection(.source)
-                try waitProgress(client) { $0["lifecycle"] as? String == "RECONNECTING" && $0["transactionsApplied"] as? Int == 1 }
+                let label="source-reconnect-batch", client=try start(label,config(label,count:batchTransactions+1,smallInserts:true))
+                try waitReader(client)
+                try withActiveBatch("source_batch",client:client) { try killConnection(.source) }
+                try waitProgress(client) { $0["lifecycle"] as? String == "RECONNECTING" && $0["transactionsApplied"] as? Int == batchTransactions }
                 try waitReader(client)
                 _ = try f.sql(.source,"UPDATE lifecycle.source_batch SET v=v+1 WHERE id=1")
                 try caughtUp(finish(client,label),label)
-                try compare("SELECT COUNT(*),SUM(v) FROM lifecycle.source_batch","8000\t32004001")
-                try checkpoint(label,"STOPPED",2,8001)
+                try compare("SELECT COUNT(*),SUM(v) FROM lifecycle.source_batch","\(batchRows)\t\(batchSum+1)")
+                try checkpoint(label,"STOPPED",batchTransactions+1,batchRows+1)
             }
             try scenario("source-reconnect-cancel") {
                 let label="source-reconnect-cancel", client=try start(label,config(label,count:1))
@@ -286,16 +317,16 @@ enum LabLifecycle {
                 try compare("SELECT id,v FROM lifecycle.target_rows ORDER BY id","1\t11\n2\t20")
                 try checkpoint(label,"STOPPED",3,3)
             }
-            let drainConfig=try config("target-drain",count:2,smallInserts:true)
+            let drainConfig=try config("target-drain",count:batchTransactions+1,smallInserts:true)
             try scenario("target-drain") {
                 let label="target-drain", client=try start(label,drainConfig)
-                try waitReader(client); try insertBatch("target_drain"); try waitPartial("target_drain",client:client)
-                try signal(client,"USR1")
+                try waitReader(client)
+                try withActiveBatch("target_drain",client:client) { try signal(client,"USR1") }
                 let result=try finish(client,label)
                 try require(result["drainRequested"] as? Bool == true,"drain was not reported")
                 try caughtUp(result,label)
-                try compare("SELECT COUNT(*),SUM(v) FROM lifecycle.target_drain","8000\t32004000")
-                try checkpoint(label,"STOPPED",1,8000)
+                try compare("SELECT COUNT(*),SUM(v) FROM lifecycle.target_drain","\(batchRows)\t\(batchSum)")
+                try checkpoint(label,"STOPPED",batchTransactions,batchRows)
             }
             try scenario("target-drain-resume") {
                 try server(.target,start:false)
@@ -306,8 +337,8 @@ enum LabLifecycle {
                 try server(.target,start:true); try waitReader(client)
                 _ = try f.sql(.source,"UPDATE lifecycle.target_drain SET v=v+1 WHERE id=1")
                 try caughtUp(finish(client,label),label)
-                try compare("SELECT COUNT(*),SUM(v) FROM lifecycle.target_drain","8000\t32004001")
-                try checkpoint(label,"STOPPED",2,8001)
+                try compare("SELECT COUNT(*),SUM(v) FROM lifecycle.target_drain","\(batchRows)\t\(batchSum+1)")
+                try checkpoint(label,"STOPPED",batchTransactions+1,batchRows+1)
             }
             try scenario("target-backoff-drain") {
                 let label="target-backoff-drain", client=try start(label,config(label,count:1))
