@@ -103,6 +103,9 @@ An array replaces the YAML array; `[]` clears it. `null` clears an optional valu
 Use `--config.version` for the configuration version; `--version` shows the
 program version. Duplicate options and parent/child overrides are errors.
 The configuration file is still required. `--help` lists configuration options.
+Section headings such as `source` group the options. Use a child option, such as
+`--source.port VALUE`, to change one setting. To replace a whole section, supply
+a YAML map, for example `--source.start '{executedGTIDs: ""}'`.
 
 `ctl reload` reads the file again and reapplies the original CLI overrides.
 It still permits only the two source stop limits to change. Thus, a stop limit

@@ -122,10 +122,14 @@ public enum ConfigurationOptions {
         "version": "Required config format; do not add tables/schema allowlists.",
     ]
     public static var help: String {
-        "Configuration overrides (CLI values replace YAML values):\n"
-            + descriptions.sorted { $0.key < $1.key }.map {
-                "  --" + ($0.key == "version" ? "config.version" : $0.key) + " VALUE  " + $0.value
+        let sections = Set(descriptions.keys.filter { key in descriptions.keys.contains { $0.hasPrefix(key + ".") } })
+        return "Configuration overrides (CLI values replace YAML values):\n"
+            + descriptions.sorted { $0.key < $1.key }.map { key, description in
+                let indent = String(repeating: "  ", count: key.split(separator: ".").count)
+                if sections.contains(key) { return "\n" + indent + key + ": (section)  " + description }
+                return indent + "--" + (key == "version" ? "config.version" : key) + " VALUE  " + description
             }.joined(separator: "\n")
             + "\nUse YAML flow syntax for arrays/maps. [] clears an array; null clears an optional value."
+            + "\nTo replace a whole section, use --SECTION YAML_MAP, for example --source.start '{executedGTIDs: \"\"}'."
     }
 }
