@@ -281,7 +281,7 @@ extension SharedCorrectness.Run {
                 try require(state("partial","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||COALESCE(applied_position,'NULL') FROM state") == "BLOCKED|0|0|NULL","partial group advanced checkpoint")
                 try require(state("partial","SELECT ordinal||'|'||status FROM row_intents ORDER BY ordinal") == "0|PENDING\n1|PENDING","failed INSERT chunk must retain every row as uncertain")
                 try reporter.pass("partial")
-                // Kill a disposable writer after MyISAM has accepted some rows.
+                // Kill a disposable writer with an unresolved target request.
                 // The whole prepared group must remain unresolved on disk, and
                 // ordinary restart must refuse to replay it.
                 for service in h.services {
@@ -289,18 +289,39 @@ extension SharedCorrectness.Run {
                     _ = try h.sql(service,"SET SESSION sql_log_bin=0; CREATE TABLE poc.batch_crash(id INT PRIMARY KEY,v INT NOT NULL) ENGINE=\(engine)")
                 }
                 let crashStart=try h.boundary("source")
-                var crashConfig=configuration("batch-crash",at:crashStart,count:1)
-                // Stay below Linux's per-argument limit for mysql -e, while
-                // retaining enough SQL chunks to observe and kill mid-group.
+                let crashRows = preservesGTIDs ? 128 : 8000
+                let committedBeforeCrash = preservesGTIDs ? 1 : 0
+                var crashConfig=configuration("batch-crash",at:crashStart,count:committedBeforeCrash+1)
+                // Preserve the chunked SQL path when source GTIDs are not retained.
                 crashConfig["batch"] = ["maximumInsertRows":4]
                 let crash=try start(SharedWorkflowCases.recovery("batch-crash"),crashConfig)
                 try waitForReader(crash)
-                _ = try h.sql("source","INSERT INTO poc.batch_crash VALUES " + (1...8000).map{"(\($0),\($0))"}.joined(separator:","))
+                var blocker = ""
+                defer { if Int(blocker) != nil { _ = try? h.sql("target57","KILL CONNECTION "+blocker) } }
+                if preservesGTIDs {
+                    // Load metadata before locking the table. The next group uses
+                    // one stored-function request, which can finish after client death.
+                    _ = try h.sql("source","INSERT INTO poc.batch_crash VALUES(0,0)")
+                    try isolated.barrier(crash,count:1)
+                    _ = try h.compose(["exec","-d","-e","MYSQL_PWD=fixture-root-only",f.profile.service(.target),"mysql","--no-defaults","-uroot","-e","LOCK TABLES poc.batch_crash WRITE; DO SLEEP(120)"])
+                    let deadline = Date().addingTimeInterval(30)
+                    repeat {
+                        blocker = try h.sql("target57","SELECT ID FROM information_schema.PROCESSLIST WHERE INFO='DO SLEEP(120)'")
+                        if Int(blocker) != nil { break }
+                        try require(Date() < deadline,"crash fixture table lock did not start")
+                        Thread.sleep(forTimeInterval:0.05)
+                    } while true
+                }
+                _ = try h.sql("source","INSERT INTO poc.batch_crash VALUES " + (1...crashRows).map{"(\($0),\($0))"}.joined(separator:","))
                 let crashDeadline=Date().addingTimeInterval(30)
                 while true {
-                    let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='batch_crash'")) ?? 0
-                    if writes > 0 { break }
-                    try require(Date() < crashDeadline && docker(["inspect",crash,"--format","{{.State.Running}}"]).text == "true","crash fixture never reached a target write")
+                    if preservesGTIDs {
+                        if try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO='SELECT `_mysql_replicator_gtid`.`apply_group`() AS applied'") == "1" { break }
+                    } else {
+                        let writes=Int(try h.sql("target57","SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='poc' AND OBJECT_NAME='batch_crash'")) ?? 0
+                        if writes > 0 { break }
+                    }
+                    try require(Date() < crashDeadline && docker(["inspect",crash,"--format","{{.State.Running}}"]).text == "true","crash fixture never reached an active target request")
                     Thread.sleep(forTimeInterval:0.02)
                 }
                 _ = try docker(["kill","--signal","KILL",crash])
@@ -308,12 +329,21 @@ extension SharedCorrectness.Run {
                 let crashedLogs=try docker(["logs",crash])
                 try crashedLogs.stdout.write(to:f.output.appendingPathComponent("batch-crash.ndjson"))
                 try crashedLogs.stderr.write(to:f.output.appendingPathComponent("batch-crash.diagnostic.json"))
+                if preservesGTIDs {
+                    _ = try h.sql("target57","KILL CONNECTION "+blocker)
+                    blocker = ""
+                    let deadline = Date().addingTimeInterval(30)
+                    while try h.sql("target57","SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE USER='apply_fixture' AND INFO='SELECT `_mysql_replicator_gtid`.`apply_group`() AS applied'") != "0" {
+                        try require(Date() < deadline,"target group did not finish after writer death")
+                        Thread.sleep(forTimeInterval:0.05)
+                    }
+                }
                 let partialRows=Int(try h.sql("target57","SELECT COUNT(*) FROM poc.batch_crash")) ?? -1
-                try require((1..<8000).contains(partialRows),"crash did not interrupt a partially applied group")
-                try require(state("batch-crash","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||(active_gtid IS NOT NULL) FROM state") == "RUNNING|0|0|1","crash advanced or cleared the pending checkpoint")
-                try require(state("batch-crash","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == "8000","crash lost prepared intents or prematurely completed rows")
+                try require(preservesGTIDs ? partialRows == crashRows+1 : (1..<crashRows).contains(partialRows),"unexpected target rows after writer death")
+                try require(state("batch-crash","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||(active_gtid IS NOT NULL) FROM state") == "RUNNING|\(committedBeforeCrash)|\(committedBeforeCrash)|1","crash advanced or cleared the pending checkpoint")
+                try require(state("batch-crash","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == String(crashRows),"crash lost prepared intents or prematurely completed rows")
                 try require(state("batch-crash","SELECT COUNT(*) FROM groups WHERE status='PENDING'") == "1","crash lost the pending group")
-                try writeJSON(["target_rows_at_crash":partialRows,"prepared_rows":8000,"automatic_replay":false],to:f.output.appendingPathComponent("batch-crash-evidence.json"))
+                try writeJSON(["target_rows_at_crash":partialRows,"prepared_rows":crashRows,"committed_before_crash":committedBeforeCrash,"preserve_source_gtids":preservesGTIDs,"automatic_replay":false],to:f.output.appendingPathComponent("batch-crash-evidence.json"))
                 try reporter.pass("batch-crash")
                 let resumed=try start(SharedWorkflowCases.recovery("batch-crash-resume"),crashConfig,initialize:false)
                 _ = try finish(resumed,"batch-crash-resume",success:false,reason:"cleanly STOPPED")
