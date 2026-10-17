@@ -555,6 +555,12 @@ extension SharedCorrectness.Run {
             try require(
                 state("batch-crash", "SELECT COUNT(*) FROM groups WHERE status='PENDING'") == "1",
                 "crash lost the pending group")
+            if preservesGTIDs {
+                let pendingGTID = try state("batch-crash", "SELECT gtid FROM groups WHERE status='PENDING'")
+                try require(
+                    h.sql("target57", "SELECT GTID_SUBSET('\(pendingGTID)',@@GLOBAL.gtid_executed)") == "1",
+                    "target did not commit the unresolved source GTID")
+            }
             try writeJSON(
                 [
                     "target_rows_at_crash": partialRows, "prepared_rows": crashRows,
