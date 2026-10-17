@@ -13,6 +13,16 @@ enum ReverseSchemaComparison {
             if fields[3].range(of:#"^`?[A-Za-z_][A-Za-z0-9_]*`?(?:, *`?[A-Za-z_][A-Za-z0-9_]*`?)*$"#,options:.regularExpression) != nil {
                 fields[3]=fields[3].replacingOccurrences(of:"`",with:"").replacingOccurrences(of:" ",with:"")
             }
+            // Normalize only the two native function spellings used by the
+            // partition-expression case. Keep this independent of the applier
+            // expression renderer. Bounds, literals and grouping stay intact.
+            let identifier="`?([A-Za-z_][A-Za-z0-9_]*)`?"
+            for (pattern,replacement) in [
+                ("(?i)^TO_DAYS\\("+identifier+"\\)$","to_days($1)"),
+                ("(?i)^EXTRACT\\(YEAR_MONTH FROM "+identifier+"\\)$","extract(year_month from $1)")
+            ] {
+                fields[3]=fields[3].replacingOccurrences(of:pattern,with:replacement,options:.regularExpression)
+            }
             return fields.joined(separator:"\t")
         }.joined(separator:"\n")
     }
@@ -43,6 +53,15 @@ enum ReverseSchemaComparison {
                 // Only the ASCII JSON paths in the shared fixtures. Preserve
                 // other literals and compare their bytes without substitution.
                 fields[9]=fields[9].replacingOccurrences(of:#"_utf8mb4\\'([$.A-Za-z0-9_]+)\\'"#,with:"'$1'",options:.regularExpression)
+            }
+            // Exact spellings observed for the generated-expression fixture.
+            // Keep this independent of the production expression parser.
+            if mysql84 {
+                let known=[
+                    "(`n` is null)":"isnull(`n`)",
+                    "trim(both _utf8mb4\\'x\\' from `v`)":"trim(both 'x' from `v`)"
+                ]
+                fields[9]=known[fields[9]] ?? fields[9]
             }
             return fields.joined(separator:"\t")
         }.joined(separator:"\n")

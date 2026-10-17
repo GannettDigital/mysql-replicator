@@ -29,7 +29,7 @@ extension ApplyTests {
         XCTAssertNil(policy.match(TargetConnectionFailure(description:"connection lost"),at:.rolledBack))
     }
     func testSkipErrorCodesComeFromParserAndPlanner() throws {
-        for (sql,code) in [("ALTER TABLE items ENABLE KEYS",ApplyErrorCode.unsupportedAlter),
+        for (sql,code) in [("ALTER TABLE items UNKNOWN_OPERATION",ApplyErrorCode.unsupportedAlter),
                            ("CREATE TABLE items(id INT PRIMARY KEY,v VECTOR)",.unsupportedColumnType),
                            ("ANALYZE TABLE items",.unsupportedDDL)] {
             XCTAssertThrowsError(try DDLStatement.parse(QueryControl(database:"poc",sql:Data(sql.utf8),errorCode:0,statusVariables:Data()))) {

@@ -174,6 +174,15 @@ public struct ApplyTable: Codable, Equatable {
         for key in foreignKeys { try key.validate() }
         try require(partitions.count <= 8192 && Set(partitions.map { SQLIdentifier.key($0.name) }).count == partitions.count,"invalid partition manifest")
         for partition in partitions { try partition.validate() }
+        let partitionNames=partitions.flatMap { [$0.name]+($0.subpartitions ?? []).map(\.name) }
+        let leaves=partitions.reduce(0) { $0+($1.subpartitions?.count ?? 1) }
+        try require(leaves <= 8192 && Set(partitionNames.map(SQLIdentifier.key)).count == partitionNames.count,"duplicate or excessive partitions/subpartitions")
+        if let first=partitions.first {
+            try require(partitions.allSatisfy { $0.method == first.method && $0.expression == first.expression && $0.keyAlgorithm == first.keyAlgorithm && $0.subpartitions?.count == first.subpartitions?.count },"inconsistent partition methods or subpartition counts")
+            if let child=first.subpartitions?.first {
+                try require(partitions.flatMap { $0.subpartitions ?? [] }.allSatisfy { $0.method == child.method && $0.expression == child.expression && $0.keyAlgorithm == child.keyAlgorithm },"inconsistent subpartition methods")
+            }
+        }
         try require(secondaryIndexes.count <= 63 && Set(secondaryIndexes.map { SQLIdentifier.key($0.name) }).count == secondaryIndexes.count,"duplicate or excessive secondary indexes")
         for key in secondaryIndexes {
             _ = try quoted(key.name)
@@ -199,10 +208,12 @@ public struct ApplyTable: Codable, Equatable {
                         && column.extra != "VIRTUAL GENERATED" && part.prefix == nil && part.direction == nil,"invalid FULLTEXT column or metadata")
                 } else if key.type == "SPATIAL" {
                     try require(!key.unique && key.parts.count == 1 && type.isSpatial && !column.nullable && part.prefix == nil,"spatial index requires one full nonnullable spatial column")
-                } else { try require(!type.isSpatial,"spatial columns require SPATIAL indexes") }
+                } else if type.isSpatial {
+                    try require(key.type == "BTREE" && (part.prefix ?? 0) > 0,"geometry BTREE indexes require a positive byte prefix")
+                }
                 try require(column.type != "json","direct JSON indexes are unsupported")
                 try require(key.type == "FULLTEXT" || ["A","D"].contains(part.direction ?? ""),"unsupported descending index")
-                if let prefix=part.prefix { try require(column.width != nil && prefix > 0 && prefix <= column.width!,"invalid index prefix") }
+                if let prefix=part.prefix { try require(prefix > 0 && (type.isSpatial || (column.width != nil && prefix <= column.width!)),"invalid index prefix") }
             }
         }
         try require((1...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,"invalid primary-key columns")

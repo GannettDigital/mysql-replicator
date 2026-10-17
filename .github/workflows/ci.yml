@@ -100,6 +100,8 @@ jobs:
         run: python3 tools/swift_cache.py restore --scratch-path .build/code-coverage
       - name: Run unit test suites
         run: make coverage-unit
+      - name: Test SQL syntax without app dependencies
+        run: make syntax-coverage
       - name: Save successful Swift build timestamps
         run: python3 tools/swift_cache.py save --scratch-path .build/code-coverage
 
@@ -119,6 +121,17 @@ jobs:
 
       - name: Verify DDL coverage catalog
         run: .build/code-coverage/debug/replicator-lab ddl-catalog check
+
+      - name: Upload isolated SQL syntax coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Keep this diagnostic report outside the coverage-* merge inputs.
+          # The normal unit collection already includes this target.
+          name: mysql-syntax-unit-coverage
+          overwrite: true
+          path: artifacts/coverage/syntax-unit/
+          if-no-files-found: error
 
   lab-tools:
     needs: select-suite

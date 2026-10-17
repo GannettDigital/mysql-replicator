@@ -55,6 +55,7 @@ enum DDLStatement: Equatable {
         try require(query.errorCode == 0,"DDL source query reported an error: source error code \(query.errorCode); partial source DDL is not supported")
         try DDLPolicy.rejectProhibited(query)
         var parser=try DDLParser(query:query,tokens:tokens)
+        parser.nativeRules=NativeReplicationRules(profile:profile)
         parser.engine = profile.targetContract.engine
         parser.targetVersion = profile.targetContract.versionPrefix
         parser.lowerCaseTableNames=lowerCaseTableNames
@@ -72,10 +73,12 @@ struct PreparedDDL {
     var after: ApplyTable?
     var sql: String
     var rawSQL: Data? = nil
+    var compatibilityRules: [String] = []
     var database:PreparedDatabaseDDL? = nil
     var additional: [SchemaTransition] = []
     var afterAlternatives: [ApplyTable]? = nil
     var preservesSchema: Bool {
+        if statement.ignoredChecksOnly { return true }
         switch statement {
         case .createIfAbsent, .createLike(_,_,true): return before != nil && before == after
         case .dropIfPresent: return before == nil && after == nil
@@ -156,20 +159,35 @@ extension TargetSession {
     }
     func prepareDDL(_ statement: DDLStatement,query source:QueryControl,timestamp:UInt64? = nil, tokens:[DDLToken]? = nil) throws -> PreparedDDL {
         let policy = config.compatibilityPolicy
-        if policy.collations.isEmpty {
+        let hasEncodingDefault: Bool
+        if case .alter(_,let actions)=statement {
+            hasEncodingDefault=actions.contains { if case .encoding(let e)=$0 { return e.usesDefault }; return false }
+        } else { hasEncodingDefault=false }
+        let nativeRules=NativeReplicationRules(profile:config.replicationProfile)
+        let checkTokens=try tokens ?? ddlTokens(source)
+        let hasIgnoredChecks=nativeRules.checkConstraints == .discard && checkTokens.contains { $0.keyword == "CHECK" }
+        if policy.collations.isEmpty && !hasEncodingDefault && !hasIgnoredChecks {
             var plan=try prepareTargetDDL(statement,query:source,timestamp:timestamp)
             plan.rawSQL=source.sql
             return plan
         }
         let context = try QuerySessionContext(query:source)
-        var parser = try DDLParser(query:source,tokens:tokens)
+        var parser = try DDLParser(query:source,tokens:checkTokens)
+        parser.nativeRules=nativeRules
         parser.lowerCaseTableNames=config.source.tableNameCaseSetting
         parser.engine=config.replicationProfile.targetContract.engine
         parser.targetVersion=contract.versionPrefix
         parser.compatibility = policy; parser.defaultUTF8MB4Collation = context.defaultUTF8MB4Collation
-        let translated = try parser.parse()
+        let parsed = try parser.parse()
+        let translated = try resolveTableEncodingDefaults(parsed,source:source,context:context)
         var plan = try prepareTargetDDL(translated,query:source,timestamp:timestamp)
-        plan.rawSQL = parser.translatedBytes(source.sql)
+        if hasEncodingDefault,
+           case .alter(_,let actions)=translated,let before=plan.before {
+            let (final,conversion)=try alterEncoding(before,actions:actions,context:context)
+            try parser.translateTableEncodingDefaults(final:final,conversion:conversion)
+        }
+        plan.compatibilityRules=parser.ignoredCheckCount > 0 ? [NativeReplicationRules.ignoredChecksRule] : []
+        plan.rawSQL = translated.ignoredChecksOnly ? Data() : parser.translatedBytes(source.sql)
         plan.sql = String(decoding:plan.rawSQL!,as:UTF8.self)
         return plan
     }
@@ -278,6 +296,7 @@ extension TargetSession {
         case .drop,.dropIfPresent: after=nil
         case .truncate: after=before
         }
+        if let current=after { after=try resolvePartitionBounds(current,context:context,source:source) }
         try after?.validate()
         if let after { try contract.validateSchemaFeatures(after) }
         try require(discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1) <= maximumCachedTables,"discovered schema limit reached")
@@ -340,7 +359,12 @@ extension TargetSession {
         default: break
         }
         guard let name=plan.statement.name else {throw ApplyError("missing prepared database DDL")}
-        _ = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL)
+        if !plan.statement.ignoredChecksOnly {
+            let rows = try query(plan.sql,textProtocol:true,timeoutSeconds:config.ddlDeadline,mutation:true,rawSQL:plan.rawSQL).0
+            if case .alter(_,let actions)=plan.statement,actions.contains(where: { if case .partition(.maintenance(let operation))=$0 { return operation.operation != .rebuild };return false }) {
+                try PartitionMaintenanceResult.validate(rows.map { ($0.column("Msg_type")?.string,$0.column("Msg_text")?.string) })
+            }
+        }
         try resetDMLSession()
         if let after=plan.after {
             let actual = try readSchema(database:after.database,name:after.table)

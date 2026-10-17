@@ -58,6 +58,21 @@ Run the Rust unit tests and Swift unit test suite:
 make test
 ```
 
+The SQL lexer and expression parser are in `MySQLSyntax`. Run their unit tests
+without Rust, MySQL libraries, Docker, or a database server:
+
+```sh
+make syntax-test
+make syntax-coverage
+```
+
+The second command writes `artifacts/coverage/syntax-unit/index.html`. It measures
+only the syntax target's own tests and requires at least 95% line coverage.
+The normal unit job also runs these tests and publishes the isolated report.
+Line coverage does not prove grammar coverage. Add positive and negative cases,
+SQL modes, precedence, source ranges, and limits for each grammar change.
+See [the syntax layer](docs/SQL_SYNTAX.md) for its boundary and current scope.
+
 Command parsing lives in `ReplicatorCommandLine`. It has no database dependencies.
 Its tests check help, argument validation, and parsed requests. CLI process tests
 also check stdout, JSON errors on stderr, and exit status without MySQL:

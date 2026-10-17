@@ -46,6 +46,22 @@ beta.6. Do not assume a squash merge preserves the old stack ancestry.
 | `beta/6/24-json-year-compatibility` | `beta/6/23-json-load-data-review` |
 | `beta/6/25-json-year-translation` | `beta/6/24-json-year-compatibility` |
 | `beta/6/26-json-generated-indexes` | `beta/6/25-json-year-translation` |
+| `beta/6/27-table-options-alter` | `beta/6/26-json-generated-indexes` |
+| `beta/6/28-multi-table-ddl` | `beta/6/27-table-options-alter` |
+| `beta/6/31-mysql-syntax` | `beta/6/28-multi-table-ddl` |
+| `beta/6/32-alter-charset` | `beta/6/31-mysql-syntax` |
+| `beta/6/33-generated-syntax` | `beta/6/32-alter-charset` |
+| `beta/6/34-spatial-prefix-indexes` | `beta/6/33-generated-syntax` |
+| `beta/6/35-table-maintenance` | `beta/6/34-spatial-prefix-indexes` |
+| `beta/6/36-check-compatibility` | `beta/6/35-table-maintenance` |
+| `beta/6/37-subpartitions` | `beta/6/36-check-compatibility` |
+| `beta/6/38-partition-maintenance` | `beta/6/37-subpartitions` |
+| `beta/6/39-partition-expressions` | `beta/6/38-partition-maintenance` |
+| `beta/6/40-partition-column-bounds` | `beta/6/39-partition-expressions` |
+
+Branches 29 and 30 were unfinished experiments based on branch 28. Branch 32
+replaces the charset work from branch 29. Branch 33 replaces the expression work from branch 30. Do not include those experiment branches in the PR stack.
+
 
 These are the existing local branches. They are not the complete beta.6
 branch set. Later branches will contain the remaining feature groups below.
@@ -861,3 +877,104 @@ unchanged. The final source passed all 416 apply/lab unit checks and strict
 Periphery analysis against the updated Swift index. Periphery reported no
 unused code. The integration results above precede this unused-code cleanup;
 no broad integration sweep was repeated after it. Both branches remain local.
+
+## Syntax and charset continuation
+
+Branch 31 extracts `MySQLSyntax`, its isolated tests and its Docker build layer.
+Branch 32 completes the selected charset ALTER cases and equivalent DEFAULT
+syntax translation. See [the updated scope assessment](COMPLETE_MYSQL_SUPPORT.md#beta6-assessment-after-the-syntax-extraction)
+and [charset evidence](ALTER_CHARSET.md). These increments do not close the full
+support plan or qualify the release.
+
+Branch 33 adds typed generated-expression forms and native metadata comparison.
+Branch 34 adds geometry BTREE byte prefixes for 5.7 targets and a specific 8.4
+version error. See [expression scope](GENERATED_EXPRESSIONS.md) and
+[spatial prefix scope](SPATIAL_PREFIX_INDEXES.md). Their combined fixed-input
+run `20261015T073916Z-20bde8e4` passed 21 applicable cases, with three native
+version exclusions. The 421 build inputs stayed unchanged. Isolated syntax
+coverage is 600/603 lines (99.50%). Periphery found no unused code. No beta.6
+release is qualified yet.
+
+Branch 35 adds FORCE and ENABLE/DISABLE KEYS. See
+[maintenance behavior and tests](TABLE_MAINTENANCE.md). Branch 36 follows the verified [native 5.7 to 8.0 rule](CHECK_CONSTRAINTS.md).
+
+Branch 36 adds a central native version-rule type and ignored 5.7 CHECK
+handling. It retains source SQL, rule IDs and durable DDL completion. Enforced
+8.4 checks still stop before target DDL on 5.7. See
+[the implementation and checks](CHECK_CONSTRAINTS.md).
+
+## Increment 37: partition and subpartition metadata
+
+Branch: `beta/6/37-subpartitions`, based on branch 36.
+
+Typed partition syntax stays in `MySQLSyntax`. The applier stores subpartition
+names, methods and expressions, and reads the corresponding native metadata.
+Selected lifecycle cases cover row effects, saved-state restart and offline
+replay. See [scope and verification](PARTITION_SUPPORT.md). Remaining partition
+forms stay open in the complete-support plan.
+
+## Increment 38: KEY algorithm and partition maintenance
+
+Branch: `beta/6/38-partition-maintenance`, based on branch 37.
+
+The saved schema now records KEY ALGORITHM=1. Omitted algorithms use native
+algorithm 2. Discovery reads the algorithm from SHOW CREATE TABLE because
+`information_schema.PARTITIONS` does not expose it. DML uses the existing
+schema cache.
+
+Typed syntax covers REBUILD, ANALYZE, CHECK, OPTIMIZE and REPAIR PARTITION.
+The applier checks administrative result rows for errors before it completes
+the DDL intent. Native CHECK and LOCAL operations do not enter the binlog.
+
+This increment also fixes schema equality. It now compares ordered
+subpartitions and KEY algorithms. Branch 37 saved subpartitions but omitted
+them from its custom equality operator. The new unit tests check each field,
+child order and exact identifier bytes.
+
+See [partition scope and test results](PARTITION_SUPPORT.md). The remaining
+partition expressions, tablespace operations and EXCHANGE WITHOUT VALIDATION
+remain open. This branch stays local.
+
+Run `20261015T164911Z-24c49dc0` passed all 12 selected profile cases, including
+offline stop/resume and the branch 37 regression. The affected unit run passed
+478 tests. The three support-catalog tests and Periphery also passed. Syntax
+coverage was collected because this increment changes `MySQLSyntax`; the
+independent target covered 897/903 executable lines (99.34%).
+
+## Increment 39: partition expressions and unchecked exchange
+
+Branch: `beta/6/39-partition-expressions`, based on branch 38.
+
+Partition bounds now use native constant evaluation before the applier saves
+the DDL intent. The saved schema contains evaluated values. The original SQL
+remains the statement sent to the target. Typed date/time literals use the
+shared syntax target. Ordinary literal bounds need no evaluation query.
+
+EXCHANGE WITHOUT VALIDATION retains native table checks and records both
+tables in the DDL journal. The applier does not validate or move misplaced
+rows. An uncertain exchange remains pending and cannot resume automatically.
+See [partition implementation and test results](PARTITION_SUPPORT.md).
+
+Both new workflows passed on all four profiles, including restart and offline
+replay. The first run passed the same-version cases. A metadata spelling fix
+in the harness allowed the cross-version reruns to pass. The affected unit run
+passed 483 tests; eight focused comparison/catalog tests passed after the fix.
+Syntax coverage was 903/909 lines (99.34%). Periphery passed. See the partition
+plan for the run IDs, input digests and remaining limits. This branch stays
+local and does not claim complete partition qualification.
+
+## Increment 40: exact column partition bounds
+
+Branch: `beta/6/40-partition-column-bounds`, based on branch 39.
+
+Add binary and charset literals to RANGE/LIST COLUMNS bounds. Read native
+partition metadata without loss of bytes. Preserve connection-charset bytes,
+empty values and native DATE spelling. Add an independent harness comparison
+for binary bounds. Record native misplaced-row errors and the limits of those
+probes. See [partition details and verification](PARTITION_SUPPORT.md).
+
+Both selected workflows passed on all four profiles with the same build.
+The final affected unit run passed 494 tests. Syntax coverage was 922/928
+lines (99.35%). The support-catalog tests and Periphery passed. Read-only
+SQLite checks confirmed exact bounds in all four saved schemas. The branch
+stays local. Full release qualification remains separate.

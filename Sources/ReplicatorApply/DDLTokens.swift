@@ -1,18 +1,7 @@
 import Foundation
+import MySQLSyntax
 
-/// One lexer for DDL classification and expressions. Quoting follows the logged
-/// SQL mode; comments cannot smuggle executable version-specific SQL.
-struct DDLToken: Equatable {
-    let text: String
-    var identifier = false
-    var literal: String? = nil
-    var literalBytes: Data? = nil
-    var range: Range<Int>? = nil
-    static func == (lhs: Self,rhs: Self) -> Bool {
-        SQLTextBytes.equal(lhs.text,rhs.text) && lhs.identifier == rhs.identifier && SQLTextBytes.equal(lhs.literal,rhs.literal) && lhs.literalBytes == rhs.literalBytes
-    }
-    var keyword: String { identifier || literal != nil ? "" : SQLIdentifier.keyword(text) }
-}
+typealias DDLToken = SQLToken
 
 enum DDLTokens {
     static func requiresConnectionCollation(_ tokens: [DDLToken]) -> Bool {
@@ -25,82 +14,23 @@ enum DDLTokens {
         }
         return false
     }
-    static func lex(_ data: Data, sqlMode: UInt64 = 0, characterSet: String = "utf8mb4", nativeMetadata:Bool = false,
-                    decode: ((Data,Bool) throws -> DDLDecodedText)? = nil) throws -> [DDLToken] {
-        try require(data.count <= 65536, "DDL statement exceeds 64 KiB")
-        if decode == nil { try require(String(data:data,encoding:.utf8) != nil,"invalid DDL UTF-8") }
-        func decoded(_ bytes: [UInt8], identifier: Bool) throws -> DDLDecodedText {
-            if let decode { return try decode(Data(bytes),identifier) }
-            guard let text=String(bytes:bytes,encoding:.utf8) else { throw ApplyError("invalid DDL literal encoding") }
-            return DDLDecodedText(text:text,bytes:nil)
-        }
-        let b = Array(data)
-        var i = 0, result: [DDLToken] = []
-        while i < b.count {
-            let c = b[i]
-            if [9,10,13,32].contains(c) { i += 1; continue }
-            if c == 47 && i+1 < b.count && b[i+1] == 42 {
-                let executable=i+2 < b.count && b[i+2] == 33
-                try require(!executable || nativeMetadata,"executable DDL comments are unsupported")
-                i += 2;var content=i
-                if executable {
-                    content += 1
-                    while content < b.count && (48...57).contains(b[content]) { content += 1 }
+    static func lex(_ data: Data, sqlMode: UInt64 = 0, characterSet: String = "utf8mb4", nativeMetadata: Bool = false,
+                    decode: ((Data, Bool) throws -> DDLDecodedText)? = nil) throws -> [DDLToken] {
+        do {
+            return try SQLLexer.lex(data, sqlMode: sqlMode, characterSet: characterSet,
+                                    nativeMetadata: nativeMetadata, decode: decode).map { token in
+                var token = token
+                if token.identifier || (token.literal == nil && token.text.utf8.allSatisfy(SQLLexer.word)) {
+                    let name = SQLIdentifier.storedName(token.text)
+                    if token.identifier { _ = try quoted(name) }
+                    else if !SQLTextBytes.equal(token.text, name) { token.identifier = true }
+                    token.text = name
                 }
-                while i+1 < b.count && !(b[i] == 42 && b[i+1] == 47) { i += 1 }
-                try require(i+1 < b.count,"unterminated DDL comment")
-                // Only SHOW CREATE metadata opts in. Source SQL keeps its strict
-                // version-comment gate; metadata tokens are never executed.
-                if executable { result += try lex(Data(b[content..<i]),sqlMode:sqlMode) }
-                try require(result.count <= 16384,"DDL token limit exceeded")
-                i += 2;continue
+                return token
             }
-            if c == 35 || (c == 45 && i+2 < b.count && b[i+1] == 45 && b[i+2] <= 32) {
-                while i < b.count && b[i] != 10 { i += 1 }; continue
-            }
-            let start = i
-            if c == 96 || c == 39 || c == 34 {
-                let isIdentifier = c == 96 || (c == 34 && sqlMode & 4 != 0)
-                i += 1; var value: [UInt8] = []; var closed = false
-                while i < b.count {
-                    let width=DDLClientEncoding.characterWidth(b,at:i,charset:characterSet)
-                    if width > 1 { value.append(contentsOf:b[i..<i+width]);i += width;continue }
-                    if b[i] == c {
-                        if i+1 < b.count && b[i+1] == c { value.append(c); i += 2; continue }
-                        i += 1; closed = true; break
-                    }
-                    if b[i] == 92 && !isIdentifier && sqlMode & (1 << 20) == 0 {
-                        i += 1; try require(i < b.count, "truncated DDL escape")
-                        if b[i] == 37 || b[i] == 95 { value.append(92) }
-                        value.append([UInt8(48):0,98:8,110:10,114:13,116:9,90:26][b[i]] ?? b[i]); i += 1
-                    } else { value.append(b[i]); i += 1 }
-                }
-                try require(closed, "unterminated DDL quote")
-                let converted = try decoded(value,identifier:isIdentifier)
-                if isIdentifier { let name=SQLIdentifier.storedName(converted.text); _ = try quoted(name); result.append(DDLToken(text:name,identifier:true)) }
-                else { result.append(DDLToken(text:"'"+converted.text.replacingOccurrences(of:"'",with:"''")+"'",literal:converted.text,literalBytes:converted.bytes)) }
-            } else if word(c) {
-                let start = i
-                repeat { i += DDLClientEncoding.characterWidth(b,at:i,charset:characterSet) } while i < b.count && word(b[i])
-                let text=try decoded(Array(b[start..<i]),identifier:true).text,name=SQLIdentifier.storedName(text)
-                result.append(DDLToken(text:name,identifier:!SQLTextBytes.equal(text,name)))
-            } else {
-                try require(c < 128 && "(),.;=+-*/%@<>!|&^~:?".utf8.contains(c), "unsupported DDL token")
-                var text = String(UnicodeScalar(c)); i += 1
-                if i < b.count && ["<=",">=","!=","<>","<<",">>","||","&&",":=","->"].contains(text+String(UnicodeScalar(b[i]))) {
-                    text += String(UnicodeScalar(b[i])); i += 1
-                    if text == "->" && i < b.count && b[i] == 62 { text += ">";i += 1 }
-                }
-                result.append(DDLToken(text:text))
-            }
-            result[result.count-1].range = start..<i
-            try require(result.count <= 16384, "DDL token limit exceeded")
-        }
-        return result
+        } catch let error as SQLSyntaxError { throw ApplyError(error.message) }
     }
-    static func word(_ c: UInt8) -> Bool {
-        (65...90).contains(c) || (97...122).contains(c) || (48...57).contains(c) || c == 95 || c == 36 || c >= 128
-    }
+    static func word(_ byte: UInt8) -> Bool { SQLLexer.word(byte) }
 }
 
 /// Canonical expressions for schema comparison; SQL still runs on the target. Canonical AST
@@ -112,96 +42,96 @@ enum DDLExpression {
     static func canonical(_ sql: String) throws -> String {
         try canonical(DDLTokens.lex(Data(sql.utf8),sqlMode:1 << 20))
     }
-    static func canonical(_ tokens: [DDLToken]) throws -> String {
-        var parser = ExpressionParser(tokens:tokens)
-        let value = try parser.expression()
-        try require(parser.i == tokens.count,"unsupported generated/partition expression")
-        return value
+    static func canonical(_ tokens: [DDLToken],sqlMode: UInt64 = 0) throws -> String {
+        do { return try render(SQLExpression.parse(tokens,sqlMode:sqlMode)) }
+        catch let error as SQLSyntaxError { throw ApplyError(error.message) }
     }
-}
-private struct ExpressionParser {
-    let tokens: [DDLToken]
-    var i = 0
-    let precedence = ["OR":1,"AND":2,"=":3,"!=":3,"<>":3,"<":3,">":3,"<=":3,">=":3,"+":4,"-":4,"*":5,"/":5,"DIV":5,"%":5,"MOD":5,"->":7,"->>":7,"COLLATE":8]
-    mutating func expression(_ minimum: Int = 0) throws -> String {
-        try require(i < tokens.count,"missing generated/partition expression")
-        let token = tokens[i]; i += 1
-        var lhs: String
-        if token.keyword == "(" {
-            lhs = try expression(); try close()
-        } else if ["+","-","NOT","~"].contains(token.keyword) {
-            lhs = "("+token.keyword.lowercased()+" "+(try expression(6))+")"
-        } else if token.keyword.hasPrefix("_"), i < tokens.count, tokens[i].literal != nil {
-            let literal=try expression(8)
-            // The lexer already stores UTF-8 text. MySQL 8.4 adds this introducer
-            // when it prints the same UTF-8 literal from a 5.7 expression.
-            lhs = token.keyword == "_UTF8MB4" ? literal : token.keyword.lowercased()+literal
-        } else if let literal = token.literal {
-            lhs = "'"+literal.replacingOccurrences(of:"'",with:"''")+"'"
-        } else if token.text.utf8.allSatisfy({(48...57).contains($0)}) && !token.identifier {
-            lhs = token.text
-            if i+1 < tokens.count && tokens[i].keyword == "." && tokens[i+1].text.utf8.allSatisfy({(48...57).contains($0)}) {
-                lhs += "."+tokens[i+1].text; i += 2
-            }
-        } else if i < tokens.count && tokens[i].keyword == "(" {
-            let function = token.keyword.lowercased()
-            if function == "cast" {
-                i += 1
-                let value=try expression()
-                try require(i < tokens.count && tokens[i].keyword == "AS","missing CAST type");i += 1
-                try require(i < tokens.count,"missing CAST type")
-                var type=tokens[i].keyword.lowercased();i += 1
-                try require(["char","binary","signed","unsigned","decimal","date","datetime","time","json","float","double","real"].contains(type),"unsupported CAST type")
-                if ["signed","unsigned"].contains(type), i < tokens.count, tokens[i].keyword == "INTEGER" { i += 1 }
-                if i < tokens.count && tokens[i].keyword == "(" {
-                    i += 1;var sizes:[String]=[]
-                    repeat {
-                        try require(i < tokens.count && !tokens[i].text.isEmpty && tokens[i].text.utf8.allSatisfy { (48...57).contains($0) },"invalid CAST width")
-                        sizes.append(tokens[i].text);i += 1
-                        if i < tokens.count && tokens[i].keyword == "," { i += 1 } else { break }
-                    } while true
-                    try close();type += "("+sizes.joined(separator:",")+")"
-                }
-                if i < tokens.count && ["CHARSET","CHARACTER"].contains(tokens[i].keyword) {
-                    let long=tokens[i].keyword == "CHARACTER";i += 1
-                    if long { try require(i < tokens.count && tokens[i].keyword == "SET","missing CAST CHARACTER SET");i += 1 }
-                    try require(i < tokens.count && tokens[i].text.utf8.allSatisfy(DDLTokens.word),"missing CAST charset")
-                    let charset=tokens[i].text.lowercased();i += 1
-                    if charset != "utf8mb4" { type += " charset "+charset }
-                }
-                try close();lhs="cast("+value+" as "+type+")"
-            } else {
-                try require(["abs","ceil","ceiling","floor","round","mod","if","ifnull","nullif","coalesce","concat","concat_ws","lower","upper","length","char_length","character_length","year","month","day","dayofmonth","to_days","to_seconds","datediff","date","hour","minute","second","json_extract","json_unquote","json_quote","json_object","json_array","json_length","json_type","json_valid","json_contains","json_contains_path","json_keys","json_depth","json_set","json_insert","json_replace","json_remove","json_merge_preserve","json_merge_patch","json_array_append","json_array_insert"].contains(function),"unsupported generated/partition function: "+token.text)
-                i += 1; var arguments: [String] = []
-                while i < tokens.count && tokens[i].keyword != ")" {
-                    arguments.append(try expression())
-                    if i < tokens.count && tokens[i].keyword == "," {
-                        i += 1;try require(i < tokens.count && tokens[i].keyword != ")","missing function argument")
-                    } else { break }
-                }
-                try close(); lhs = function+"("+arguments.joined(separator:",")+")"
-            }
-        } else if ["NULL","TRUE","FALSE"].contains(token.keyword) { lhs = token.keyword.lowercased() }
-        else {
-            try require(token.identifier || token.text.utf8.allSatisfy(DDLTokens.word),"unsupported expression operand")
-            lhs = try quoted(token.text)
-        }
-        while i < tokens.count, let level = precedence[tokens[i].keyword], level >= minimum {
-            let op = tokens[i].keyword.lowercased(); i += 1
-            if op == "collate" {
-                try require(i < tokens.count && tokens[i].literal == nil && tokens[i].text.utf8.allSatisfy(DDLTokens.word),"missing expression collation")
-                lhs="("+lhs+" collate "+tokens[i].text.lowercased()+")";i += 1;continue
-            }
-            let rhs=try expression(level+1)
+
+    static func render(_ expression: SQLExpression) throws -> String {
+        switch expression {
+        case .literal(let token):
+            return "'"+(token.literal ?? "").replacingOccurrences(of:"'",with:"''")+"'"
+        case .identifier(let token): return try quoted(token.text)
+        case .number(let value):
+            var value=value.lowercased()
+            if value.contains("e") { return value }
+            while value.count > 1,value.first == "0",value.dropFirst().first != "." { value.removeFirst() }
+            return value.first == "." ? "0"+value : value
+        case .keyword(let value): return value == "true" ? "1" : value == "false" ? "0" : value
+        case .prefix(let op,let value):
+            if op == "not" || op == "!" { return try negating(value) }
+            if op == "+" { return try render(value) }
+            return "("+op+" "+(try render(value))+")"
+        case .introduced(let name,let value): return (name == "_utf8mb4" ? "" : name)+(try render(value))
+        case .cast(let value,let type):
+            let metadataType=type.replacingOccurrences(of:" charset utf8mb4",with:"")
+            return "cast("+(try render(value))+" as "+metadataType+")"
+        case .collate(let value,let name): return "("+(try render(value))+" collate "+name+")"
+        case .call(let name,let args): return try renderCall(name,args)
+        case .binary(let op,let left,let right):
+            let lhs=try render(left),rhs=try render(right)
             if op == "->" || op == "->>" {
-                lhs="json_extract("+lhs+","+rhs+")"
-                if op == "->>" { lhs="json_unquote("+lhs+")" }
-            } else { lhs = "("+lhs+" "+op+" "+rhs+")" }
+                let extracted="json_extract("+lhs+","+rhs+")"
+                return op == "->>" ? "json_unquote("+extracted+")" : extracted
+            }
+            if op == "concat" { return "concat("+lhs+","+rhs+")" }
+            let op=["&&":"and","||":"or","!=":"<>","mod":"%"][op] ?? op
+            return "("+lhs+" "+op+" "+rhs+")"
+        case .tuple(let values): return "("+(try values.map(render)).joined(separator:",")+")"
+        case .caseValue(let value,let branches,let other):
+            var result="(case "
+            if let value { result += try render(value)+" " }
+            for branch in branches { result += try "when "+render(branch.condition)+" then "+render(branch.value)+" " }
+            if let other { result += try "else "+render(other)+" " }
+            return result+"end)"
+        case .between(let value,let lower,let upper,let negative):
+            return try "("+render(value)+(negative ? " not" : "")+" between "+render(lower)+" and "+render(upper)+")"
+        case .inList(let value,let items,let negative):
+            if items.count == 1 { return try render(.binary(negative ? "<>" : "=",value,items[0])) }
+            return try "("+render(value)+(negative ? " not" : "")+" in ("+items.map(render).joined(separator:",")+"))"
+        case .isTest(let value,let type,let negative):
+            let type=type == "unknown" ? "null" : type
+            if type == "null",!negative { return try "isnull("+render(value)+")" }
+            return try "("+render(value)+(negative ? " is not " : " is ")+type+")"
+        case .pattern(let op,let value,let pattern,let escape,let negative):
+            var result=try "("+render(value)+(negative ? " not " : " ")+(op == "rlike" ? "regexp" : op)+" "+render(pattern)
+            if let escape { result += try " escape "+render(escape) }
+            return result+")"
+        case .interval(let value,let unit): return try "interval "+render(value)+" "+unit
+        case .bytes(let bytes): return "0x"+bytes.map { String(format:"%02x",$0) }.joined()
+        case .trim(let direction,let remove,let value):
+            if let direction { return try "trim("+direction+" "+(remove.map(render) ?? "' '")+" from "+render(value)+")" }
+            return try "trim("+render(value)+")"
+        case .extract(let unit,let value): return try "extract("+unit+" from "+render(value)+")"
+        case .convertUsing(let value,let charset): return try "convert("+render(value)+" using "+charset+")"
         }
-        return lhs
     }
-    mutating func close() throws {
-        try require(i < tokens.count && tokens[i].keyword == ")","unbalanced expression")
-        i += 1
+
+    private static func renderCall(_ name:String,_ args:[SQLExpression]) throws -> String {
+        if name == "mod",args.count == 2 { return try render(.binary("%",args[0],args[1])) }
+        if ["date_add","date_sub","adddate","subdate"].contains(name),args.count == 2 {
+            let amount:SQLExpression
+            if case .interval=args[1] { amount=args[1] } else { amount = .interval(args[1],"day") }
+            return try render(.binary(["date_sub","subdate"].contains(name) ? "-" : "+",args[0],amount))
+        }
+        if name == "timestampadd",args.count == 3,case .keyword(let unit)=args[0] {
+            return try render(.binary("+",args[2],.interval(args[1],unit)))
+        }
+        let name=["power":"pow","lcase":"lower","ucase":"upper","character_length":"char_length","ceil":"ceiling","substring":"substr","mid":"substr","position":"locate"][name] ?? name
+        return name+"("+(try args.map(render)).joined(separator:",")+")"
+    }
+    private static func negating(_ value:SQLExpression) throws -> String {
+        switch value {
+        case .binary(let op,let left,let right):
+            if let inverse=["=":"<>","<>":"=","!=":"=","<":">=",">":"<=","<=":">",">=":"<"][op] {
+                return try render(.binary(inverse,left,right))
+            }
+        case .isTest(let operand,let type,let negative): return try render(.isTest(operand,type,negated:!negative))
+        case .call("isnull",let args) where args.count == 1: return try render(.isTest(args[0],"null",negated:true))
+        case .between(let operand,let lower,let upper,let negative): return try render(.between(operand,lower,upper,negated:!negative))
+        case .inList(let operand,let items,let negative): return try render(.inList(operand,items,negated:!negative))
+        default: break
+        }
+        return try "(not "+render(value)+")"
     }
 }

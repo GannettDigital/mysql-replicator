@@ -55,6 +55,14 @@ The builder uses pinned Swift 6.2.1 and Rust 1.93.1 images and the checksum-veri
 
 The runtime image is digest-pinned Ubuntu 16.04.7 with glibc 2.23. No newer glibc or Swift runtime is installed there. Build checks reject an ELF interpreter or dynamically needed libraries.
 
+The static and coverage Dockerfiles compile `MySQLSyntax` in a separate
+`sql-syntax` stage, after third-party dependencies and before other app sources.
+Only parser sources and its build helper enter this stage. App-only edits reuse
+it. Parser edits rebuild it and the stages that consume it. A package manifest,
+toolchain, or build-flag change can also invalidate it.
+`tools/build_syntax.py` uses the same Swift flags and timestamp manifest as the
+application build. It removes temporary target placeholders after the build.
+
 Two executables are produced:
 
 - `mysql-replicator`: the current production executable, now including the bounded offline decoder and JSON inspector.

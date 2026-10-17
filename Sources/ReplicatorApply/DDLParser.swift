@@ -1,4 +1,5 @@
 import Foundation
+import MySQLSyntax
 import ReplicatorCodec
 
 /// Complete parsing for table/database DDL. Stored object bodies are parsed by
@@ -13,12 +14,18 @@ struct DDLParser {
     func storedTableName(_ name:String) -> String { lowerCaseTableNames == 1 ? SQLIdentifier.lowercase(name) : name }
     var engine = "MyISAM"
     var targetVersion = "5.7."
+    let expressionSQLMode: UInt64
     let realAsFloat: Bool
     let database: String?
     var compatibility = CompatibilityPolicy()
     var defaultUTF8MB4Collation: UInt32 = 255
     var edits: [DDLSQLEdit] = []
+    var partitionLiteralCharset="utf8mb4"
+    var nativeRules=NativeReplicationRules(profile:.mysql84To57MyISAM)
+    var ignoredCheckCount=0
+    var tableEncodingRanges: [(Range<Int>, DDLTableEncoding)] = []
     init(_ data: Data, database: String?, sqlMode: UInt64 = 0) throws {
+        expressionSQLMode=sqlMode
         realAsFloat = sqlMode & 1 != 0
         self.database = database; tokens = try DDLTokens.lex(data,sqlMode:sqlMode)
     }
@@ -28,6 +35,8 @@ struct DDLParser {
             let charset=CharacterSetRegistry.collation(id:context.clientCharset)?.characterSet
             try require(charset == "utf8mb3" || charset == "utf8mb4", "non-UTF-8 Query-event text needs charset-aware parsing: character_set_client=\(DDLQueryContextDiagnostic.collation(context.clientCharset))")
         }
+        partitionLiteralCharset=context.flatMap { CharacterSetRegistry.collation(id:$0.connectionCollation)?.characterSet } ?? "utf8mb4"
+        expressionSQLMode=context?.sqlMode ?? 0
         realAsFloat=(context?.sqlMode ?? 0) & 1 != 0
         database=query.database
         self.tokens=try tokens ?? DDLTokens.lex(query.sql,sqlMode:context?.sqlMode ?? 0)
@@ -184,7 +193,7 @@ struct DDLParser {
             else if take("DEFAULT") {
                 if isNext("(") {
                     try require(targetVersion != "5.7.","target MySQL 5.7 does not support expression defaults (requires MySQL 8.0.13 or later)")
-                    column.defaultExpression = try DDLExpression.canonical(parenthesized())
+                    column.defaultExpression = try DDLExpression.canonical(parenthesized(),sqlMode:expressionSQLMode)
                     attribute = "default"
                     try require(seen.insert(attribute).inserted,"duplicate DDL column attribute")
                     continue
@@ -204,6 +213,7 @@ struct DDLParser {
                 }
                 attribute = "default"
             }
+            else if isNext("CHECK") { try ignoredCheck(); attribute = "check" }
             else if take("COMMENT") { try consumeCommentLiteral(); attribute = "comment" }
             else if take("AUTO_INCREMENT") { column.extra = "auto_increment"; column.nullable = false; attribute = "extra" }
             else if take("ON") { try expect("UPDATE"); guard let value = try defaultValue(), value.hasPrefix("CURRENT_TIMESTAMP") else { throw ApplyError("unsupported ON UPDATE expression") }; column.extra = "on update "+value; attribute = "extra" }
@@ -211,7 +221,7 @@ struct DDLParser {
             else if take("COLLATE") { column = withCollation(column,try collationName()); attribute = "collation" }
             else if isNext("GENERATED") || isNext("AS") {
                 if take("GENERATED") { _ = take("ALWAYS") }; try expect("AS")
-                column.generationExpression = try DDLExpression.canonical(parenthesized())
+                column.generationExpression = try DDLExpression.canonical(parenthesized(),sqlMode:expressionSQLMode)
                 column.extra = take("STORED") ? "STORED GENERATED" : "VIRTUAL GENERATED"; _ = take("VIRTUAL"); attribute = "extra"
             } else { break }
             try require(seen.insert(attribute).inserted,"duplicate DDL column attribute")
@@ -238,7 +248,7 @@ struct DDLParser {
             var prefix:Int?
             if isNext("(") {
                 try require(targetVersion != "5.7.","target MySQL 5.7 does not support functional indexes (requires MySQL 8.0.13 or later)")
-                expression=try DDLExpression.canonical(parenthesized());column=nil
+                expression=try DDLExpression.canonical(parenthesized(),sqlMode:expressionSQLMode);column=nil
             } else {
                 column=try identifier();expression=nil
                 if take("(") { prefix=try number();try require(fulltext || prefix! > 0,"invalid index prefix");try expect(")") }
@@ -254,8 +264,7 @@ struct DDLParser {
         guard take("CONSTRAINT") else { return nil }
         let name = ["PRIMARY","UNIQUE","FOREIGN","CHECK"].contains(where:isNext) ? nil : try identifier()
         try require(engine == "InnoDB" || !isNext("FOREIGN"),"foreign keys are unsupported by the DDL contract")
-        try require(!isNext("CHECK"),"CHECK constraints are unsupported by the DDL contract")
-        try require(isNext("PRIMARY") || isNext("UNIQUE") || isNext("FOREIGN"),"unsupported DDL constraint: expected PRIMARY KEY or UNIQUE")
+        try require(isNext("PRIMARY") || isNext("UNIQUE") || isNext("FOREIGN") || isNext("CHECK"),"unsupported DDL constraint: expected PRIMARY KEY or UNIQUE")
         return name
     }
     mutating func indexDefinition(constraintName: String? = nil) throws -> ApplyIndex {
@@ -315,12 +324,17 @@ struct DDLParser {
                 result = .alterDatabase(definition)
             } else {
                 try expect("TABLE"); let table = try name(); var actions: [AlterAction] = []
+                var items:[(range:Range<Int>,ignored:Bool)]=[]
                 repeat {
+                    let start=index, count=actions.count
                     if take("ALGORITHM") { _ = take("="); try require(["DEFAULT","COPY","INPLACE"].contains(try identifier().uppercased()),"unsupported ALTER algorithm") }
                     else if take("LOCK") { _ = take("="); try require(["DEFAULT","NONE","SHARED","EXCLUSIVE"].contains(try identifier().uppercased()),"unsupported ALTER lock") }
                     else { actions.append(try alterAction(table:table)) }
-                } while take(",") || isTableOption
+                    let ignored = actions.count > count && actions.last == .ignoredCheck
+                    items.append((try itemRange(from:start),ignored))
+                } while take(",") || isTableOption || isTableEncoding
                 try require(!actions.isEmpty,"ALTER requires an operation")
+                removeIgnoredItems(items)
                 result = Self.statement(table,actions)
             }
         } else if take("RENAME") {
@@ -371,9 +385,13 @@ struct DDLParser {
     mutating func createTable(_ name: TableName,conditional: Bool) throws -> DDLStatement {
         try expect("("); var columns: [ApplyColumn] = [], key: [String]?, indexes: [ApplyIndex] = []
         var foreignKeys: [(ApplyForeignKey,String?)] = []
+        var items:[(range:Range<Int>,ignored:Bool)]=[]
         repeat {
+            let start=index
             let constraint = try constraintName()
-            if isNext("FOREIGN") { foreignKeys.append(try foreignKey(table:name,constraint:constraint)) }
+            let ignored=isNext("CHECK")
+            if ignored { try ignoredCheck() }
+            else if isNext("FOREIGN") { foreignKeys.append(try foreignKey(table:name,constraint:constraint)) }
             else if take("PRIMARY") {
                 try expect("KEY"); let parts = try keyParts(); try require(key == nil && parts.allSatisfy{$0.prefix == nil && $0.column != nil},"invalid DDL primary key"); key = parts.map { $0.column ?? "" }
             } else if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") || isNext("SPATIAL") || isNext("FULLTEXT") { indexes.append(try indexDefinition(constraintName:constraint)) }
@@ -382,7 +400,9 @@ struct DDLParser {
                 try require(columns.count <= 256,"DDL column limit exceeded")
                 if primary { try require(key == nil,"multiple DDL primary keys"); key = [column.name] }
             }
+            items.append((try itemRange(from:start),ignored))
         } while take(",")
+        removeIgnoredItems(items)
         try expect(")")
         // Native reserves explicit names before it names functional indexes.
         var named=indexes.filter { $0.implicitName == nil }
@@ -419,13 +439,33 @@ struct DDLParser {
         return conditional ? .createIfAbsent(schema,engine) : .create(schema,engine)
     }
     mutating func alterAction(table: TableName) throws -> AlterAction {
+        if ["REBUILD","ANALYZE","CHECK","OPTIMIZE","REPAIR"].contains(tokens.indices.contains(index) ? tokens[index].keyword : "") {
+            let end=tokens.last?.keyword == ";" ? tokens.count-1 : tokens.count
+            do {
+                let operation=try SQLPartitionMaintenance.parse(Array(tokens[index..<end]))
+                index=end
+                return .partition(.maintenance(operation))
+            } catch let error as SQLSyntaxError { throw ApplyError(error.message) }
+        }
+        if ["FORCE","ENABLE","DISABLE"].contains(where:isNext) {
+            let end=min(tokens.count,index+(isNext("FORCE") ? 1 : 2))
+            do {
+                let operation=try SQLAlterMaintenance.parse(Array(tokens[index..<end]))
+                index=end;return .maintenance(operation)
+            } catch let error as SQLSyntaxError { throw ApplyError(error.message) }
+        }
+        if isTableEncoding || isNext("CONVERT") { return .encoding(try tableEncodingChange()) }
         if isTableOption { return .tableOption(try tableOption()) }
         if take("ADD") {
             let constraint = try constraintName()
+            if isNext("CHECK") { try ignoredCheck();return .ignoredCheck }
             if isNext("FOREIGN") { let (key,index) = try foreignKey(table:table,constraint:constraint); return .addForeignKey(key,index) }
             if take("PRIMARY") { try expect("KEY"); let parts = try keyParts(); try require(parts.allSatisfy{$0.prefix == nil && $0.column != nil},"primary prefix unsupported"); return .primaryKey(parts.map { $0.column ?? "" }) }
             if isNext("INDEX") || isNext("KEY") || isNext("UNIQUE") || isNext("SPATIAL") || isNext("FULLTEXT") { return .indexes(.add(try indexDefinition(constraintName:constraint))) }
-            if take("PARTITION") { return .partition(.add(try partitionItems(method:"",expression:""))) }
+            if take("PARTITION") {
+                if take("PARTITIONS") { return .partition(.addHash(try number())) }
+                return .partition(.add(try partitionItems(method:"",expression:"")))
+            }
             _ = take("COLUMN"); let (c,primary) = try column(); try require(!primary,"ADD inline primary key is unsupported; use ADD PRIMARY KEY")
             try require(c.nullable || c.hasDefaultValue || c.isGenerated,"ADD NOT NULL requires an explicit default or generated expression")
             return .add(c,try placement() ?? .last)
@@ -448,7 +488,7 @@ struct DDLParser {
             if take("SET") { try expect("DEFAULT")
                 if isNext("(") {
                     try require(targetVersion != "5.7.","target MySQL 5.7 does not support expression defaults (requires MySQL 8.0.13 or later)")
-                    return .defaultExpression(column,try DDLExpression.canonical(parenthesized()))
+                    return .defaultExpression(column,try DDLExpression.canonical(parenthesized(),sqlMode:expressionSQLMode))
                 }
                 let value = try defaultValue(); return .defaultValue(column,value,numeric:numericDefault,bytes:byteDefault,literalBytes:literalDefaultBytes) }
             try expect("DROP"); try expect("DEFAULT"); return .defaultValue(column,nil)
@@ -459,7 +499,7 @@ struct DDLParser {
         if take("TRUNCATE") { try expect("PARTITION"); return .partition(.truncate(try partitionNames())) }
         if take("REORGANIZE") { try expect("PARTITION"); let names = try partitionNames(); try expect("INTO"); return .partition(.reorganize(names,try partitionItems(method:"",expression:""))) }
         if take("COALESCE") { try expect("PARTITION"); return .partition(.coalesce(try number())) }
-        if take("EXCHANGE") { try expect("PARTITION"); let partition = try identifier(); try expect("WITH"); try expect("TABLE"); let table = try name(); if take("WITH") { try expect("VALIDATION") }; return .partition(.exchange(partition,table)) }
+        if take("EXCHANGE") { try expect("PARTITION"); let partition = try identifier(); try expect("WITH"); try expect("TABLE"); let table = try name(); if take("WITH") || take("WITHOUT") { try expect("VALIDATION") }; return .partition(.exchange(partition,table)) }
         throw ApplyError("unsupported ALTER TABLE operation",code:.unsupportedAlter)
     }
 }

@@ -50,16 +50,42 @@ extension ApplyTable {
 extension TargetSession {
     func altering(_ table: ApplyTable,actions: [AlterAction],context: QuerySessionContext) throws -> ApplyTable {
         var result = table
-        let encoding = DDLEncoding(characterSet:table.defaultCharacterSet!,collation:table.defaultCollation!)
+        // MySQL resolves table options for the whole ALTER, even when ADD or
+        // MODIFY appears before the encoding clause in the statement.
+        let (encoding,conversion)=try alterEncoding(table,actions:actions,context:context)
+        result.defaultCharacterSet=encoding.characterSet;result.defaultCollation=encoding.collation
+        if let conversion {
+            var columns=result.columns
+            for i in columns.indices {
+                let name=columns[i].name
+                let replaced=actions.contains { action in
+                    switch action {
+                    case .modify(let old,_,_),.drop(let old): return SQLIdentifier.equal(old,name)
+                    default: return false
+                    }
+                }
+                if !replaced { columns[i]=try convertedColumn(columns[i],table:TableName(database:table.database,table:table.table),encoding:conversion,context:context) }
+            }
+            result=result.replacing(columns:columns)
+        }
+        func resolve(_ definition:ApplyColumn) throws -> ApplyColumn {
+            var column=definition
+            if let conversion,try DMLColumnType(column).isText,column.characterSet != "binary",column.collation != "binary" {
+                column.characterSet=conversion.characterSet;column.collation=conversion.collation
+            }
+            return try resolveColumn(column,parent:encoding,context:context,database:table.database)
+        }
         for action in actions {
             switch action {
+            case .encoding, .ignoredCheck: break
+            case .maintenance: break // Native rebuild/index state does not change the stored column schema.
             case .tableOption: break // Original SQL applies the engine-specific option.
             case .addForeignKey(let key,let index): result = try result.addingForeignKey(key,indexName:index)
             case .dropForeignKey(let name):
                 guard let i = result.foreignKeys.firstIndex(where: { $0.child == result.identity && SQLIdentifier.equal($0.name,name) }) else { throw ApplyError("DROP foreign key is absent") }
                 result.foreignKeys.remove(at:i)
             case .add(let definition,let placement):
-                let column = try resolveColumn(definition,parent:encoding,context:context,database:table.database)
+                let column = try resolve(definition)
                 try require(!result.columns.contains{SQLIdentifier.equal($0.name,column.name)},"DDL ADD column already exists")
                 var columns = result.columns
                 switch placement {
@@ -71,14 +97,14 @@ extension TargetSession {
                 }
                 result = result.replacing(columns:columns)
             case .modify(let old,let definition,let placement):
-                var column = try resolveColumn(definition,parent:encoding,context:context,database:table.database)
+                var column = try resolve(definition)
                 guard let i = result.columns.firstIndex(where:{SQLIdentifier.equal($0.name,old)}) else { throw ApplyError("MODIFY/CHANGE column is absent") }
                 if !SQLIdentifier.equal(old,column.name) {
                     try require(!result.columns.contains{SQLIdentifier.equal($0.name,column.name)},"CHANGE destination column exists")
                     try require(try !result.secondaryIndexes.flatMap(\.parts).contains { try $0.expression.map { try DDLExpression.references(old,in:$0) } == true },"target cannot rename a column used by a functional index; drop that index first")
                     // MySQL rejects renaming a referenced generated/partition
                     // dependency. Do not invent a different expression rewrite.
-                    try require(result.columns.allSatisfy{!($0.generationExpression?.contains((try? quoted(old)) ?? old) ?? false)} && result.partitions.allSatisfy{!$0.expression.contains((try? quoted(old)) ?? old)},"CHANGE of a generated/partition dependency is unsupported")
+                    try require(result.columns.allSatisfy{!($0.generationExpression?.contains((try? quoted(old)) ?? old) ?? false)} && result.partitions.allSatisfy{!$0.expression.contains((try? quoted(old)) ?? old) && ($0.subpartitions ?? []).allSatisfy { !$0.expression.contains((try? quoted(old)) ?? old) }},"CHANGE of a generated/partition dependency is unsupported")
                 }
                 if SQLIdentifier.contains(result.primaryKeyColumns,old) { column.nullable = false }
                 var columns = result.columns; columns.remove(at:i)

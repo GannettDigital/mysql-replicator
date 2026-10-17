@@ -66,9 +66,14 @@ extension TargetSession {
     }
 
     func withMetadataScratch<T>(database:String,body:(String) throws -> T) throws -> T {
-        let name=try quoted(database)+"."+quoted("_replicator_metadata_"+UUID().uuidString.replacingOccurrences(of:"-",with:""))
+        try withMetadataTable(database:database) { try body($0.sql) }
+    }
+
+    func withMetadataTable<T>(database:String,body:(TableName) throws -> T) throws -> T {
+        let table=TableName(database:database,table:"_replicator_metadata_"+UUID().uuidString.replacingOccurrences(of:"-",with:""))
+        let name=try table.sql
         let outcome:Result<T,Error>
-        do { outcome = .success(try body(name)) } catch { outcome = .failure(error) }
+        do { outcome = .success(try body(table)) } catch { outcome = .failure(error) }
         do { _ = try query("DROP TEMPORARY TABLE IF EXISTS "+name,textProtocol:true) }
         catch {
             try? connection.close().wait()

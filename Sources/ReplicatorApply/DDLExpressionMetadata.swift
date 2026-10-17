@@ -30,6 +30,10 @@ extension TargetContract {
         }
         for index in table.secondaryIndexes {
             for part in index.parts {
+                if index.type == "BTREE",let name=part.column,
+                   let column=table.columns.first(where:{SQLIdentifier.equal($0.name,name)}),try DMLColumnType(column).isSpatial {
+                    try require(versionPrefix == "5.7.","target MySQL 8.4 does not support geometry BTREE prefix indexes: index \(index.name), column \(name); native error 1089")
+                }
                 if part.expression != nil {
                     try require(versionPrefix != "5.7.","target MySQL 5.7 does not support functional index \(index.name) (requires MySQL 8.0.13 or later)")
                 }

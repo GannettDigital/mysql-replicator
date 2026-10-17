@@ -6,7 +6,20 @@ enum DDLCompatibilityCases {
     struct Check {
         let sql: String
         let expected: String
-        init(_ sql: String,_ expected: String) { self.sql=sql; self.expected=expected }
+        let fields: [Int]?
+        let myISAMExpected: String?
+        init(_ sql: String,_ expected: String,fields:[Int]? = nil,myISAMExpected:String? = nil) {
+            self.sql=sql;self.expected=expected;self.fields=fields;self.myISAMExpected=myISAMExpected
+        }
+        func expected(engine:String) -> String { engine == "MyISAM" ? (myISAMExpected ?? expected) : expected }
+        func observation(_ value:String) throws -> String {
+            guard let fields else {return value}
+            return try value.components(separatedBy:"\n").map { row in
+                let columns=row.components(separatedBy:"\t")
+                try require(fields.allSatisfy { $0 >= 0 && $0 < columns.count },"missing field in native SQL observation")
+                return fields.map { columns[$0] }.joined(separator:"\t")
+            }.joined(separator:"\n")
+        }
     }
     struct Step {
         let sql: String
@@ -14,25 +27,41 @@ enum DDLCompatibilityCases {
         let sqlTransactional: String
         var transactions = 1
         var restartBefore = false
-        init(_ sql: String,_ checks: [Check] = [], sqlTransactional: String? = nil,restartBefore:Bool = false) { self.restartBefore=restartBefore;self.sql=sql; self.checks=checks; self.sqlTransactional=sqlTransactional ?? sql }
+        init(_ sql: String,_ checks: [Check] = [], sqlTransactional: String? = nil,restartBefore:Bool = false,transactions:Int = 1) { self.transactions=transactions;self.restartBefore=restartBefore;self.sql=sql; self.checks=checks; self.sqlTransactional=sqlTransactional ?? sql }
     }
     struct Case {
         let test: QualificationCase
         let steps: [Step]
         let nativeInnoDB: Bool
-        init(_ id: String,_ description: String,_ steps: [Step],nativeInnoDB: Bool = false,file: String = #filePath,line: UInt = #line) {
+        let profileExclusions: [LabProfile:String]
+        init(_ id: String,_ description: String,_ steps: [Step],nativeInnoDB: Bool = false,profileExclusions: [LabProfile:String] = [:],file: String = #filePath,line: UInt = #line) {
             test=QualificationCase("ddl-compat-"+id,description,file:file,line:line)
-            self.steps=steps; self.nativeInnoDB=nativeInnoDB
+            self.steps=steps; self.nativeInnoDB=nativeInnoDB; self.profileExclusions=profileExclusions
         }
     }
     static let cases: [Case] = [
+        partitionExpressions,
+        partitionColumnBounds,
+        partitionExchangeUnchecked,
+        partitionKeyAlgorithm,
+        partitionMaintenance,
+        subpartitions,
+        partitionHashForms,
+        generatedExpressions,
         unicodeNames,
         encodedQueryText,
         tableNameCase,
         fulltextIndexes,
+        spatialPrefixIndexes,
         jsonGeneratedIndexes,
         tableOptions,
+        tableMaintenance,
+        ignoredChecks,
         alterConversions,
+        tableCharset,
+        charsetConversion,
+        compoundCharset,
+        charsetDefaults,
         multiTableDDL,
         crossSchemaRelationships,
         .init("constraints","Named PRIMARY/UNIQUE constraints in CREATE and ALTER preserve index names and following DML",[

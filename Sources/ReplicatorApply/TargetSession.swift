@@ -163,7 +163,7 @@ final class TargetSession {
             let encoding=try tableEncoding(TableName(database:database,table:name))
             table.defaultCharacterSet=encoding.characterSet;table.defaultCollation=encoding.collation
             table.secondaryIndexes=try readIndexes(database:database,name:name,primaryKey:table.primaryKeyColumns)
-            table.partitions=try readPartitions(database:database,name:name)
+            table.partitions=try readPartitions(database:database,name:name,columns:table.columns)
             if contract.transactional && validateRelationships { table.foreignKeys = try readForeignKeys(TableName(database:database,table:name)) }
             try table.validate()
             try contract.validateSchemaFeatures(table)
@@ -279,7 +279,7 @@ final class TargetSession {
         try require(try readIndexes(database:t.database,name:t.table,primaryKey:t.primaryKeyColumns) == t.secondaryIndexes,"target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
         try require(try query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",binds).0.isEmpty,"target triggers are unsupported")
-        try require(try readPartitions(database:t.database,name:t.table) == t.partitions,"target partition layout differs from historical schema")
+        try require(try readPartitions(database:t.database,name:t.table,columns:t.columns) == t.partitions,"target partition layout differs from historical schema")
     }
     private func verifyTriggerVisibility(_ t: ApplyTable) throws {
         let binds = [MySQLData(string:t.database),MySQLData(string:t.table)]

@@ -16,7 +16,11 @@ COPY tools/build_dependencies.py tools/swift_cache.py tools/
 # Ordinary layers retain objects, build databases and dependency checkouts.
 # Application edits do not invalidate this expensive dependency compilation.
 RUN python3 tools/build_dependencies.py --configuration release --enable-code-coverage --jobs 2 --force-resolved-versions
-FROM dependencies AS build
+FROM dependencies AS sql-syntax
+COPY Sources/MySQLSyntax Sources/MySQLSyntax
+COPY tools/build_syntax.py tools/
+RUN python3 tools/build_syntax.py --configuration release --enable-code-coverage --jobs 2 --force-resolved-versions
+FROM sql-syntax AS build
 COPY Sources Sources
 COPY tests tests
 COPY rust rust

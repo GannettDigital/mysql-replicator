@@ -49,8 +49,9 @@ struct LabScenario {
             return item
         }
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
-        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
+        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",profileExclusions:$0.profileExclusions,smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,profileExclusions:$0.profileExclusions,smoke:$0.id == "composite") }
+        cases.append(.init(test:.init("check-target57-limits","Reject enforced 8.4 CHECK constraints before target DDL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source with enforced CHECK constraints.",intent:"reject before target SQL"))
         cases.append(.init(test:.init("json-target57-limits","Native 5.7 version and MyISAM engine limits stop JSON DDL before target SQL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source to emit expression defaults and functional indexes.",intent:"reject before target SQL"))
         cases.append(.init(test:.init("json-target84-schema","Existing 8.4 JSON defaults and functional indexes survive DML, restart and replay"),family:"bootstrap",profileExclusions:[.forward:"Requires an 8.4 target.",.mysql57MyISAM:"Requires an 8.4 target.",.mysql57InnoDB:"Requires an 8.4 target."]))
         cases.append(.init(test:.init("json-year-compatibility","Explicit JSON YEAR conversion, strict refusal, restart and offline replay"),family:"dml",profileExclusions:[.forward:"Requires the 5.7 to 8.4 JSON YEAR conversion policy.",.mysql57MyISAM:"5.7 targets retain JSON YEAR without conversion.",.mysql57InnoDB:"5.7 targets retain JSON YEAR without conversion."]))
