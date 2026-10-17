@@ -36,6 +36,7 @@ extension SharedCorrectness.Run {
                 isolated.state("json-year-strict", "SELECT transactions_applied FROM state") == "1",
                 "strict JSON refusal advanced checkpoint")
             _ = try f.sql(.target, seed)
+            try isolated.resetTargetGTIDs(at: start)
             var config = initial
             config["compatibility"] = ["jsonYearToInteger": true]
             func live(_ label: String, count: Int, initialize: Bool = false) throws -> [String: Any] {
@@ -113,6 +114,7 @@ extension SharedCorrectness.Run {
             }
             _ = try invoke("json-year-fetch", "fetch")
             _ = try f.sql(.target, seed)
+            try isolated.resetTargetGTIDs(at: start)
             f.config["stateDirectory"] = "/evidence/json-year-replay"
             source["host"] = "127.0.0.1"
             source["port"] = 1
