@@ -687,7 +687,7 @@ public enum SharedCorrectness {
                         let currentSchema=try JSONSerialization.jsonObject(with:Data(current.utf8)) as? [String:Any]
                         try require(NSDictionary(dictionary:schema ?? [:]).isEqual(to:currentSchema ?? [:]),"published schema differs from the DDL transition")
                         try require((schema?["columns"] as? [[String:Any]])?.count == 4 && schema?["secondaryIndexes"] is [[String:Any]],"extended schema metadata missing")
-                        try require(state(saved,"PRAGMA user_version") == "12","state version gate differs")
+                        try require(state(saved,"PRAGMA user_version") == "13","state version gate differs")
                         return ["intent":intent,"schema":schema ?? [:],"following_row_intents":references] as [String:Any]
                     }
                     try assertion("normalized-binlog",caseID:test.test.id) { try binlogAssertion(test,starts:starts) }
