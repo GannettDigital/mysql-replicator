@@ -54,7 +54,7 @@ struct LabScenario {
             return item
         }
         cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
-        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",profileExclusions:$0.profileExclusions,smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
+        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:["ddl-compat-foreign-key-controls","ddl-compat-foreign-key-ddl","ddl-compat-foreign-key-missing-parent","ddl-compat-foreign-key-parent-keys","ddl-compat-foreign-key-syntax-columns","ddl-compat-foreign-key-cross-database","ddl-compat-foreign-key-generated","ddl-compat-foreign-key-compound-indexes"].contains($0.test.id) ? "foreign-keys" : "ddl",profileExclusions:$0.profileExclusions,smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
         cases.append(.init(test:.init("create-select-contract","Native permanent CTAS restrictions and unchanged target progress"),family:"rejections",intent:"source or target restriction; no partial apply"))
         cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,profileExclusions:$0.profileExclusions,smoke:$0.id == "composite") }
         cases.append(.init(test:.init("check-target57-limits","Reject enforced 8.4 CHECK constraints before target DDL"),family:"rejections",source84OnlyReason:"Requires an 8.4 source with enforced CHECK constraints.",intent:"reject before target SQL"))

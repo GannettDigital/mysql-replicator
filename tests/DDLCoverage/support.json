@@ -1270,8 +1270,8 @@
       "stage": 4,
       "family": "rows",
       "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "eligibility": "eligible",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -1285,9 +1285,9 @@
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Tables require a supported primary key.",
+      "source_behavior": "Tables can use a nonnullable unique index without a declared primary key. FULL metadata can report a promoted internal primary key.",
+      "native_behavior": "Native row apply first seeks a primary key, then a nonnullable unique key whose columns are present. Other lookup methods remain separate.",
+      "current_behavior": "Select and save a full nonnullable scalar unique index when no primary key exists. Use its values for row matching and recovery. Shared cases cover key changes, ordered DDL, restart and replay. Nullable, prefix, generated and expression identities remain outside this fallback.",
       "acceptance": "Use eligible unique keys without ambiguous NULL or prefix comparisons.",
       "assertions": [
         "source_outcome",
@@ -1296,19 +1296,35 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
-      "code_references": [
-        "Sources/ReplicatorApply/DMLTablePlan.swift"
+      "candidate_cases": [
+        "ddl-compat-unique-row-identity"
       ],
-      "native_references": []
+      "code_references": [
+        "Sources/ReplicatorApply/RowIdentity.swift",
+        "Sources/ReplicatorApply/DMLTablePlan.swift",
+        "Sources/ReplicatorApply/Recovery.swift",
+        "Sources/ReplicatorLabCore/UniqueKeyCases.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/log_event.cc",
+          "symbol": "search_key_in_table"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/log_event.cc",
+          "symbol": "Table_map_log_event::init_primary_key_field"
+        }
+      ]
     },
     {
       "id": "rows.keyless",
       "stage": 4,
       "family": "rows",
       "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "eligibility": "eligible",
+      "implementation": "subset",
       "profiles": [
         "mysql84-to-mysql57-myisam",
         "mysql57-to-mysql84-innodb",
@@ -1322,9 +1338,9 @@
         "GTID restrictions apply with GTID and file-position capture.",
         "ROW logging and a matching target baseline are required."
       ],
-      "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Tables without a supported primary key are rejected.",
+      "source_behavior": "Source row events can describe tables without a usable unique key, including identical row copies.",
+      "native_behavior": "Native row apply can scan and compare binary field contents. Each row event changes one matching copy.",
+      "current_behavior": "Save a fullRow identity and use all base fields with exact text, NULL, decimal, signed-zero and typed-JSON predicates. UPDATE and DELETE affect one copy. Recovery retains each operation without unique-key folding. Selected shared cases cover restart, replay and partial-write or rollback behavior; full boundary qualification remains open.",
       "acceptance": "Preserve duplicate-row multiplicity; record recovery uncertainty for full-row matching.",
       "assertions": [
         "source_outcome",
@@ -1333,11 +1349,27 @@
         "checkpoint_and_restart",
         "failure_state"
       ],
-      "candidate_cases": [],
-      "code_references": [
-        "Sources/ReplicatorApply/DMLTablePlan.swift"
+      "candidate_cases": [
+        "ddl-compat-keyless-rows"
       ],
-      "native_references": []
+      "code_references": [
+        "Sources/ReplicatorApply/RowIdentity.swift",
+        "Sources/ReplicatorApply/FullRowPredicate.swift",
+        "Sources/ReplicatorApply/Recovery.swift",
+        "Sources/ReplicatorLabCore/KeylessCases.swift"
+      ],
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/log_event.cc",
+          "symbol": "record_compare"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/log_event.cc",
+          "symbol": "do_table_scan_and_update"
+        }
+      ]
     },
     {
       "id": "rows.myisam-groups",
@@ -1441,8 +1473,8 @@
         "ROW logging and a matching target baseline are required."
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Self-references, cycles and some parent keys are rejected.",
+      "native_behavior": "Native row application restores NO_FOREIGN_KEY_CHECKS_F. InnoDB performs unlogged cascades and permits self-references and cycles subject to its action limits.",
+      "current_behavior": "Self-references, cycles, source check settings, supporting-index additions, FK-column renames and internal database DROP are implemented. Missing-parent relationships and parent recreation are supported. Native InnoDB parent-key rules accept nonunique, composite-prefix and extended indexes. FK names, MySQL 5.7 MATCH actions and native column storage rules are supported. Cross-database drops record surviving relationship schemas. Stored generated FK columns use native action limits. Virtual FK columns remain a native restriction. Selected compound FK/index/column changes use compact, exact index-choice records. Other ALTER combinations still need qualification.",
       "acceptance": "Preserve native-valid relationships, DDL dependencies, cascades and rollback.",
       "assertions": [
         "source_outcome",
@@ -1452,20 +1484,52 @@
         "failure_state"
       ],
       "candidate_cases": [
-        "foreign-key-safety"
+        "foreign-keys",
+        "foreign-key-safety",
+        "ddl-compat-foreign-key-controls",
+        "ddl-compat-foreign-key-ddl",
+        "ddl-compat-foreign-key-missing-parent",
+        "ddl-compat-foreign-key-parent-keys",
+        "ddl-compat-foreign-key-syntax-columns",
+        "ddl-compat-foreign-key-cross-database",
+        "ddl-compat-foreign-key-generated",
+        "ddl-compat-foreign-key-compound-indexes"
       ],
       "code_references": [
-        "Sources/ReplicatorApply/ForeignKeys.swift"
+        "Sources/ReplicatorApply/ForeignKeys.swift",
+        "Sources/ReplicatorApply/ForeignKeyIndexes.swift",
+        "Sources/ReplicatorApply/DDLForeignKeys.swift"
       ],
-      "native_references": []
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/log_event.cc",
+          "symbol": "Rows_log_event::do_apply_event"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/log_event.cc",
+          "symbol": "Rows_log_event::do_apply_event"
+        },
+        {
+          "repository": "mysql57",
+          "path": "storage/innobase/row/row0ins.cc",
+          "symbol": "row_ins_foreign_check_on_constraint"
+        },
+        {
+          "repository": "mysql57",
+          "path": "sql/sql_table.cc",
+          "symbol": "mysql_prepare_create_table"
+        }
+      ]
     },
     {
       "id": "rows.foreign-key-checks",
       "stage": 4,
       "family": "rows",
       "classification": "tool_gap",
-      "eligibility": "needs_native_review",
-      "implementation": "missing",
+      "eligibility": "eligible",
+      "implementation": "subset",
       "profiles": [
         "mysql57-to-mysql84-innodb",
         "mysql57-to-mysql57-innodb"
@@ -1478,8 +1542,8 @@
         "ROW logging and a matching target baseline are required."
       ],
       "source_behavior": "Source accepts supported forms; record source-version exceptions.",
-      "native_behavior": "Confirm the exact SQL form and settings against the pinned native server.",
-      "current_behavior": "Source events with FK checks disabled are rejected.",
+      "native_behavior": "Native row application restores NO_FOREIGN_KEY_CHECKS_F. InnoDB performs unlogged cascades and permits self-references and cycles subject to its action limits.",
+      "current_behavior": "Self-references, cycles, per-event foreign_key_checks, missing-parent DDL and parent recreation are supported. Native InnoDB parent-key rules accept nonunique, composite-prefix and extended indexes. Some compound relationship changes remain outside the subset.",
       "acceptance": "Reproduce recorded source effects without duplicate target cascades.",
       "assertions": [
         "source_outcome",
@@ -1489,12 +1553,30 @@
         "failure_state"
       ],
       "candidate_cases": [
-        "foreign-key-safety"
+        "foreign-keys",
+        "foreign-key-safety",
+        "ddl-compat-foreign-key-controls"
       ],
       "code_references": [
         "Sources/ReplicatorApply/ForeignKeys.swift"
       ],
-      "native_references": []
+      "native_references": [
+        {
+          "repository": "mysql57",
+          "path": "sql/log_event.cc",
+          "symbol": "Rows_log_event::do_apply_event"
+        },
+        {
+          "repository": "mysql84",
+          "path": "sql/log_event.cc",
+          "symbol": "Rows_log_event::do_apply_event"
+        },
+        {
+          "repository": "mysql57",
+          "path": "storage/innobase/row/row0ins.cc",
+          "symbol": "row_ins_foreign_check_on_constraint"
+        }
+      ]
     },
     {
       "id": "policy.filter-relationships",

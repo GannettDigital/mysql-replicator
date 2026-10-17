@@ -184,7 +184,28 @@ replication, exercises cascades, composite references, ordered DDL and restart,
 and checks exclusions, rollback and offline recovery relationship evidence.
 It runs as its own parallel CI area. Use
 `make correctness PROFILE=mysql57-to-mysql84-innodb ARGS="--family foreign-keys"`.
-MyISAM profiles retain `reject-foreign-key`.
+The family also includes `ddl-compat-foreign-key-controls`. It checks
+self-references, cycles, source check settings, restart and offline replay.
+`ddl-compat-foreign-key-ddl` checks supporting indexes, FK-column renames, internal
+database DROP and replay through the saved schema history. It also checks journal
+records for FK tables with no captured events. The safety case adds an incoming
+FK only on the target. It checks that DROP fails before SQL and keeps the checkpoint.
+`ddl-compat-foreign-key-missing-parent` checks missing parents, parent recreation,
+restart and replay while the parent is absent.
+`ddl-compat-foreign-key-parent-keys` checks native nonunique, composite-prefix and
+extended parent keys, cascades, restart and replay.
+`ddl-compat-foreign-key-syntax-columns` checks constraint and index names, MATCH
+action translation, native-compatible column types, cascades, restart and replay.
+`ddl-compat-foreign-key-cross-database` checks child database DROP, parent DROP
+with source checks disabled, surviving relationships, parent recreation, restart
+and replay while the parent database is absent. It compares both databases.
+`ddl-compat-foreign-key-generated` checks stored generated parent and child columns,
+cascades, native virtual/action rejection, restart and replay.
+`ddl-compat-foreign-key-compound-indexes` checks multiple FK additions mixed with
+index and column changes. It checks the index-choice journal, actual saved schema,
+restart and replay.
+`reject-foreign-key` tests a missing parent index on InnoDB and
+foreign-key DDL refusal on MyISAM.
 
 The `filters` family runs wildcard exclusions, saved-state resume and included-DDL
 refusal on all profiles. It keeps the independent native/target binlog oracle as

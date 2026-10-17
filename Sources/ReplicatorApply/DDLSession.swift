@@ -33,13 +33,26 @@ extension TargetSession {
         let exists = try scalar("SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",[.init(string:name)]) != "0"
         try require(exists || conditional,"DDL DROP DATABASE target is absent")
         let before = exists ? try databaseEncoding(name) : nil
+        var retired = discovered.filter { SQLTextBytes.equal($0.value.database,name) }
         if contract.transactional && exists {
-            try require(try scalar("SELECT COUNT(*) AS v FROM information_schema.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_NAME IS NOT NULL AND (TABLE_SCHEMA=? OR REFERENCED_TABLE_SCHEMA=?)",[.init(string:name),.init(string:name)]) == "0","DROP DATABASE with foreign keys is unsupported; drop constraints first")
+            try requireForeignKeyVisibility()
+            // Include every FK participant in this database, even if no row
+            // event has loaded it. The graph planner also loads outside tables.
+            let rows = try query("SELECT DISTINCT BINARY TABLE_NAME AS name FROM information_schema.KEY_COLUMN_USAGE WHERE BINARY TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL UNION SELECT DISTINCT BINARY REFERENCED_TABLE_NAME AS name FROM information_schema.KEY_COLUMN_USAGE WHERE BINARY REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL",[.init(string:name),.init(string:name)]).0
+            for row in rows {
+                guard let table = row.column("name")?.string else { throw ApplyError("missing DROP DATABASE relationship table") }
+                guard try tableExists(TableName(database:name,table:table)) else { continue }
+                let schema = try readSchema(database:name,name:table)
+                if let known = discovered[schema.identity] { try require(known == schema,"target schema drift before DROP DATABASE") }
+                retired[schema.identity] = schema
+                try require(retired.count <= maximumCachedTables,"DROP DATABASE schema limit exceeded")
+            }
         }
-        // Retire every known table in this database atomically with the GTID.
-        // Unseen objects need no invented table-schema records.
-        let changes = discovered.values.filter{SQLTextBytes.equal($0.database,name)}.map{SchemaTransition(before:$0,after:nil)}
+        // Record each affected FK participant, including tables not yet used by
+        // a row event. Retire these snapshots with the database's source GTID.
+        let changes = retired.keys.sorted().map { SchemaTransition(before:retired[$0],after:nil) }
+        let plan = try prepareForeignKeyTransitions(PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),database:PreparedDatabaseDDL(name:name,before:before,after:nil,serverCollation:nil),additional:changes),foreignKeyChecks:context.foreignKeyChecks)
         try setDDLSession(context,source:source,useDatabase:false)
-        return PreparedDDL(statement:statement,before:nil,after:nil,sql:String(decoding:source.sql,as:UTF8.self),database:PreparedDatabaseDDL(name:name,before:before,after:nil,serverCollation:nil),additional:changes)
+        return plan
     }
 }

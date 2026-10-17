@@ -78,6 +78,9 @@ extension InnoDBTargetContract {
         // writes generate target-local GTIDs; upstream progress lives in SQLite.
         try require(try target.scalar("SELECT @@SESSION.GTID_NEXT AS v") == "AUTOMATIC","target session requires automatic local GTIDs")
         _ = try target.query("SET SESSION foreign_key_checks=1,unique_checks=1")
+        if let sql = NativeReplicationRules(profile:target.config.replicationProfile).foreignKeySessionSQL {
+            _ = try target.query(sql)
+        }
     }
     func validateTable(_ table: ApplyTable, target: TargetSession) throws {
         try target.validateForeignKeys(table)

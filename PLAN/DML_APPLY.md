@@ -122,12 +122,14 @@ Capture and apply use separate timing collectors; their elapsed times overlap.
   table. Multi-row events/statements and primary-key changes are supported within
   this subset. Multi-statement groups are rejected before any target mutation,
   consistent with the accepted native MyISAM expected-negative reference.
-- ASCII SQL identifiers (quoted, never interpolated unescaped); a primary key with 1–16 full,
-  nonnullable supported scalar columns, including DATE/integer composite keys. Named ordinary/unique BTREE secondary indexes
+- Prefer a primary key or eligible UNIQUE index with 1–16 full, nonnullable
+  supported base scalar columns, including DATE/integer composite keys. Without
+  such a key, use [full-row matching](KEYLESS_ROWS.md) and change one matching copy.
+  Named ordinary/unique BTREE secondary indexes
   are supported as described in [the MODIFY/index slice](DDL_MODIFY_AND_INDEXES.md);
-  row identity still uses the primary key. Target triggers are rejected. The
+  key selection is described in [beta.6 row identity](ROW_IDENTITY.md). Target triggers are rejected. The
   [DDL compatibility increment](DDL_COMPATIBILITY.md) adds bounded generated
-  columns and partitioned targets. Prepared targets may use an integer primary-key
+  columns and partitioned targets. Prepared targets may use an indexed integer
   AUTO_INCREMENT, literal defaults and temporal CURRENT_TIMESTAMP defaults/on-update
   attributes. All row values, including generated IDs and source-evaluated temporal
   values, are supplied explicitly. Generated-expression columns are the exception:
@@ -254,13 +256,16 @@ Changed metadata is revalidated; row values are still validated individually.
 Ordered DDL replaces this cache after execution drains. The SQL worker owns
 separate immutable column descriptors for exact target result decoding.
 A successful SQL response with the expected count acknowledges the row; there is
-no post-write SELECT. This acknowledges MyISAM's write acceptance, not a guarantee
-of crash durability or atomicity with SQLite. Full primary-key tuples identify rows. Text comparisons
+no general post-write SELECT. Generated columns and ENUM zero retain their
+specific post-write checks. Acceptance does not prove MyISAM crash durability or
+atomicity with SQLite. Primary or selected unique-key tuples identify rows.
+Without a usable key, full-row matching preserves duplicate counts. Text comparisons
 use stored UTF-8 bytes, not collation or Swift's canonical Unicode equivalence;
 binary values and full unsigned 64-bit values remain exact. Plain INSERT relies
 on MySQL to reject duplicate primary/unique keys, without an existence SELECT;
-UPDATE/DELETE require the full matching before image. Key changes also
-require the destination key to be absent. Drift is an error, never an upsert.
+UPDATE/DELETE require the full matching before image. A changed primary or unique
+key must not identify another row. A changed full-row image may create another
+identical copy. Drift is an error, never an upsert.
 
 Raw live events, including required format/rotation/heartbeat context, go to
 `relay.frames`. Each record contains little-endian UInt32 metadata length and

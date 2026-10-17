@@ -152,7 +152,8 @@ public struct ApplyTable: Codable, Equatable {
     /// Complete connected relationship component, including inbound cascades.
     public var foreignKeys: [ApplyForeignKey] = []
     let identity: SQLNameKey
-    var keyIndexes: [Int] { primaryKeyColumns.map { name in columns.firstIndex { SQLIdentifier.equal($0.name,name) }! } }
+    var savedRowIdentity: RowIdentity? = nil
+    var keyIndexes: [Int] { (rowIdentity?.columns ?? []).map { name in columns.firstIndex { SQLIdentifier.equal($0.name,name) }! } }
     var keyIndex: Int { keyIndexes[0] }
     init(database: String, table: String, columns: [ApplyColumn], primaryKey: String,
          defaultCharacterSet: String? = nil, defaultCollation: String? = nil, secondaryIndexes: [ApplyIndex] = [], partitions: [ApplyPartition] = [], foreignKeys: [ApplyForeignKey] = []) {
@@ -166,7 +167,7 @@ public struct ApplyTable: Codable, Equatable {
         self.partitions=partitions; self.foreignKeys=foreignKeys
     }
     var sqlName: String { get throws { try quoted(database) + "." + quoted(table) } }
-    func validate() throws {
+    func validate(requireRowIdentity:Bool = true) throws {
         _ = try sqlName
         try require(!columns.isEmpty && columns.count <= 256 && Set(columns.map { SQLIdentifier.key($0.name) }).count == columns.count,"invalid column manifest")
         for c in columns { try c.validate() }
@@ -216,17 +217,18 @@ public struct ApplyTable: Codable, Equatable {
                 if let prefix=part.prefix { try require(prefix > 0 && (type.isSpatial || (column.width != nil && prefix <= column.width!)),"invalid index prefix") }
             }
         }
-        try require((1...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,"invalid primary-key columns")
-        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy{SQLIdentifier.contains(primaryKeyColumns,$0.name)},"auto-increment requires a primary-key column")
+        try require((0...16).contains(primaryKeyColumns.count) && Set(primaryKeyColumns.map(SQLIdentifier.key)).count == primaryKeyColumns.count,"invalid primary-key columns")
+        try require(columns.filter{$0.extra == "auto_increment"}.allSatisfy { column in SQLIdentifier.contains(primaryKeyColumns,column.name) || secondaryIndexes.contains { $0.parts.contains { SQLIdentifier.equal($0.column ?? "",column.name) } } },"auto-increment requires an indexed column")
         for name in primaryKeyColumns {
             guard let key = columns.first(where:{SQLIdentifier.equal($0.name,name)}) else { throw ApplyError("missing primary key column") }
             let type = try DMLColumnType(key)
             try require(!key.nullable && !key.isGenerated && !type.isSpatial && !type.base.hasSuffix("text") && !type.base.hasSuffix("blob") && type.base != "json","primary key requires full nonnullable supported base scalar columns")
         }
+        if requireRowIdentity { try validateRowIdentity() }
     }
 }
 extension ApplyTable {
-    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions,foreignKeys }
+    enum CodingKeys: String, CodingKey { case database,table,columns,primaryKey,primaryKeyColumns,rowIdentity,defaultCharacterSet,defaultCollation,secondaryIndexes,partitions,foreignKeys }
     public init(from decoder: Decoder) throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
         database=try c.decode(String.self,forKey:.database); table=try c.decode(String.self,forKey:.table)
@@ -241,12 +243,15 @@ extension ApplyTable {
         secondaryIndexes=try c.decodeIfPresent([ApplyIndex].self,forKey:.secondaryIndexes) ?? []
         partitions=try c.decodeIfPresent([ApplyPartition].self,forKey:.partitions) ?? []
         foreignKeys=try c.decodeIfPresent([ApplyForeignKey].self,forKey:.foreignKeys) ?? []
+        savedRowIdentity=try c.decodeIfPresent(RowIdentity.self,forKey:.rowIdentity)
+        if savedRowIdentity != nil { try validateRowIdentity() }
     }
     public func encode(to encoder: Encoder) throws {
         var c=encoder.container(keyedBy:CodingKeys.self)
         try c.encode(database,forKey:.database); try c.encode(table,forKey:.table); try c.encode(columns,forKey:.columns)
         if primaryKeyColumns.count == 1 { try c.encode(primaryKey,forKey:.primaryKey) }
         else { try c.encode(primaryKeyColumns,forKey:.primaryKeyColumns) }
+        if primaryKeyColumns.isEmpty { try c.encodeIfPresent(rowIdentity,forKey:.rowIdentity) }
         try c.encodeIfPresent(defaultCharacterSet,forKey:.defaultCharacterSet)
         try c.encodeIfPresent(defaultCollation,forKey:.defaultCollation)
         try c.encode(secondaryIndexes,forKey:.secondaryIndexes)
@@ -375,6 +380,7 @@ struct Mutation {
     let row: DecodedRow
     let eventOffset: String
     let rowIndex: Int
+    var foreignKeyChecks = true
 }
 enum DMLPlan {
     /// Validate the entire group before the first mutation. The MyISAM contract
@@ -412,7 +418,7 @@ enum DMLPlan {
                 try require((row.before != nil) == (row.operation != "insert") && (row.after != nil) == (row.operation != "delete"),"invalid row image shape")
                 if let before = row.before { try plan.validate(before) }
                 if let after = row.after { try plan.validate(after) }
-                result.append(Mutation(table:plan.table,row:row,eventOffset:event.offset,rowIndex:index))
+                result.append(Mutation(table:plan.table,row:row,eventOffset:event.offset,rowIndex:index,foreignKeyChecks:event.rowFlags! & 2 == 0))
             }
         }
         try require(!result.isEmpty,"initial applier requires a single-table DML statement")

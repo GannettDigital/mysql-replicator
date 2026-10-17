@@ -69,7 +69,7 @@ enum RecoveryRelay {
                 let row = event.rows[intent.row], plan = try DMLTablePlan(intent.table)
                 if let before=row.before { try plan.validate(before) }
                 if let after=row.after { try plan.validate(after) }
-                groups[group].rows.append(.init(ordinal:intent.ordinal,status:intent.status,schemaID:intent.schemaID,schema:intent.table,sourceEventOffset:intent.offset,sourceRow:intent.row,operation:row.operation,beforeKey:row.before.map { values in intent.table.keyIndexes.map{values[$0]} },afterKey:row.after.map { values in intent.table.keyIndexes.map{values[$0]} },before:row.before,after:row.after))
+                groups[group].rows.append(.init(ordinal:intent.ordinal,status:intent.status,schemaID:intent.schemaID,schema:intent.table,sourceEventOffset:intent.offset,sourceRow:intent.row,operation:row.operation,beforeKey:intent.table.usesFullRowIdentity ? nil : row.before.map { values in intent.table.keyIndexes.map{values[$0]} },afterKey:intent.table.usesFullRowIdentity ? nil : row.after.map { values in intent.table.keyIndexes.map{values[$0]} },before:row.before,after:row.after,foreignKeyChecks:event.rowFlags! & 2 == 0))
                 found.insert(key)
             }
         }

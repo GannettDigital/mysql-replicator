@@ -11,7 +11,12 @@ The four [profiles in the README](../README.md#tested-profiles) select explicit
 source versions, target versions, and target engines. Other combinations are not
 tested. Initial copying, engine conversion, and server upgrades are external tasks.
 The target must have a matching baseline and no independent writers or native
-replication channels. Each replicated table needs a supported primary key.
+replication channels. The applier prefers a supported primary key, then a unique
+key with full, nonnullable base scalar columns. Otherwise it matches the full
+base-row image and changes one matching row per row event. Duplicate rows and
+nullable keys use this path. It can require a table scan for each row event.
+See [key selection](../PLAN/ROW_IDENTITY.md) and
+[full-row matching and recovery](../PLAN/KEYLESS_ROWS.md).
 
 Sources use ROW logging, FULL row images, CRC32 checksums, and GTIDs. A MySQL 5.7
 source requires GTID capture; the 8.4 profile also permits file-position capture.
@@ -188,9 +193,26 @@ It is a subset of MySQL SQL. Important exclusions and policies are:
   MySQL 8.4 column SRID attributes remain unsupported. Stored
   spatial bytes can have different function semantics across server versions.
 - InnoDB foreign keys use the [documented subset](../PLAN/MYSQL57_FOREIGN_KEYS.md).
-  Self-references, cycles, incomplete or nonunique parent keys, generated FK
-  columns, partitioned participants, and source events with checks disabled
-  remain unsupported. Filters cannot split a foreign-key relationship.
+  Self-references, cycles and source `foreign_key_checks` settings are supported.
+  Nonunique parent indexes, leading columns of composite keys, and clustered-key
+  extensions are supported. MySQL 8.4 sessions use native replica-thread settings.
+  See [parent-key rules](../PLAN/FOREIGN_KEY_PARENT_KEYS.md). Named supporting
+  indexes, unnamed constraints and MySQL 5.7 MATCH behavior are supported. Column
+  checks use native InnoDB storage rules, including different string lengths. See
+  [FK syntax and columns](../PLAN/FOREIGN_KEY_SYNTAX_COLUMNS.md). Stored generated FK
+  columns are supported with native action limits. Virtual FK columns and partitioned
+  participants have native restrictions. See [generated FKs](../PLAN/GENERATED_COLUMN_FOREIGN_KEYS.md).
+  Filters cannot split a relationship.
+  Missing-parent FKs are supported with source checks disabled for DDL. The
+  target still enforces each row event’s check setting. See
+  [missing-parent behavior](../PLAN/MISSING_PARENT_FOREIGN_KEYS.md).
+  Compound FK/index/column changes are tested with exact index-choice records.
+  See [compound ALTER scope](../PLAN/COMPOUND_FOREIGN_KEY_INDEXES.md).
+  Supporting-index additions, FK-column renames and cross-database DROP are
+  implemented. A parent database DROP requires disabled source checks when an
+  outside child still references it. See [database drops](../PLAN/CROSS_DATABASE_FOREIGN_KEYS.md),
+  [FK DDL scope](../PLAN/FOREIGN_KEY_DDL.md) and
+  [check settings](../PLAN/FOREIGN_KEY_CONTROLS.md) for limits.
 
 Selected error skips do not make unsupported behavior correct. See
 [error handling and recovery](OFFLINE_REPLAY.md) before enabling skips.

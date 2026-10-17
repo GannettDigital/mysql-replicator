@@ -156,7 +156,8 @@ extension TargetSession {
         return JSONSQL.document(document,scalars:scalars)
     }
     func verifyJSONTypes(_ document:JSONDocument,column:String,table:ApplyTable,key:[DecodedValue]) throws {
-        let predicate=try table.keyIndexes.map { index in
+        let fullRow=try table.usesFullRowIdentity ? FullRowPredicate.make(table:table,types:DMLTablePlan(table).columnTypes,values:key,compatibility:config.compatibilityPolicy,bind:bind) : nil
+        let predicate=try fullRow?.sql ?? table.keyIndexes.map { index in
             let column=table.columns[index]
             let type=try DMLColumnType(column)
             return try type.sqlKeyColumn(quoted(column.name))+"="+type.sqlValue("?")
@@ -167,8 +168,8 @@ extension TargetSession {
         for start in stride(from:0,to:checks.count,by:64) {
             let part=Array(checks[start..<min(start+64,checks.count)])
             let select=part.indices.map { "JSON_TYPE(JSON_EXTRACT(\(name),?)) AS j\($0)" }.joined(separator:",")
-            let binds=part.map { MySQLData(string:$0.path) }+(try key.map(bind))
-            let row=try query("SELECT "+select+" FROM "+sqlName+" WHERE "+predicate,binds).0.first
+            let binds=part.map { MySQLData(string:$0.path) }+(try fullRow?.binds ?? key.map(bind))
+            let row=try query("SELECT "+select+" FROM "+sqlName+" WHERE "+predicate+" LIMIT 1",binds).0.first
             for (i,check) in part.enumerated() {
                 try require(row?.column("j\(i)")?.string == check.type,"target JSON type differs at \(column)\(check.path)")
             }

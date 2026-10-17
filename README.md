@@ -224,14 +224,15 @@ check which profiles and variants passed.
 | --- | --- |
 | Row changes | INSERT, UPDATE, DELETE, multiple rows, primary-key changes, upsert, REPLACE, IGNORE, INSERT SELECT, joined updates/deletes, and LOAD DATA as row events |
 | Data types | Signed/unsigned integers, DECIMAL, date/time types, CHAR/VARCHAR, binary strings, TEXT/BLOB families, ENUM, SET, BIT, FLOAT/DOUBLE, JSON, spatial types, and NULL values |
-| Keys and transactions | Composite primary keys, secondary and unique indexes; InnoDB multi-statement transactions and foreign keys within the profile limits |
+| Keys and transactions | Composite primary keys, nonnullable unique-key fallback, full-row matching for keyless tables and duplicates, secondary indexes; InnoDB multi-statement transactions and foreign keys within the profile limits |
 | DDL | Database create/alter/drop; table create/alter/drop, LIKE, rename, truncate, column and index changes, defaults, generated columns, partitions, views, and stored routines within the supported SQL syntax |
 | Process control and failures | Starting positions, resume from saved state, source/target restarts, table filters, selected error skips, offline replay, and support bundles |
 
 This is a test summary, not a claim of complete MySQL compatibility. MyISAM
 profiles accept one DML statement per source transaction, affecting one table
-that is not excluded by the table filters. Tables need primary keys that meet
-the [DML requirements](PLAN/DML_APPLY.md). See the type-specific limits for
+that is not excluded by the table filters. Tables without a usable unique key use
+[full-row matching](PLAN/KEYLESS_ROWS.md), which can require table scans.
+See the type-specific limits for
 [JSON](docs/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md),
 [FLOAT/DOUBLE](PLAN/FLOATING_POINT_SUPPORT.md), and
 [spatial columns](PLAN/SPATIAL_SUPPORT.md). Some MySQL-specific values inside JSON cannot be recreated

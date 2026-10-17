@@ -54,20 +54,27 @@ extension SharedCorrectness.Run {
             let original = f.config
             defer { f.config = original }
             let cases = [
-                ("nonunique","CREATE TABLE fk_failure.bad(id INT PRIMARY KEY,pid INT,CONSTRAINT bad_fk FOREIGN KEY(pid) REFERENCES fk_failure.parent(n)) ENGINE=InnoDB","complete unique parent key"),
+                ("parent-index","CREATE TABLE fk_failure.bad(id INT PRIMARY KEY,pid INT,CONSTRAINT bad_fk FOREIGN KEY(pid) REFERENCES fk_failure.parent(n)) ENGINE=InnoDB","supporting parent index"),
                 ("filtered-ddl","CREATE TABLE fk_failure.bad(id INT PRIMARY KEY,pid INT,CONSTRAINT bad_fk FOREIGN KEY(pid) REFERENCES fk_failure.parent(id)) ENGINE=InnoDB","crosses included and excluded"),
                 ("filtered-discovery","DELETE FROM fk_failure.parent WHERE id=1","crosses an excluded table"),
                 ("rollback","BEGIN; INSERT INTO fk_failure.parent VALUES(2,2); INSERT INTO fk_failure.child VALUES(20,1); COMMIT","1452"),
                 ("autocommit","INSERT INTO fk_failure.child VALUES(20,1)","1452"),
-                ("checks-disabled-ddl","SET foreign_key_checks=0; CREATE TABLE fk_failure.bad(id INT PRIMARY KEY,pid INT,CONSTRAINT bad_fk FOREIGN KEY(pid) REFERENCES fk_failure.parent(id)) ENGINE=InnoDB","foreign_key_checks=0 is unsupported"),
-                ("checks-disabled-rows","SET foreign_key_checks=0; INSERT INTO fk_failure.child VALUES(20,999)","row flags other than STMT_END")
+                ("checks-restored","BEGIN; SET foreign_key_checks=0; INSERT INTO fk_failure.child VALUES(21,999); SET foreign_key_checks=1; INSERT INTO fk_failure.child VALUES(20,1); COMMIT","1452"),
+                ("cross-database-drop","DROP DATABASE fk_failure","references an absent parent table")
             ]
             for (id,sql,reason) in cases {
                 let label = "fk-"+id
                 for role in LabProfile.Role.allCases {
                     _ = try f.sql(role,"SET sql_log_bin=0; DROP DATABASE IF EXISTS fk_failure; CREATE DATABASE fk_failure CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE fk_failure.parent(id INT PRIMARY KEY,n INT,KEY(n)) ENGINE=InnoDB; CREATE TABLE fk_failure.child(id INT PRIMARY KEY,pid INT,CONSTRAINT child_fk FOREIGN KEY(pid) REFERENCES fk_failure.parent(id) ON DELETE CASCADE) ENGINE=InnoDB; INSERT INTO fk_failure.parent VALUES(1,1)")
                 }
-                if id == "rollback" || id == "autocommit" { _ = try f.sql(.target,"SET sql_log_bin=0; DELETE FROM fk_failure.parent WHERE id=1") }
+                if id == "parent-index" { _ = try f.sql(.target,"SET sql_log_bin=0; ALTER TABLE fk_failure.parent DROP INDEX n") }
+                if id == "cross-database-drop" {
+                    // A target-only incoming FK must block DROP before SQL.
+                    // The source and native replica have no such relationship.
+                    let childDB = f.variant.lowerCaseTableNames == 0 ? "FK_failure" : "fk_external"
+                    _ = try f.sql(.target,"SET sql_log_bin=0; CREATE DATABASE " + childDB + " CHARACTER SET utf8mb4 COLLATE utf8mb4_bin; CREATE TABLE " + childDB + ".child(id INT PRIMARY KEY,pid INT,CONSTRAINT external_fk FOREIGN KEY(pid) REFERENCES fk_failure.parent(id)) ENGINE=InnoDB")
+                }
+                if id == "rollback" || id == "autocommit" || id == "checks-restored" { _ = try f.sql(.target,"SET sql_log_bin=0; DELETE FROM fk_failure.parent WHERE id=1") }
                 let before = try f.boundary()
                 f.config = original; f.config["stateDirectory"] = "/evidence/"+label
                 if id == "filtered-ddl" { f.config["replicateWildIgnoreTable"] = ["fk_failure.bad"] }
@@ -87,10 +94,19 @@ extension SharedCorrectness.Run {
                 let counts = try f.runner.run(["sqlite3",state,"SELECT transactions_applied FROM state"]).text
                 try require(counts == "0","foreign-key failure advanced progress")
                 try require(try f.sql(.target,"SELECT COUNT(*) FROM fk_failure.parent WHERE id=2; SELECT COUNT(*) FROM fk_failure.child") == "0\n0","failed transaction retained target changes")
-                if id == "rollback" || id == "autocommit" {
+                if id == "cross-database-drop" {
+                    try require(try f.runner.run(["sqlite3",state,"SELECT COUNT(*) FROM ddl_intents"]).text == "0","cross-database DROP issued an intent")
+                    let childDB = f.variant.lowerCaseTableNames == 0 ? "FK_failure" : "fk_external"
+                    _ = try f.sql(.target,"SET sql_log_bin=0; DROP DATABASE " + childDB)
+                }
+                if id == "rollback" || id == "autocommit" || id == "checks-restored" {
                     let report = try f.docker(["run","--rm","--platform","linux/amd64","--network","none","--mount","type=volume,src=\(f.volume),dst=/evidence","--entrypoint","/usr/local/bin/mysql-replicator",f.image,"recovery","inspect","--config","/evidence/"+label+".yaml"])
                     try report.stdout.write(to:f.output.appendingPathComponent(label+"-recovery.json"))
                     guard let json = try JSONSerialization.jsonObject(with:report.stdout) as? [String:Any], let pending = json["pending"] as? [[String:Any]], let relations = pending.first?["foreignKeyRelationships"] as? [[String:Any]] else { throw LabError("missing recovery relationships") }
+                    if id == "checks-restored" {
+                        let rows = pending.first?["rows"] as? [[String:Any]] ?? []
+                        try require(rows.map { $0["foreignKeyChecks"] as? Bool } == [false,true],"recovery lost per-event foreign-key checks")
+                    }
                     try require(relations.contains { $0["name"] as? String == "child_fk" && $0["onDelete"] as? String == "CASCADE" },"recovery lost cascade relationship")
                 }
             }

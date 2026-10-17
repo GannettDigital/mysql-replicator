@@ -547,7 +547,7 @@ final class StateStore {
         diagnostic?.nativeCompatibilityRules = plan.compatibilityRules.isEmpty ? nil : plan.compatibilityRules
         diagnostic?.viewTransitions = plan.viewTransitions.isEmpty ? nil : plan.viewTransitions
         let contextJSON = try diagnostic.map { String(decoding:try JSONEncoder().encode($0),as:UTF8.self) }
-        let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,afterAlternatives:plan.afterAlternatives)] : [])
+        let transitions = plan.additional + ((plan.before != nil || plan.after != nil) ? [SchemaTransition(before:plan.before,after:plan.after,supportingIndexReplacements:plan.supportingIndexReplacements,removableSupportingIndexes:plan.removableSupportingIndexes)] : [])
         let policyJSON = String(decoding:try JSONEncoder().encode(compatibility),as:UTF8.self)
         let transitionsJSON = String(decoding:try JSONEncoder().encode(transitions),as:UTF8.self)
         try atomic {

@@ -39,15 +39,16 @@ encoding and ENUM/SET definitions. Independent destination writes or schema
 changes invalidate this assumption.
 
 See [current support](SUPPORT.md) for scalar types, native 5.7 charsets and
-collations, and primary-key requirements. ENUM/SET discovery reads exact labels
+collations, and primary/unique lookup-key requirements. ENUM/SET discovery reads exact labels
 through temporary target columns. This includes non-UTF-8 and supplementary
 labels. The target account needs `CREATE TEMPORARY TABLES` on replicated databases.
 Composite keys,
 PK updates, multiple source statements and multiple tables per transaction are
 supported in this profile. Target triggers are rejected. InnoDB foreign keys
 support complete primary/unique parent keys, composite references, RESTRICT/NO
-ACTION, CASCADE and SET NULL. Self-references, cycles, nonunique/partial parent
-keys and checks-disabled source events remain unsupported. Bootstrap must preserve
+ACTION, CASCADE and SET NULL. Self-references, cycles and source
+`foreign_key_checks` settings are supported. Nonunique/partial parent keys remain
+unsupported. Bootstrap must preserve
 matching source relationships; filters cannot split a connected relationship.
 See [foreign-key scope](../PLAN/MYSQL57_FOREIGN_KEYS.md) for DDL limits and tests.
 Supported database/table DDL, generated columns,
@@ -111,12 +112,20 @@ mysql-replicator run --config apply.yaml
 ```
 
 Inspection lists every pending group, GTID and source/relay boundary, retained
-schemas, each mutation's old/new primary key and before/after row images, and
+schemas, each mutation's old/new lookup key and before/after row images, and
 saved failure/statement diagnostics. Decimal and integer values remain strings
 with explicit types; binary values are base64. Expectations fold repeated writes
-and primary-key changes within each transaction into initial/final images. A
+and lookup-key changes within each transaction into initial/final images. The
+`rowIdentity` field names the index and its ordered columns. `primaryKeyColumns`
+retains the declared primary key and is empty for a unique-key fallback. A
 missing initial/final field means no row at that key. SQL NULL is a typed value
 inside a row, distinct from an absent row.
+
+For a table without a usable unique key, `rowIdentity.kind` is `fullRow`.
+`beforeKey` and `afterKey` are absent. `fullRowChanges` retains each operation in
+order, including identical images. These rows are not folded into `expectations`.
+The records do not identify one physical copy or prove the total target row
+count. Reconcile duplicate counts as well as values before a recovery action.
 
 Compare this evidence to target rows while independent writes are stopped.
 Expectations use exact encoded keys: collation-equivalent keys may alias, and

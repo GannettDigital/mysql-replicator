@@ -5,9 +5,12 @@ import Foundation
 @testable import ReplicatorCapture
 
 extension ResumeTests {
-    private func recoveryFixture(completed: Int = 0, block: Bool = true, foreignKeys: Bool = false) throws -> (URL,ApplyConfiguration,[PreparedDMLGroup]) {
+    private func recoveryFixture(completed: Int = 0, block: Bool = true, foreignKeys: Bool = false, uniqueKey: Bool = false) throws -> (URL,ApplyConfiguration,[PreparedDMLGroup]) {
         let path=try directory(), c=try helper.config(path.path,profile:ReplicationProfile.mysql57To84InnoDB.rawValue)
         var table = try helper.tables()[0]
+        if uniqueKey {
+            table=table.replacing(indexes:[ApplyIndex(name:"by_id",unique:true,parts:[.init(column:"id",prefix:nil)])],primaryKey:[])
+        }
         if foreignKeys {
             table.foreignKeys = [
                 ApplyForeignKey(name:"child_fk",database:table.database,table:"child",columns:["parent_id"],referencedDatabase:table.database,referencedTable:table.table,referencedColumns:table.primaryKeyColumns,onDelete:"CASCADE"),
@@ -32,6 +35,19 @@ extension ResumeTests {
             if block { try store.block("simulated uncertain COMMIT") }
         }
         return (path,c,groups)
+    }
+    func testUniqueKeyRecoveryUsesSavedSchemaAndIdentity() throws {
+        let (path,config,_) = try recoveryFixture(uniqueKey:true)
+        let report=try Recovery.inspect(configuration:config)
+        let identity=RowIdentity(kind:.unique,index:"by_id",columns:["id"])
+        XCTAssertEqual(report.pending.first?.rows.first?.schema.primaryKeyColumns,[])
+        XCTAssertEqual(report.pending.first?.rows.first?.schema.rowIdentity,identity)
+        XCTAssertEqual(report.pending.first?.rows.first?.afterKey,[.signed(3)])
+        XCTAssertEqual(report.pending.first?.expectations.first?.rowIdentity,identity)
+        XCTAssertEqual(try helper.sqlite(path.appendingPathComponent("state.sqlite"),"SELECT DISTINCT json_extract(schema_json,'$.rowIdentity.index') FROM schemas"),[["by_id"]])
+        _ = try Recovery.resolve(configuration:config,action:.retry,gtids:helper.sid+":11-14",reason:"DBA restored the unique-key table to the baseline")
+        let reopened=try StateStore(configuration:config,initialize:false)
+        XCTAssertEqual(reopened.currentSchemas.first?.rowIdentity,identity)
     }
     func testUncertainCommitEvidenceIncludesIndirectCascadeTables() throws {
         let (_,configuration,_) = try recoveryFixture(foreignKeys:true)
