@@ -100,6 +100,43 @@ found by this investigation. This work does not claim that increasing
 helper-function preparation and execution, then reduce the generated SQL or add
 a suitable configurable execution deadline. The failed runs are retained below.
 
+## Recovery and runtime-control fixtures
+
+PR 62 run `38988605961` exposed two more test assumptions.
+
+The MyISAM `multirow` application succeeded. Its final rows matched the expected
+rows. The test still expected four client-side reads. With source GTID
+preservation, the multi-row DELETE checks run inside the target stored function.
+Only the two UPDATE checks use client-side reads. The assertion now uses the
+configured preservation mode. Row and binlog comparisons remain in place.
+
+The runtime-control test completed its first replay and resume. It then cleared
+the target rows and started another replay with fresh SQLite state. It did not
+clear the target GTID history. The applier correctly blocked a source GTID that
+the target had already executed. The support bundle recorded that reason, but
+the test reported a control-socket timeout.
+
+The independent replay now resets the disposable target's GTID history before
+it restores the seed rows. Resume cases retain their rows, GTIDs and SQLite
+state. The status wait also detects an exited process and saves its logs. It
+reports the applier diagnostic instead of waiting for a missing control socket.
+
+Original CI evidence is retained under `artifacts/ci-failures/` in
+`pr62-current-myisam` and `pr62-current-control`.
+
+The wider local run then reached the older 8,000-row MyISAM crash test. Its
+support bundle reported `MyISAM GTID group program exceeds target
+max_allowed_packet`. SQLite retained one pending group; no target write was
+issued. This is the same large-group limit described above.
+
+For preserved source GTIDs, the crash test now applies one row to load metadata,
+locks the target table, and submits a 128-row group. It waits until MySQL has
+received the stored-function request, kills the writer, and releases the lock.
+It checks the completed target rows and GTID, the unchanged SQLite checkpoint,
+all pending row intents, and refusal to resume the unresolved group. The earlier
+duplicate-key case still checks partial MyISAM persistence. The path without
+GTID preservation retains its 8,000-row partial-write test.
+
 ## Validation
 
 All listed checks passed. Container checks ran on the release branch as fixes were added. They used the
@@ -134,6 +171,32 @@ The large-group execution failures remain in
 `20261017T004109Z-12c16065/` and `20261017T004258Z-6c706c8f/`, including support
 bundles. They are not passing scale tests. The lifecycle test correction does
 not close that execution-size and timeout investigation.
+
+## PR 62 follow-up validation
+
+The complete `failure-recovery-offline` area passed locally on all four profiles,
+using the default variant and the full tier. This includes nested assertions
+inside the MyISAM recovery and forward-failure cases.
+
+| Profile | Passed cases | Report under `artifacts/lab/` |
+| --- | ---: | --- |
+| 5.7 → 5.7 InnoDB | 3 | `20261017T012040Z-97a33c1d/result.json` |
+| 5.7 → 8.4 InnoDB | 3 | `20261017T012813Z-2ca0a7ed/result.json` |
+| 5.7 → 5.7 MyISAM | 23 | `20261017T013800Z-a4bd9a45/result.json` |
+| 8.4 → 5.7 MyISAM | 42 | `20261017T015738Z-d8d2a259/result.json` |
+
+Both MyISAM crash cases recorded 129 target rows: one previously committed row
+and the 128-row unresolved group. The target retained the group's source GTID.
+SQLite retained all 128 pending row intents and its earlier checkpoint. Ordinary
+restart refused replay and did not change the target rows.
+
+The Swift lab build and format checks for the changed files passed. The InnoDB
+runs preceded the final MyISAM-only crash-test correction. Other capture variants
+remain for CI. The path without source-GTID preservation was not rerun locally.
+
+The initial full MyISAM runs remain in `20261017T012423Z-20105a7b` and
+`20261017T013044Z-134a7cb7`, including their large-group failure bundles. The
+128-row crash tests do not close the large-group packet and execution limits.
 
 ## Saved evidence and push
 
