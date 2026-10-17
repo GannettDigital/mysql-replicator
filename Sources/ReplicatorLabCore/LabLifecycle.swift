@@ -467,8 +467,7 @@ enum LabLifecycle {
                     f.profile.transactionalTarget
                     ? "UPDATE lifecycle.target_uncertain SET v=v+10 ORDER BY id"
                     : "INSERT INTO lifecycle.target_uncertain VALUES(2,2),(3,3)"
-                let operation =
-                    f.profile.transactionalTarget ? "UPDATE" : "SELECT `_mysql_replicator_gtid`.`apply_group`() AS"
+                let operation = f.profile.transactionalTarget ? "UPDATE" : "INSERT INTO"
                 _ = try f.sql(.source, mutation)
                 while try f.sql(
                     .target,
