@@ -343,6 +343,10 @@ extension SharedCorrectness.Run {
                 try require(state("batch-crash","SELECT lifecycle||'|'||transactions_applied||'|'||rows_applied||'|'||(active_gtid IS NOT NULL) FROM state") == "RUNNING|\(committedBeforeCrash)|\(committedBeforeCrash)|1","crash advanced or cleared the pending checkpoint")
                 try require(state("batch-crash","SELECT COUNT(*) FROM row_intents WHERE status='PENDING'") == String(crashRows),"crash lost prepared intents or prematurely completed rows")
                 try require(state("batch-crash","SELECT COUNT(*) FROM groups WHERE status='PENDING'") == "1","crash lost the pending group")
+                if preservesGTIDs {
+                    let pendingGTID = try state("batch-crash","SELECT gtid FROM groups WHERE status='PENDING'")
+                    try require(h.sql("target57","SELECT GTID_SUBSET('\(pendingGTID)',@@GLOBAL.gtid_executed)") == "1","target did not commit the unresolved source GTID")
+                }
                 try writeJSON(["target_rows_at_crash":partialRows,"prepared_rows":crashRows,"committed_before_crash":committedBeforeCrash,"preserve_source_gtids":preservesGTIDs,"automatic_replay":false],to:f.output.appendingPathComponent("batch-crash-evidence.json"))
                 try reporter.pass("batch-crash")
                 let resumed=try start(SharedWorkflowCases.recovery("batch-crash-resume"),crashConfig,initialize:false)
