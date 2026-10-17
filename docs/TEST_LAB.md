@@ -356,9 +356,14 @@ make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle --skip-b
 The 11 lifecycle cases use equivalent bootstrapped integer tables and default to
 GTIDs; capture variants below also exercise file-position starts.
 They cover source socket loss, rotation, clean/crash restart, interruption during
-an 8,000-row group, backoff cancellation, and changed source settings; target
+an active group, backoff cancellation, and changed source settings; target
 socket loss/restart, active-group drain, saved-state resume with an unavailable
 target, backoff drain, lost mutation replies and changed target settings.
+InnoDB tests wait for partial progress in an 8,000-row group. MyISAM tests first
+apply one row to load table metadata. They then hold a table lock and wait for
+an issued 128-row helper-function request before the interruption. This removes
+the need to catch a short interval between individual writes. The lock is released
+after the interruption or drain request.
 Successful cases compare source/native/target rows and saved checkpoints.
 The InnoDB lost-reply case observes a provisional write before disconnecting,
 then checks rollback and durable pending-row evidence. The applier still reports
