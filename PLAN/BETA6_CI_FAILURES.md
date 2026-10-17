@@ -1,6 +1,6 @@
 # Beta.6 CI failure corrections
 
-Updated: 2026-10-16. This report covers the failures found in PRs 55–65.
+Updated: 2026-10-17 UTC. This report covers the failures found in PRs 55–65.
 The fixes are local. No CI jobs were cancelled or rerun, and no branches were
 pushed during this work. The next CI run must check the updated stack.
 
@@ -273,3 +273,97 @@ stopped, and its files were retained.
 For subsequent test fixes, run only the changed cases locally. Leave the full
 suite and other matrix variants to GitHub Actions. This rule is also in
 `AGENTS.md`.
+
+## Wider stack audit: failed and cancelled jobs
+
+Reviewed the available checks for PRs 55–65 on 2026-10-17 UTC. The saved audit
+contains 36 workflow runs, their jobs and artifact lists. Some jobs were still
+running or queued at the last status read. This is an audit of recorded failures,
+not a claim that every job has finished.
+
+A final status read found 40 more failed or cancelled jobs. Their logs showed
+the same DML timeouts, stale state-version and DDL assertions, offline positioning
+error, and JSON replay reset error. Timing and release gates reported missing or
+failed records. No new failure cause was found in those 40 logs. PRs 62–65 still
+had running or queued jobs at that read; later failures are outside this snapshot.
+
+Evidence is under `artifacts/ci-failures/stack-followup-20261017/` in the release
+worktree. Support bundles were read before the affected tests were run locally.
+The original bundles and logs remain unchanged.
+
+### DML job timeouts
+
+The DML jobs had 44–48 cases in one fixture. They reached the workflow's 45-minute
+limit while cases were still passing. For example, PR 63 job `117288693905` was
+cancelled after about 45 minutes during `matrix-fixedfloating`. PR 64 job
+`117289207895` stopped during `matrix-generated`.
+
+The CI policy now limits each DML group to eight cases. The generated normal
+full plan grows from 176 to 226 jobs. It retains the same 2,085 obligations and
+contains 60 DML jobs. Job names include the numbered DML area. Existing matrix
+checks preserve case order and dependencies.
+
+Missing measurement artifacts were a result of the cancelled test processes.
+The final report and release gates then failed because required jobs were
+incomplete. PR 55's `Debian Packaging & Integration Smoke` failure was such a
+gate failure, not a Debian compilation error. Superseded runs with no jobs are
+separate from tests cancelled at the timeout.
+
+Expanded coverage is a separate limit. With the current catalog, its matrix
+exceeds GitHub's 256-job limit both before and after this change. Normal full CI
+fits the limit. Expanded coverage needs separate matrix groups before it can run
+at this catalog size. This audit does not claim that expanded coverage works.
+
+### New fixture corrections
+
+| Failure | Evidence | Correction |
+| --- | --- | --- |
+| Offline DDL replay in the file-position variant | The command reported `offline replay requires GTID positioning`. No applier bundle was expected for this configuration error. | Select GTID positioning for offline replay. Keep file-position capture for the live phase and retain the saved starting GTIDs. |
+| Encoded SQL with ENUM values | The bundle reported that ordered ENUM/SET label validation requires `binlog_row_metadata=FULL`. | Request FULL metadata for DDL cases that write ENUM/SET values. Restore the variant's metadata setting before other DDL cases. These cases do not claim MINIMAL ENUM/SET support. |
+| Partition comparison with lowercase table names | The target metadata query returned each partition row twice after a second table was created. Data, columns and indexes matched. | Read PARTITIONS directly. Filter SQL views with the already-read base-table list. Compare exact name bytes and retain duplicate rows in the comparison. |
+| JSON bootstrap replay with a fresh SQLite state | The target had already executed the source GTID. The bundle showed no issued target write and no applied transaction in the new state. | Reset the disposable target's GTID history to the saved starting boundary when a test restores its seed data for an independent replay. Apply the same correction to JSON YEAR, expression-index, spatial-metadata and large-value fixtures. |
+
+The partition query issue was not reproduced in a separate local MySQL 8.4
+probe. Both query forms returned four rows in that probe. The changed query
+removes the subquery present in the CI failure. Focused lowercase-table tests
+passed, but the original CI environment still needs to check this correction.
+
+The target GTID reset helper is only for independent test experiments. Resume
+checks keep their target rows, target GTIDs and SQLite state. The production
+check for a target GTID that is missing from SQLite remains unchanged.
+
+Other reviewed failures matched the assertion and state-version corrections
+already recorded above. No additional production applier change was required
+for the failures in this audit.
+
+### Focused local checks
+
+The lab build, format lint for changed files, and 26 CI matrix/runner unit tests
+passed. Matrix generation retained all normal full-CI obligations. Only affected
+cases ran locally; the full suite remains for GitHub Actions.
+
+| Profile and variant | Cases | Result | Report under `artifacts/lab/` |
+| --- | --- | --- | --- |
+| 8.4 → 5.7 MyISAM, position-minimal | Executable comments, keyless rows, partition expressions, encoded SQL and charset conversion | Five passed | `20261017T043953Z-4ebc42d7/result.json` |
+| 8.4 → 5.7 MyISAM, lowercase-tables | Partition expressions | Passed | `20261017T044129Z-17268db4/result.json` |
+| 5.7 → 8.4 InnoDB, lowercase-tables | Ignored CHECK constraints and partition DDL | Both passed | `20261017T044424Z-d82ba0d6/result.json` |
+
+The position-minimal selection also requested `ddl-compat-types`. Its existing
+catalog rule marks that combination not applicable; it was not counted as a pass.
+
+The first reverse lowercase run, `20261017T044129Z-7441f7e1`, failed during setup:
+its target container was no longer running. No case had started and no support
+bundle existed. The fixture logs were retained. A repeat of only those two cases
+passed without a code change. The cause of that container stop was not confirmed.
+
+The five GTID-reset cases passed on 5.7 → 8.4 InnoDB with the default variant:
+JSON YEAR, target JSON schema, spatial metadata, expression dependencies, and
+large values. Report: `20261017T045208Z-0101a01d/result.json`.
+
+The large-value case also passed on 5.7 → 5.7 MyISAM with the default variant.
+It checks that engine's separate blocked-resume path. Report:
+`20261017T045605Z-c4a07aa3/result.json`.
+
+Together, these runs contain 14 passing case executions. No full suite was run
+locally for this audit. No GitHub workflow was rerun or cancelled. The fixes are
+committed through the stack without rewriting published history.

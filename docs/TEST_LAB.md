@@ -395,6 +395,18 @@ MySQL 5.7 has no `binlog_row_metadata` setting. Lifecycle's default integer-only
 workload uses MINIMAL on the 8.4 source; explicit variants preserve their setting
 across restarts. Matrix fixtures that require FULL labels declare that override.
 
+DDL cases that write ENUM/SET values also request FULL metadata: encoded SQL,
+charset conversion, and keyless rows. They still use file-position capture when
+that variant is selected. They do not test ENUM/SET with MINIMAL metadata. Other
+DDL cases restore the variant's metadata setting. The existing types-case rule
+excludes that case from the position-minimal variant.
+
+Offline replay uses GTID positioning, including the replay phase of a live
+file-position test. It uses the saved starting GTID set. When a case restores
+target seed data for an independent replay, it also resets the disposable target's
+GTID history to that starting set. Resume tests retain both target GTIDs and
+SQLite state. These fixture resets are not production recovery instructions.
+
 ```sh
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--variant position-minimal --family filters --coverage"
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite lifecycle --variant gtid-full --coverage --skip-build"
