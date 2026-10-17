@@ -213,3 +213,63 @@ bash artifacts/beta6-release-stack/push-branches.sh
 
 These local checks do not replace the full CI matrix. The matrix includes other
 variants and areas that were not rerun here.
+
+## PR 59–61 assertion corrections
+
+The next stack review found 13 failed jobs with four assertion problems.
+Saved evidence is under `artifacts/ci-failures/stack-20261017/`.
+
+| Case | Saved evidence | Correction |
+| --- | --- | --- |
+| `ddl-index-table-rename` | The following row used the current renamed schema. The DDL intent had no single `after_schema_id`; its transition list contained both names. | Compare the current schema with the journaled after-image and check the following row intents against that schema. |
+| `ddl-compat-foreign-key-missing-parent` | The query matched two CREATE records, including one from an earlier FK case. | Filter DDL records by the current case's source GTID interval. |
+| `ddl-compat-multi-table` | The query matched four complete DROP records across several cases. | Apply the same case GTID filter before checking the transition count. |
+| `ddl-compat-keyless-rows` | Direct MyISAM execution recorded one row as DONE and one as PENDING. The group stayed pending and the checkpoint did not advance. | Check acknowledged and pending rows separately. InnoDB rollback and an unresolved preserved-GTID function keep both row intents pending. |
+
+The case filter uses MySQL `GTID_SUBTRACT` and `GTID_SUBSET`. It does not parse
+GTID intervals in the harness. The assertions still check exact counts. They do
+not accept extra matching records from the current case.
+
+The rename and keyless corrections retain row comparisons and checkpoint checks.
+They do not change the applier's execution or durable-state behavior.
+
+The first local grouped run passed the FK DDL cases and reached `ddl-index-like`.
+Its schema and row checks passed, but a separate stale assertion expected SQLite
+state format 12. Branch 9 introduced format 13 without updating that assertion.
+The expected version is now 13 on branch 9 and its descendants. Earlier branches
+retain their own expected state versions.
+
+### Local results for the assertion corrections
+
+The lab build, format checks for the changed Swift files, and `git diff --check`
+passed. The following runs used the corrected state-version assertion:
+
+| Check | Profile and variant | Result | Report under `artifacts/lab/` |
+| --- | --- | --- | --- |
+| Four index cases, FK replication and FK safety | 5.7 → 5.7 InnoDB, default | All six cases passed | `20261017T025559Z-d944d40f/result.json` |
+| Keyless rows and multi-table DDL | 5.7 → 5.7 InnoDB, default | Both cases passed | `20261017T032644Z-cb8318d5/result.json` |
+| Keyless rows and multi-table DDL | 5.7 → 5.7 MyISAM, default | Both cases passed | `20261017T032644Z-77448c82/result.json` |
+
+The initial FK/index run, `20261017T022154Z-8ffced43`, passed all nine FK DDL
+cases. It then failed the stale state-version assertion. The later six-case
+index/FK run passed with the corrected version.
+
+Two larger DDL runs completed all 45 selected cases each. Their final reports
+failed the input check because the index state-version assertion changed while
+they ran. These are not clean full-run results:
+
+- `20261017T022446Z-42cd309d/result.json`: InnoDB; all 45 cases passed.
+- `20261017T022446Z-16c7e683/result.json`: MyISAM; all 45 cases passed.
+
+The final two-case runs above provide clean results for the corrected DDL cases.
+The original larger-run evidence remains unchanged.
+
+The lowercase-table run, `20261017T030455Z-2d7b5c26`, passed nine FK DDL cases
+and four index cases. This includes missing-parent and table-rename assertions.
+The run was then stopped at the user's request to limit local testing to changed
+cases. Its final group result is incomplete. Its four fixture containers were
+stopped, and its files were retained.
+
+For subsequent test fixes, run only the changed cases locally. Leave the full
+suite and other matrix variants to GitHub Actions. This rule is also in
+`AGENTS.md`.

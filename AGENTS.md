@@ -47,7 +47,10 @@ Use [docs/CI_MEASUREMENTS.md](docs/CI_MEASUREMENTS.md) for measurement scope and
 test-area comparison rules. Do not remove a test because its line coverage overlaps
 another test. Check its profile, catalog obligations and assertions first.
 
-# Select syntax tests
+# Select local tests
+
+For test fixes, rerun only the changed cases locally. Leave the full suite to
+GitHub Actions. Do not expand a local run to a full suite unless the user asks.
 
 Run `tools/syntax_tests.py` when `Sources/MySQLSyntax`, its tests, or its build
 and coverage setup changes. Do not run this separate suite for unrelated code
