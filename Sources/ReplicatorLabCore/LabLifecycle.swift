@@ -114,6 +114,7 @@ enum LabLifecycle {
             for key in ["sourceReconnect","targetReconnect"] { value[key]=["initialDelaySeconds":1,"maximumDelaySeconds":1,"maximumAttempts":60] }
             if smallInserts {
                 value["batch"]=["maximumInsertRows":4]
+                value["ddlTimeoutSeconds"]=60
                 // The 8,000-row MyISAM group uses one stored function to keep
                 // its source GTID. Allow the generated SQL before connecting.
                 _ = try f.sql(.target,"SET GLOBAL max_allowed_packet=67108864")
@@ -189,11 +190,15 @@ enum LabLifecycle {
             try require(try f.sql(.source,"SELECT GTID_SUBSET('\(end.gtids)','\(gtids)')") == "1","applied GTIDs do not cover source")
             try require(position["file"] as? String == end.file && String(describing:offset) == String(end.position),"file/offset checkpoint differs")
         }
-        func waitPartial(_ table: String) throws {
-            let deadline=Date().addingTimeInterval(30)
+        func waitPartial(_ table: String, client: String) throws {
+            let deadline=Date().addingTimeInterval(90)
             while true {
                 let writes=Int(try f.sql(.target,"SELECT COUNT_WRITE FROM performance_schema.table_io_waits_summary_by_table WHERE OBJECT_SCHEMA='lifecycle' AND OBJECT_NAME='\(table)'")) ?? 0
                 if (1..<8000).contains(writes) { return }
+                if try f.docker(["inspect",client,"--format","{{.State.Running}}"]).text != "true" {
+                    let logs=try f.docker(["logs",client])
+                    throw LabError("applier stopped before partial writes: "+String(decoding:logs.stderr,as:UTF8.self))
+                }
                 try require(writes < 8000 && Date() < deadline,"missed active group for "+table)
                 Thread.sleep(forTimeInterval:0.02)
             }
@@ -231,7 +236,7 @@ enum LabLifecycle {
             }
             try scenario("source-reconnect-batch") {
                 let label="source-reconnect-batch", client=try start(label,config(label,count:2,smallInserts:true))
-                try waitReader(client); try insertBatch("source_batch"); try waitPartial("source_batch")
+                try waitReader(client); try insertBatch("source_batch"); try waitPartial("source_batch",client:client)
                 try killConnection(.source)
                 try waitProgress(client) { $0["lifecycle"] as? String == "RECONNECTING" && $0["transactionsApplied"] as? Int == 1 }
                 try waitReader(client)
@@ -284,7 +289,7 @@ enum LabLifecycle {
             let drainConfig=try config("target-drain",count:2,smallInserts:true)
             try scenario("target-drain") {
                 let label="target-drain", client=try start(label,drainConfig)
-                try waitReader(client); try insertBatch("target_drain"); try waitPartial("target_drain")
+                try waitReader(client); try insertBatch("target_drain"); try waitPartial("target_drain",client:client)
                 try signal(client,"USR1")
                 let result=try finish(client,label)
                 try require(result["drainRequested"] as? Bool == true,"drain was not reported")
