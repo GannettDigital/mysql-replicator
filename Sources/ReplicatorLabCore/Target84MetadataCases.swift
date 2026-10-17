@@ -51,6 +51,7 @@ extension SharedCorrectness.Run {
             }
             _ = try invoke("spatial-metadata-fetch","fetch")
             _ = try f.sql(.target,base+enhanced)
+            try isolated.resetTargetGTIDs(at:start)
             f.config["stateDirectory"]="/evidence/spatial-metadata-replay"
             source["host"]="127.0.0.1";source["port"]=1;source.removeValue(forKey:"passwordEnvironment");source.removeValue(forKey:"password")
             source["stopAfterTransactions"]=1;f.config["source"]=source
