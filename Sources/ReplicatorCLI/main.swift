@@ -311,6 +311,9 @@ do {
         if let code = failure.code { diagnostic["code"] = code.rawValue }
         if let number = failure.mysqlErrorNumber { diagnostic["mysqlErrorNumber"] = number }
         if let state = failure.sqlState { diagnostic["sqlState"] = state }
+        if let detail = failure.targetSQL, let bytes = try? JSONEncoder().encode(detail) {
+            diagnostic["targetSQL"] = try? JSONSerialization.jsonObject(with: bytes)
+        }
     } else if let failure = error as? LiveInspectionError {
         let summary = (try? JSONEncoder().encode(failure.summary)).flatMap {
             try? JSONSerialization.jsonObject(with: $0)

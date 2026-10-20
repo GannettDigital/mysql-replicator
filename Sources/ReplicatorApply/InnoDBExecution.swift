@@ -80,7 +80,8 @@ enum InnoDBExecution {
                 let diagnostic = TargetFailureDiagnostic(
                     reason: String(describing: error), statement: failedTrace,
                     rows: diagnosticRows(groups, failedIndex: index, outcome: outcome, skipped: skipped),
-                    ddlGTID: nil, ddlSQL: nil, transactionOutcome: outcome)
+                    ddlGTID: nil, ddlSQL: nil, transactionOutcome: outcome,
+                    targetSQL: (error as? ApplyError)?.targetSQL)
                 return .init(
                     acknowledged: acknowledged, failure: error, diagnostic: diagnostic,
                     discardUnwritten: error is TargetConnectionFailure && outcome == "notStarted"

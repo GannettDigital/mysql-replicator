@@ -58,3 +58,27 @@ arrives at least as fast as apply, status is `notCatchingUp`.
 Configure `statistics.sourcePollIntervalSeconds` and
 `statistics.rateWindowSeconds` from 5 through 3600 seconds. Replay ignores the
 poll interval. Rates describe the current process; durable totals survive restart.
+
+## Target SQL errors
+
+`targetFailure.ddlSQL` identifies the source DDL. The optional
+`targetFailure.targetSQL` object identifies the target SQL operation that failed.
+These can differ. A session SET or metadata SELECT can fail before the applier
+sends the source DDL. The object includes:
+
+- `sql`: the SQL template, without expansion of bound parameters.
+- `mysqlErrorNumber` and `sqlState`: the MySQL error number and SQLSTATE.
+- `serverMessage`: the message from MySQL.
+
+The applier saves these details in SQLite and the support bundle. Setup errors
+that occur before a transaction starts can report `targetSQL` at the top level.
+Older saved failures can lack this field. Server messages and literal SQL can
+contain row values. Treat these diagnostics as private operational data.
+
+`targetFailure.statement.phase` still describes the data-write outcome.
+For example, a failed session SET leaves the source DDL phase at `notIssued`.
+Use the recovery commands to inspect a BLOCKED state before restart.
+`recovery resolve retry` currently requires journaled DML. It cannot retry DDL
+rejected before a DDL intent was saved. A direct restart also rejects that
+BLOCKED state. This session-setting fix does not change those recovery limits.
+Do not infer that a write is safe to retry from the MySQL error number alone.

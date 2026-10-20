@@ -10,12 +10,17 @@ public struct ApplyError: Error, CustomStringConvertible {
     public let code: ApplyErrorCode?
     public let mysqlErrorNumber: Int?
     public let sqlState: String?
+    public let targetSQL: TargetSQLDiagnostic?
     public var description: String { code.map { "[\($0.rawValue)] \(message)" } ?? message }
-    public init(_ message: String, code: ApplyErrorCode? = nil, mysqlErrorNumber: Int? = nil, sqlState: String? = nil) {
+    public init(
+        _ message: String, code: ApplyErrorCode? = nil, mysqlErrorNumber: Int? = nil, sqlState: String? = nil,
+        targetSQL: TargetSQLDiagnostic? = nil
+    ) {
         self.message = message
         self.code = code
         self.mysqlErrorNumber = mysqlErrorNumber
         self.sqlState = sqlState
+        self.targetSQL = targetSQL
     }
 }
 func require(_ condition: @autoclosure () throws -> Bool, _ message: String, code: ApplyErrorCode? = nil) throws {

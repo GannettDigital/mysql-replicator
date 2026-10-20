@@ -9,7 +9,9 @@ extension TargetSession {
         // A named zone must exist on the target too; no timezone substitution.
         _ = try query("SET SESSION time_zone=?", [.init(string: context.timeZone ?? "+00:00")])
         try require(context.explicitDefaultsForTimestamp != false, "legacy implicit TIMESTAMP defaults are unsupported")
-        _ = try query("SET SESSION explicit_defaults_for_timestamp=1")
+        try timestampDefaults.prepare(
+            read: { try self.scalar("SELECT @@SESSION.explicit_defaults_for_timestamp AS v") },
+            enable: { _ = try self.query("SET SESSION explicit_defaults_for_timestamp=1") })
         // USE contains names from the UTF-8 schema model, not source SQL bytes.
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         if useDatabase, let db = source.database, !db.isEmpty { _ = try query("USE \(quoted(db))", textProtocol: true) }

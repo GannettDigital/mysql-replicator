@@ -37,7 +37,8 @@ extension TargetSession {
                 acknowledged: Array(repeating: 0, count: groups.count), failure: error,
                 diagnostic: .init(
                     reason: String(describing: error), statement: .init(), rows: [],
-                    ddlGTID: nil, ddlSQL: nil, transactionOutcome: "notStarted"),
+                    ddlGTID: nil, ddlSQL: nil, transactionOutcome: "notStarted",
+                    targetSQL: (error as? ApplyError)?.targetSQL),
                 discardUnwritten: error is TargetConnectionFailure)
         }
         if config.target.preserveSourceGTIDs {
@@ -195,7 +196,7 @@ extension TargetSession {
                     acknowledged: counts, failure: error,
                     diagnostic: .init(
                         reason: String(describing: error), statement: statementTrace, rows: rows, ddlGTID: nil,
-                        ddlSQL: nil),
+                        ddlSQL: nil, targetSQL: (error as? ApplyError)?.targetSQL),
                     discardUnwritten: error is TargetConnectionFailure && statementTrace.phase == .notIssued,
                     skipped: skipped)
             }

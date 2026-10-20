@@ -121,7 +121,8 @@ struct DMLExecution {
             return Outcome(
                 acknowledged: acknowledged, failure: error,
                 diagnostic: .init(
-                    reason: String(describing: error), statement: statement, rows: spans, ddlGTID: nil, ddlSQL: nil),
+                    reason: String(describing: error), statement: statement, rows: spans, ddlGTID: nil, ddlSQL: nil,
+                    targetSQL: (error as? ApplyError)?.targetSQL),
                 discardUnwritten: error is TargetConnectionFailure && statement.phase == .notIssued && wholeGroups)
         }
     }

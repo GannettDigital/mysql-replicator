@@ -26,6 +26,12 @@ Source transactions can change more than one table. The default
 not atomic. After an uncertain result, inspect the evidence and repair the target
 before you resolve recovery. Do not assume that automatic retry is safe.
 
+The target session must use `explicit_defaults_for_timestamp=ON` for DDL.
+With this default, the SQL transport does not need `SUPER` for timestamp setup.
+If the value is OFF and the account cannot change it, DDL stops before execution.
+Ask the DBA to enable the server default. Inspect and resolve any BLOCKED state
+before you restart. The error includes the failed SET and the MySQL message.
+
 Foreign keys use the same [supported subset](../PLAN/MYSQL57_FOREIGN_KEYS.md) as
 the 5.7 → 8.4 InnoDB profile. The applier does not support every native 5.7
 foreign-key definition. DDL with an explicit MyISAM engine is rejected.

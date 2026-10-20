@@ -11,6 +11,7 @@ final class TargetSession {
     let jsonScratchID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))
     var jsonScratchTables = Set<String>()
     var jsonScratchOrdinal: UInt64 = 0
+    let timestampDefaults = TimestampDefaultsSession()
     var statementTrace = TargetStatementTrace()
     var statementSourceGTID: SourceGTID?
     var statementRequiresCommit = true
@@ -124,27 +125,7 @@ final class TargetSession {
         } catch let e where isTargetTransportFailure(e) {
             throw TargetConnectionFailure(description: "target connection interrupted")
         } catch let e as MySQLError {
-            switch e {
-            case .duplicateEntry:
-                throw ApplyError(
-                    "target SQL error 1062 (duplicate key)", code: .duplicateKey, mysqlErrorNumber: 1062,
-                    sqlState: "23000")
-            case .invalidSyntax: throw ApplyError("target SQL syntax error")
-            case .server(let packet):
-                if packet.errorCode == 1644
-                    && [
-                        "target before-image mismatch or missing row", "unexpected target affected-row count",
-                        "target after-image mismatch",
-                    ].contains(packet.errorMessage)
-                {
-                    throw ApplyError(packet.errorMessage)
-                }
-                throw ApplyError(
-                    "target SQL error \(packet.errorCode), state \(packet.sqlState ?? "unknown")",
-                    code: packet.errorCode == 1062 ? .duplicateKey : .targetSQL,
-                    mysqlErrorNumber: Int(packet.errorCode.rawValue), sqlState: packet.sqlState)
-            default: throw ApplyError("target connection/protocol failure; SQL outcome may be uncertain")
-            }
+            throw TargetSQLDiagnostic.applyError(e, sql: sql)
         } catch { throw ApplyError("target transport failure; SQL outcome may be uncertain") }
     }
     func scalar(_ sql: String, _ binds: [MySQLData] = []) throws -> String? {

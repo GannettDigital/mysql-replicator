@@ -207,6 +207,15 @@ struct LabScenario {
                 test: .init(
                     "large-values", "Large TEXT/BLOB writes, packet fragmentation, restart, replay and recovery"),
                 family: "dml"))
+        cases.append(
+            .init(
+                test: .init("ddl-session-permissions", "DDL without SUPER, restart and session failure diagnostics"),
+                family: "failures",
+                profileExclusions: [
+                    .forward: "Tests the 5.7 InnoDB target account contract.",
+                    .reverse: "Tests the 5.7 session variable privilege check.",
+                    .mysql57MyISAM: "Tests the 5.7 InnoDB target account contract.",
+                ]))
         cases += ModifyIndexCases.cases.map {
             .init(test: $0.test, family: "indexes", smoke: $0.test.id == "ddl-index-create")
         }

@@ -70,6 +70,8 @@ public struct TargetFailureDiagnostic: Codable {
     var ddlContext: DDLQueryContextDiagnostic? = nil
     /// InnoDB outcome for the failed source group; absent for MyISAM/DDL.
     var transactionOutcome: String? = nil
+    /// The failed SQL operation, separate from the mutation outcome above.
+    var targetSQL: TargetSQLDiagnostic? = nil
 }
 
 /// Separate from forced cancellation: journaled execution is allowed to drain.

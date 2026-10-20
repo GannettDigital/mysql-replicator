@@ -41,6 +41,7 @@ final class DDLDiagnosticsTests: XCTestCase {
                 .utf8)
         let decoded = try JSONDecoder().decode(TargetFailureDiagnostic.self, from: old)
         XCTAssertNil(decoded.ddlContext)
+        XCTAssertNil(decoded.targetSQL)
         XCTAssertEqual(decoded.reason, "old failure")
     }
 }

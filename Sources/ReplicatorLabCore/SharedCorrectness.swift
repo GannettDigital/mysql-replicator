@@ -138,6 +138,7 @@ public enum SharedCorrectness {
                     try dmlRefusals()
                     try orderedDDL()
                     try collationWorkflows()
+                    try ddlSessionPermissions()
                     try jsonYearCompatibility()
                     try jsonTarget84Schema()
                     try target84IndexSpatialMetadata()

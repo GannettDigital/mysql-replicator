@@ -427,7 +427,8 @@ public enum ApplyRun {
                                     reason: String(describing: error), statement: target.statementTrace,
                                     rows: [], ddlGTID: state.pendingGTID,
                                     ddlSQL: failedQuery.map { String(decoding: $0.sql, as: UTF8.self) },
-                                    ddlContext: failedQuery.flatMap { DDLQueryContextDiagnostic(query: $0) })
+                                    ddlContext: failedQuery.flatMap { DDLQueryContextDiagnostic(query: $0) },
+                                    targetSQL: (error as? ApplyError)?.targetSQL)
                                 targetFailure = diagnostic
                                 try state.recordTargetFailure(diagnostic)
                                 if error is TargetConnectionFailure && target.statementTrace.phase == .notIssued {

@@ -68,7 +68,8 @@ enum BinlogExecution {
                     acknowledged: counts, failure: failure,
                     diagnostic: .init(
                         reason: String(describing: failure), statement: statement,
-                        rows: rows, ddlGTID: nil, ddlSQL: nil, transactionOutcome: outcome),
+                        rows: rows, ddlGTID: nil, ddlSQL: nil, transactionOutcome: outcome,
+                        targetSQL: (failure as? ApplyError)?.targetSQL),
                     discardUnwritten: failure is TargetConnectionFailure && outcome == "notStarted"
                         && statement.phase == .notIssued,
                     skipped: skipped)
