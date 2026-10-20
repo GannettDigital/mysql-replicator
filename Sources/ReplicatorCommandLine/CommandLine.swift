@@ -3,6 +3,7 @@ import ArgumentParser
 /// Parsed requests contain no open files, connections, or replication state.
 public enum CLIRequest: Equatable {
     case help(String)
+    case configurationHelp(command: String?, section: String?)
     case version
     case apply(config: String, initialize: Bool, offline: Bool)
     case fetch(config: String)
@@ -19,11 +20,17 @@ public enum CLIRequest: Equatable {
 
 public struct CLIParseError: Error, CustomStringConvertible {
     public let description: String
+    public init(description: String) { self.description = description }
 }
 
 public enum ReplicatorCommandLine {
     public static func parse(_ arguments: [String]) throws -> CLIRequest {
         do {
+            let commands = Root.configuration.subcommands.compactMap { $0.configuration.commandName } + ["help"]
+            if let first = arguments.first, !first.hasPrefix("-"), !commands.contains(first) {
+                let suggestion = first == "reply" ? " Did you mean 'replay'?" : ""
+                throw ValidationError("Unknown command '\(first)'.\(suggestion) Use --help to list commands.")
+            }
             var command = try Root.parseAsRoot(arguments.isEmpty ? ["--help"] : arguments)
             if let request = command as? RequestCommand {
                 // Argument Parser permits repeated scalar options. Keep the
@@ -31,6 +38,7 @@ public enum ReplicatorCommandLine {
                 let options: Set<String> = [
                     "--config", "--initialize", "--source-config", "--schema",
                     "--include-raw", "--transactions", "--binlog-file", "--gtids", "--reason", "--timeout", "--version",
+                    "--command", "--section",
                 ]
                 var seen = Set<String>()
                 for argument in arguments {
@@ -72,10 +80,11 @@ private struct Root: RequestCommand {
             Put connection, profile, and policy settings in a YAML configuration file.
             Commands emit JSON records. Diagnostics go to stderr. Failures exit with status 1.
             Help and version output are plain text and do not connect to MySQL.
+            Use config-help --command COMMAND for configuration types, defaults, and examples.
             """,
         subcommands: [
             Run.self, Fetch.self, Replay.self, Control.self, SupportBundle.self,
-            Inspect.self, InspectRelay.self, Blackhole.self, Skip.self, Recovery.self,
+            Inspect.self, InspectRelay.self, Blackhole.self, Skip.self, Recovery.self, ConfigurationHelp.self,
         ])
     @Flag(help: "Show the release version and codec capabilities.") var version = false
     var request: CLIRequest { version ? .version : .help(Self.helpMessage(columns: 88)) }
@@ -83,11 +92,32 @@ private struct Root: RequestCommand {
 
 private struct Config: ParsableArguments {
     @Option(
-        name: .customLong("config"), help: ArgumentHelp("Read settings from this YAML file.", valueName: "FILE.yaml"))
+        name: .customLong("config"),
+        help: ArgumentHelp(
+            "Read settings from this YAML file. See config-help --command COMMAND for overrides.",
+            valueName: "FILE.yaml"))
     var path: String
     mutating func validate() throws {
         guard !path.isEmpty else { throw ValidationError("--config requires a nonempty path.") }
     }
+}
+
+private struct ConfigurationHelp: RequestCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "config-help",
+        abstract: "Show configuration types, defaults, and YAML examples.",
+        discussion: """
+            Omit --command for the full reference. Use --section to select a section or one setting.
+            Example: mysql-replicator config-help --command replay --section target
+            This command does not read a configuration file or connect to MySQL.
+            """
+    )
+    @Option(
+        help: "Configuration command: run, replay, fetch, support-bundle, ctl, recovery, skip, blackhole, or inspect.")
+    var command: String?
+    @Option(help: "Section or dotted setting name, for example target or target.transport.")
+    var section: String?
+    var request: CLIRequest { .configurationHelp(command: command, section: section) }
 }
 
 private struct ApplyOptions: ParsableArguments {

@@ -1,5 +1,7 @@
 # Shared YAML configuration for run, fetch, replay and support-bundle.
 # Short starting points: run.minimal.yaml and replay.minimal.yaml in this directory.
+# Typed reference: mysql-replicator config-help --command run
+# Select one section: mysql-replicator config-help --command replay --section target
 # Copy to apply.yaml and replace REPLACE_* values. Initial data/schema copying is external.
 # Commented options are inactive. Defaults are shown unless labeled "example".
 # Relative paths resolve from the process working directory, not this YAML file.

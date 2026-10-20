@@ -5,10 +5,11 @@ import Foundation
 public enum ConfigurationOptions {
     public static let descriptions: [String: String] = [
         "applierProfiling": "Detailed apply timings; coarse timings stay on.",
-        "archive": "Binary log files for fetch, replay, and support bundles.",
+        "archive": "Required for fetch and replay. Optional for support bundles. Binary log files; ignored by run.",
         "archive.directory": "Required. fetch: must NOT exist; replay: existing immutable raw binlogs.",
         "archive.files": "Optional ordered, nonempty list for EXTERNAL replay only; rejected by fetch.",
-        "archive.firstFile": "Example starting filename (whole file, not event position).",
+        "archive.firstFile":
+            "Whole starting file. fetch defaults to source.start.file or the oldest source file. External replay defaults to the first selected file.",
         "archive.lowerCaseTableNames":
             "Optional original source setting for EXTERNAL archives. Must match source.lowerCaseTableNames (default 0).",
         "archive.maximumBytes": "Default 64 GiB total archive limit; minimum 4 bytes. Increase for multi-day archives.",
@@ -29,19 +30,19 @@ public enum ConfigurationOptions {
         "compatibility.jsonYearToInteger":
             "Only mysql57-to-mysql84-innodb. Convert YEAR inside JSON to UNSIGNED INTEGER.",
         "ddlPolicy": "Rules for source DDL that can cause independent target writes.",
-        "ddlPolicy.events": "Only supported value; no scheduled target writes.",
-        "ddlPolicy.triggers": "skip or reject. skip audits CREATE/DROP without issuing them;",
+        "ddlPolicy.events": "Reject source events to prevent scheduled target writes.",
+        "ddlPolicy.triggers": "skip audits CREATE/DROP without issuing them. Source trigger row effects still apply.",
         "ddlTimeoutSeconds": "Top-level setting; 1..86400 seconds. Timeout can leave uncertain DDL.",
         "maximumRelayBytes": "Durable relay cap for run/replay; 1 MiB..1 GiB, default 256 MiB.",
-        "profile": "Select a source version and target version/engine from the list above.",
+        "profile": "Select the source version and target version/engine.",
         "replicateWildDoTable": "Include matching tables. Empty means all tables, subject to ignore rules.",
         "replicateWildIgnoreTable":
-            "To add exclusions, REPLACE the line above with ONE of these equivalent YAML lists:",
+            "Exclude matching tables. Empty means no exclusions.",
         "skipErrors": "Optional rules to skip supported failures in run and replay.",
         "skipErrors.codes": "Example; 1062 needs confirmed InnoDB rollback.",
-        "skipErrors.recordSkippedTransactions": "Default. false keeps counters/checkpoint but no per-GTID audit.",
+        "skipErrors.recordSkippedTransactions": "false keeps counters/checkpoint but no per-GTID audit.",
         "source": "Source connection and binary log settings.",
-        "source.caFile": "Optional; omit to use system trust roots. Source has no verify-ca mode.",
+        "source.caFile": "Required for verify-ca; otherwise omit to use system trust roots.",
         "source.decoderProfiling": "Detailed decoder timings; coarse timings stay on.",
         "source.downloadCacheBytes":
             "Normal live backlog; 20 MiB..1 GiB. One larger event can enter an empty cache. Unused by replay.",
@@ -72,7 +73,7 @@ public enum ConfigurationOptions {
         "source.tlsVerification":
             "Same choices as target: verify-identity or verify-ca. verify-ca requires caFile; serverHostname is optional.",
         "source.username": "Example account; source replication/metadata privileges.",
-        "source.version": "Required; legacy source.tables is not accepted by run/replay.",
+        "source.version": "Use version 2. Legacy source.tables is not accepted by run/replay.",
         "sourceReconnect": "Retry source connections after supported transport failures.",
         "sourceReconnect.enabled": "Live run only; replay always disables source reconnect.",
         "sourceReconnect.initialDelaySeconds": "First retry delay; 1..300 seconds.",
@@ -93,18 +94,20 @@ public enum ConfigurationOptions {
         "supportBundle": "Manual collection and automatic collection on a BLOCKED error.",
         "supportBundle.binlogContextBytes":
             "Maximum payload bytes per binlog excerpt; 4 KiB through 256 MiB. Original offsets are recorded.",
-        "supportBundle.directory": "Required when onBlocked is true. Must be outside stateDirectory.",
+        "supportBundle.directory":
+            "Required when onBlocked is true. Manual collection defaults to support-bundles beside stateDirectory. Must be outside stateDirectory.",
         "supportBundle.format": "tar packs the files. directory leaves them unpacked for inspection.",
         "supportBundle.logs": "Optional existing log files; omitted/[] adds no logs.",
         "supportBundle.maximumBytes": "Default 2 GiB including tar overhead; minimum 1 MiB.",
         "supportBundle.onBlocked": "true collects one bundle when run/replay enters BLOCKED.",
-        "supportBundle.output": "Optional manual path. Must be new and outside stateDirectory.",
+        "supportBundle.output":
+            "Manual path. If omitted, generate a unique name in directory. Must be new and outside stateDirectory. Automatic collection always generates a name.",
         "target": "Dedicated replica connection and session settings.",
         "target.caFile": "Required for verify-ca; otherwise may be omitted for system trust roots.",
         "target.transport":
             "DML transport: sql (default) or binlog. BINLOG requires additional privileges and a new state directory; see docs/BINLOG_TRANSPORT.md.",
         "target.explicitTableLocks": "Optional LOCK TABLES; must stay false for the InnoDB profile.",
-        "target.host": "Dedicated target matching the selected profile.",
+        "target.host": "Required with port unless unixSocket is set. Dedicated target matching the selected profile.",
         "target.nativeAutoStartDisabled": "Required attestation that native replication will not auto-start.",
         "target.password": "Alternative; remove passwordEnvironment. Choose exactly one.",
         "target.passwordEnvironment": "Name of the environment variable with the target password.",
@@ -123,15 +126,4 @@ public enum ConfigurationOptions {
         "targetReconnect.maximumDelaySeconds": "Backoff cap; initialDelaySeconds..300 seconds.",
         "version": "Required config format; do not add tables/schema allowlists.",
     ]
-    public static var help: String {
-        let sections = Set(descriptions.keys.filter { key in descriptions.keys.contains { $0.hasPrefix(key + ".") } })
-        return "Configuration overrides (CLI values replace YAML values):\n"
-            + descriptions.sorted { $0.key < $1.key }.map { key, description in
-                let indent = String(repeating: "  ", count: key.split(separator: ".").count)
-                if sections.contains(key) { return "\n" + indent + key + ": (section)  " + description }
-                return indent + "--" + (key == "version" ? "config.version" : key) + " VALUE  " + description
-            }.joined(separator: "\n")
-            + "\nUse YAML flow syntax for arrays/maps. [] clears an array; null clears an optional value."
-            + "\nTo replace a whole section, use --SECTION YAML_MAP, for example --source.start '{executedGTIDs: \"\"}'."
-    }
 }

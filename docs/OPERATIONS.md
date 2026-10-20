@@ -1,5 +1,30 @@
 # Replication status and statistics
 
+## Command and configuration errors
+
+Successful commands, help, and version requests exit with status `0`. Failures
+exit with status `1`. Error diagnostics are JSON records on stderr.
+
+- `argument_error`: an unknown command, missing or invalid argument, duplicate
+  option, or invalid placement of a configuration override. Use the command's
+  `--help`. The typo `reply` gives a suggestion to use `replay`.
+- `configuration_error`: the configuration file cannot be read, or its YAML
+  syntax or decoded value type is invalid. `configPath` identifies the file.
+  `keyPath` identifies the setting when available. YAML syntax errors include
+  `line` and `column` when the parser supplies them. Both start at `1`.
+
+These errors occur before replication starts. They do not include binlog offsets.
+Configuration diagnostics omit input values and YAML excerpts. A location inside
+a command-line override is not reported as a location in the configuration file.
+Connection errors, server compatibility checks, and runtime errors retain their
+existing categories, such as `apply_failed` and `binlog_decode_failed`.
+
+Scripts that previously treated an argument error as `apply_failed`,
+`skip_failed`, `inspect_failed`, or `binlog_decode_failed` must use the new
+categories. Exit status remains unchanged.
+
+## Read running status
+
 Run `mysql-replicator ctl status --config apply.yaml` to read a running process.
 Control replies (`status`, `stop`, and `reload`) use indented JSON with sorted
 keys on stdout. Diagnostics use stderr. You can pipe the reply to `jq`:

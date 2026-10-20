@@ -1,7 +1,7 @@
 # Beta.7 operator issues
 
-Status: analysis and proposed work. No runtime changes in this document.
-Reviewed on 2026-10-20 against `beta/7/04-compatible-sql-routing`, commit `636bedb`.
+Status: implementation in progress on `beta/7/04-compatible-sql-routing`.
+Initial review: 2026-10-20, commit `636bedb`. Progress updated on 2026-10-20.
 The supplied incident bundle is from `0.1.0-beta.6`.
 
 Inputs: the local `PLAN/beta7-opearability.md` notes and the supplied
@@ -9,6 +9,21 @@ Inputs: the local `PLAN/beta7-opearability.md` notes and the supplied
 The original notes and bundle remain unchanged. Do not copy customer row values,
 credentials, or full configuration into public issues or test fixtures.
 Use synthetic schemas and rows to reproduce the failures.
+
+## Implementation status
+
+The findings below describe the initial review. Use this table for current status.
+
+| ID | Status | Delivered work and remaining checks |
+| --- | --- | --- |
+| OP-01 | Implemented; not yet committed | Argument errors use `argument_error`. File-read and YAML errors use `configuration_error`, with available file/key/line/column fields. `reply` suggests `replay`. Exit status remains 1. Focused CLI and configuration tests pass. Environment and server checks remain under OP-04. |
+| OP-02 | Implemented; not yet committed | Normal help shows command syntax. `config-help` selects a command, section, or setting. Metadata supplies types, defaults, null handling, units, choices, and examples. Tests compare model fields/types and policy defaults, decode examples, and check command-specific output. |
+| OP-08 | Partial | Audited retry for DDL rejected before an intent was saved (`3f3d3d0`). Unit tests cover all four profiles. Live and replay tests pass on 5.7 → 5.7 InnoDB. Coordinate output and the full failure matrix remain. |
+| OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
+| OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
+| OP-03–07, OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
+
+Next: add OP-03 logging. Continue the delivery order below.
 
 ## Issue list
 

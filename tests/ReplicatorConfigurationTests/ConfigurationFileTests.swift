@@ -6,6 +6,35 @@ import XCTest
 @testable import ReplicatorApply
 
 final class ConfigurationFileTests: XCTestCase {
+    func testStructuredConfigurationLocationsAndOverrideLocations() throws {
+        struct Config: Decodable {
+            struct Source: Decodable { let port: Int }
+            let source: Source
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
+        defer { try? FileManager.default.removeItem(at: file) }
+        for yaml in ["source: {port: secret-invalid-port}", "source: {}"] {
+            try Data(yaml.utf8).write(to: file)
+            XCTAssertThrowsError(try ConfigurationFile.load(Config.self, from: file)) { error in
+                guard let failure = error as? ConfigurationError else { return XCTFail("Wrong error type") }
+                XCTAssertEqual(failure.configPath, file.path)
+                XCTAssertEqual(failure.keyPath, "source.port")
+                XCTAssertNil(failure.line)
+                XCTAssertFalse(failure.description.contains("secret-invalid-port"))
+            }
+        }
+        try Data("source: {port: 3306}".utf8).write(to: file)
+        let overrides = try ConfigurationOverrides(arguments: ["run", "--source.port", "[secret-invalid-port"])
+        XCTAssertThrowsError(try overrides.load(Config.self, from: file)) { error in
+            guard let failure = error as? ConfigurationError else { return XCTFail("Wrong error type") }
+            XCTAssertEqual(failure.configPath, file.path)
+            XCTAssertEqual(failure.keyPath, "source.port")
+            XCTAssertNil(failure.line)
+            XCTAssertNil(failure.column)
+            XCTAssertFalse(failure.description.contains("secret-invalid-port"))
+        }
+    }
+
     func testBinlogTransportIsOptInAndRejectsConflictingSettings() throws {
         let text = try example()
         let original = try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(text.utf8))

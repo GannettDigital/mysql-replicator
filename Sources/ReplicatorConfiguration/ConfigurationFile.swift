@@ -20,11 +20,20 @@ public enum ConfigurationFile {
     }
 
     public static func load<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
-        try decode(type, from: read(from: url))
+        try decode(type, from: read(from: url), sourceURL: url)
     }
 
     /// Read once so reload validation and decoding see the same file generation.
     public static func read(from url: URL) throws -> Data {
+        do { return try readFile(from: url) } catch let error as ConfigurationError {
+            throw error.atFile(url)
+        } catch {
+            // Do not include file contents or Foundation's full error context.
+            throw ConfigurationError("cannot read configuration file; check that it exists and is readable").atFile(url)
+        }
+    }
+
+    private static func readFile(from url: URL) throws -> Data {
         guard ["yaml", "yml"].contains(url.pathExtension.lowercased()) else {
             throw ConfigurationError(
                 "configuration must be a .yaml or .yml file; convert legacy JSON configuration to YAML")
@@ -48,7 +57,13 @@ public enum ConfigurationFile {
         return try JSONSerialization.data(withJSONObject: root, options: .sortedKeys)
     }
 
-    public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    public static func decode<T: Decodable>(_ type: T.Type, from data: Data, sourceURL: URL? = nil) throws -> T {
+        do { return try decodeYAML(type, from: data) } catch let error as ConfigurationError {
+            throw sourceURL.map { error.atFile($0) } ?? error
+        }
+    }
+
+    private static func decodeYAML<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         guard data.count <= maximumBytes else { throw ConfigurationError("configuration exceeds 1 MiB") }
         guard let text = String(data: data, encoding: .utf8) else {
             throw ConfigurationError("configuration must be UTF-8 YAML")
@@ -60,10 +75,12 @@ public enum ConfigurationFile {
             // Keep structural locations, never input values or source excerpts.
             let context: DecodingError.Context
             let detail: String
+            var missingKey: String?
             switch error {
             case .keyNotFound(let key, let c):
                 context = c
                 detail = "missing setting \(key.stringValue)"
+                missingKey = key.stringValue
             case .typeMismatch(_, let c):
                 context = c
                 detail = "wrong value type"
@@ -75,18 +92,32 @@ public enum ConfigurationFile {
                 detail = "invalid value"
             @unknown default: throw ConfigurationError("invalid YAML configuration")
             }
+            let path = (context.codingPath.map(\.stringValue) + (missingKey.map { [$0] } ?? [])).joined(separator: ".")
             if let yamlError = context.underlyingError as? YamlError {
-                switch yamlError {
-                case .duplicatedKeysInMapping(_, let c):
-                    throw ConfigurationError("duplicate YAML key at line \(c.mark.line), column \(c.mark.column)")
-                case .scanner(_, _, let mark, _), .parser(_, _, let mark, _), .composer(_, _, let mark, _):
-                    throw ConfigurationError("invalid YAML at line \(mark.line), column \(mark.column)")
-                default: throw ConfigurationError("invalid YAML configuration")
-                }
+                throw yamlDiagnostic(yamlError, keyPath: path.isEmpty ? nil : path)
             }
-            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
-            throw ConfigurationError("configuration \(path.isEmpty ? "root" : path): \(detail)")
+            throw ConfigurationError(
+                "configuration \(path.isEmpty ? "root" : path): \(detail)", keyPath: path.isEmpty ? nil : path)
+        } catch let error as YamlError {
+            throw yamlDiagnostic(error)
         }
+    }
+
+    private static func yamlDiagnostic(_ error: YamlError, keyPath: String? = nil) -> ConfigurationError {
+        let mark: Mark
+        let reason: String
+        switch error {
+        case .duplicatedKeysInMapping(_, let context):
+            mark = context.mark
+            reason = "duplicate YAML key"
+        case .scanner(_, _, let location, _), .parser(_, _, let location, _), .composer(_, _, let location, _):
+            mark = location
+            reason = "invalid YAML"
+        default: return ConfigurationError("invalid YAML configuration", keyPath: keyPath)
+        }
+        return ConfigurationError(
+            "\(reason) at line \(mark.line), column \(mark.column)", keyPath: keyPath,
+            line: mark.line, column: mark.column)
     }
 }
 
@@ -138,5 +169,19 @@ indirect enum DiagnosticValue: Decodable {
 
 public struct ConfigurationError: Error, CustomStringConvertible {
     public let description: String
-    init(_ description: String) { self.description = description }
+    public let configPath: String?
+    public let keyPath: String?
+    public let line: Int?
+    public let column: Int?
+    init(_ description: String, configPath: String? = nil, keyPath: String? = nil, line: Int? = nil, column: Int? = nil)
+    {
+        self.description = description
+        self.configPath = configPath
+        self.keyPath = keyPath
+        self.line = line
+        self.column = column
+    }
+    func atFile(_ url: URL) -> Self {
+        .init(description, configPath: url.path, keyPath: keyPath, line: line, column: column)
+    }
 }

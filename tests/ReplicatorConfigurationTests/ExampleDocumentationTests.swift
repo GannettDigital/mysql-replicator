@@ -21,6 +21,25 @@ extension ConfigurationFileTests {
         var expected = Set<String>()
         func inspect(_ value: Any, path: String = "") {
             var mirror = Mirror(reflecting: value)
+            if !path.isEmpty {
+                var type = String(describing: mirror.subjectType)
+                if type.hasPrefix("Optional<") { type = String(type.dropFirst(9).dropLast()) }
+                let expectedType: ConfigurationOptionMetadata.ValueType
+                switch type {
+                case "String": expectedType = .string
+                case "Bool": expectedType = .boolean
+                case "Int", "Int64", "UInt32", "UInt64": expectedType = .integer
+                case "Array<String>", "Array<ApplyErrorCode>": expectedType = .stringList
+                case "Dictionary<String, String>": expectedType = .stringMap
+                case "ReplicationProfile", "TLSVerification", "TargetTransport", "Format": expectedType = .enumeration
+                default: expectedType = .section
+                }
+                // These string properties are validated as enums by the models.
+                let stringEnums = ["source.mode", "ddlPolicy.triggers", "ddlPolicy.events"]
+                XCTAssertEqual(
+                    ConfigurationOptions.metadata[path]?.type,
+                    stringEnums.contains(path) ? .enumeration : expectedType, path)
+            }
             if mirror.displayStyle == .optional {
                 if let child = mirror.children.first {
                     mirror = Mirror(reflecting: child.value)

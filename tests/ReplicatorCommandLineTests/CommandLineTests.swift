@@ -8,6 +8,7 @@ final class CommandLineTests: XCTestCase {
             [], ["run"], ["fetch"], ["replay"], ["support-bundle"], ["inspect"],
             ["inspect-relay"], ["blackhole"], ["skip"], ["ctl"], ["ctl", "status"],
             ["ctl", "stop"], ["ctl", "reload"], ["recovery"], ["recovery", "inspect"], ["recovery", "resolve"],
+            ["config-help"],
         ]
         for path in paths {
             guard case .help(let text) = try ReplicatorCommandLine.parse(path + ["--help"]) else {
@@ -22,6 +23,11 @@ final class CommandLineTests: XCTestCase {
     func testCommandsProduceRequestsWithoutReadingConfiguration() throws {
         let config = "/does/not/exist.yaml"
         let cases: [([String], CLIRequest)] = [
+            (["config-help"], .configurationHelp(command: nil, section: nil)),
+            (
+                ["config-help", "--command", "replay", "--section", "target"],
+                .configurationHelp(command: "replay", section: "target")
+            ),
             (["run", "--config", config], .apply(config: config, initialize: false, offline: false)),
             (["replay", "--initialize", "--config", config], .apply(config: config, initialize: true, offline: true)),
             (["run", "--config=" + config, "--initialize"], .apply(config: config, initialize: true, offline: false)),

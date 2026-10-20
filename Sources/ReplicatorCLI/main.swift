@@ -17,7 +17,11 @@ import ReplicatorConfiguration
 func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
     switch request {
     case .help(let text):
-        print(text + "\n" + ConfigurationOptions.help)
+        print(text)
+    case .configurationHelp(let command, let section):
+        do { print(try ConfigurationOptions.help(command: command, section: section)) } catch let error
+            as ConfigurationError
+        { throw CLIParseError(description: error.description) }
     case .version:
         print(
             "mysql-replicator \(ReleaseVersion.current) (codec ABI \(Codec.abiVersion), capabilities \(Codec.capabilities))"
@@ -102,13 +106,14 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
     case .apply(let path, let initialize, let offline):
         let configFile = URL(fileURLWithPath: path).standardizedFileURL
         let configData = try overrides.read(from: configFile)
-        let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: configData)
+        let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: configData, sourceURL: configFile)
         let reloadIdentity = try ConfigurationFile.reloadIdentity(from: configData)
         struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration }
         let archive =
             try offline
             ? ArchiveReplay(
-                configuration: ConfigurationFile.decode(ArchiveOptions.self, from: configData).archive,
+                configuration: ConfigurationFile.decode(ArchiveOptions.self, from: configData, sourceURL: configFile)
+                    .archive,
                 source: config.source, contract: (config.profile ?? .mysql84To57MyISAM).sourceContract,
                 filtered: !(config.replicateWildIgnoreTable ?? []).isEmpty
                     || !(config.replicateWildDoTable ?? []).isEmpty,
@@ -138,7 +143,7 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
                     "reload may change only source.stopAfterTransactions and source.stopAfterGTIDs; other settings require restart, and saved identity/checkpoint restrictions still apply"
                 )
             }
-            let candidate = try ConfigurationFile.decode(ApplyConfiguration.self, from: data)
+            let candidate = try ConfigurationFile.decode(ApplyConfiguration.self, from: data, sourceURL: configFile)
             try candidate.validate(offline: offline)
             return try StopConditions(
                 transactions: candidate.source.stopAfterTransactions, gtids: candidate.source.stopAfterGTIDs)
@@ -254,33 +259,25 @@ func recover(
     return
 }
 
-// Keep the existing JSON error categories and exit status for argument failures.
-func argumentFailure(_ error: CLIParseError, arguments: [String]) -> Error {
-    switch arguments.first {
-    case "run", "replay", "ctl", "recovery", "skip":
-        return ApplyError(error.description)
-    case "fetch", "support-bundle", "blackhole":
-        return CaptureError(error.description)
-    case "inspect" where arguments.contains(where: { $0 == "--source-config" || $0.hasPrefix("--source-config=") }):
-        return CaptureError(error.description)
-    case "inspect-relay":
-        return ApplyError(error.description)
-    default:
-        return DecoderError(code: 1, offset: 0, reason: error.description)
-    }
-}
-
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
-    let overrides = try ConfigurationOverrides(arguments: arguments)
-    let request: CLIRequest
-    do { request = try ReplicatorCommandLine.parse(overrides.arguments) } catch let error as CLIParseError {
-        throw argumentFailure(error, arguments: arguments)
+    let overrides: ConfigurationOverrides
+    do { overrides = try ConfigurationOverrides(arguments: arguments) } catch let error as ConfigurationError {
+        throw CLIParseError(description: error.description)
     }
+    let request = try ReplicatorCommandLine.parse(overrides.arguments)
     try execute(request, overrides: overrides)
 } catch {
     var diagnostic: [String: Any]
-    if CommandLine.arguments.dropFirst().first == "skip" {
+    if let failure = error as? CLIParseError {
+        diagnostic = ["error": "argument_error", "reason": failure.description]
+    } else if let failure = error as? ConfigurationError {
+        diagnostic = ["error": "configuration_error", "reason": failure.description]
+        if let path = failure.configPath { diagnostic["configPath"] = path }
+        if let path = failure.keyPath { diagnostic["keyPath"] = path }
+        if let line = failure.line { diagnostic["line"] = line }
+        if let column = failure.column { diagnostic["column"] = column }
+    } else if CommandLine.arguments.dropFirst().first == "skip" {
         diagnostic = ["error": "skip_failed", "reason": String(describing: error)]
     } else if let failure = error as? DecoderError {
         diagnostic = [

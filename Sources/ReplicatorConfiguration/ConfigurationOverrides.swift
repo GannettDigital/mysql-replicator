@@ -74,9 +74,13 @@ public struct ConfigurationOverrides {
         self.values = values
         self.arguments = clean
     }
-    public func read(from url: URL) throws -> Data { try applying(to: ConfigurationFile.read(from: url)) }
+    public func read(from url: URL) throws -> Data {
+        do { return try applying(to: ConfigurationFile.read(from: url)) } catch let error as ConfigurationError {
+            throw error.atFile(url)
+        }
+    }
     public func load<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
-        try ConfigurationFile.decode(type, from: read(from: url))
+        try ConfigurationFile.decode(type, from: read(from: url), sourceURL: url)
     }
     public func applying(to data: Data) throws -> Data {
         guard !values.isEmpty else { return data }
@@ -103,7 +107,12 @@ public struct ConfigurationOverrides {
             if text.isEmpty {
                 parsed = ""
             } else {
-                parsed = try ConfigurationFile.decode(DiagnosticValue.self, from: Data(text.utf8)).value
+                do {
+                    parsed = try ConfigurationFile.decode(DiagnosticValue.self, from: Data(text.utf8)).value
+                } catch is ConfigurationError {
+                    // A location in this CLI value is not a location in the YAML file.
+                    throw ConfigurationError("invalid YAML value for configuration override \(path)", keyPath: path)
+                }
             }
             let parts = path.split(separator: ".").map(String.init)
             if sourceOnly && parts == ["source"] {

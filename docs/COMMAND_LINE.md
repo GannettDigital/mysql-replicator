@@ -17,6 +17,7 @@ mysql-replicator recovery resolve --help
 
 | Command | Purpose | Configuration |
 |---|---|---|
+| `config-help` | Show typed configuration help. Select a command or section. | None |
 | `run` | Capture from a source and apply changes to a target. | `--config APPLY.yaml` |
 | `fetch` | Download a finite source binlog range to a local archive. | `--config APPLY.yaml` |
 | `replay` | Apply local raw binlogs without a source connection. | `--config APPLY.yaml` |
@@ -102,7 +103,33 @@ Use YAML flow syntax for arrays or maps: `--replicateWildDoTable '["app.%"]'`.
 An array replaces the YAML array; `[]` clears it. `null` clears an optional value.
 Use `--config.version` for the configuration version; `--version` shows the
 program version. Duplicate options and parent/child overrides are errors.
-The configuration file is still required. `--help` lists configuration options.
+The configuration file is still required for execution. `--help` shows command
+syntax and options. Use `config-help` for configuration types, defaults, units,
+allowed values, and YAML examples:
+
+```sh
+mysql-replicator config-help --command replay
+mysql-replicator config-help --command replay --section target
+mysql-replicator config-help --section source.stopAfterGTIDs
+mysql-replicator config-help
+```
+
+Omit `--command` for the full reference. `--section` accepts a section or a dotted
+setting name. This command needs no configuration file and makes no connections.
+It writes plain text to stdout. An unknown command or setting reports
+`argument_error` on stderr and exits with status `1`.
+
+`required` means required within the containing section. Conditional requirements,
+such as target TCP versus Unix socket settings, appear in the description.
+`default: none` means no fixed default value. Descriptions explain generated paths
+and other values selected at runtime. `null: allowed` means that YAML `null` uses
+the default or leaves the setting unset. Example values do not form a complete
+configuration and can require changes to related settings.
+
+The reference includes settings read or validated by the selected command.
+For replay, source connection fields remain part of the file schema, but replay
+does not connect to the source. Recovery and skip also validate the apply
+configuration without connecting to MySQL. `ctl` reads only `stateDirectory`.
 Section headings such as `source` group the options. Use a child option, such as
 `--source.port VALUE`, to change one setting. To replace a whole section, supply
 a YAML map, for example `--source.start '{executedGTIDs: ""}'`.
