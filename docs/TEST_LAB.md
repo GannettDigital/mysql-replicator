@@ -17,7 +17,10 @@ selection stays unchanged. The current expanded-coverage matrix exceeds GitHub's
 256-job limit; it needs separate matrices before instrumented copies can run.
 See [the BINLOG plan](../PLAN/BINLOG_TRANSPORT.md#ci-matrix-size).
 Use `--variant without-source-gtids --case positive` to check basic DML without
-target GTID preservation. SQLite still tracks source GTIDs in that variant.
+target GTID preservation. Add `--case ddl-compat-generated` to check SQL selection
+for generated columns. SQLite still tracks source GTIDs in that variant.
+The BINLOG correctness selections also include SQL compatibility cases. The
+`sql_transport_groups` SQLite table records why a transaction used SQL.
 
 Shared fixtures enable automatic support bundles when the applier enters
 `BLOCKED`. They use `format: directory` so you can read the files without extraction.

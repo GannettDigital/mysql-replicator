@@ -7,7 +7,7 @@ final class LabProfileTests: XCTestCase {
         let rows = try LabScenario.select(tier: "full", family: "gtids", ids: [])
         XCTAssertEqual(Set(rows.map(\.id)), ["ddl-compat-tagged-gtids", "ddl-compat-source-gtid-preservation"])
         let disabled = LabScenario.correctness.filter { $0.reason(.forward, variant: .withoutSourceGTIDs) == nil }
-        XCTAssertEqual(Set(disabled.map(\.id)), ["ddl-compat-tagged-gtids", "positive"])
+        XCTAssertEqual(Set(disabled.map(\.id)), ["ddl-compat-tagged-gtids", "positive", "ddl-compat-generated"])
         for profile in LabProfile.allCases {
             XCTAssertTrue(
                 LabLifecycle.fields(profile, variant: .withoutSourceGTIDs).allSatisfy {

@@ -49,6 +49,11 @@ struct PreparedDMLGroup {
     let mutations: [Mutation]
     let relayEnd: UInt64
     var binlog: BinlogEventProgram? = nil
+    var sqlReason: DMLSQLReason? = nil
+    // Swift 6.2.1 can fail ownership verification when this Optional read
+    // is inlined from an array element in an optimized Linux build.
+    @inline(never)
+    func executionTransport() -> TargetTransport { binlog == nil ? .sql : .binlog }
     var id: String { group.gtid!.canonical }
     var wireBytes: Int { group.events.reduce(0) { $0 + Int($1.eventSize) } }
 }
@@ -97,7 +102,9 @@ final class DMLBatch {
         try flushIfExpired()
         let cost = group.wireBytes
         if !groups.isEmpty {
-            if policy.flushOnTableChange && groups[0].mutations[0].table != group.mutations[0].table {
+            if groups[0].executionTransport() != group.executionTransport() {
+                try flush(reason: "transport")
+            } else if policy.flushOnTableChange && groups[0].mutations[0].table != group.mutations[0].table {
                 try flush(reason: "table")
             } else if rows + group.mutations.count > policy.maximumRows {
                 try flush(reason: "rows")

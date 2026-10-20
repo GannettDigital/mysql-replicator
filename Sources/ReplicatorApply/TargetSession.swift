@@ -15,6 +15,9 @@ final class TargetSession {
     var statementSourceGTID: SourceGTID?
     var statementRequiresCommit = true
     var binlogContext = BinlogFormatContext()
+    var dmlTransport: TargetTransport?
+    var executionTransport: TargetTransport { dmlTransport ?? config.target.transport }
+    var myisamGTIDSupportReady = false
     private var foreignKeyChecks: Bool?
     func setForeignKeyChecks(_ enabled: Bool) throws {
         guard foreignKeyChecks != enabled else { return }
@@ -77,10 +80,10 @@ final class TargetSession {
                 rawSQL: rawSQL)
             // DDL and MyISAM complete at the statement boundary. An inactive
             // version comment needs this COMMIT to record its empty transaction.
-            if config.target.transport != .binlog || statementRequiresCommit {
+            if executionTransport != .binlog || statementRequiresCommit {
                 _ = try query("COMMIT", textProtocol: true)
             }
-            if config.target.transport != .binlog { try resetSourceGTID() }
+            if executionTransport != .binlog { try resetSourceGTID() }
             return result
         }
         try require(
@@ -219,6 +222,7 @@ final class TargetSession {
         }
     }
     func resetDMLSession() throws {
+        foreignKeyChecks = nil  // Native row events can change this session setting.
         _ = try query("SET SESSION timestamp=DEFAULT")
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")

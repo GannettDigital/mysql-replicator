@@ -77,7 +77,8 @@ replication continues.
   when you use a binlog file position.
 - **Target transport:** use SQL statements by default, or select
   `target.transport: binlog` to apply compatible row events with MySQL's `BINLOG`
-  statement. Both modes retain state in SQLite. BINLOG is opt-in; it is not a
+  statement. Transactions that need supported compatibility conversions use SQL.
+  The selection occurs before writes. Both modes retain state in SQLite. BINLOG is opt-in; it is not a
   native replication channel or a demonstrated performance improvement.
 - **Source GTIDs:** preserve them on a target that permits assignment, or track
   them only in SQLite. See [required privileges and Cloud SQL limits](docs/GTID_PRESERVATION.md).

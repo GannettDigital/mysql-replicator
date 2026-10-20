@@ -7,8 +7,38 @@ extension TargetSession {
         _ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
         maximumInsertBytes: Int, checkSourceFailure: @escaping () throws -> Void
     ) -> DMLExecution.Outcome {
-        if config.target.transport == .binlog {
-            return executeBinlog(groups, cancellation: cancellation, checkSourceFailure: checkSourceFailure)
+        let transport = groups.first?.executionTransport() ?? .sql
+        dmlTransport = transport
+        defer { dmlTransport = nil }
+        do {
+            try require(
+                !groups.isEmpty && groups.allSatisfy { $0.executionTransport() == transport },
+                "mixed or empty target transport batch")
+            if transport == .binlog {
+                try require(config.target.transport == .binlog, "BINLOG program in SQL configuration")
+                return executeBinlog(groups, cancellation: cancellation, checkSourceFailure: checkSourceFailure)
+            }
+            if config.target.transport == .binlog {
+                try require(groups.allSatisfy { $0.sqlReason != nil }, "SQL group lacks a compatibility decision")
+                statementTrace = .init()
+                try checkSourceFailure()
+                try require(!cancellation.isCancelled, "apply cancelled")
+                // A completed BINLOG GTID can leave GTID_NEXT undefined. Reset
+                // before SQL metadata/scratch DDL; never after an uncertain write.
+                if config.target.preserveSourceGTIDs { try resetSourceGTID() }
+                try resetDMLSession()
+                _ = try query("SET SESSION unique_checks=1")
+                if config.target.preserveSourceGTIDs && !contract.transactional {
+                    try preflightMyISAMGTIDSupport()
+                }
+            }
+        } catch {
+            return .init(
+                acknowledged: Array(repeating: 0, count: groups.count), failure: error,
+                diagnostic: .init(
+                    reason: String(describing: error), statement: .init(), rows: [],
+                    ddlGTID: nil, ddlSQL: nil, transactionOutcome: "notStarted"),
+                discardUnwritten: error is TargetConnectionFailure)
         }
         if config.target.preserveSourceGTIDs {
             return executePreservingGTIDs(

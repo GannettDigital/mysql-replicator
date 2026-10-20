@@ -146,7 +146,8 @@ the source set.
 
 With SQL transport, a per-transaction check blocks if the target already has a
 source GTID that SQLite has not completed. BINLOG transport follows `mysqlbinlog`:
-it omits this query and lets MySQL skip an already-executed GTID. In both modes,
+it omits this query and lets MySQL skip an already-executed GTID. A transaction
+selected for SQL compatibility handling retains the SQL check. In both modes,
 pending SQLite intents still block ordinary restart after an uncertain write.
 Keep the saved intents and inspect the target rows. A recorded target GTID is
 not proof that a failed MyISAM group applied in full.

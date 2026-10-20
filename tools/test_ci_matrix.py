@@ -88,6 +88,16 @@ class MatrixTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not applicable'):
             generate([dict(scenarios=[rows[0], rows[2]])], policy)
 
+    def test_gtids_disabled_subset_does_not_use_full_family_boundaries(self):
+        rows = self.rows[:3] + [dict(row('create'), variant='without-source-gtids')]
+        policy = copy.deepcopy(self.policy)
+        policy['areas'][0].pop('size')
+        policy['areas'][0]['split_after'] = ['create']
+        result = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(result['obligations'], len(rows))
+        shard = next(s for s in result['include'] if s['variant'] == 'without-source-gtids')
+        self.assertEqual(shard['cases'], ['create'])
+
     def test_unknown_family_or_suite_fails_instead_of_omitting_coverage(self):
         for extra, reason in [(row('new', family='new-family'), 'unassigned correctness families'),
                               (row('new', suite='new-suite'), 'unassigned suite')]:

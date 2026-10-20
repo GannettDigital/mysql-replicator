@@ -45,27 +45,41 @@ This path accepts version 4 binlogs with CRC32, table maps, and version 2 FULL
 INSERT, UPDATE, and DELETE row events. The existing decoder and schema checks
 still run. The applier does not reconstruct or translate row-event bytes.
 
-The current implementation has the following limits. A refusal keeps the
-checkpoint before the affected transaction. It does not silently fall back to SQL.
-These are tool limits unless the text identifies a MySQL restriction.
+The applier selects SQL before writes when a transaction needs one of these
+operations:
 
-These cases stop before row writes:
+- Apply rows to a table with generated columns.
+- Exclude some table events from an otherwise included transaction.
+- Apply a partial JSON update with the existing SQL JSON update code.
+- Convert a typed YEAR value inside JSON with `compatibility.jsonYearToInteger`.
+- Apply rows whose source collation is mapped by `compatibility.collations`.
+
+The selection applies to the **whole source transaction**, including other tables
+in that transaction. It keeps one source GTID and one completion record. Entirely
+filtered transactions still advance the checkpoint and, when enabled, record an
+empty source GTID. DDL continues to use SQL.
+
+This is a preparation decision, not an error retry. The applier never retries a
+failed BINLOG write as SQL. SQL selection also does not bypass the existing SQL
+checks. For example, a binary JSON subtype that SQL cannot reproduce can still
+block a transaction selected for SQL.
+
+The decoder still reads all row events. SQLite uses those values to identify
+pending writes after a failure. This implementation does not yet omit row decoding
+for transactions sent through BINLOG. It does not rewrite raw event bytes.
+
+These cases still stop before row writes:
 
 - MyISAM groups outside the shared one-statement/one-included-table rule.
   This rule also applies with source GTID preservation disabled. When preservation
   is enabled, MySQL itself completes the GTID at the first MyISAM statement end.
-  This implementation does not remove that engine restriction.
-- A source group with both included and filtered events. Entirely filtered groups
-  still advance the checkpoint and, when enabled, record an empty source GTID.
-- Generated columns, partial row images, partial JSON updates, and unsupported
-  event types. These limits apply to BINLOG mode, not to the default SQL mode.
-- `compatibility.jsonYearToInteger: true`. This conversion needs the SQL path.
-- A source statement whose encoded request exceeds the target packet limit,
-  or a group that exceeds the raw-event byte limit. Base64 adds approximately one third to the raw size. The complete
-  SQL request and command byte must fit `max_allowed_packet` and the client limit.
+- Partial row images and unsupported event types.
+- A BINLOG statement whose encoded request exceeds the target packet limit,
+  or a group that exceeds the raw-event byte limit. Base64 adds approximately one
+  third to the raw size. The complete request must fit the target packet limit.
+  A size error does not select SQL.
 
-Source and target schemas must pass the existing compatibility checks. DDL
-collation mappings still apply. They do not change the raw row-event bytes.
+Source and target schemas must pass the existing compatibility checks.
 Compressed transaction payloads and XA remain unsupported by the shared decoder.
 A different server version, permissive execution mode, or disabled GTID
 preservation does not waive these checks.
@@ -98,11 +112,14 @@ The applier assigns the next source GTID directly. It does not query the target
 GTID set or reset GTID_NEXT after each transaction. With preservation enabled,
 it resets before installing a format description and at clean shutdown. With
 preservation disabled, it restores AUTOMATIC after a format-description event.
-Ordinary metadata reads do not require a reset.
+Ordinary metadata reads do not require a reset. Before a batch selected for SQL,
+the applier resets GTID_NEXT and the SQL session settings. That batch uses the
+existing SQL GTID checks and engine-specific execution. MyISAM SQL execution
+with GTID preservation also needs the [scratch-object privileges](GTID_PRESERVATION.md).
 
 Like `mysqlbinlog`, this mode lets MySQL skip an already-executed GTID. Use a
 verified target baseline. This server behavior does not resolve an uncertain
-previous write in SQLite. The SQL transport retains its existing GTID checks.
+previous write in SQLite. Transactions selected for SQL retain the existing per-transaction GTID checks.
 
 ## Failure and restart
 
@@ -118,7 +135,14 @@ MyISAM can keep partial writes and the source GTID after an error. The applier
 keeps the pending group for review. It never retries a failed BINLOG request as SQL.
 
 Support bundles retain the transport setting, source events, schema records, row
-intents, and target failure. Start with `failure.json`. Do not use the target's
+intents, and target failure. For a transaction selected for SQL, the
+`sql_transport_groups` table contains its `gtid` and selection `reason`. These
+records are committed with the pending row intents and removed with the retained
+group history. Reasons include `generated-columns`, `filtered-group`,
+`partial-json`, `json-year`, and `collation-mapping`. The first matching reason is
+recorded. An ordinary BINLOG transaction needs no additional journal row.
+
+Start with `failure.json`. Do not use the target's
 GTID set alone to decide that a failed MyISAM group applied in full.
 
 ## Select and operate the transport
@@ -162,6 +186,13 @@ continuation. Both profiles also passed the selected lifecycle cases
 `source-reconnect`, `target-reconnect`, `target-uncertain`, and
 `target-uncertain-resume`. These cover socket loss, server restarts, and refusal
 to resume an uncertain write. The full type and lifecycle matrices remain untested.
+The SQL-selection tests passed generated columns, partial JSON updates, mixed
+table filters, mapped-collation cleanup, and collation collisions on 8.4 → 5.7
+MyISAM. Generated columns also passed with source GTID preservation disabled.
+On 5.7 → 8.4 InnoDB, generated columns, table filters, and JSON YEAR conversion passed. The YEAR
+case includes UPDATE, DELETE, restart, and offline replay. These are selected
+cases; they do not establish complete type support for BINLOG execution.
+
 The 10K single-row benchmarks passed with both transports. BINLOG now uses about
 four target calls per transaction, compared with five for SQL. The fresh comparison
 did not show a clear elapsed-time gain over SQL. Native times varied between

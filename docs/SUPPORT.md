@@ -313,7 +313,9 @@ The remaining JSON opaque subtype and range limits are documented in the
 row replication can store binary JSON values that ordinary client SQL cannot
 recreate with the same type. The SQL transport retains the source bytes and stops
 before a write when its constructor cannot preserve the value. BINLOG sends
-the row bytes directly. Target-version restrictions still apply. See
+compatible row bytes directly. Transactions that need generated-column handling,
+partial filtering, partial JSON updates, or configured value conversions use SQL.
+The selection occurs before writes. Target-version restrictions still apply. See
 [BINLOG transport](BINLOG_TRANSPORT.md).
 
 ### Database defaults in legacy ALTER syntax

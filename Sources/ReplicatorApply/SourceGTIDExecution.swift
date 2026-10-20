@@ -24,7 +24,7 @@ extension TargetSession {
         try SourceGTIDExecution.validate(identity, targetVersion: serverVersionID ?? 0)
         // Match mysqlbinlog replay: the server handles an already-executed GTID.
         // Pending SQLite intents still block ordinary restart after uncertain writes.
-        guard config.target.transport != .binlog else { return }
+        guard executionTransport != .binlog else { return }
         try require(
             try scalar("SELECT GTID_SUBSET(?,@@GLOBAL.gtid_executed) AS v", [.init(string: identity.canonical)]) == "0",
             "target already executed source GTID \(identity.canonical) but SQLite has not recorded it; inspect the target and saved state before recovery"
@@ -42,9 +42,9 @@ extension TargetSession {
         guard config.target.preserveSourceGTIDs else { return }
         try assignSourceGTID(identity)
         _ = try query("BEGIN", textProtocol: true)
-        let end = config.target.transport == .binlog && rolledBack ? "ROLLBACK" : "COMMIT"
+        let end = executionTransport == .binlog && rolledBack ? "ROLLBACK" : "COMMIT"
         _ = try query(end, textProtocol: true, mutation: true)
-        if config.target.transport != .binlog { try resetSourceGTID() }
+        if executionTransport != .binlog { try resetSourceGTID() }
     }
     /// Set immediately before the actual write, after metadata and JSON scratch
     /// preparation. BINLOG replay assigns the next GTID directly.

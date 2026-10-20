@@ -10,7 +10,10 @@ With the default SQL transport, object key order and whitespace can change.
 Array order is preserved. The opt-in [BINLOG transport](BINLOG_TRANSPORT.md)
 sends the original complete row values to MySQL. It avoids SQL constructors for
 binary JSON values, but still requires compatible target types and event formats.
-It does not implement partial JSON updates or `jsonYearToInteger` translation.
+Transactions with partial JSON updates use SQL. Transactions with typed JSON YEAR
+values also use SQL when `jsonYearToInteger` is enabled. This selection occurs
+before writes and covers the whole transaction. An ordinary YEAR column does not
+need this JSON conversion.
 
 For example, this source statement is supported:
 

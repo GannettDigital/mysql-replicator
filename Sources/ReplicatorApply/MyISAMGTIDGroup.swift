@@ -88,6 +88,7 @@ extension TargetSession {
     }
 
     func preflightMyISAMGTIDSupport() throws {
+        guard !myisamGTIDSupportReady else { return }
         try withoutScratchLogging {
             try prepareGTIDScratch()
             _ = try query(
@@ -95,6 +96,7 @@ extension TargetSession {
                 textProtocol: true)
             _ = try query("DROP FUNCTION \(MyISAMGTIDProgram.function)", textProtocol: true)
         }
+        myisamGTIDSupportReady = true
     }
     private func prepareGTIDScratch() throws {
         let p = MyISAMGTIDProgram.parameters

@@ -44,9 +44,58 @@
       "area": "rows-json-replay",
       "suite": "correctness",
       "profiles": [
-        "mysql84-to-mysql57-myisam",
-        "mysql57-to-mysql84-innodb",
-        "mysql57-to-mysql57-myisam",
+        "mysql84-to-mysql57-myisam"
+      ],
+      "cases": [
+        "positive",
+        "matrix-json",
+        "matrix-typedjson",
+        "offline-replay",
+        "live-skip-errors",
+        "ddl-compat-generated",
+        "wild-ignore",
+        "matrix-jsonpartial",
+        "ddl-compat-collation-cleanup",
+        "ddl-compat-collation-collision"
+      ]
+    },
+    {
+      "area": "rows-json-replay",
+      "suite": "correctness",
+      "profiles": [
+        "mysql57-to-mysql84-innodb"
+      ],
+      "cases": [
+        "positive",
+        "matrix-json",
+        "matrix-typedjson",
+        "offline-replay",
+        "live-skip-errors",
+        "ddl-compat-generated",
+        "wild-ignore",
+        "json-year-compatibility"
+      ]
+    },
+    {
+      "area": "rows-json-replay",
+      "suite": "correctness",
+      "profiles": [
+        "mysql57-to-mysql57-myisam"
+      ],
+      "cases": [
+        "positive",
+        "matrix-json",
+        "matrix-typedjson",
+        "offline-replay",
+        "live-skip-errors",
+        "ddl-compat-generated",
+        "wild-ignore"
+      ]
+    },
+    {
+      "area": "rows-json-replay",
+      "suite": "correctness",
+      "profiles": [
         "mysql57-to-mysql57-innodb"
       ],
       "cases": [
@@ -54,7 +103,9 @@
         "matrix-json",
         "matrix-typedjson",
         "offline-replay",
-        "live-skip-errors"
+        "live-skip-errors",
+        "ddl-compat-generated",
+        "wild-ignore"
       ]
     },
     {
@@ -68,7 +119,8 @@
         "mysql57-to-mysql57-innodb"
       ],
       "cases": [
-        "positive"
+        "positive",
+        "ddl-compat-generated"
       ]
     },
     {

@@ -10,10 +10,14 @@ mysqlbinlog transaction boundaries and the shared durable queue. SQL remains the
 default. The operator guide lists the supported inputs and explicit refusals.
 Full CI now selects BINLOG cases for all four profiles. A complete SQL test pass does not imply a BINLOG test pass.
 
-The broader byte-rewriting work in delivery step 4 remains future work:
-generated-column mapping, partial JSON updates, compressed transaction payloads,
-and compatibility conversions that change row bytes. Partially filtered groups
-also remain an explicit refusal. Do not enable these paths by removing checks.
+Step 4 now uses explicit SQL selection before writes. Generated columns,
+partially filtered transactions, partial JSON updates, configured collation
+mappings, and typed JSON YEAR conversion use the existing SQL executor. The whole
+source transaction uses one executor. Failed BINLOG writes are never retried as
+SQL. This design avoids changes to raw event bytes. The decoder still reads all
+rows for SQLite recovery records.
+
+Compressed transaction payloads remain outside the shared decoder's support.
 MyISAM retains the shared one-statement/one-table rule even without source GTID
 preservation. Cloud SQL permissions still need a live environment test.
 
@@ -354,8 +358,9 @@ context, target schema and outcome. No new whole-file hashes are required.
    and state completion. Apply one source GTID at a time. Keep SQL as the default.
 4. Add explicit cross-version preparation rules only where needed. Test optional
    table-map metadata, collations, generated columns, JSON YEAR, and source/target
-   schema differences. Decompress transaction payloads before submission. Do not
-   assume that changing a version string or FDE converts the event format.
+   schema differences. Select SQL for supported conversions before writes, at
+   complete transaction boundaries. Compressed payloads remain a separate decoder
+   task. Do not assume that changing a version string or FDE converts the format.
 5. Run the same named lab cases with both transports. Add transport as an option
    under the existing profile model. Include restart, offline replay, target
    disconnect, filters, empty GTID markers, skip policies and failure bundles.
@@ -389,7 +394,8 @@ alone does not prove complete MyISAM application.
 
 ## CI matrix size
 
-The normal full matrix has 242 jobs, including 12 selected BINLOG jobs. The
+The normal full matrix has 246 jobs, including 12 selected BINLOG jobs. Four
+additional SQL jobs check generated columns without source GTID preservation. The
 expanded coverage matrix exceeds GitHub's limit of 256 jobs. The existing SQL
 matrix also exceeds that limit with expanded coverage. Split the execution matrix
 before the next expanded-coverage run. Do not remove release-binary assertions to
@@ -402,3 +408,51 @@ integration run built the release image, then stopped at the user's request duri
 fixture startup. It did not complete the selected JSON and replay cases. The new
 BINLOG CI selections have not run on GitHub. Keep this distinction when resuming
 beta.7 work. The prior completed integration and timing runs remain listed above.
+
+
+## SQL selection before writes (2026-10-20)
+
+Work branch: `beta/7/04-compatible-sql-routing`. Commit `ab02c62` first merged
+`beta/6-stack/11-release` into beta.7. The new selector uses decoded table and row
+metadata. It selects SQL for generated columns, partly filtered transactions,
+partial JSON updates, mapped collations, and configured JSON YEAR conversion.
+It selects the whole source transaction. A preparation batch ends when the
+selected executor changes. Source order and source GTID boundaries stay intact.
+
+The target uses the existing SQL engine adapter for a selected transaction.
+Before SQL execution, it resets the GTID and SQL session state. MySQL row events
+can change foreign-key and unique-key check settings. MyISAM GTID scratch objects
+are checked once, before the first selected SQL batch needs them. A failed BINLOG
+request is never retried as SQL.
+
+SQLite records the first matching selection reason in `sql_transport_groups`.
+The record and pending row intents share one commit. Group deletion also removes
+the selection record. Existing format-14 state can add this diagnostic table;
+the raw BINLOG program format remains version 1.
+
+Focused checks:
+
+- 66 Swift tests passed, including transport selection, group boundaries,
+  journal creation and migration, uncertain writes, configuration, and lab options.
+- 29 CI planning tests passed. The generated full matrix has 246 jobs.
+- On 8.4 → 5.7 MyISAM, generated columns, partial JSON, table filters, collation
+  cleanup, and collation collisions passed. Report:
+  `artifacts/lab/20261020T201326Z-b890bf99/result.json`.
+- On that profile, generated columns also passed with source GTID preservation
+  disabled. Report: `artifacts/lab/20261020T201250Z-a4359940/result.json`.
+- On 5.7 → 8.4 InnoDB, generated columns passed before the test server stopped
+  during a later case. The failed run is retained at
+  `artifacts/lab/20261020T201027Z-76afce83/result.json`.
+- The fresh InnoDB run passed JSON YEAR conversion and table filters. It includes
+  stop/resume, changed primary keys, DELETE before-images, and offline replay
+  without a source connection. Report:
+  `artifacts/lab/20261020T201501Z-32d34c2e/result.json`.
+
+The optimized Linux build exposed a Swift 6.2.1 ownership-verifier failure when
+it inlined the transport check from an array element. The check now uses a small
+non-inlined method. The release build passed with that change.
+
+No new performance measurement was made. All row events are still decoded for
+SQLite recovery records. Selective row decoding needs a separate design for those
+records. Full BINLOG type and profile checks remain for CI. The existing limits
+for compressed payloads, partial row images, XA, and MyISAM source groups remain.

@@ -26,6 +26,11 @@ extension SharedCorrectness.Run {
             // The default path must stop before a write that loses the source type.
             var strict = initial
             strict["stateDirectory"] = "/evidence/json-year-strict"
+            // The refusal belongs to text SQL transport. The translated phase
+            // uses the selected transport and must route opaque YEAR through SQL.
+            var strictTarget = strict["target"] as! [String: Any]
+            strictTarget["transport"] = "sql"
+            strict["target"] = strictTarget
             let rejected = try isolated.start("json-year-strict", config: strict)
             _ = try isolated.finish(
                 rejected, label: "json-year-strict", config: strict, reason: "cannot preserve JSON type 13")
@@ -71,6 +76,11 @@ extension SharedCorrectness.Run {
             }
             _ = try live("json-year-insert", count: 2, initialize: true)
             try verify(4)
+            if f.dmlTransport == "binlog" {
+                try require(
+                    isolated.state("json-year-insert", "SELECT reason FROM sql_transport_groups") == "json-year",
+                    "JSON YEAR group did not record its SQL selection")
+            }
             var changed = config
             changed["compatibility"] = ["jsonYearToInteger": false]
             let wrong = try isolated.start("json-year-policy-change", config: changed, initialize: false)

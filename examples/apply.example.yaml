@@ -63,7 +63,7 @@ source:
   # decoderProfiling: false        # Detailed decoder timings; coarse timings stay on.
 
 target:                            # Dedicated replica connection and session settings.
-  transport: sql                  # sql (default) or binlog. See docs/BINLOG_TRANSPORT.md for limits and privileges.
+  transport: sql                  # sql (default) or binlog. BINLOG selects SQL before writes for supported compatibility cases. See docs/BINLOG_TRANSPORT.md.
   preserveSourceGTIDs: true        # Default. Retain source GTIDs on the target. False keeps them only in the replicator.
   host: REPLACE_TARGET_HOST         # Dedicated target matching the selected profile.
   port: 3306                       # Required with host; valid range 1..65535.

@@ -521,9 +521,6 @@ public struct ApplyConfiguration: Decodable {
         try target.validate()
         if target.transport == .binlog {
             try require(!target.explicitTableLocks, "BINLOG transport cannot use explicit table locks")
-            try require(
-                !compatibilityPolicy.jsonYearToInteger,
-                "BINLOG transport does not implement compatibility.jsonYearToInteger; use SQL transport")
         }
         try require(target.nativeAutoStartDisabled, "operator must disable automatic native replication start")
         try require(

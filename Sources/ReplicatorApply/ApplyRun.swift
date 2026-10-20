@@ -438,17 +438,22 @@ public enum ApplyRun {
                         }
                         let mutations: [Mutation]
                         var binlog: BinlogEventProgram?
+                        var sqlReason: DMLSQLReason?
                         do {
                             mutations = try state.profile("dml.plan") {
                                 try DMLPlan.make(
                                     group, tables: planningCache.tables, transactional: profile.transactional)
                             }
                             if configuration.target.transport == .binlog && !mutations.isEmpty {
-                                binlog = try timings.measure("apply.binlog.prepare") {
-                                    try binlogCapture.prepare(
-                                        group, mutations: mutations,
-                                        maximumPacketBytes: packetLimit, transactional: profile.transactional,
-                                        preserveSourceGTIDs: configuration.target.preserveSourceGTIDs)
+                                sqlReason = DMLSQLReason.select(
+                                    group, mutations: mutations, compatibility: configuration.compatibilityPolicy)
+                                if sqlReason == nil {
+                                    binlog = try timings.measure("apply.binlog.prepare") {
+                                        try binlogCapture.prepare(
+                                            group, mutations: mutations,
+                                            maximumPacketBytes: packetLimit, transactional: profile.transactional,
+                                            preserveSourceGTIDs: configuration.target.preserveSourceGTIDs)
+                                    }
                                 }
                             }
                         } catch {
@@ -476,7 +481,8 @@ public enum ApplyRun {
                         }
                         try batch.append(
                             PreparedDMLGroup(
-                                group: group, mutations: mutations, relayEnd: state.relayLength, binlog: binlog))
+                                group: group, mutations: mutations, relayEnd: state.relayLength, binlog: binlog,
+                                sqlReason: sqlReason))
                     }
                     while true {
                         if drain.isCancelled {

@@ -122,7 +122,9 @@ def generate(catalogs, policy, expanded_coverage=False):
                 members = [r['id'] for r in rows if r['family'] in area['families']]
                 if not members:
                     continue
-                chunks = case_groups(members, area)
+                # This variant selects a few focused cases, not the full family.
+                # Full-family timing boundaries need not exist in that subset.
+                chunks = [members] if variant == 'without-source-gtids' else case_groups(members, area)
                 for index, roots in enumerate(chunks, 1):
                     selected = closure(roots)
                     # Dependencies may be repeated, but each primary obligation

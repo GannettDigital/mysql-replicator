@@ -165,6 +165,7 @@ final class StateStore {
             try execute(
                 "CREATE TABLE groups(sequence INTEGER PRIMARY KEY,gtid TEXT UNIQUE NOT NULL,source_file TEXT NOT NULL,start_position TEXT NOT NULL,end_position TEXT NOT NULL,relay_start INTEGER NOT NULL,relay_end INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,completed_at TEXT)"
             )
+            try createSQLTransportJournal()
             try createDDLSkips()
             try createCompatibilityJournal()
             try execute("CREATE INDEX groups_retention ON groups(status,completed_at)")
@@ -552,6 +553,7 @@ final class StateStore {
                 try execute("PRAGMA user_version=14")
             }
         }
+        try createSQLTransportJournal()
         try openCounters()
         ready = true
     }
@@ -562,6 +564,14 @@ final class StateStore {
         try execute(
             "INSERT OR REPLACE INTO target_transport VALUES(1,?,?)",
             [transport.rawValue, String(BinlogEventProgram.formatVersion)])
+    }
+    private func createSQLTransportJournal() throws {
+        // Additive diagnostic records. They share the group journal commit and
+        // are removed with their group, including unaudited skips and pruning.
+        try execute("CREATE TABLE IF NOT EXISTS sql_transport_groups(gtid TEXT PRIMARY KEY,reason TEXT NOT NULL)")
+        try execute(
+            "CREATE TRIGGER IF NOT EXISTS prune_sql_transport AFTER DELETE ON groups BEGIN DELETE FROM sql_transport_groups WHERE gtid=OLD.gtid; END"
+        )
     }
     private func createGTIDModeJournal(_ preserveSourceGTIDs: Bool) throws {
         try execute(
@@ -968,6 +978,9 @@ final class StateStore {
                             String(item.group.start.position), String(item.group.end.position), String(start),
                             String(item.relayEnd), time,
                         ])
+                    if let reason = item.sqlReason {
+                        try execute("INSERT INTO sql_transport_groups VALUES(?,?)", [item.id, reason.rawValue])
+                    }
                     for (ordinal, row) in item.mutations.enumerated() {
                         try execute(
                             "INSERT INTO row_intents VALUES(?,?,?,?,?,'PENDING',?,NULL)",
