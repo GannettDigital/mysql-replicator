@@ -5,6 +5,19 @@ import XCTest
 @testable import ReplicatorApply
 
 final class ConfigurationOverrideTests: XCTestCase {
+    func testLoggingFlagBeforeCommandPreservesOverrides() throws {
+        let options = try ConfigurationOverrides(arguments: [
+            "--verbose", "run", "--config", "x.yaml", "--target.port", "3307",
+        ])
+        XCTAssertEqual(options.arguments, ["--verbose", "run", "--config", "x.yaml"])
+        struct Config: Decodable {
+            struct Target: Decodable { let port: Int }
+            let target: Target
+        }
+        XCTAssertEqual(
+            try ConfigurationFile.decode(Config.self, from: options.applying(to: Data("target: {port: 3306}".utf8)))
+                .target.port, 3307)
+    }
     func testHelpDistinguishesSectionsFromValues() throws {
         let help = try ConfigurationOptions.help()
         for section in ["source", "target", "source.start", "batch", "supportBundle"] {

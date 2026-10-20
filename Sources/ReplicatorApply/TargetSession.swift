@@ -3,6 +3,7 @@ import MySQLNIO
 import NIOCore
 import NIOPosix
 import ReplicatorCodec
+import ReplicatorLogging
 
 final class TargetSession {
     let group: MultiThreadedEventLoopGroup
@@ -112,12 +113,20 @@ final class TargetSession {
                 phase: .possiblyExecuted, sql: sql, sqlBase64: rawSQL?.base64EncodedString())
         }
         do {
-            let rows = try timings.measure("target.sql") {
-                try profile(textProtocol ? "sql.text" : "sql.prepared") {
-                    if let rawSQL { return try connection.simpleQueryBytes(Array(rawSQL)).wait() }
-                    return try textProtocol
-                        ? connection.simpleQuery(sql).wait()
-                        : connection.cachedQuery(sql, binds, onMetadata: { affected = $0.affectedRows }).wait()
+            let rows = try ApplicationLog.measure(
+                "Target query", level: .debug,
+                metadata: [
+                    "purpose": .string(TargetQueryPurpose.classify(sql, mutation: mutation)),
+                    "transport": .string(executionTransport.rawValue),
+                ]
+            ) {
+                try timings.measure("target.sql") {
+                    try profile(textProtocol ? "sql.text" : "sql.prepared") {
+                        if let rawSQL { return try connection.simpleQueryBytes(Array(rawSQL)).wait() }
+                        return try textProtocol
+                            ? connection.simpleQuery(sql).wait()
+                            : connection.cachedQuery(sql, binds, onMetadata: { affected = $0.affectedRows }).wait()
+                    }
                 }
             }
             if mutation { statementTrace.phase = .acknowledged }
@@ -223,6 +232,9 @@ final class TargetSession {
             let identity = SQLNameKey.table(database, name)
             let table: ApplyTable
             if let cached = discovered[identity] {
+                ApplicationLog.logger.debug(
+                    "Use cached target schema",
+                    metadata: ["cache": "hit", "database": .string(database), "table": .string(name)])
                 table = cached
             } else {
                 try require(discovered.count < maximumCachedTables, "discovered schema limit reached")
@@ -249,50 +261,54 @@ final class TargetSession {
     }
 
     func readSchema(database: String, name: String, validateRelationships: Bool = true) throws -> ApplyTable {
-        try profile("target.read_schema") {
-            let binds = [MySQLData(string: database), MySQLData(string: name)]
-            let columns = try query(
-                "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
-                binds
-            ).0
-            let keys = try query(
-                "SELECT COLUMN_NAME,SUB_PART,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",
-                binds
-            ).0
-            try require(!columns.isEmpty, "discovered target table is absent")
-            try require(keys.count <= 16, "discovered target primary key exceeds 16 columns")
-            var table = ApplyTable(
-                database: database, table: name,
-                columns: try columns.map { row in
-                    try readColumn(row, table: TableName(database: database, table: name))
-                }, primaryKeyColumns: keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
-            let parts = keys.map {
-                ApplyIndexPart(
-                    column: $0.column("COLUMN_NAME")?.string, prefix: $0.column("SUB_PART")?.int,
-                    direction: NativeReplicationRules(profile: config.replicationProfile).indexDirection(
-                        $0.column("COLLATION")?.string, type: "BTREE"))
+        try ApplicationLog.measure(
+            "Read target schema", metadata: ["phase": "schema", "database": .string(database), "table": .string(name)]
+        ) {
+            try profile("target.read_schema") {
+                let binds = [MySQLData(string: database), MySQLData(string: name)]
+                let columns = try query(
+                    "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
+                    binds
+                ).0
+                let keys = try query(
+                    "SELECT COLUMN_NAME,SUB_PART,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",
+                    binds
+                ).0
+                try require(!columns.isEmpty, "discovered target table is absent")
+                try require(keys.count <= 16, "discovered target primary key exceeds 16 columns")
+                var table = ApplyTable(
+                    database: database, table: name,
+                    columns: try columns.map { row in
+                        try readColumn(row, table: TableName(database: database, table: name))
+                    }, primaryKeyColumns: keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
+                let parts = keys.map {
+                    ApplyIndexPart(
+                        column: $0.column("COLUMN_NAME")?.string, prefix: $0.column("SUB_PART")?.int,
+                        direction: NativeReplicationRules(profile: config.replicationProfile).indexDirection(
+                            $0.column("COLLATION")?.string, type: "BTREE"))
+                }
+                table.primaryKeyParts = parts.contains { $0.prefix != nil || $0.direction != "A" } ? parts : nil
+                let encoding = try tableEncoding(TableName(database: database, table: name))
+                table.defaultCharacterSet = encoding.characterSet
+                table.defaultCollation = encoding.collation
+                table.secondaryIndexes = try readIndexes(
+                    database: database, name: name, primaryKey: table.effectivePrimaryKeyParts)
+                table.partitions = try readPartitions(database: database, name: name, columns: table.columns)
+                if contract.transactional && validateRelationships {
+                    table.foreignKeys = try readForeignKeys(TableName(database: database, table: name))
+                }
+                try table.validate()
+                table.savedRowIdentity = table.rowIdentity
+                try contract.validateSchemaFeatures(table)
+                if validateRelationships {
+                    try verifySchema(table)
+                } else {
+                    // Related-table validation must not replace a complete prepared
+                    // plan with this deliberately graph-free metadata snapshot.
+                    try verifyTargetSchema(table, validateRelationships: false)
+                }
+                return table
             }
-            table.primaryKeyParts = parts.contains { $0.prefix != nil || $0.direction != "A" } ? parts : nil
-            let encoding = try tableEncoding(TableName(database: database, table: name))
-            table.defaultCharacterSet = encoding.characterSet
-            table.defaultCollation = encoding.collation
-            table.secondaryIndexes = try readIndexes(
-                database: database, name: name, primaryKey: table.effectivePrimaryKeyParts)
-            table.partitions = try readPartitions(database: database, name: name, columns: table.columns)
-            if contract.transactional && validateRelationships {
-                table.foreignKeys = try readForeignKeys(TableName(database: database, table: name))
-            }
-            try table.validate()
-            table.savedRowIdentity = table.rowIdentity
-            try contract.validateSchemaFeatures(table)
-            if validateRelationships {
-                try verifySchema(table)
-            } else {
-                // Related-table validation must not replace a complete prepared
-                // plan with this deliberately graph-free metadata snapshot.
-                try verifyTargetSchema(table, validateRelationships: false)
-            }
-            return table
         }
     }
     private func readColumn(_ row: MySQLRow, table: TableName) throws -> ApplyColumn {

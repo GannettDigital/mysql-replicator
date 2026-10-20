@@ -28,6 +28,7 @@ final class CLIProcessTests: XCTestCase {
             ["recovery", "--help"], ["recovery", "inspect", "--help"], ["recovery", "resolve", "--help"],
             ["help", "recovery", "resolve"],
             ["config-help", "--help"], ["config-help"], ["config-help", "--command", "ctl"],
+            ["run", "--debug", "--help"], ["config-help", "--verbose", "--command", "ctl"],
         ] {
             let (status, out, error) = try run(args)
             XCTAssertEqual(status, 0, String(decoding: error, as: UTF8.self))
@@ -149,5 +150,65 @@ final class CLIProcessTests: XCTestCase {
             let diagnostic = try XCTUnwrap(JSONSerialization.jsonObject(with: error) as? [String: Any])
             XCTAssertEqual(diagnostic["error"] as? String, "argument_error")
         }
+    }
+
+    func testReplayLogsPhasesWithoutSourceAccessOrLeakingCredentials() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        // macOS's per-user temporary path can exceed the control socket limit.
+        let directory = URL(fileURLWithPath: "/tmp").appendingPathComponent("log-test-" + UUID().uuidString)
+        let archive = directory.appendingPathComponent("binlogs")
+        try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.copyItem(
+            at: root.appendingPathComponent("tests/ReplicatorLabTests/Fixtures/source-positive.binlog"),
+            to: archive.appendingPathComponent("binlog.000003"))
+        let config = directory.appendingPathComponent("apply.yaml")
+        let secret = "never-log-this-target-password"
+        let yaml = """
+            version: 2
+            stateDirectory: '\(directory.appendingPathComponent("state").path)'
+            source:
+              version: 2
+              host: unused.invalid
+              port: 3306
+              username: unused
+              requireTLS: false
+              serverID: 9100
+              sourceUUID: 8ba09bde-bc41-11f1-8272-ba06e9024a03
+              mode: gtid
+              start: {executedGTIDs: '8ba09bde-bc41-11f1-8272-ba06e9024a03:1-10'}
+            target:
+              unixSocket: /tmp/mysql-replicator-\(UUID().uuidString).sock
+              username: unused
+              password: '\(secret)'
+              requireTLS: false
+              nativeAutoStartDisabled: true
+              preserveSourceGTIDs: false
+            targetReconnect: {enabled: false}
+            archive: {directory: '\(archive.path)'}
+            """
+        try Data(yaml.utf8).write(to: config)
+        let (status, out, error) = try run(["replay", "--config", config.path, "--initialize", "--verbose"])
+        XCTAssertEqual(status, 1)  // Deliberately absent target socket.
+        XCTAssertTrue(out.isEmpty)
+        let records = try error.split(separator: 10).map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any])
+        }
+        let logs = records.filter { $0["kind"] as? String == "log" }
+        let messages = logs.compactMap { $0["message"] as? String }
+        XCTAssertTrue(messages.contains("Archive scan progress"), String(decoding: error, as: UTF8.self))
+        XCTAssertTrue(messages.contains("Connect to target started"), messages.description)
+        XCTAssertTrue(messages.contains("Connect to target finished"), messages.description)
+        XCTAssertFalse(messages.contains("Connect to source started"))
+        XCTAssertEqual(records.last?["error"] as? String, "apply_failed")
+        XCTAssertFalse(String(decoding: error, as: UTF8.self).contains(secret))
+        let (skipStatus, _, skipError) = try run([
+            "--verbose", "skip", "8ba09bde-bc41-11f1-8272-ba06e9024a03:11", "--config", config.path,
+        ])
+        XCTAssertEqual(skipStatus, 1)  // No captured pending transaction can be skipped.
+        let last = try XCTUnwrap(skipError.split(separator: 10).last)
+        let skipped = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(last)) as? [String: Any])
+        XCTAssertEqual(skipped["error"] as? String, "skip_failed")
     }
 }

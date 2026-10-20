@@ -3,6 +3,27 @@ import XCTest
 @testable import ReplicatorCommandLine
 
 final class CommandLineTests: XCTestCase {
+    func testLoggingFlagsDoNotChangeRequestsAndDebugWins() throws {
+        let base = ["run", "--config", "/unused.yaml"]
+        let expected = try ReplicatorCommandLine.parse(base)
+        for (flags, level) in [
+            ([], "warning"), (["--verbose"], "info"), (["--debug"], "debug"), (["--debug", "--verbose"], "debug"),
+        ] {
+            let invocation = try ReplicatorCommandLine.parseInvocation(base + flags)
+            XCTAssertEqual(invocation.request, expected)
+            XCTAssertEqual(invocation.logLevel, level)
+        }
+        let literal = try ReplicatorCommandLine.parseInvocation([
+            "recovery", "resolve", "retry", "--config", "x.yaml", "--gtids", "uuid:1", "--reason=--debug",
+        ])
+        XCTAssertEqual(literal.logLevel, "warning")
+        XCTAssertEqual(try ReplicatorCommandLine.parseInvocation(["--verbose"] + base).logLevel, "info")
+        XCTAssertEqual(try ReplicatorCommandLine.parseInvocation(["--verbose"] + base + ["--debug"]).logLevel, "debug")
+        XCTAssertThrowsError(try ReplicatorCommandLine.parse(base + ["--debug", "--debug"]))
+        guard case .help = try ReplicatorCommandLine.parse(["run", "--debug", "--help"]) else {
+            return XCTFail("No help")
+        }
+    }
     func testHelpNeedsNoConfigurationOrDatabase() throws {
         let paths = [
             [], ["run"], ["fetch"], ["replay"], ["support-bundle"], ["inspect"],

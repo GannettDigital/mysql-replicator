@@ -1,4 +1,5 @@
 import ReplicatorCapture
+import ReplicatorLogging
 
 extension TargetSession {
     /// Engine-specific transaction semantics stay behind the target adapter;
@@ -8,6 +9,12 @@ extension TargetSession {
         maximumInsertBytes: Int, checkSourceFailure: @escaping () throws -> Void
     ) -> DMLExecution.Outcome {
         let transport = groups.first?.executionTransport() ?? .sql
+        ApplicationLog.logger.debug(
+            "Execute DML batch",
+            metadata: [
+                "phase": "target_execute", "transport": .string(transport.rawValue),
+                "transactions": .string(String(groups.count)),
+            ])
         dmlTransport = transport
         defer { dmlTransport = nil }
         do {

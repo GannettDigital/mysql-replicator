@@ -9,7 +9,7 @@ public struct ConfigurationOverrides {
     public init(arguments: [String]) throws {
         var values: [String: String] = [:]
         var clean: [String] = []
-        let command = arguments.first ?? ""
+        let command = arguments.drop(while: { $0 == "--verbose" || $0 == "--debug" }).first ?? ""
         sourceOnly =
             command == "blackhole"
             || (command == "inspect"

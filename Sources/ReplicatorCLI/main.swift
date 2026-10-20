@@ -4,6 +4,7 @@ import ReplicatorCapture
 import ReplicatorCodec
 import ReplicatorCommandLine
 import ReplicatorConfiguration
+import ReplicatorLogging
 
 #if canImport(Musl)
     import Musl
@@ -104,6 +105,9 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         try FileHandle.standardOutput.write(contentsOf: data + Data([10]))
         return
     case .apply(let path, let initialize, let offline):
+        ApplicationLog.logger.info(
+            "Load apply configuration",
+            metadata: ["phase": "configuration", "mode": .string(offline ? "replay" : "run")])
         let configFile = URL(fileURLWithPath: path).standardizedFileURL
         let configData = try overrides.read(from: configFile)
         let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: configData, sourceURL: configFile)
@@ -111,17 +115,21 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration }
         let archive =
             try offline
-            ? ArchiveReplay(
-                configuration: ConfigurationFile.decode(ArchiveOptions.self, from: configData, sourceURL: configFile)
+            ? ApplicationLog.measure("Read archive inventory", metadata: ["phase": "archive_inventory"]) {
+                try ArchiveReplay(
+                    configuration: ConfigurationFile.decode(
+                        ArchiveOptions.self, from: configData, sourceURL: configFile
+                    )
                     .archive,
-                source: config.source, contract: (config.profile ?? .mysql84To57MyISAM).sourceContract,
-                filtered: !(config.replicateWildIgnoreTable ?? []).isEmpty
-                    || !(config.replicateWildDoTable ?? []).isEmpty,
-                progress: { progress in
-                    if let data = try? JSONEncoder().encode(progress) {
-                        try? FileHandle.standardError.write(contentsOf: data + Data([10]))
-                    }
-                }) : nil
+                    source: config.source, contract: (config.profile ?? .mysql84To57MyISAM).sourceContract,
+                    filtered: !(config.replicateWildIgnoreTable ?? []).isEmpty
+                        || !(config.replicateWildDoTable ?? []).isEmpty,
+                    progress: { progress in
+                        if let data = try? JSONEncoder().encode(progress) {
+                            try? ApplicationLog.writeDiagnostic(data + Data([10]))
+                        }
+                    })
+            } : nil
         let sourcePassword =
             try offline
             ? ""
@@ -165,7 +173,7 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
                 configuration: config, sourcePassword: sourcePassword, targetPassword: targetPassword,
                 initialize: initialize, cancellation: cancellation, drain: drain, archive: archive, control: control,
                 emitProgress: { try FileHandle.standardOutput.write(contentsOf: encoder.encode($0) + Data([10])) })
-            try FileHandle.standardError.write(contentsOf: encoder.encode(summary) + Data([10]))
+            try ApplicationLog.writeDiagnostic(encoder.encode(summary) + Data([10]))
         } catch var failure as ApplyRunError {
             if config.supportBundle?.onBlocked == true, failure.progress.lifecycle == "BLOCKED" {
                 // ApplyRun has released the state writer before collection.
@@ -208,7 +216,7 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
             emitTransaction: {
                 if transactions { try FileHandle.standardOutput.write(contentsOf: encoder.encode($0) + Data([10])) }
             })
-        try FileHandle.standardError.write(contentsOf: encoder.encode(summary) + Data([10]))
+        try ApplicationLog.writeDiagnostic(encoder.encode(summary) + Data([10]))
         return
     case .inspectFile(let path, let schemaPath, let includeRaw, let sourceFile):
         let file = URL(fileURLWithPath: path)
@@ -265,8 +273,17 @@ do {
     do { overrides = try ConfigurationOverrides(arguments: arguments) } catch let error as ConfigurationError {
         throw CLIParseError(description: error.description)
     }
-    let request = try ReplicatorCommandLine.parse(overrides.arguments)
-    try execute(request, overrides: overrides)
+    let invocation = try ReplicatorCommandLine.parseInvocation(overrides.arguments)
+    ApplicationLog.configure(level: invocation.logLevel)
+    switch invocation.request {
+    case .help, .version, .configurationHelp:
+        try execute(invocation.request, overrides: overrides)
+    default:
+        let command = overrides.arguments.drop(while: { $0 == "--verbose" || $0 == "--debug" }).first ?? ""
+        try ApplicationLog.measure("Command", metadata: ["mode": .string(command)]) {
+            try execute(invocation.request, overrides: overrides)
+        }
+    }
 } catch {
     var diagnostic: [String: Any]
     if let failure = error as? CLIParseError {
@@ -277,7 +294,7 @@ do {
         if let path = failure.keyPath { diagnostic["keyPath"] = path }
         if let line = failure.line { diagnostic["line"] = line }
         if let column = failure.column { diagnostic["column"] = column }
-    } else if CommandLine.arguments.dropFirst().first == "skip" {
+    } else if CommandLine.arguments.dropFirst().drop(while: { $0 == "--verbose" || $0 == "--debug" }).first == "skip" {
         diagnostic = ["error": "skip_failed", "reason": String(describing: error)]
     } else if let failure = error as? DecoderError {
         diagnostic = [
@@ -320,7 +337,7 @@ do {
         diagnostic = ["error": "inspect_failed", "reason": String(describing: error)]
     }
     if let bytes = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]) {
-        try? FileHandle.standardError.write(contentsOf: bytes + Data([10]))
+        try? ApplicationLog.writeDiagnostic(bytes + Data([10]))
     }
     exit(1)
 }

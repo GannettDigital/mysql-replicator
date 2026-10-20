@@ -1,5 +1,6 @@
 import Foundation
 import ReplicatorCodec
+import ReplicatorLogging
 
 public final class ArchiveReplay {
     /// File inventory and source contract for fetched or external archives.
@@ -115,6 +116,13 @@ public final class ArchiveReplay {
         let started = DispatchTime.now().uptimeNanoseconds
         let total = manifest.files.reduce(UInt64(0)) { $0 + $1.bytes }
         func report(_ phase: String, _ file: String, _ completed: Int, _ bytes: UInt64) {
+            ApplicationLog.logger.info(
+                "Archive scan progress",
+                metadata: [
+                    "phase": .string(phase), "file": .string(file),
+                    "filesCompleted": .string(String(completed)), "filesTotal": .string(String(manifest.files.count)),
+                    "bytesRead": .string(String(bytes)), "bytesTotal": .string(String(total)),
+                ])
             progress(
                 Progress(
                     phase: phase, file: file, filesCompleted: completed, filesTotal: manifest.files.count,

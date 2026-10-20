@@ -13,6 +13,51 @@ mysql-replicator recovery resolve --help
 `-h` also shows help. `mysql-replicator help replay` is an equivalent form.
 `mysql-replicator --version` shows the release version, codec ABI, and capabilities.
 
+## Application logs
+
+Use `--verbose` for INFO logs or `--debug` for DEBUG logs. If both flags are set,
+DEBUG takes precedence. Put the flag after the command, for example:
+
+```sh
+mysql-replicator replay --config replay.yaml --verbose
+mysql-replicator run --config apply.yaml --debug
+```
+
+The default level is WARNING. The new phase and query messages use INFO and DEBUG,
+so they are off by default. Help, version, and `config-help` do not emit logs.
+Flags apply to one invocation; `ctl reload` does not change the log level.
+
+Logs are one JSON object per line on stderr, with `kind: "log"`. Each record has
+`level`, `message`, `timestamp` (Unix seconds), and `fields`. Existing command
+results, progress records, final diagnostics, and exit status keep their formats.
+stderr can contain both log records and existing JSON diagnostics. For example:
+
+```sh
+mysql-replicator replay --config replay.yaml --verbose 2>replay.ndjson
+jq 'select(.kind == "log")' replay.ndjson
+jq 'select(.error != null)' replay.ndjson
+```
+
+INFO shows command start/end, archive scan progress, connections, target setup,
+schema reads, DDL, reconnect delays, drain state, and stop or blocked state.
+During apply, status logs include the durable checkpoint and row/transaction counts.
+They appear at lifecycle changes and at most once every five seconds otherwise.
+There are no per-row INFO messages. DDL and first schema reads can still produce
+many messages for workloads with many tables.
+
+DEBUG adds target query families, duration, completion outcome, schema-cache hits,
+DML batches, and transport decisions. A query family is a fixed label such as
+`schema.columns` or `session_setup`. It is not the SQL text. Logs omit SQL text,
+bound values, passwords, and server error text. Table names and GTIDs can appear.
+Full failure diagnostics and support bundles remain separate and can contain data.
+
+Output is synchronous. A slow file, pipe, or Docker log consumer can slow the
+replicator, especially at DEBUG. The handler bounds each record and does not
+accumulate a queue. Disabled messages do not format metadata or start log timers.
+Use DEBUG for diagnosis, then return to the default level for performance tests.
+Log-write failure does not change the target write outcome. Keep stderr writable
+if you need complete logs. A log record does not replace the SQLite checkpoint.
+
 ## Commands
 
 | Command | Purpose | Configuration |

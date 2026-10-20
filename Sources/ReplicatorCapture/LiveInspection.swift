@@ -3,6 +3,7 @@ import MySQLNIO
 import NIOCore
 import NIOPosix
 import ReplicatorCodec
+import ReplicatorLogging
 
 /// Socket auto-read is disabled during dumping. Only an empty consumer queue
 /// requests a read; a bounded socket read may deliver multiple small packets or
@@ -200,14 +201,16 @@ public enum LiveInspection {
                     try SocketAddress.makeAddressResolvingHost(config.host, port: config.port)
                 }
             }
-            let connection = try timings.measure("capture.connect") {
-                try sourceNetworkOperation {
-                    try MySQLConnection.connect(
-                        to: address, username: config.username, database: "",
-                        password: password, tlsConfiguration: config.tlsConfiguration(),
-                        serverHostname: config.serverHostname,
-                        requireTLS: config.requireTLS, handshakeTimeout: .seconds(10), on: loop
-                    ).wait()
+            let connection = try ApplicationLog.measure("Connect to source", metadata: ["phase": "source_connect"]) {
+                try timings.measure("capture.connect") {
+                    try sourceNetworkOperation {
+                        try MySQLConnection.connect(
+                            to: address, username: config.username, database: "",
+                            password: password, tlsConfiguration: config.tlsConfiguration(),
+                            serverHostname: config.serverHostname,
+                            requireTLS: config.requireTLS, handshakeTimeout: .seconds(10), on: loop
+                        ).wait()
+                    }
                 }
             }
             defer { try? timings.measure("capture.shutdown.connection") { try connection.close().wait() } }

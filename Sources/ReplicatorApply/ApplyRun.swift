@@ -1,6 +1,7 @@
 import Foundation
 import ReplicatorCapture
 import ReplicatorCodec
+import ReplicatorLogging
 
 public struct ApplySummary: Encodable {
     public let kind = "apply_summary"
@@ -60,6 +61,12 @@ public enum ApplyRun {
             try require(configuration.source.mode == "gtid", "offline replay requires GTID positioning")
         }
         let profile = configuration.replicationProfile
+        ApplicationLog.logger.info(
+            "Start replication",
+            metadata: [
+                "mode": .string(archive == nil ? "run" : "replay"), "profile": .string(profile.rawValue),
+                "transport": .string(configuration.target.transport.rawValue),
+            ])
         let legacyMetadata = profile.sourceContract.requiresHistoricalSchema
         let filter = try TableFilter(
             configuration.replicateWildIgnoreTable ?? [], including: configuration.replicateWildDoTable ?? [],
@@ -83,7 +90,9 @@ public enum ApplyRun {
         var finalResult: ApplySummary?
         var activeBatchTransactions = 0
         var executionQueue: DMLExecutor?
-        let state = try StateStore(configuration: configuration, initialize: initialize, timings: timings)
+        let state = try ApplicationLog.measure("Open replication state", metadata: ["phase": "state"]) {
+            try StateStore(configuration: configuration, initialize: initialize, timings: timings)
+        }
         let statistics = configuration.statistics ?? StatisticsPolicy()
         let estimator = ProgressEstimator(window: statistics.rateWindowSeconds)
         let monitor = archive == nil ? SourceMonitor() : nil
@@ -143,7 +152,25 @@ public enum ApplyRun {
                 sourceFailurePosition: sourceFailurePosition, estimate: estimate(lifecycle),
                 counters: state.counters, applyQueue: executionQueue?.snapshot)
         }
+        var lastLogLifecycle: String?
+        var lastLogTime: UInt64 = 0
         func report(_ value: ApplySummary) throws {
+            if ApplicationLog.logger.logLevel <= .info {
+                let now = DispatchTime.now().uptimeNanoseconds
+                if lastLogLifecycle != value.lifecycle || now - lastLogTime >= 5_000_000_000 {
+                    ApplicationLog.logger.info(
+                        "Replication status",
+                        metadata: [
+                            "lifecycle": .string(value.lifecycle),
+                            "transactions": .string(String(value.transactionsApplied)),
+                            "rows": .string(String(value.rowsApplied)),
+                            "file": .string(value.appliedPosition?.file ?? ""),
+                            "position": .string(value.appliedPosition.map { String($0.position) } ?? ""),
+                        ])
+                    lastLogLifecycle = value.lifecycle
+                    lastLogTime = now
+                }
+            }
             if let observation = value.estimate?.sourceObservation, observation.observedAt != savedObservation {
                 try state.saveSourceObservation(observation)
                 savedObservation = observation.observedAt
@@ -154,6 +181,12 @@ public enum ApplyRun {
         func stoppedResult() -> ApplySummary {
             if drain.isCancelled { stopReason = "drainRequested" }
             let result = summary("STOPPED")
+            ApplicationLog.logger.info(
+                "Replication stopped",
+                metadata: [
+                    "lifecycle": "STOPPED", "transactions": .string(String(state.transactions)),
+                    "reasonCode": .string(stopReason ?? "completed"),
+                ])
             finalResult = result
             return result
         }
@@ -182,10 +215,15 @@ public enum ApplyRun {
             }
             while true {
                 do {
-                    let target = try TargetSession(
-                        configuration: configuration, password: targetPassword, timings: targetTimings)
+                    let target = try ApplicationLog.measure("Connect to target", metadata: ["phase": "target_connect"])
+                    {
+                        try TargetSession(
+                            configuration: configuration, password: targetPassword, timings: targetTimings)
+                    }
                     defer { try? target.unlock() }
-                    try target.preflight()
+                    try ApplicationLog.measure("Check target", metadata: ["phase": "target_setup"]) {
+                        try target.preflight()
+                    }
                     try state.bindTargetIdentity(target.targetUUID!)
                     for identity in try state.pendingGTIDMarkers() {
                         try SourceGTIDExecution.validate(identity, targetVersion: target.serverVersionID ?? 0)
@@ -322,6 +360,11 @@ public enum ApplyRun {
                                 let identity = SQLNameKey.table(database, name)
                                 let table: ApplyTable
                                 if planningCache.tables[identity] != nil {
+                                    ApplicationLog.logger.debug(
+                                        "Use cached table map",
+                                        metadata: [
+                                            "cache": "hit", "database": .string(database), "table": .string(name),
+                                        ])
                                     table = try state.profile("target.discover") { try planningCache.validate(decoded) }
                                 } else {
                                     try barrier()
@@ -344,6 +387,9 @@ public enum ApplyRun {
                             binlogCapture.resetGroup()
                         }
                         if group.outcome == .statement {
+                            ApplicationLog.logger.info(
+                                "Prepare source DDL",
+                                metadata: ["phase": "ddl", "gtid": .string(group.gtid?.canonical ?? "")])
                             try barrier()
                             target.statementTrace = .init()
                             try state.begin(group)
@@ -400,13 +446,20 @@ public enum ApplyRun {
                                 hasDDLIntent = true
                                 try require(!cancellation.isCancelled, "apply cancelled")
                                 try checkSourceFailure()
-                                try target.sourceStatement(
-                                    group.gtid!, requiresCommit: plan.statement == .versionCommentNoop
-                                ) { try target.applyDDL(&plan) }
+                                try ApplicationLog.measure(
+                                    "Apply source DDL",
+                                    metadata: ["phase": "ddl", "gtid": .string(group.gtid!.canonical)]
+                                ) {
+                                    try target.sourceStatement(
+                                        group.gtid!, requiresCommit: plan.statement == .versionCommentNoop
+                                    ) { try target.applyDDL(&plan) }
+                                }
                                 planningCache = try DMLPlanningCache(
                                     target.discovered, compatibility: configuration.compatibilityPolicy,
                                     legacyMetadata: legacyMetadata)
                                 try state.complete(group, rowCount: 0, ddl: plan)
+                                ApplicationLog.logger.info(
+                                    "DDL checkpoint saved", metadata: ["gtid": .string(group.gtid!.canonical)])
                                 try progress()
                                 return
                             } catch {
@@ -456,6 +509,13 @@ public enum ApplyRun {
                                             preserveSourceGTIDs: configuration.target.preserveSourceGTIDs)
                                     }
                                 }
+                                ApplicationLog.logger.debug(
+                                    "Select DML transport",
+                                    metadata: [
+                                        "transport": .string(sqlReason == nil ? "binlog" : "sql"),
+                                        "reasonCode": .string(sqlReason?.rawValue ?? "compatible"),
+                                        "gtid": .string(group.gtid?.canonical ?? ""),
+                                    ])
                             }
                         } catch {
                             try barrier()
@@ -662,6 +722,12 @@ public enum ApplyRun {
                                     throw ApplyError("\(error); last source failure: \(reconnectReason!)")
                                 }
                                 try report(summary("RECONNECTING"))
+                                ApplicationLog.logger.info(
+                                    "Wait before source reconnect",
+                                    metadata: [
+                                        "phase": "source_reconnect", "attempt": .string(String(retry.attempts)),
+                                        "delaySeconds": .string(String(delay)),
+                                    ])
                                 timings.measure("source.reconnect_wait") {
                                     SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
                                 }
@@ -701,6 +767,12 @@ public enum ApplyRun {
                         throw ApplyError("target reconnect attempts exhausted; last failure: \(targetReason!)")
                     }
                     try report(summary("TARGET_RECONNECTING"))
+                    ApplicationLog.logger.info(
+                        "Wait before target reconnect",
+                        metadata: [
+                            "phase": "target_reconnect", "attempt": .string(String(targetRetry.attempts)),
+                            "delaySeconds": .string(String(delay)),
+                        ])
                     timings.measure("target.reconnect_wait") {
                         SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
                     }
@@ -726,6 +798,11 @@ public enum ApplyRun {
             // A rejected resume/preflight must not rewrite the saved checkpoint.
             if !initialize && !started { throw ApplyRunError(reason: reason, progress: summary("STOPPED"), code: code) }
             if let sourceFailurePosition { try? state.recordSourceFailure(reason, at: sourceFailurePosition) }
+            ApplicationLog.logger.info(
+                "Replication blocked; inspect the final diagnostic and saved state",
+                metadata: [
+                    "lifecycle": "BLOCKED", "reasonCode": .string(code?.rawValue ?? "apply_failed"),
+                ])
             do { try state.block(reason) } catch {
                 throw ApplyRunError(
                     reason: reason + "; additionally failed to persist BLOCKED diagnostic",

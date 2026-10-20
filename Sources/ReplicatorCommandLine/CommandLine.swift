@@ -23,8 +23,16 @@ public struct CLIParseError: Error, CustomStringConvertible {
     public init(description: String) { self.description = description }
 }
 
+public struct CLIInvocation {
+    public let request: CLIRequest
+    public let logLevel: String
+}
+
 public enum ReplicatorCommandLine {
     public static func parse(_ arguments: [String]) throws -> CLIRequest {
+        try parseInvocation(arguments).request
+    }
+    public static func parseInvocation(_ arguments: [String]) throws -> CLIInvocation {
         do {
             let commands = Root.configuration.subcommands.compactMap { $0.configuration.commandName } + ["help"]
             if let first = arguments.first, !first.hasPrefix("-"), !commands.contains(first) {
@@ -38,7 +46,7 @@ public enum ReplicatorCommandLine {
                 let options: Set<String> = [
                     "--config", "--initialize", "--source-config", "--schema",
                     "--include-raw", "--transactions", "--binlog-file", "--gtids", "--reason", "--timeout", "--version",
-                    "--command", "--section",
+                    "--command", "--section", "--verbose", "--debug",
                 ]
                 var seen = Set<String>()
                 for argument in arguments {
@@ -51,7 +59,7 @@ public enum ReplicatorCommandLine {
                 if seen.contains("--version"), arguments != ["--version"] {
                     throw ValidationError("Use --version without a subcommand or other options.")
                 }
-                return request.request
+                return CLIInvocation(request: request.request, logLevel: request.logging.level)
             }
             if command is Control || command is Recovery {
                 throw ValidationError("Select a subcommand. Use --help to list subcommands.")
@@ -61,18 +69,26 @@ public enum ReplicatorCommandLine {
             throw ValidationError("Select a command. Use --help to list commands.")
         } catch {
             if Root.exitCode(for: error) == .success {
-                return .help(Root.fullMessage(for: error, columns: 88))
+                return CLIInvocation(request: .help(Root.fullMessage(for: error, columns: 88)), logLevel: "warning")
             }
             throw CLIParseError(description: Root.fullMessage(for: error, columns: 88))
         }
     }
 }
 
+private struct LoggingOptions: ParsableArguments {
+    @Flag(help: "Write INFO application logs to stderr.") var verbose = false
+    @Flag(help: "Write DEBUG application logs to stderr. Overrides --verbose.") var debug = false
+    var level: String { debug ? "debug" : (verbose ? "info" : "warning") }
+}
+
 private protocol RequestCommand: ParsableCommand {
+    var logging: LoggingOptions { get }
     var request: CLIRequest { get }
 }
 
 private struct Root: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "mysql-replicator",
         abstract: "Replicate MySQL binlog changes across supported server versions.",
@@ -103,6 +119,7 @@ private struct Config: ParsableArguments {
 }
 
 private struct ConfigurationHelp: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "config-help",
         abstract: "Show configuration types, defaults, and YAML examples.",
@@ -127,6 +144,7 @@ private struct ApplyOptions: ParsableArguments {
 }
 
 private struct Run: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "run",
         abstract: "Capture from the source and apply changes to the target.",
@@ -140,6 +158,7 @@ private struct Run: RequestCommand {
 }
 
 private struct Replay: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "replay",
         abstract: "Apply raw binlog files from a local archive without source access.",
@@ -153,6 +172,7 @@ private struct Replay: RequestCommand {
 }
 
 private struct Fetch: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "fetch",
         abstract: "Download a finite source binlog range to a local archive.",
@@ -164,6 +184,7 @@ private struct Fetch: RequestCommand {
 }
 
 private struct SupportBundle: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "support-bundle",
         abstract: "Collect local files to diagnose a replication failure.",
@@ -192,6 +213,7 @@ private struct ControlOptions: ParsableArguments {
 }
 
 private struct Status: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "status", abstract: "Show the running process state and progress.")
     @OptionGroup var options: ControlOptions
@@ -199,6 +221,7 @@ private struct Status: RequestCommand {
 }
 
 private struct Stop: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "stop", abstract: "Request a graceful drain and wait for the process to stop.")
     @OptionGroup var options: ControlOptions
@@ -206,6 +229,7 @@ private struct Stop: RequestCommand {
 }
 
 private struct Reload: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "reload",
         abstract: "Reload the transaction and GTID stop limits from YAML.",
@@ -226,6 +250,7 @@ private struct Recovery: ParsableCommand {
 }
 
 private struct RecoveryInspect: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "inspect",
         abstract: "Show pending transactions and the saved recovery information.")
@@ -239,6 +264,7 @@ private enum RecoveryAction: String, ExpressibleByArgument {
 }
 
 private struct RecoveryResolve: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "resolve",
         abstract: "Record a DBA decision for a blocked transaction group.",
@@ -263,6 +289,7 @@ private struct RecoveryResolve: RequestCommand {
 }
 
 private struct Skip: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "skip",
         abstract: "Skip a captured failed GTID that has no target write intents.",
@@ -274,6 +301,7 @@ private struct Skip: RequestCommand {
 }
 
 private struct Blackhole: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "blackhole",
         abstract: "Measure capture and decoding without a target applier.")
@@ -283,6 +311,7 @@ private struct Blackhole: RequestCommand {
 }
 
 private struct InspectRelay: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "inspect-relay", abstract: "Read a local relay file and emit JSON records.")
     @Argument(help: "Local relay file.") var file: String
@@ -291,6 +320,7 @@ private struct InspectRelay: RequestCommand {
 }
 
 private struct Inspect: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "inspect",
         abstract: "Inspect a raw binlog file or a live source stream.",
