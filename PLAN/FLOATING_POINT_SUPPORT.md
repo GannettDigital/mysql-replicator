@@ -1,7 +1,8 @@
 # FLOAT and DOUBLE support
 
-Status: implementation and unit tests complete. Shared integration cases are
-added but have not run. Run them after the missing-type work, as agreed.
+Status: implementation and unit tests complete. Shared integration cases exist
+for all four profiles. Use the exact commit's full-CI results for release
+qualification; the initial unit-only results below are historical.
 
 ## Stored row values
 
@@ -20,9 +21,10 @@ rules; row comparison still checks the exact stored bits. Recovery output includ
 a readable decimal string and an `ieeeBits` hexadecimal string. The latter is
 the exact value. Recovery does not infer commit success from an approximate match.
 
-The codec ABI is now 7. Kinds 8 and 9 carry the IEEE bits in `unsigned_value`.
-Existing kinds and C struct layouts are unchanged. Swift requires ABI 7 to prevent
-a stale Rust library from loading. No SQLite schema migration is needed.
+This increment introduced codec ABI 7. Kinds 8 and 9 carry the IEEE bits in
+`unsigned_value`. The current ABI is 11 after the JSON, spatial and charset additions.
+Build Swift and Rust from the same revision. No SQLite schema migration is
+needed for floating-point values.
 
 ## DDL and defaults
 
@@ -32,7 +34,9 @@ a stale Rust library from loading. No SQLite schema migration is needed.
 | FLOAT(p) | 0–24 becomes FLOAT; 25–53 becomes DOUBLE |
 | DOUBLE PRECISION | Normalized as DOUBLE |
 | REAL | FLOAT with logged REAL_AS_FLOAT mode; otherwise DOUBLE |
-| FLOAT(M,D), DOUBLE(M,D), DOUBLE(p), ZEROFILL | Rejected in this increment |
+| FLOAT(M,D), DOUBLE(M,D) | Supported for native widths 1–255 and scales 0–30, with D no greater than M |
+| ZEROFILL | Supported; implies UNSIGNED |
+| DOUBLE(p) | Rejected by native 5.7 and 8.4 syntax |
 | Numeric and exponent defaults | Accepted within the numeric parser; MySQL executes the original expression |
 | NULL defaults | Retained as SQL NULL |
 
@@ -95,9 +99,40 @@ profiles without starting containers (`/tmp/beta5-float-selection.json`).
 The shared catalog includes `matrix-floating` and `bootstrap-matrix-floating`
 on all four profiles. The cases include a default with more than six digits,
 primary-key changes, DML, subnormal and maximum values, ADD, and MODIFY.
-The old FLOAT refusal cases now test fixed-scale forms under the IDs
-`reject-float-fixed-scale` and `matrix-reject-float-fixed-scale`.
+The fixed-scale refusal cases were replaced by `matrix-fixedfloating` and
+`bootstrap-matrix-fixedfloating` in beta.6. The generic unsupported-DDL and filter
+cases now use an explicit engine outside the selected target profile.
 
-Integration qualification remains pending. Include exact binary-value checks
-when qualifying the shared cases. SQL text comparisons alone do not distinguish
-all FLOAT values. JSON support is the next separate increment.
+Full CI includes these cases. The local results listed above cover unit tests
+and offline selection, not database integration. Use exact binary-value checks
+when reviewing the CI results: SQL text alone does not distinguish all
+FLOAT values. [JSON support](JSON_SUPPORT.md) is implemented separately.
+
+## Beta.6 fixed-scale work
+
+Fixed-scale metadata retains M and D. Row transport still uses IEEE bytes. The
+binlog metadata carries the floating-point width, not M and D. Saved target
+schema supplies these attributes, as it does for other absent source metadata.
+No codec or SQLite schema change is needed.
+
+Default comparison follows `Field_real::truncate` and the fixed-format metadata
+presentation. It does not replace the original default expression sent to MySQL.
+The local 5.7.42 and 8.4.8 probes produced matching defaults for FLOAT(10,2),
+DOUBLE(20,6), FLOAT(30,20), DOUBLE(200,0), and a value rounded to zero.
+
+The selected unit tests include fixed-scale schema reload and reconstruction of
+row values from retained relay bytes. The shared live and bootstrap cases check
+rounding, defaults, NULL, signed and unsigned values, large ranges, ADD, MODIFY,
+primary-key changes, UPDATE and DELETE. See [beta.6](beta.6.md) for final results.
+
+For FLOAT(M,D), a legal decimal endpoint can round outward in binary32. For
+example, FLOAT(8,2) stores 999999.99 as 1000000. Native row apply copies these
+bits, but a prepared SQL parameter of 1000000 fails strict range checking.
+Write expressions bound the SQL input to the declared decimal endpoints. The
+target then stores the same FLOAT bits. Validation rejects values outside the
+rounded storage endpoints. Key predicates compare the stored value after promotion to DOUBLE. This avoids
+the range shortcut used by UPDATE and DELETE for rounded FLOAT endpoints. It can
+require a table scan when a primary key includes a fixed-scale FLOAT column.
+Plain FLOAT/DOUBLE and fixed-scale DOUBLE key predicates remain unchanged.
+`matrix-floatbounds` and its bootstrap case check both signs, unsigned values,
+primary-key updates and DELETE at these boundaries. Strict SQL mode remains on.

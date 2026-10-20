@@ -373,5 +373,41 @@ Use `make lab-list`, `--family indexes`, or a named
 Selected runs retain checksummed evidence and explicit requested cases/family;
 omitted cases never supply assertions. Wildcard-filter/checkpoint cases remain
 non-DDL-grammar regressions, so their passes do not inflate DDL coverage.
-The registry contains 185 declarations and 63 DDL scenarios. Logical catalog IDs
-remain stable even when their original CLI runner is gone.
+The check command reports the current registry and DDL scenario counts. Logical
+catalog IDs remain stable even when their original CLI runner is gone.
+
+## Beta.6 support audit
+
+`support.json` extends this inventory with type, DML, event, policy and remaining
+DDL requirements. `schema/support.schema.json` defines its strict format. The
+existing check and report commands validate and display these requirements.
+They use the four current `LabProfile` IDs and the shared correctness case IDs.
+
+The audit is partial. Each requirement lists its planned stage, native behavior,
+conditions, implementation files, required assertions and candidate tests.
+Native references use the repository pins in `upstream.json`. Candidate tests
+are review pointers, not qualification bindings. DDL evidence import does not
+qualify these new requirements. The support report always shows them as
+`unverified` until an assertion evidence importer is implemented.
+
+`eligible` identifies positive-support work. `needs_native_review` keeps an
+unresolved compatibility question visible. `excluded` is reserved for native
+restrictions, target limits and explicit safety policies. Keep negative tests
+for these exclusions. See the [beta.6 work plan](../../PLAN/beta.6.md).
+
+### Status labels
+
+- `tool_gap`: a specific path is refused or not implemented. Native eligibility
+  can still need review; the refusal itself is known.
+- `target_limit`: the target version or engine cannot retain the stated feature.
+- `native_restriction`: native MySQL rejects the stated form and settings.
+- `safety_policy`: the tool deliberately excludes the operation.
+- `untested`: the stated combinations are not fully tested. Selected tests can
+  already pass. This label does not mean that the feature is unsupported.
+
+Implementation and qualification are separate. `implemented` does not qualify
+all profiles or failure paths. `subset` describes a bounded implementation;
+it does not identify another unsupported SQL form without further evidence.
+The report counts `confirmed_tool_gaps` and `qualification_gaps` separately.
+These are broad inventory groups, not a percentage of MySQL feature support.
+Use `current_behavior` for the exact scope and the evidence for the exact build.

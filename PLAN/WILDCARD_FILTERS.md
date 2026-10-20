@@ -1,3 +1,7 @@
+Current behavior: beta.6 adds wildcard includes and pins both filter lists in state.
+See [the current filter rules](../docs/SUPPORT.md#include-and-ignore-filters).
+The design below records the original ignore-only implementation.
+
 # Wildcard table exclusions
 
 The optional top-level apply configuration field `replicateWildIgnoreTable`
@@ -28,13 +32,19 @@ not suppress creation of its owning database. The native implementation tests
 
 Row exclusions are decided from checked TABLE_MAP identity before consulting the
 target or interpreting column values. Excluded tables can be absent on the
-replica and use types the applier cannot otherwise apply (for example DECIMAL,
-JSON and DATETIME). Framing, CRC, table-map references, row flags, transaction
+replica and use types the applier cannot otherwise apply. Framing, CRC, table-map references, row flags, transaction
 boundaries and resource limits remain enforced. Excluded row payloads are opaque;
 they are not certified as valid decoded values. Included events keep the existing
 schema/type/full-image checks. Mixed included/excluded row events apply only the
-included effects, subject to the existing single-statement/single-target-table
-applier contract. No SQL is rewritten.
+included effects, subject to the profile's transaction limits. MyISAM permits one
+statement on one included table; InnoDB permits multiple statements and tables.
+No SQL is rewritten.
+
+Native ROW replication can also apply only the included part of a transaction.
+A transaction across filters is not always a native replication error. It can
+still break application relationships. This tool rejects foreign keys across a
+filter boundary. This is an explicit safety policy. See the
+[native restrictions and tool limits](../docs/SUPPORT.md#native-restrictions-and-tool-limits).
 
 DDL scope is classified separately from supported column syntax. Excluded
 CREATE/ALTER/DROP/TRUNCATE TABLE, standalone index operations, simple view DDL,

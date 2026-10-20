@@ -1,9 +1,10 @@
 import Foundation
 import Yams
+
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 #else
-import Glibc
+    import Glibc
 #endif
 
 public struct LabError: Error, CustomStringConvertible {
@@ -41,42 +42,62 @@ public final class ProcessRunner {
     public let root: URL
     public init(root: URL) { self.root = root }
 
-    public func run(_ arguments: [String], environment: [String: String] = [:],
-                    timeout: TimeInterval = 120, checked: Bool = true, onOutput: ((Data) -> Void)? = nil) throws -> CommandResult {
+    public func run(
+        _ arguments: [String], environment: [String: String] = [:], input: Data? = nil,
+        timeout: TimeInterval = 120, checked: Bool = true, onOutput: ((Data) -> Void)? = nil
+    ) throws -> CommandResult {
         try require(!arguments.isEmpty, "empty command")
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("replicator-command-" + UUID().uuidString)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "replicator-command-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let outURL = directory.appendingPathComponent("stdout")
         let errURL = directory.appendingPathComponent("stderr")
         FileManager.default.createFile(atPath: outURL.path, contents: nil)
         FileManager.default.createFile(atPath: errURL.path, contents: nil)
-        let output = try FileHandle(forWritingTo: outURL), errors = try FileHandle(forWritingTo: errURL)
-        defer { try? output.close(); try? errors.close() }
+        let output = try FileHandle(forWritingTo: outURL)
+        let errors = try FileHandle(forWritingTo: errURL)
+        defer {
+            try? output.close()
+            try? errors.close()
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = arguments
         process.currentDirectoryURL = root
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-        process.standardInput = FileHandle.nullDevice
+        let inputFile: FileHandle?
+        if let input {
+            let url = directory.appendingPathComponent("stdin")
+            try input.write(to: url)
+            inputFile = try FileHandle(forReadingFrom: url)
+        } else {
+            inputFile = nil
+        }
+        defer { try? inputFile?.close() }
+        process.standardInput = inputFile ?? FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = errors
         let completion = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in completion.signal() }
-        let liveOut = try FileHandle(forReadingFrom:outURL), liveErr = try FileHandle(forReadingFrom:errURL)
-        defer { try? liveOut.close(); try? liveErr.close() }
+        let liveOut = try FileHandle(forReadingFrom: outURL)
+        let liveErr = try FileHandle(forReadingFrom: errURL)
+        defer {
+            try? liveOut.close()
+            try? liveErr.close()
+        }
         func drain() throws {
             guard let onOutput else { return }
-            for file in [liveOut,liveErr] {
+            for file in [liveOut, liveErr] {
                 // Bound each poll so a chatty child cannot starve the timeout.
-                if let data = try file.read(upToCount:64*1024), !data.isEmpty { onOutput(data) }
+                if let data = try file.read(upToCount: 64 * 1024), !data.isEmpty { onOutput(data) }
             }
         }
         try process.run()
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var finished = false
         repeat {
-            finished = completion.wait(timeout:.now() + 0.1) == .success
+            finished = completion.wait(timeout: .now() + 0.1) == .success
             try drain()
         } while !finished && ProcessInfo.processInfo.systemUptime < deadline
         if !finished {
@@ -92,13 +113,17 @@ public final class ProcessRunner {
         let errSize = try errURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         try require(outSize <= 128 * 1024 * 1024 && errSize <= 128 * 1024 * 1024, "command output exceeds lab limit")
         if let onOutput {
-            for file in [liveOut,liveErr] {
+            for file in [liveOut, liveErr] {
                 if let rest = try file.readToEnd(), !rest.isEmpty { onOutput(rest) }
             }
         }
-        let result = CommandResult(stdout: try Data(contentsOf: outURL), stderr: try Data(contentsOf: errURL), status: process.terminationStatus)
+        let result = CommandResult(
+            stdout: try Data(contentsOf: outURL), stderr: try Data(contentsOf: errURL),
+            status: process.terminationStatus)
         if checked && result.status != 0 {
-            throw LabError("command \(arguments.first!) exited \(result.status): " + String(decoding: result.stderr.suffix(16_384), as: UTF8.self))
+            throw LabError(
+                "command \(arguments.first!) exited \(result.status): "
+                    + String(decoding: result.stderr.suffix(16_384), as: UTF8.self))
         }
         return result
     }

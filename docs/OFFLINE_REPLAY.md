@@ -90,8 +90,9 @@ fields retain the normal apply YAML shape, but are not used to connect. Source
 `password` and `passwordEnvironment` may be omitted for replay; only the target
 password is resolved. Replay excludes already-covered GTIDs locally, including
 sets with holes, without decoding historical row values against newer schemas.
-SQLite's saved source progress takes precedence on resume. Target-local GTIDs do
-not replace this checkpoint.
+SQLite's saved source progress takes precedence on resume. Target GTIDs do not
+replace this checkpoint. Replay uses the same `target.preserveSourceGTIDs` setting
+as live mode. See [GTID preservation and privileges](GTID_PRESERVATION.md).
 
 Target TCP connections use TLS by default. The default
 `target.tlsVerification: verify-identity` verifies the CA chain and requires
@@ -351,8 +352,9 @@ configured, it first saves `archive/inventory.json`. This file lists file sizes
 and selected file preambles, including the first file's `Previous_gtids`.
 Preamble reads have a 64 KiB event limit. The inventory has a size limit and does
 not validate the full archive. It records header errors and the total file count.
-The bundle then includes raw binlogs within the byte budget. It gives priority
-to pending and last-applied files. Optional log files are included when they fit.
+The bundle then includes binlog byte excerpts within the byte budget. It gives
+priority to failed, pending and last-applied files. Optional logs are included
+when they fit.
 `bundle.json` lists file hashes and omitted evidence. Relay bytes beyond the
 journal's durable boundary are labeled as an unjournaled tail, not applied work.
 
@@ -389,3 +391,15 @@ resume, offline reload during blocked target execution, live idle reload,
 rejection of checkpoint changes/past limits, and acknowledged stop during an
 active target batch. It compares final rows and schemas against source/native on
 all profiles. Unit tests also cover control socket cleanup and GTID-set holes.
+
+### Binlog excerpts in support bundles
+
+Bundles copy up to `supportBundle.binlogContextBytes` per selected archive file
+(default 4 MiB). They retain the file prefix and bytes around the pending group
+or applied position. For archive framing or CRC errors, the bundle gives priority
+to the failed event position. This position is saved in SQLite when available,
+so a later manual bundle can include it. The JSON index gives original offsets, omitted ranges, and
+whether the complete pending group fits. Byte ranges are diagnostic data, not
+standalone replay files. Use `relay.frames` for captured table maps and rows.
+Corrupt input can prevent decoding; its raw bytes remain useful. The total bundle
+size limit still applies. Keep the original archive for further investigation.

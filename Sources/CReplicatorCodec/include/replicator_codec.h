@@ -4,7 +4,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 10. Handles are opaque, serial-use and released exactly once. Invalid
+/* ABI 14. Event results include a GTID tag buffer (empty for ordinary GTIDs).
+ * Encoded text uses interpretations 11-14 and binary cell bytes.
+ * 11: single-byte space padding; 12: 16-bit BE; 13: 16-bit LE; 14: 32-bit BE.
+ * Handles are opaque, serial-use and released exactly once. Invalid
  * non-null/dangling pointers are a caller contract violation, as in any C API.
  * Input buffers are borrowed only for feed(). Results own all returned storage,
  * independent of input/context lifetimes, until result_free(). Views are borrowed
@@ -20,19 +23,20 @@ typedef struct { const uint8_t *data; uint64_t length; } rc_bytes;
 typedef struct {
     uint64_t offset, number, table_id;
     uint32_t event_type, timestamp, server_id, next_position, flags, row_count, column_count;
-    /* payload_flags: GTID flags for types 33/34, row flags for 23-25/30-32/39.
+    /* payload_flags: GTID flags for types 33/34/42, row flags for 23-25/30-32/39.
      * query_error_code/query_status: source QUERY_EVENT error and status bytes.
      * Header flags and row/GTID flags are distinct namespaces. */
     uint32_t event_size, payload_flags, query_error_code;
     rc_bytes query_status;
-    rc_bytes name, database, table, detail, raw, error, fingerprint;
+    rc_bytes name, database, table, detail, raw, error, fingerprint, gtid_tag;
 } rc_event;
 /* Value kinds: 0 absent, 1 SQL NULL, 2 signed integer, 3 unsigned integer,
  * 4 UTF-8 text, 5 binary, 6 exact decimal text, 7 canonical temporal text,
  * 8 FLOAT IEEE-754 binary32 bits, 9 DOUBLE IEEE-754 binary64 bits, 10 typed JSON document envelope, 11 JSON diff vector envelope.
  * Kinds 8/9 use unsigned_value, with zero high bits for kind 8. Non-finite values fail.
  * Text/binary are pointer+length, including embedded NUL.
- * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7/8/9/10, in column order.
+ * Column interpretations supplied on TABLE_MAP only: 2/3/4/5/6/7/8/9/10/11, in column order.
+ * Interpretation 11 is encoded text; result cells use kind 5, not JSON diff kind 11.
  * History is mandatory for rows, even if optional wire metadata happens to exist.
  */
 typedef struct { uint32_t kind; int64_t signed_value; uint64_t unsigned_value; rc_bytes bytes; } rc_value;
@@ -54,6 +58,7 @@ typedef struct {
         collation_database, default_collation_utf8mb4;
     uint32_t microseconds, explicit_defaults_timestamp, time_zone_length;
     uint8_t time_zone[64];
+    uint32_t auto_increment_increment, auto_increment_offset;
 } rc_query_context;
 int32_t rc_query_context_decode(const uint8_t *bytes, uint64_t length, rc_query_context *out);
 uint32_t replicator_codec_abi_version(void);

@@ -1,147 +1,11 @@
 import Foundation
-import NIOCore
 import MySQLNIO
+import NIOCore
 import ReplicatorCodec
 
 public struct CaptureError: Error, CustomStringConvertible {
     public let description: String
     public init(_ description: String) { self.description = description }
-}
-
-/// Canonical, untagged GTID intervals. Bounds prevent allocation from untrusted
-/// config. MySQL encodes inclusive text ends as exclusive binary ends.
-public struct GTIDSet: Equatable {
-    struct SID: Equatable { let uuid: UUID; var intervals: [ClosedRange<UInt64>] }
-    private(set) var sids: [SID]
-    private var canonicalBytes: Int
-    private static func digits(_ value: UInt64) -> Int {
-        var n = value, count = 1
-        while n >= 10 { n /= 10; count += 1 }
-        return count
-    }
-    private static func bytes(_ range: ClosedRange<UInt64>) -> Int {
-        digits(range.lowerBound) + (range.lowerBound == range.upperBound ? 0 : 1 + digits(range.upperBound))
-    }
-    public init(_ text: String) throws {
-        guard text.utf8.count <= 1024 * 1024 else { throw CaptureError("GTID set exceeds 1 MiB") }
-        var result: [SID] = []
-        if !text.isEmpty {
-            for entry in text.split(separator: ",", omittingEmptySubsequences: false) {
-                let fields = entry.split(separator: ":", omittingEmptySubsequences: false)
-                guard fields.count >= 2, let uuid = UUID(uuidString: String(fields[0])),
-                      !result.contains(where: { $0.uuid == uuid }), result.count < 64 else {
-                    throw CaptureError("invalid, duplicate or tagged GTID SID")
-                }
-                var intervals: [ClosedRange<UInt64>] = []
-                for field in fields.dropFirst() {
-                    let bounds = field.split(separator: "-", omittingEmptySubsequences: false)
-                    guard (1...2).contains(bounds.count), let low = UInt64(bounds[0]),
-                          let high = UInt64(bounds.last!), low > 0, low <= high, high < UInt64(Int64.max),
-                          intervals.count < 4096 else { throw CaptureError("invalid GTID interval") }
-                    intervals.append(low...high)
-                }
-                intervals.sort { $0.lowerBound < $1.lowerBound }
-                var merged: [ClosedRange<UInt64>] = []
-                for range in intervals {
-                    if let last = merged.last, range.lowerBound <= last.upperBound + 1 {
-                        merged[merged.count-1] = last.lowerBound...max(last.upperBound, range.upperBound)
-                    } else { merged.append(range) }
-                }
-                result.append(SID(uuid: uuid, intervals: merged))
-            }
-        }
-        sids = result.sorted { $0.uuid.uuidString < $1.uuid.uuidString }
-        canonicalBytes = max(0,sids.count-1) + sids.reduce(0) { total,sid in
-            total + 36 + sid.intervals.reduce(0) { $0 + 1 + Self.bytes($1) }
-        }
-    }
-    public var isEmpty: Bool { sids.isEmpty }
-    public var canonical: String {
-        sids.map { sid in
-            sid.uuid.uuidString.lowercased() + ":" + sid.intervals.map {
-                $0.lowerBound == $0.upperBound ? String($0.lowerBound) : "\($0.lowerBound)-\($0.upperBound)"
-            }.joined(separator: ":")
-        }.joined(separator: ",")
-    }
-    public func contains(sid: String, sequence: String) -> Bool {
-        guard let uuid = UUID(uuidString: sid), let n = UInt64(sequence) else { return false }
-        return sids.first { $0.uuid == uuid }?.intervals.contains { $0.contains(n) } ?? false
-    }
-    public func covers(_ other: GTIDSet) -> Bool {
-        other.sids.allSatisfy { required in
-            guard let stored = sids.first(where: { $0.uuid == required.uuid }) else { return false }
-            return required.intervals.allSatisfy { range in
-                stored.intervals.contains { $0.lowerBound <= range.lowerBound && $0.upperBound >= range.upperBound }
-            }
-        }
-    }
-    func union(_ other: GTIDSet) throws -> GTIDSet {
-        let ids=Set((sids+other.sids).map(\.uuid)).sorted { $0.uuidString < $1.uuidString }
-        let entries=ids.map { uuid -> String in
-            let ranges=(sids+other.sids).filter { $0.uuid == uuid }.flatMap(\.intervals).sorted { $0.lowerBound < $1.lowerBound }
-            var merged:[ClosedRange<UInt64>]=[]
-            for range in ranges {
-                if let last=merged.last,range.lowerBound <= last.upperBound+1 {
-                    merged[merged.count-1]=last.lowerBound...max(last.upperBound,range.upperBound)
-                } else { merged.append(range) }
-            }
-            return uuid.uuidString+":"+merged.map { "\($0.lowerBound)-\($0.upperBound)" }.joined(separator:":")
-        }
-        return try GTIDSet(entries.joined(separator:","))
-    }
-    public mutating func include(sid: String, sequence: String) throws {
-        guard let uuid = UUID(uuidString: sid), !sequence.isEmpty,
-              sequence.utf8.allSatisfy({ (48...57).contains($0) }),
-              let n = UInt64(sequence), n > 0, n < UInt64(Int64.max) else {
-            throw CaptureError("invalid observed GTID")
-        }
-        guard let index = sids.firstIndex(where: { $0.uuid == uuid }) else {
-            let size = canonicalBytes + (sids.isEmpty ? 0 : 1) + 37 + Self.digits(n)
-            guard sids.count < 64, size <= 1024*1024 else { throw CaptureError("GTID set limit exceeded") }
-            let position = sids.firstIndex { $0.uuid.uuidString > uuid.uuidString } ?? sids.count
-            sids.insert(SID(uuid:uuid,intervals:[n...n]),at:position)
-            canonicalBytes = size
-            return
-        }
-        // Find the first interval whose end reaches n. Usually this is an
-        // append to the final interval; no text serialization or sorting.
-        var low = 0, high = sids[index].intervals.count
-        while low < high {
-            let mid = low + (high-low)/2
-            if sids[index].intervals[mid].upperBound < n { low = mid+1 } else { high = mid }
-        }
-        if low < sids[index].intervals.count, sids[index].intervals[low].contains(n) { return }
-        var start = low, end = low, lower = n, upper = n
-        if low > 0, sids[index].intervals[low-1].upperBound + 1 == n {
-            start -= 1; lower = sids[index].intervals[start].lowerBound
-        }
-        if low < sids[index].intervals.count, sids[index].intervals[low].lowerBound == n+1 {
-            end += 1; upper = sids[index].intervals[low].upperBound
-        }
-        let replacement = lower...upper
-        let removedBytes = sids[index].intervals[start..<end].reduce(0) { $0 + 1 + Self.bytes($1) }
-        let size = canonicalBytes - removedBytes + 1 + Self.bytes(replacement)
-        guard sids[index].intervals.count - (end-start) + 1 <= 4096,
-              size <= 1024*1024 else { throw CaptureError("GTID set limit exceeded") }
-        // Check all bounds before mutation, so a rejected update is atomic.
-        if end-start == 1 { sids[index].intervals[start] = replacement }
-        else { sids[index].intervals.replaceSubrange(start..<end,with:[replacement]) }
-        canonicalBytes = size
-    }
-    func encoded() -> ByteBuffer {
-        var buffer = ByteBufferAllocator().buffer(capacity: 128)
-        buffer.writeInteger(UInt64(sids.count), endianness: .little)
-        for sid in sids {
-            var uuid = sid.uuid.uuid
-            withUnsafeBytes(of: &uuid) { buffer.writeBytes($0) }
-            buffer.writeInteger(UInt64(sid.intervals.count), endianness: .little)
-            for range in sid.intervals {
-                buffer.writeInteger(range.lowerBound, endianness: .little)
-                buffer.writeInteger(range.upperBound + 1, endianness: .little)
-            }
-        }
-        return buffer
-    }
 }
 
 public enum DumpStart {
@@ -151,7 +15,7 @@ public enum DumpStart {
     func packet(serverID: UInt32, nonBlocking: Bool) throws -> MySQLPacket {
         guard serverID != 0 else { throw CaptureError("dump client server ID must be nonzero") }
         var p = MySQLPacket()
-        let flags: UInt16 = nonBlocking ? 1 : 0 // No heartbeat-v2/compression negotiation.
+        let flags: UInt16 = nonBlocking ? 1 : 0  // No heartbeat-v2/compression negotiation.
         switch self {
         case .position(let file, let position):
             guard position >= 4, !file.isEmpty, file.utf8.count <= 255, !file.utf8.contains(0) else {
@@ -167,7 +31,7 @@ public enum DumpStart {
             p.payload.writeInteger(UInt8(0x1e))
             p.payload.writeInteger(flags, endianness: .little)
             p.payload.writeInteger(serverID, endianness: .little)
-            p.payload.writeInteger(UInt32(0), endianness: .little) // source selects file
+            p.payload.writeInteger(UInt32(0), endianness: .little)  // source selects file
             p.payload.writeInteger(UInt64(4), endianness: .little)
             p.payload.writeInteger(UInt32(encoded.readableBytes), endianness: .little)
             p.payload.writeBuffer(&encoded)
@@ -187,14 +51,22 @@ struct DumpPacketDecoder: ByteToMessageDecoder {
     var expectedSequence: UInt8 = 1
     var pending: ByteBuffer?
     mutating func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        if let timings { return try timings.measure("binlog.packet_frame") { try decodeFrame(context:context,buffer:&buffer) } }
-        return try decodeFrame(context:context,buffer:&buffer)
+        if let timings {
+            return try timings.measure("binlog.packet_frame") { try decodeFrame(context: context, buffer: &buffer) }
+        }
+        return try decodeFrame(context: context, buffer: &buffer)
     }
-    private mutating func decodeFrame(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        guard let header: UInt32 = buffer.getInteger(at: buffer.readerIndex, endianness: .little) else { return .needMoreData }
-        let length = Int(header & 0xffffff), sequence = UInt8(header >> 24)
+    private mutating func decodeFrame(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState
+    {
+        guard let header: UInt32 = buffer.getInteger(at: buffer.readerIndex, endianness: .little) else {
+            return .needMoreData
+        }
+        let length = Int(header & 0xffffff)
+        let sequence = UInt8(header >> 24)
         guard sequence == expectedSequence else { throw CaptureError("dump packet sequence mismatch") }
-        guard length <= maximumMessageBytes - (pending?.readableBytes ?? 0) else { throw CaptureError("dump packet/message limit exceeded") }
+        guard length <= maximumMessageBytes - (pending?.readableBytes ?? 0) else {
+            throw CaptureError("dump packet/message limit exceeded")
+        }
         guard buffer.readableBytes >= 4 + length else { return .needMoreData }
         buffer.moveReaderIndex(forwardBy: 4)
         var body = buffer.readSlice(length: length)!
@@ -206,7 +78,9 @@ struct DumpPacketDecoder: ByteToMessageDecoder {
         }
         return .continue
     }
-    mutating func decodeLast(context: ChannelHandlerContext, buffer: inout ByteBuffer, seenEOF: Bool) throws -> DecodingState {
+    mutating func decodeLast(context: ChannelHandlerContext, buffer: inout ByteBuffer, seenEOF: Bool) throws
+        -> DecodingState
+    {
         let state = try decode(context: context, buffer: &buffer)
         if state == .needMoreData && (buffer.readableBytes != 0 || pending != nil) {
             throw SourceTransportError("truncated dump packet at disconnect")
@@ -220,14 +94,24 @@ final class DumpCommand: MySQLCommand {
     let receive: (Data) throws -> Void
     let timings: StageTimings?
     init(request: MySQLPacket, timings: StageTimings? = nil, receive: @escaping (Data) throws -> Void) {
-        self.request = request; self.receive = receive; self.timings=timings
+        self.request = request
+        self.receive = receive
+        self.timings = timings
     }
-    func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState { .init(response: [request]) }
+    func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+        .init(response: [request])
+    }
     func handle(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
-        if let timings { return try timings.measure("binlog.dump_response") { try handleResponse(packet:&packet,capabilities:capabilities) } }
-        return try handleResponse(packet:&packet,capabilities:capabilities)
+        if let timings {
+            return try timings.measure("binlog.dump_response") {
+                try handleResponse(packet: &packet, capabilities: capabilities)
+            }
+        }
+        return try handleResponse(packet: &packet, capabilities: capabilities)
     }
-    private func handleResponse(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
+    private func handleResponse(packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws
+        -> MySQLCommandState
+    {
         if packet.isError {
             let e = try packet.decode(MySQLProtocol.ERR_Packet.self, capabilities: capabilities)
             let reason = "source dump error \(e.errorCode): \(e.sqlState ?? "") \(e.errorMessage)"

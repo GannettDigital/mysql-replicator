@@ -7,84 +7,311 @@ struct LabScenario {
     var dependencies: [String] = []
     var requiresTransactionalTarget = false
     var source84OnlyReason: String?
+    var profileExclusions: [LabProfile: String] = [:]
     var requiresMyISAMTarget = false
     var intent: String = "apply"
     var smoke = false
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
-        if let reason=variant.reason(profile) { return reason }
-        if ["offline-replay","offline-skip-errors","runtime-control","large-values"].contains(id) && variant == .positionMinimal { return "Offline replay uses GTID positioning; use default or gtid-full variants." }
-        if id == "live-skip-errors" && variant == .positionMinimal { return "Skip/resume fixture uses exact GTID stop boundaries; use default or gtid-full variants." }
-        if profile.sourceVersion != .mysql84, let reason=source84OnlyReason { return reason }
-        if variant == .positionMinimal && id == "myisam-recovery" { return "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants." }
-        if variant == .positionMinimal && id == "ddl-compat-types" { return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full." }
-        if family == "foreign-keys" && !profile.transactionalTarget { return "Foreign keys require an InnoDB target; MyISAM DDL refusal remains qualified separately." }
-        if requiresMyISAMTarget && profile.transactionalTarget { return "MyISAM partial persistence and fail-stop contract; InnoDB rollback/retry uses transactional recovery." }
-        return requiresTransactionalTarget && !profile.transactionalTarget ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal is qualified by myisam-recovery." : nil
+        if id == "ddl-compat-source-gtid-preservation" && variant != .standard {
+            return "Use the default variant to test target GTID preservation."
+        }
+        if variant == .withoutSourceGTIDs && id != "ddl-compat-tagged-gtids" {
+            return "This variant tests tagged source GTIDs without target preservation."
+        }
+        if id == "ddl-compat-tagged-gtids" && variant != .withoutSourceGTIDs {
+            return "5.7 cannot preserve tags; use --variant without-source-gtids to test SQLite tag tracking."
+        }
+        if id == "ddl-compat-table-name-case" && variant != .lowercaseTables {
+            return "Requires --variant lowercase-tables (lower_case_table_names=1)."
+        }
+        if id == "ddl-compat-unicode-names" && variant == .lowercaseTables {
+            return "This case checks distinct case-sensitive table names; use mode 0."
+        }
+        if let reason = variant.reason(profile) { return reason }
+        if let reason = profileExclusions[profile] { return reason }
+        if ["offline-replay", "offline-skip-errors", "runtime-control", "large-values"].contains(id)
+            && variant == .positionMinimal
+        {
+            return "Offline replay uses GTID positioning; use default or gtid-full variants."
+        }
+        if id == "live-skip-errors" && variant == .positionMinimal {
+            return "Skip/resume fixture uses exact GTID stop boundaries; use default or gtid-full variants."
+        }
+        if profile.sourceVersion != .mysql84, let reason = source84OnlyReason { return reason }
+        if variant == .positionMinimal && id == "myisam-recovery" {
+            return
+                "Historical discovery/recovery workflow is GTID-only; positional capture is qualified by correctness and lifecycle variants."
+        }
+        if variant == .positionMinimal && id == "ddl-compat-types" {
+            return "ENUM/SET type fixture requires FULL optional metadata; retained in gtid-full."
+        }
+        if family == "foreign-keys" && !profile.transactionalTarget {
+            return "Foreign keys require an InnoDB target; MyISAM DDL refusal remains qualified separately."
+        }
+        if requiresMyISAMTarget && profile.transactionalTarget {
+            return
+                "MyISAM partial persistence and fail-stop contract; InnoDB rollback/retry uses transactional recovery."
+        }
+        return requiresTransactionalTarget && !profile.transactionalTarget
+            ? "Exercises a multi-table source transaction outside the MyISAM apply contract; its refusal is qualified by myisam-recovery."
+            : nil
     }
-    func fields(_ profile: LabProfile, variant: LabVariant = .standard) -> [String:Any] {
-        var value=test.fields
-        value["profile"]=profile.rawValue; value["variant"]=variant.rawValue; value["family"]=family
-        value["dependencies"]=dependencies; value["intent"]=intent
-        value["expected"]=["source":"accept","native":"apply","applier":intent]
-        if family == "failures" || family == "recovery" { value["expected"]=["source":"accept","native":"per-case success or expected rejection","applier":intent] }
-        if id == "myisam-recovery" { value["ordered_steps"]=SharedWorkflowCases.recovery.map { $0.fields } }
-        if id == "forward-failures" { value["ordered_steps"]=SharedWorkflowCases.failures.map { $0.fields } }
-        if id == DDLCoverageCases.group.id { value["ordered_steps"]=DDLCoverageCases.changes.map { $0.test.fields } }
-        if family == "bootstrap", let fixture=DMLCompatibilityCases.cases.first(where:{id == "bootstrap-matrix-"+$0.id}) { value["phase_count"]=fixture.phases.count }
-        value["status"]=reason(profile,variant:variant) == nil ? "not_run" : "not_applicable"
-        if let reason=reason(profile,variant:variant) { value["reason"]=reason }
-        value["setup"]=["bootstrap","dml-refusals","discovery","failures","recovery","ordered","collation","filters"].contains(family) || id == "positive" ? "equivalent unlogged table snapshots; isolated state and saved-state resume" : "replicated DDL; baseline reverse_poc tables are bootstrapped"
+    func fields(_ profile: LabProfile, variant: LabVariant = .standard) -> [String: Any] {
+        var value = test.fields
+        value["profile"] = profile.rawValue
+        value["variant"] = variant.rawValue
+        value["family"] = family
+        value["dependencies"] = dependencies
+        value["intent"] = intent
+        value["expected"] = ["source": "accept", "native": "apply", "applier": intent]
+        if id == "create-select-contract" {
+            value["expected"] =
+                profile.sourceVersion == .mysql57
+                ? [
+                    "source": "reject permanent CTAS with error 1786", "native": "apply following row group",
+                    "applier": "apply following row group",
+                ]
+                : [
+                    "source": "accept atomic InnoDB CTAS; reject MyISAM CTAS",
+                    "native": "reject atomic DDL on MyISAM with error 3979",
+                    "applier": "reject incomplete group; retain checkpoint",
+                ]
+        }
+        if family == "failures" || family == "recovery" {
+            value["expected"] = [
+                "source": "accept", "native": "per-case success or expected rejection", "applier": intent,
+            ]
+        }
+        if id == "myisam-recovery" { value["ordered_steps"] = SharedWorkflowCases.recovery.map { $0.fields } }
+        if id == "forward-failures" { value["ordered_steps"] = SharedWorkflowCases.failures.map { $0.fields } }
+        if id == DDLCoverageCases.group.id { value["ordered_steps"] = DDLCoverageCases.changes.map { $0.test.fields } }
+        if family == "bootstrap",
+            let fixture = DMLCompatibilityCases.cases.first(where: { id == "bootstrap-matrix-" + $0.id })
+        {
+            value["phase_count"] = fixture.phases.count
+        }
+        value["status"] = reason(profile, variant: variant) == nil ? "not_run" : "not_applicable"
+        if let reason = reason(profile, variant: variant) { value["reason"] = reason }
+        value["setup"] =
+            ["bootstrap", "dml-refusals", "discovery", "failures", "recovery", "ordered", "collation", "filters"]
+                .contains(family) || id == "positive"
+            ? "equivalent unlogged table snapshots; isolated state and saved-state resume"
+            : "replicated DDL; baseline reverse_poc tables are bootstrapped"
         return value
     }
     static var correctness: [LabScenario] {
-        var cases=DatabaseCreationCases.cases.map { test -> LabScenario in
-            var item=LabScenario(test:test.test,family:"database")
-            if test.existing { item.dependencies=["database-explicit"] }
-            item.smoke=test.test.id == "database-explicit"
+        var cases = DatabaseCreationCases.cases.map { test -> LabScenario in
+            var item = LabScenario(test: test.test, family: "database")
+            if test.existing { item.dependencies = ["database-explicit"] }
+            item.smoke = test.test.id == "database-explicit"
             return item
         }
-        cases.append(.init(test:.init("reverse-database-table-defaults","Defaults, multi-table transaction, implicit DDL commit and table swap"),family:"database",dependencies:["database-charset-only"],requiresTransactionalTarget:true))
-        cases += DDLCompatibilityCases.cases.map { .init(test:$0.test,family:"ddl",smoke:["ddl-compat-types","ddl-compat-database"].contains($0.test.id)) }
-        cases += DMLCompatibilityCases.cases.map { .init(test:.init("matrix-"+$0.id,"Shared DML matrix: "+$0.id),family:"dml",source84OnlyReason:$0.source84OnlyReason,smoke:$0.id == "composite") }
-        cases.append(.init(test:.init("large-values","Large TEXT/BLOB writes, packet fragmentation, restart, replay and recovery"),family:"dml"))
-        cases += ModifyIndexCases.cases.map { .init(test:$0.test,family:"indexes",smoke:$0.test.id == "ddl-index-create") }
-        cases.append(.init(test:.init("foreign-key-safety","Foreign-key exclusions, rollback and recovery evidence"),family:"foreign-keys",requiresTransactionalTarget:true,intent:"reject unsafe relationships; retain rollback and cascade evidence"))
-        cases.append(.init(test:.init("foreign-keys","InnoDB foreign-key DDL, cascades, composite keys and restart"),family:"foreign-keys",requiresTransactionalTarget:true))
-        cases.append(.init(test:.init("offline-replay","Fetch, external raw replay, resume, and sensitive support evidence"),family:"offline"))
-        cases.append(.init(test:.init("offline-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"offline",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
-        cases.append(.init(test:.init("live-skip-errors","Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),family:"policy",intent:"skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
-        cases.append(.init(test:.init("runtime-control","Exact GTID limits, reload, status, and graceful stop"),family:"offline"))
-        cases.append(.init(test:DDLCompatibilityCases.skipTrigger,family:"policy",intent:"skip definitions; apply row effects",smoke:true))
-        cases += ["enum-non-bmp","set-non-bmp","engine","foreign-key","event","trigger","float-fixed-scale","fulltext"].map {
-            .init(test:.init("reject-"+$0,"Reject unsupported DDL: "+$0),family:"rejections",intent:"reject before target SQL",smoke:$0 == "fulltext")
+        cases.append(
+            .init(
+                test: .init(
+                    "reverse-database-table-defaults",
+                    "Defaults, multi-table transaction, implicit DDL commit and table swap"), family: "database",
+                dependencies: ["database-charset-only"], requiresTransactionalTarget: true))
+        cases += DDLCompatibilityCases.cases.map {
+            .init(
+                test: $0.test,
+                family: ["ddl-compat-tagged-gtids", "ddl-compat-source-gtid-preservation"].contains($0.test.id)
+                    ? "gtids"
+                    : [
+                        "ddl-compat-foreign-key-column-swaps", "ddl-compat-foreign-key-controls",
+                        "ddl-compat-foreign-key-ddl", "ddl-compat-foreign-key-missing-parent",
+                        "ddl-compat-foreign-key-parent-keys", "ddl-compat-foreign-key-syntax-columns",
+                        "ddl-compat-foreign-key-cross-database", "ddl-compat-foreign-key-generated",
+                        "ddl-compat-foreign-key-compound-indexes",
+                    ].contains($0.test.id) ? "foreign-keys" : "ddl", profileExclusions: $0.profileExclusions,
+                smoke: ["ddl-compat-types", "ddl-compat-database"].contains($0.test.id))
+        }
+        cases.append(
+            .init(
+                test: .init(
+                    "create-select-contract", "Native permanent CTAS restrictions and unchanged target progress"),
+                family: "rejections", intent: "source or target restriction; no partial apply"))
+        cases += DMLCompatibilityCases.cases.map {
+            .init(
+                test: .init("matrix-" + $0.id, "Shared DML matrix: " + $0.id), family: "dml",
+                source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions,
+                smoke: $0.id == "composite")
+        }
+        cases.append(
+            .init(
+                test: .init("check-target57-limits", "Reject enforced 8.4 CHECK constraints before target DDL"),
+                family: "rejections", source84OnlyReason: "Requires an 8.4 source with enforced CHECK constraints.",
+                intent: "reject before target SQL"))
+        cases.append(
+            .init(
+                test: .init(
+                    "json-target57-limits",
+                    "Native 5.7 version and MyISAM engine limits stop JSON DDL before target SQL"),
+                family: "rejections",
+                source84OnlyReason: "Requires an 8.4 source to emit expression defaults and functional indexes.",
+                intent: "reject before target SQL"))
+        cases.append(
+            .init(
+                test: .init(
+                    "json-target84-schema",
+                    "Existing 8.4 JSON defaults and functional indexes survive DML, restart and replay"),
+                family: "bootstrap",
+                profileExclusions: [
+                    .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
+                    .mysql57InnoDB: "Requires an 8.4 target.",
+                ]))
+        cases.append(
+            .init(
+                test: .init(
+                    "target84-index-spatial-metadata",
+                    "8.4 invisible indexes and SRID constraints survive DML, ALTER, restart and replay"),
+                family: "bootstrap",
+                profileExclusions: [
+                    .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
+                    .mysql57InnoDB: "Requires an 8.4 target.",
+                ]))
+        cases.append(
+            .init(
+                test: .init(
+                    "expression-target84-dependencies",
+                    "8.4 target expression dependencies, compound ALTER, refusal, restart and replay"),
+                family: "bootstrap",
+                profileExclusions: [
+                    .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
+                    .mysql57InnoDB: "Requires an 8.4 target.",
+                ]))
+        cases.append(
+            .init(
+                test: .init(
+                    "alter-rename-target84-refusal", "Refuse a native 8.4 parent rename defect before target SQL"),
+                family: "bootstrap",
+                profileExclusions: [
+                    .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
+                    .mysql57InnoDB: "Requires an 8.4 target.",
+                ]))
+        cases.append(
+            .init(
+                test: .init(
+                    "json-year-compatibility",
+                    "Explicit JSON YEAR conversion, strict refusal, restart and offline replay"), family: "dml",
+                profileExclusions: [
+                    .forward: "Requires the 5.7 to 8.4 JSON YEAR conversion policy.",
+                    .mysql57MyISAM: "5.7 targets retain JSON YEAR without conversion.",
+                    .mysql57InnoDB: "5.7 targets retain JSON YEAR without conversion.",
+                ]))
+        cases.append(
+            .init(
+                test: .init(
+                    "large-values", "Large TEXT/BLOB writes, packet fragmentation, restart, replay and recovery"),
+                family: "dml"))
+        cases += ModifyIndexCases.cases.map {
+            .init(test: $0.test, family: "indexes", smoke: $0.test.id == "ddl-index-create")
+        }
+        cases.append(
+            .init(
+                test: .init("foreign-key-safety", "Foreign-key exclusions, rollback and recovery evidence"),
+                family: "foreign-keys", requiresTransactionalTarget: true,
+                intent: "reject unsafe relationships; retain rollback and cascade evidence"))
+        cases.append(
+            .init(
+                test: .init("foreign-keys", "InnoDB foreign-key DDL, cascades, composite keys and restart"),
+                family: "foreign-keys", requiresTransactionalTarget: true))
+        cases.append(
+            .init(
+                test: .init("offline-replay", "Fetch, external raw replay, resume, and sensitive support evidence"),
+                family: "offline"))
+        cases.append(
+            .init(
+                test: .init(
+                    "offline-skip-errors",
+                    "Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),
+                family: "offline",
+                intent: "skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"))
+        cases.append(
+            .init(
+                test: .init(
+                    "live-skip-errors",
+                    "Optional skip audit, pre-write DDL rejection, InnoDB rollback/continue and MyISAM refusal"),
+                family: "policy", intent: "skip listed unwritten errors; skip duplicate GTID only after InnoDB rollback"
+            ))
+        cases.append(
+            .init(
+                test: .init("runtime-control", "Exact GTID limits, reload, status, and graceful stop"),
+                family: "offline"))
+        cases.append(
+            .init(
+                test: DDLCompatibilityCases.skipTrigger, family: "policy",
+                intent: "skip definitions; apply row effects", smoke: true))
+        cases += ["engine", "foreign-key", "event", "trigger"].map {
+            .init(
+                test: .init("reject-" + $0, "Reject unsupported DDL: " + $0), family: "rejections",
+                intent: "reject before target SQL", smoke: $0 == "engine")
         }
         cases += [
-            .init(test:DDLCoverageCases.wildcardFilter,family:"filters",intent:"skip excluded events; apply included rows",smoke:true),
-            .init(test:DDLCoverageCases.wildcardResume,family:"filters",dependencies:[DDLCoverageCases.wildcardFilter.id],intent:"resume saved filter state"),
-            .init(test:DDLCoverageCases.wildcardRejection,family:"filters",dependencies:[DDLCoverageCases.wildcardResume.id],intent:"reject included DDL before target SQL")
+            .init(
+                test: DDLCoverageCases.wildcardFilter, family: "filters",
+                intent: "skip excluded events; apply included rows", smoke: true),
+            .init(
+                test: DDLCoverageCases.wildcardResume, family: "filters",
+                dependencies: [DDLCoverageCases.wildcardFilter.id], intent: "resume saved filter state"),
+            .init(
+                test: DDLCoverageCases.wildcardRejection, family: "filters",
+                dependencies: [DDLCoverageCases.wildcardResume.id], intent: "reject included DDL before target SQL"),
         ]
-        cases.append(.init(test:DDLCoverageCases.group,family:"ordered"))
-        cases += [DDLCompatibilityCases.collationCleanup,DDLCompatibilityCases.collationCollision].map {
-            .init(test:$0,family:"collation",source84OnlyReason:"Requires 8.4 source 0900/NO PAD collations and 5.7 mapping; these collations do not exist on a 5.7 source.")
+        cases.append(.init(test: DDLCoverageCases.group, family: "ordered"))
+        cases += [DDLCompatibilityCases.collationCleanup, DDLCompatibilityCases.collationCollision].map {
+            .init(
+                test: $0, family: "collation",
+                source84OnlyReason:
+                    "Requires 8.4 source 0900/NO PAD collations and 5.7 mapping; these collations do not exist on a 5.7 source."
+            )
         }
-        cases.append(.init(test:DDLCoverageCases.positive,family:"dml",smoke:true))
-        cases += DMLCompatibilityCases.cases.map { .init(test:.init("bootstrap-matrix-"+$0.id,"Discover bootstrapped DML schema: "+$0.id),family:"bootstrap",source84OnlyReason:$0.source84OnlyReason) }
-        cases += DMLCompatibilityCases.rejections.map { .init(test:.init("matrix-reject-"+$0.id,"Refuse incompatible bootstrapped metadata: "+$0.id),family:"dml-refusals",source84OnlyReason:"Requires 8.4 optional TABLE_MAP metadata; 5.7 omits signedness and labels, and uses the target baseline schema.",intent:"reject with unchanged durable progress") }
-        cases.append(.init(test:ModifyIndexCases.resume,family:"discovery"))
-        cases.append(.init(test:.init("forward-failures","Forward DDL/policy failures retain pending evidence and blocked following writes"),family:"failures",source84OnlyReason:"Historical 8.4 to 5.7 MyISAM grants, index limits and native error codes.",intent:"per-case apply or fail-stop"))
-        cases.append(.init(test:.init("myisam-recovery","MyISAM discovery, exact values, cache, failures and crash/replay refusal"),family:"recovery",requiresMyISAMTarget:true,intent:"per-case apply or fail-stop"))
+        cases.append(.init(test: DDLCoverageCases.positive, family: "dml", smoke: true))
+        cases += DMLCompatibilityCases.cases.map {
+            .init(
+                test: .init("bootstrap-matrix-" + $0.id, "Discover bootstrapped DML schema: " + $0.id),
+                family: "bootstrap", source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions)
+        }
+        cases += DMLCompatibilityCases.rejections.map {
+            .init(
+                test: .init("matrix-reject-" + $0.id, "Refuse incompatible bootstrapped metadata: " + $0.id),
+                family: "dml-refusals",
+                source84OnlyReason:
+                    "Requires 8.4 optional TABLE_MAP metadata; 5.7 omits signedness and labels, and uses the target baseline schema.",
+                intent: "reject with unchanged durable progress")
+        }
+        cases.append(.init(test: ModifyIndexCases.resume, family: "discovery"))
+        cases.append(
+            .init(
+                test: .init(
+                    "forward-failures",
+                    "Forward DDL/policy failures retain pending evidence and blocked following writes"),
+                family: "failures",
+                source84OnlyReason: "Historical 8.4 to 5.7 MyISAM grants, index limits and native error codes.",
+                intent: "per-case apply or fail-stop"))
+        cases.append(
+            .init(
+                test: .init(
+                    "myisam-recovery", "MyISAM discovery, exact values, cache, failures and crash/replay refusal"),
+                family: "recovery", requiresMyISAMTarget: true, intent: "per-case apply or fail-stop"))
         return cases
     }
     static func select(tier: String, family: String?, ids: Set<String>) throws -> [LabScenario] {
-        let all=correctness, known=Set(all.map(\.id))
-        try require(ids.isSubset(of:known),"unknown cases: " + ids.subtracting(known).sorted().joined(separator:", "))
-        if let family { try require(Set(all.map(\.family)).contains(family),"unknown correctness family: "+family) }
-        var selected=Set(all.filter { (family == nil || $0.family == family) && (ids.isEmpty ? tier == "full" || $0.smoke : ids.contains($0.id)) }.map(\.id))
-        try require(ids.isEmpty || selected == ids,"selected cases do not belong to the requested family")
+        let all = correctness
+        let known = Set(all.map(\.id))
+        try require(
+            ids.isSubset(of: known), "unknown cases: " + ids.subtracting(known).sorted().joined(separator: ", "))
+        if let family { try require(Set(all.map(\.family)).contains(family), "unknown correctness family: " + family) }
+        var selected = Set(
+            all.filter {
+                (family == nil || $0.family == family)
+                    && (ids.isEmpty ? tier == "full" || $0.smoke : ids.contains($0.id))
+            }.map(\.id))
+        try require(ids.isEmpty || selected == ids, "selected cases do not belong to the requested family")
         var prior: Set<String> = []
         while prior != selected {
-            prior=selected
+            prior = selected
             for item in all where selected.contains(item.id) { selected.formUnion(item.dependencies) }
         }
         return all.filter { selected.contains($0.id) }

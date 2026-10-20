@@ -9,6 +9,10 @@ Write for data engineers, DBAs, and platform engineers who know MySQL replicatio
 - Use short sentences. Give each sentence one main subject.
 - Use active voice and direct instructions.
 - Use one term for each concept. Explain technical terms when necessary.
+- Prefer standard industry terms and terms defined in the MySQL documentation.
+  Define a project-specific term before you use it. Do not use phrases such as
+  "replication coverage qualified" without a clear definition. State which tests
+  ran, which profiles they used, what passed, and what remains untested.
 - Keep commands, code identifiers, configuration keys, and product names exact.
 - State tested behavior and support limits. Do not remove a limit to simplify the text.
 - Apply this rule to the text you change. Do not rewrite unrelated documents.
@@ -42,3 +46,12 @@ support bundle to debug replication errors. Do not repeatedly poll full logs.
 Use [docs/CI_MEASUREMENTS.md](docs/CI_MEASUREMENTS.md) for measurement scope and
 test-area comparison rules. Do not remove a test because its line coverage overlaps
 another test. Check its profile, catalog obligations and assertions first.
+
+# Select local tests
+
+For test fixes, rerun only the changed cases locally. Leave the full suite to
+GitHub Actions. Do not expand a local run to a full suite unless the user asks.
+
+Run `tools/syntax_tests.py` when `Sources/MySQLSyntax`, its tests, or its build
+and coverage setup changes. Do not run this separate suite for unrelated code
+changes. Select the affected apply or lab tests for those changes.

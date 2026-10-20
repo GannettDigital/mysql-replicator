@@ -58,6 +58,21 @@ Run the Rust unit tests and Swift unit test suite:
 make test
 ```
 
+The SQL lexer and expression parser are in `MySQLSyntax`. Run their unit tests
+without Rust, MySQL libraries, Docker, or a database server:
+
+```sh
+make syntax-test
+make syntax-coverage
+```
+
+The second command writes `artifacts/coverage/syntax-unit/index.html`. It measures
+only the syntax target's own tests and requires at least 95% line coverage.
+The normal unit job also runs these tests and publishes the isolated report.
+Line coverage does not prove grammar coverage. Add positive and negative cases,
+SQL modes, precedence, source ranges, and limits for each grammar change.
+See [the syntax layer](docs/SQL_SYNTAX.md) for its boundary and current scope.
+
 Command parsing lives in `ReplicatorCommandLine`. It has no database dependencies.
 Its tests check help, argument validation, and parsed requests. CLI process tests
 also check stdout, JSON errors on stderr, and exit status without MySQL:
@@ -375,3 +390,11 @@ see the [test lab guide](docs/TEST_LAB.md). For the original forward streaming
 and capture experiments use `make lab-benchmark PROFILE=mysql84-to-mysql57-myisam`
 with `ARGS="--mode streaming"` or `ARGS="--mode capture"`; see
 [the benchmark guide](PLAN/PERFORMANCE_BENCHMARK.md). These remain uninstrumented.
+
+## Swift syntax and format
+
+Use Swift 6.2.1 and run `make lint`. This check uses the formatter in the Swift
+toolchain. It parses Swift files and checks their format without building the
+project. Run `make format` to apply the format in `.swift-format`. CI runs this
+check in parallel with Periphery and other checks. Compiler and unit-test jobs
+still check types and behavior. Vendor code and upstream MySQL trees are excluded.

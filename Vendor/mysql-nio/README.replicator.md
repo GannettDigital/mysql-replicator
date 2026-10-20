@@ -36,6 +36,16 @@ barrier that closes each server statement before DDL/session changes. Connection
 closure releases all remaining server statements, including uncertain commands.
 The default `query` API still uses prepare/execute/close.
 
+Prepared statement keys use the exact UTF-8 bytes of the SQL. The dictionary
+hashes these bytes and compares the keys to resolve hash collisions. Swift
+`String` equality treats some different Unicode byte sequences as equal;
+MySQL can use those sequences for distinct table and column names. Row lookup
+also compares name bytes. Row descriptions retain all column names.
+
+`simpleQueryBytes` sends the original Query-event SQL bytes with COM_QUERY.
+It does not convert them to UTF-8. The applier restores the logged client charset
+before execution. The String API keeps its existing UTF-8 behavior.
+
 The SQL transport splits and joins logical messages at the MySQL 0xffffff-byte
 packet boundary. An exact multiple requires an empty final packet. Continuation
 packets must have consecutive sequence IDs. Messages are limited to 1 GiB.

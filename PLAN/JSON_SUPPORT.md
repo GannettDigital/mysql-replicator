@@ -3,6 +3,14 @@
 Status: the ordinary-value, typed-value and partial-update paths have unit tests.
 The selected live, bootstrap and recovery cases now pass on all four profiles.
 Some legacy opaque types still have SQL transport gaps, listed below.
+The [beta.6 investigation](JSON_TRANSPORT_INVESTIGATION.md) records native
+constructor probes, prepared parameters, LOAD DATA and separate transport choices.
+The [YEAR compatibility rule](JSON_YEAR_COMPATIBILITY.md) is separate from
+binary-value gaps. YEAR-to-integer conversion is available but disabled by default.
+
+For application guidance, Base64 examples, and the YEAR configuration rule, see
+[JSON support](../docs/JSON_SUPPORT.md). This file retains implementation notes
+and test history.
 
 ## Required behavior
 
@@ -85,15 +93,18 @@ typed annotations, traversal and reconstructed documents have size limits.
 The existing event-size configuration controls these limits.
 
 JSON schema discovery and CREATE/ADD/MODIFY use the shared schema paths. Direct
-JSON primary and secondary index columns remain invalid. JSON expression indexes
-and non-NULL JSON defaults are outside this DDL increment.
+JSON primary and secondary index columns remain invalid. Later work adds indexes
+on generated JSON scalar columns. It also adds functional indexes and JSON
+expression defaults for 8.4 targets. MySQL 5.7 targets retain their native
+restrictions. See [the current JSON support guide](../docs/JSON_SUPPORT.md).
 
 ## Remaining limits and qualification
 
 These are SQL transport gaps, not invalid source JSON:
 
 - Native 5.7 can store YEAR as opaque type 13. MySQL 8.4 converts a YEAR SQL
-  expression to an integer. The current target check stops on that type change.
+  expression to an integer. Strict mode stops on that type change. The optional
+  `compatibility.jsonYearToInteger` rule accepts this conversion for 5.7 to 8.4.
 - Legacy opaque type 253 can differ from the type produced by CAST AS BINARY
   on another version. The current target check stops if the subtype or bytes
   differ. Other opaque subtypes without an implemented SQL constructor stop
@@ -128,7 +139,7 @@ discovery:
 
 Ordinary and typed cases apply to all four profiles. Bootstrap cases restart the
 applier between phases. The former `matrix-reject-json-opaque` case is removed;
-DECIMAL is now a positive case. The former JSON DDL refusal uses GEOMETRY.
+DECIMAL is now a positive case. Filter refusal fixtures now use an explicit engine outside the selected target profile. GEOMETRY is now a supported type.
 
 Database qualification now runs the selected live, bootstrap and partial-update
 cases. The large-value case also checks source-free replay, clean restart and
@@ -204,3 +215,10 @@ from file-position-only configuration.
 The affected Swift unit targets passed 392 tests. The Rust suite passed nine
 tests. The DDL catalog structure check passed with 63 scenarios and 186
 registered cases. These checks do not qualify unselected MySQL features.
+
+## Optional YEAR compatibility rule
+
+For 5.7 to 8.4, `compatibility.jsonYearToInteger: true` converts YEAR values
+inside JSON to unsigned integers. The default is strict preservation. The rule
+also applies to target before-image checks and offline replay. Source relay and
+recovery images stay unchanged. See [configuration and limits](JSON_YEAR_COMPATIBILITY.md).

@@ -172,15 +172,15 @@
         "ddl.encoding.charset-only",
         "ddl.reject.collation-0900",
         "ddl.reject.charset-default",
-        "ddl.reject.charset-latin1",
+        "ddl.encoding.latin1",
         "ddl.native.collate-only"
       ]
     },
     {
-      "id": "column.types",
-      "family": "C",
-      "name": "Column Types",
-      "grammar": "Reject unsupported DOUBLE(10,2) column before mutation",
+      "id": "table.engine-policy",
+      "family": "B",
+      "name": "Target Engine Policy",
+      "grammar": "Reject an explicit incompatible engine before mutation",
       "scenario_ids": [
         "ddl.reject.ddl-unsupported"
       ]
@@ -2045,22 +2045,22 @@
       ]
     },
     {
-      "id": "ddl.reject.charset-latin1",
-      "name": "Reject latin1 outside the current row encoding subset",
+      "id": "ddl.encoding.latin1",
+      "name": "Apply latin1 column data and defaults",
       "family": "E",
       "feature": "encoding.column-default",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
       "implementation": "implemented",
-      "intent": "reject",
+      "intent": "apply",
       "prerequisites": [
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "Reject latin1 outside the current row encoding subset"
+        "CREATE and ALTER latin1 columns; retain raw stored bytes."
       ],
       "following_workload": [
-        "A later event must remain unapplied."
+        "INSERT, UPDATE and DELETE preserve high bytes, NUL, keys and NULL."
       ],
       "upstream_refs": [
         {
@@ -2084,10 +2084,10 @@
             "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -2096,11 +2096,10 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "rejection",
-            "diagnostic": "unsupported discovered character set",
-            "reason": "unsupported discovered character set",
-            "warnings": "Capture diagnostics and warnings.",
-            "partial_effects": "Assert target effects and stopped boundary explicitly."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           }
         },
         {
@@ -2113,10 +2112,10 @@
             "logging": "event"
           },
           "native84": {
-            "outcome": "unknown",
-            "reason": "Native outcome must be measured.",
-            "warnings": "Not yet qualified.",
-            "partial_effects": "Not yet qualified."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           },
           "target57_sql": {
             "outcome": "not_applicable",
@@ -2125,30 +2124,25 @@
             "partial_effects": "Not applicable."
           },
           "swift57": {
-            "outcome": "rejection",
-            "diagnostic": "unsupported discovered character set",
-            "reason": "unsupported discovered character set",
-            "warnings": "Capture diagnostics and warnings.",
-            "partial_effects": "Assert target effects and stopped boundary explicitly."
+            "outcome": "success",
+            "effect": "changed",
+            "warnings": "Capture native warnings.",
+            "partial_effects": "Compare schema and stored bytes."
           }
         }
       ],
       "required_assertions": [
         {
-          "id": "diagnostic",
-          "description": "Assert the expected diagnostic/error category."
+          "id": "schema",
+          "description": "Compare charset, collation and defaults after CREATE and ALTER."
         },
         {
-          "id": "partial-effects",
-          "description": "Compare target data/schema and pending intents after rejection."
+          "id": "row-bytes",
+          "description": "Compare exact bytes after each DML phase."
         },
         {
-          "id": "stopped-boundary",
-          "description": "Ensure rejected work did not become a completed checkpoint."
-        },
-        {
-          "id": "following-event-blocked",
-          "description": "Verify a later source event remains unapplied."
+          "id": "restart",
+          "description": "Restore saved encoding metadata at a clean checkpoint."
         }
       ],
       "bindings": [
@@ -2156,26 +2150,28 @@
           "suite": "ddl-suite",
           "role": "swift_apply_with_native_reference",
           "case_ids": [
-            "charset_latin1"
+            "matrix-encodings"
           ],
           "profiles": [
             "swift.position.metadata-minimal",
             "swift.gtid.metadata-full"
           ],
           "assertion_ids": [],
-          "note": "Existing aggregate case passes are historical. Named assertion evidence and build provenance are not yet bound; this does not qualify the contract."
+          "producers": [
+            "shared-correctness"
+          ],
+          "note": "Shared positive encoding case replaces the obsolete refusal. Aggregate passes do not qualify named assertions."
         }
       ],
       "gaps": [
-        "Native rejection equivalence is not established by a Swift unsupported-feature rejection.",
-        "Wire required assertion IDs and evidence provenance; audit every required check before qualification."
+        "Shared matrix-encodings and bootstrap-matrix-encodings replace the obsolete charset_latin1 refusal. Exact named assertion bindings remain open."
       ]
     },
     {
       "id": "ddl.reject.ddl-unsupported",
-      "name": "Reject unsupported DOUBLE(10,2) column before mutation",
-      "family": "C",
-      "feature": "column.types",
+      "name": "Reject an explicit incompatible engine before mutation",
+      "family": "B",
+      "feature": "table.engine-policy",
       "scope": "in_scope",
       "scope_reason": "Declared DDL checklist obligation; qualify only the stated schema and settings.",
       "implementation": "implemented",
@@ -2184,7 +2180,7 @@
         "Use the pinned three-server fixture and the narrow supported row types; prepare prior state at the recorded source boundary."
       ],
       "operation": [
-        "Reject unsupported DOUBLE(10,2) column before mutation"
+        "Reject an explicit incompatible engine before mutation"
       ],
       "following_workload": [
         "A later event must remain unapplied."
@@ -9527,6 +9523,286 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-collation-cleanup-removed",
       "reason": "Dependent collation cleanup phase: saved schema creation or policy pinning refusal. Executed with ddl-compat-collation-cleanup; does not independently qualify catalog assertions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-unicode-names",
+      "reason": "Native Unicode table-name identity, rename, LIKE and row checks. This regression does not qualify every identifier or case-setting requirement."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-query-encodings",
+      "reason": "Exact non-UTF-8 Query bytes, multibyte syntax boundaries, native defaults and following row changes. This selected regression is not complete charset qualification."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-name-case",
+      "reason": "Native mode-1 table names through DDL, row events and clean restart. This case does not qualify case-insensitive filesystems or cross-setting replication."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-json-indexes",
+      "reason": "JSON generated-column indexes, row changes, CREATE LIKE and restart on four profiles. This selected regression does not qualify every generated expression."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-fulltext",
+      "reason": "FULLTEXT parser metadata and indexed search after row changes, DDL or restart. Selected regression; full engine and option qualification remains open."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-maintenance",
+      "reason": "Native FORCE and ENABLE/DISABLE KEYS, disabled-index DML, compound ALTER and restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-options",
+      "reason": "Comments, physical options, AUTO_INCREMENT, LIKE and restart. Other engine options need qualification."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-conversions",
+      "reason": "Selected native cross-family MODIFY and CHANGE conversions, following DML and restart. This does not qualify all conversions."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-table-charset",
+      "reason": "Selected table-default workflow; full charset qualification remains open."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-charset-conversion",
+      "reason": "Selected charset-conversion workflow; full conversion qualification remains open."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-charset-defaults",
+      "reason": "MySQL 5.7 DEFAULT encoding forms use explicit equivalent encodings on the 8.4 target."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-compound-charset",
+      "reason": "Compound conversion and table-default clauses preserve independent collations, database inheritance and following columns."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-generated-expressions",
+      "reason": "Generated predicates, CASE, byte literals and built-in functions compare native metadata and row effects through restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-spatial-prefix-indexes",
+      "reason": "MySQL 5.7 geometry BTREE prefix indexes: metadata, spatial bytes, ALTER and restart. MySQL 8.4 is a native version exclusion."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-multi-table",
+      "reason": "Ordered cross-schema moves, swaps, DROP lists, saved schema retirement and restart. Failure and filter boundaries also have unit checks."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-cross-schema-relationships",
+      "reason": "Cross-schema parent/child renames and multi-table DROP. InnoDB variants check foreign-key metadata and a cascade. MyISAM variants omit foreign keys."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-ignored-checks",
+      "reason": "Native ignored 5.7 CHECK syntax, durable no-op ALTER, compound changes and restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-subpartitions",
+      "reason": "Partition metadata, native row effects and saved-state restart; subpartitions also uses offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-hash-forms",
+      "reason": "Partition metadata, native row effects and saved-state restart; subpartitions also uses offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-key-algorithm",
+      "reason": "KEY algorithm 1 row placement, durable schema, CREATE LIKE, ALTER, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-maintenance",
+      "reason": "Logged native partition maintenance, result handling, unlogged CHECK and LOCAL operations, following DML and restart."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-expressions",
+      "reason": "Native bound evaluation, RANGE/LIST and COLUMNS metadata, DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-column-bounds",
+      "reason": "Native bound evaluation, RANGE/LIST and COLUMNS metadata, DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-exchange-unchecked",
+      "reason": "Unchecked exchange row placement, two-table journal, exchange back, DML and offline stop/resume."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-temporary-create-select",
+      "reason": "Temporary CTAS row effects, native comparison, clean restart and offline stop/resume."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-stored-objects",
+      "reason": "Routine attributes and definers, view check options, multi-view DROP, following rows, journal, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-unique-row-identity",
+      "reason": "Nonnullable unique keys, ordered key changes, exact row effects, saved key identity, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-view-renames",
+      "reason": "Ordered view/table rename chains, view metadata journal, row effects, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-conditional-routines",
+      "reason": "5.7 routine conditional CREATE translation, preserved bodies and definers, journaled no-ops, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-keyless-rows",
+      "reason": "Full-row matching with duplicates, NULLs, byte-distinct text and JSON types; restart, offline replay, partial failure and recovery."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-controls",
+      "reason": "InnoDB self-references, cycles, foreign_key_checks changes, restart, replay and rollback recovery."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-syntax-columns",
+      "reason": "Native FK names, MATCH actions, compatible column types, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-cross-database",
+      "reason": "Child and parent database DROP, surviving FK schemas, missing parent, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-generated",
+      "reason": "Stored generated FK parents and children, native virtual/action limits, cascades, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-generated-dependencies",
+      "reason": "Compound generated dependency changes, stored/base conversions, following DML, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-column-keys",
+      "reason": "Inline primary keys, AUTO_INCREMENT, implicit rebuild values, following DML, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-compound-indexes",
+      "reason": "Compound FK/index/column changes, compact replacement journal, actual schema persistence, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-parent-keys",
+      "reason": "Native InnoDB nonunique, composite-prefix and extended parent keys, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-missing-parent",
+      "reason": "Missing-parent metadata, disabled-check DDL, parent recreation, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-ddl",
+      "reason": "Supporting-index replacement, FK-column renames, internal database DROP, durable schema transitions and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-column-index-syntax",
+      "reason": "Inline keys, grouped columns, native key names, index and execution options, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-table-rename",
+      "reason": "Standalone and compound ALTER renames, changed FK peers, cross-schema moves, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-grouped-constraints",
+      "reason": "Grouped FK and ignored CHECK clauses, reserved index names, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-primary-key-parts",
+      "reason": "Primary-key prefixes, full-value row lookups, ALTER, CREATE LIKE, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-column-renames",
+      "reason": "Remaining ALTER syntax, preserved metadata, subsequent rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-alter-options",
+      "reason": "Remaining ALTER syntax, preserved metadata, subsequent rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-absent-definers",
+      "reason": "Absent definer metadata, invoker execution, native error 1449, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-column-swaps",
+      "reason": "Simultaneous column names, original key identities, placement, generated expressions, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-foreign-key-column-swaps",
+      "reason": "Parent, child and self FK swaps, new constraints, cascades, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-column-renames",
+      "reason": "Column rename with replacement/removal of partitioning, following DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-partition-rename-syntax",
+      "reason": "Column rename with replacement/removal of partitioning, following DML, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-executable-comments",
+      "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-executable-comments-target-gate",
+      "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-executable-comments-source-gate",
+      "reason": "Executable comments follow native target version gates; retain original SQL, journal, rows, restart and replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-tagged-gtids",
+      "reason": "Tagged DDL and DML identities, native independent counters, saved-state restart, rotation and offline replay to a tagged stop limit."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-source-gtid-preservation",
+      "reason": "Preserve source GTIDs across multi-row and keyless writes, restart and offline replay."
     }
   ]
 }

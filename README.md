@@ -59,7 +59,9 @@ storage engine. The test suite checks these four combinations:
 | [`mysql57-to-mysql57-innodb`](docs/MYSQL57_INNODB.md) | MySQL 5.7 InnoDB | MySQL 5.7 InnoDB | Supported with [limits](PLAN/MYSQL57_FOREIGN_KEYS.md) |
 
 Set `profile` in your YAML configuration to select a profile. Other combinations
-are not tested. See [DML support](PLAN/DML_APPLY.md) and
+are not tested. This page describes the current source tree; check the release
+notes for the binary you install. See [support and remaining limits](docs/SUPPORT.md),
+[DML support](PLAN/DML_APPLY.md), and
 [DDL support](PLAN/DDL_COMPATIBILITY.md) for the supported operations and limits.
 
 Copy the initial data with an external tool. If a write fails or the tool cannot
@@ -69,21 +71,27 @@ replication continues.
 ## Features
 
 - **Live replication:** start from a GTID set or binlog file position. Stop cleanly
-  and resume from the saved replication position.
+  and resume from the saved replication position. GTID restrictions apply even
+  when you use a binlog file position.
+- **Source GTIDs:** preserve them on a target that permits assignment, or track
+  them only in SQLite. See [required privileges and Cloud SQL limits](docs/GTID_PRESERVATION.md).
 - **Offline replay:** fetch binlogs or use a directory of raw files from
   `mysqlbinlog`. Replay does not connect to the source. Stop after a transaction
   count or when the applied GTID set contains `source.stopAfterGTIDs`.
+- **Configuration:** use YAML and override settings with CLI options such as
+  `--source.port`. Source and target support the same TLS verification modes.
 - **Process control:** use `ctl status`, `ctl stop`, and `ctl reload`. Reload
   supports changes to selected limits, such as when to stop replication. It does
   not replace the saved replication position.
 - **Disconnects and restarts:** reconnect to the source or target when the saved
   state permits continuation. If the tool cannot confirm whether a target write
   completed, it stops replication for DBA review.
-- **Selection and error handling:** exclude tables with wildcard rules. Skip
+- **Selection and error handling:** include or exclude tables with wildcard rules. Skip
   selected errors in live or replay mode. You can record each skipped transaction
   or disable these records. The DBA remains responsible for data consistency
   after a skip.
-- **Statistics and troubleshooting:** collect transaction and row counts, plus
+- **Statistics and troubleshooting:** retain transaction, row, event and byte
+  counts. Read backlog and estimated catch-up time with `ctl status`. Measure
   time spent downloading, decoding, and applying binlog events. Export logs,
   configuration, and saved state as a **support bundle** for troubleshooting.
   Create a bundle manually or enable automatic collection when an error stops
@@ -91,7 +99,8 @@ replication continues.
 
 See the [configuration reference](examples/apply.example.yaml),
 [replay and control guide](docs/OFFLINE_REPLAY.md), and
-[filter rules](PLAN/WILDCARD_FILTERS.md). State records help a DBA investigate
+[filter rules](docs/SUPPORT.md#include-and-ignore-filters), and
+[status metrics](docs/OPERATIONS.md). State records help a DBA investigate
 failures. They do not guarantee automatic recovery when the outcome of a target
 write is unknown.
 
@@ -214,23 +223,34 @@ replication positions and the expected behavior after errors. Selected tests use
 These comparisons exclude server-specific values, such as server IDs.
 Some tests use additional helper containers.
 
-| Area | Tested cases |
+The table lists cases in the suite. Use the CI report for the exact commit to
+check which profiles and variants passed.
+
+| Area | Cases in the suite |
 | --- | --- |
 | Row changes | INSERT, UPDATE, DELETE, multiple rows, primary-key changes, upsert, REPLACE, IGNORE, INSERT SELECT, joined updates/deletes, and LOAD DATA as row events |
 | Data types | Signed/unsigned integers, DECIMAL, date/time types, CHAR/VARCHAR, binary strings, TEXT/BLOB families, ENUM, SET, BIT, FLOAT/DOUBLE, JSON, spatial types, and NULL values |
-| Keys and transactions | Composite primary keys, secondary and unique indexes; InnoDB multi-statement transactions and foreign keys within the profile limits |
+| Keys and transactions | Composite primary keys, nonnullable unique-key fallback, full-row matching for keyless tables and duplicates, secondary indexes; InnoDB multi-statement transactions and foreign keys within the profile limits |
 | DDL | Database create/alter/drop; table create/alter/drop, LIKE, rename, truncate, column and index changes, defaults, generated columns, partitions, views, and stored routines within the supported SQL syntax |
 | Process control and failures | Starting positions, resume from saved state, source/target restarts, table filters, selected error skips, offline replay, and support bundles |
 
 This is a test summary, not a claim of complete MySQL compatibility. MyISAM
 profiles accept one DML statement per source transaction, affecting one table
-that is not excluded by the table filters. Tables need primary keys that meet
-the [DML requirements](PLAN/DML_APPLY.md). See the type-specific limits for
-[JSON](PLAN/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md),
+that is not excluded by the table filters. Tables without a usable unique key use
+[full-row matching](PLAN/KEYLESS_ROWS.md), which can require table scans.
+See the type-specific limits for
+[JSON](docs/JSON_SUPPORT.md), [BIT](PLAN/BIT_SUPPORT.md),
 [FLOAT/DOUBLE](PLAN/FLOATING_POINT_SUPPORT.md), and
-[spatial columns](PLAN/SPATIAL_SUPPORT.md). JSON has some legacy opaque-value
-transport gaps. Spatial values retain their stored SRID and coordinate bytes;
-this does not make spatial function behavior equal across MySQL versions. Other untested behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
+[spatial columns](PLAN/SPATIAL_SUPPORT.md). Some MySQL-specific values inside JSON cannot be recreated
+exactly through SQL. Spatial values retain their stored SRID and coordinate bytes;
+this does not make spatial function behavior equal across MySQL versions.
+Text supports the [character sets and collations](docs/SUPPORT.md) listed in the
+support summary. Fixed-scale FLOAT/DOUBLE and selected FULLTEXT operations are
+implemented. Some MySQL features remain unsupported. See the
+[support summary](docs/SUPPORT.md) for the remaining restrictions.
+[Support status](docs/SUPPORT.md#support-status) separates tool gaps, target
+incompatibilities, native restrictions, policies and incomplete tests. Untested
+behavior is not necessarily unsupported. Check the [test inventory](docs/TEST_LAB.md),
 [DML limits](PLAN/DML_APPLY.md), [large-value limits](docs/LARGE_VALUES.md),
 and [DDL limits](PLAN/DDL_COMPATIBILITY.md).
 

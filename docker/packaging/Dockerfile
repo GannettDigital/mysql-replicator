@@ -38,7 +38,11 @@ COPY Package.swift Package.resolved ./
 COPY Vendor Vendor
 COPY tools/build_dependencies.py tools/swift_cache.py tools/
 RUN python3 tools/build_dependencies.py --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
-FROM dependencies AS swift-inputs
+FROM dependencies AS sql-syntax
+COPY Sources/MySQLSyntax Sources/MySQLSyntax
+COPY tools/build_syntax.py tools/
+RUN python3 tools/build_syntax.py --swift-sdk x86_64-swift-linux-musl --configuration release --jobs 2 --force-resolved-versions -Xcc -I/opt/sqlite -Xlinker -L/out/native
+FROM sql-syntax AS swift-inputs
 COPY Sources Sources
 COPY tests tests
 COPY packaging/Probe/Sources packaging/Probe/Sources

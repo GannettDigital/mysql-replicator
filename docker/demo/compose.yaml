@@ -10,7 +10,7 @@ services:
     container_name: "${REPLICATOR_DEMO_APPLIER:?demo applier container name required}"
     init: true
     entrypoint: ["/bin/sleep"]
-    command: ["infinity"]
+    command: ["--lower-case-table-names=${REPLICATOR_LOWER_CASE_TABLE_NAMES:-0}", "infinity"]
     restart: "no"
     network_mode: "service:target57"
     depends_on:

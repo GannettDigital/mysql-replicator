@@ -10,60 +10,72 @@ struct DMLExecution {
         let failure: Error?
         var diagnostic: TargetFailureDiagnostic? = nil
         var discardUnwritten = false
-        var skipped: [Int:SkippedApplyError] = [:]
-        func record(in state: StateStore) throws { try Self.record([self],in:state) }
+        var skipped: [Int: SkippedApplyError] = [:]
+        func record(in state: StateStore) throws { try Self.record([self], in: state) }
         /// Coalesce only ordered completions already published by the worker.
         /// A failed outcome must be last; later tickets must remain pending.
         static func record(_ outcomes: [Outcome], in state: StateStore) throws {
-            try require(!outcomes.isEmpty && outcomes.dropLast().allSatisfy { $0.failure == nil },"invalid batch completion window")
-            let last=outcomes.last!
-            var acknowledged: [Int]=[], skipped: [Int:SkippedApplyError]=[:]
+            try require(
+                !outcomes.isEmpty && outcomes.dropLast().allSatisfy { $0.failure == nil },
+                "invalid batch completion window")
+            let last = outcomes.last!
+            var acknowledged: [Int] = []
+            var skipped: [Int: SkippedApplyError] = [:]
             for outcome in outcomes {
-                for (index,error) in outcome.skipped { skipped[acknowledged.count+index]=error }
-                acknowledged.append(contentsOf:outcome.acknowledged)
+                for (index, error) in outcome.skipped { skipped[acknowledged.count + index] = error }
+                acknowledged.append(contentsOf: outcome.acknowledged)
             }
             do {
-                try state.finishBatch(acknowledgedRows:acknowledged,skipped:skipped,batchCount:outcomes.count)
-                if let diagnostic=last.diagnostic { try state.recordTargetFailure(diagnostic) }
+                try state.finishBatch(acknowledgedRows: acknowledged, skipped: skipped, batchCount: outcomes.count)
+                if let diagnostic = last.diagnostic { try state.recordTargetFailure(diagnostic) }
                 if last.discardUnwritten { try state.discardUnwrittenPending() }
-            }
-            catch {
-                if let failure=last.failure { throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)") }
+            } catch {
+                if let failure = last.failure {
+                    throw ApplyError("\(failure); additionally failed to record batch prefix: \(error)")
+                }
                 throw error
             }
-            if let failure=last.failure { throw failure }
+            if let failure = last.failure { throw failure }
         }
     }
-    static func run(_ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
-                    maximumInsertRows: Int, maximumInsertBytes: Int,
-                    lock: (ApplyTable) throws -> Void, write: (Mutation) throws -> Void,
-                    insert: ([Mutation]) throws -> Void, completedGroup: () throws -> Void,
-                    resetTrace: () -> Void = {}, trace: () -> TargetStatementTrace = { .init(phase:.possiblyExecuted) }) -> Outcome {
-        var acknowledged = Array(repeating:0,count:groups.count)
+    static func run(
+        _ groups: [PreparedDMLGroup], cancellation: CaptureCancellation,
+        maximumInsertRows: Int, maximumInsertBytes: Int,
+        lock: (ApplyTable) throws -> Void, write: (Mutation) throws -> Void,
+        insert: ([Mutation]) throws -> Void, completedGroup: () throws -> Void,
+        resetTrace: () -> Void = {}, trace: () -> TargetStatementTrace = { .init(phase: .possiblyExecuted) }
+    ) -> Outcome {
+        var acknowledged = Array(repeating: 0, count: groups.count)
         // Each reference retains its original group and row ordinal. Chunking
         // never changes row order or moves work across a table/operation boundary.
-        let rows = groups.enumerated().flatMap { index,group in group.mutations.map { (index,$0) } }
-        var cursor = 0, attemptedEnd = 0
+        let rows = groups.enumerated().flatMap { index, group in group.mutations.map { (index, $0) } }
+        var cursor = 0
+        var attemptedEnd = 0
         do {
             while cursor < rows.count {
                 resetTrace()
                 attemptedEnd = cursor
-                try require(!cancellation.isCancelled,"apply cancelled")
+                try require(!cancellation.isCancelled, "apply cancelled")
                 let first = rows[cursor].1
-                let count = insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in
-                        let end = cursor+offset
-                        guard end < rows.count else { return nil }
-                        // Coalesce across source groups only when both groups
-                        // contain one row. With explicit locks enabled, larger
-                        // groups keep their lock until their last chunk.
-                        if rows[end].0 != rows[cursor].0 && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1) { return nil }
-                        return rows[end].1
+                let count = insertChunkCount(
+                    first, maximumInsertRows: maximumInsertRows, maximumInsertBytes: maximumInsertBytes
+                ) { offset in
+                    let end = cursor + offset
+                    guard end < rows.count else { return nil }
+                    // Coalesce across source groups only when both groups
+                    // contain one row. With explicit locks enabled, larger
+                    // groups keep their lock until their last chunk.
+                    if rows[end].0 != rows[cursor].0
+                        && (groups[rows[cursor].0].mutations.count != 1 || groups[rows[end].0].mutations.count != 1)
+                    {
+                        return nil
+                    }
+                    return rows[end].1
                 }
-                let end = cursor+count
+                let end = cursor + count
                 attemptedEnd = end
                 if acknowledged[rows[cursor].0] == 0 { try lock(first.table) }
-                if end-cursor == 1 { try write(first) }
-                else { try insert(rows[cursor..<end].map { $0.1 }) }
+                if end - cursor == 1 { try write(first) } else { try insert(rows[cursor..<end].map { $0.1 }) }
                 // First record all successful rows in memory. Lock release can
                 // fail afterwards without losing a known successful response.
                 var completed = 0
@@ -75,7 +87,7 @@ struct DMLExecution {
                 for _ in 0..<completed { try completedGroup() }
                 cursor = end
             }
-            return Outcome(acknowledged:acknowledged,failure:nil)
+            return Outcome(acknowledged: acknowledged, failure: nil)
         } catch {
             let statement = trace()
             var spans: [TargetFailureDiagnostic.Rows] = []
@@ -86,24 +98,31 @@ struct DMLExecution {
                     let disposition: String
                     let end: Int
                     if ordinal < acknowledged[groupIndex] {
-                        disposition = "acknowledged"; end = acknowledged[groupIndex]
+                        disposition = "acknowledged"
+                        end = acknowledged[groupIndex]
                     } else if absolute >= cursor && absolute < attemptedEnd && statement.phase != .notIssued {
-                        disposition = "possiblyExecuted"; end = min(group.mutations.count, ordinal + attemptedEnd-absolute)
+                        disposition = "possiblyExecuted"
+                        end = min(group.mutations.count, ordinal + attemptedEnd - absolute)
                     } else {
-                        disposition = "notIssued"; end = group.mutations.count
+                        disposition = "notIssued"
+                        end = group.mutations.count
                     }
                     let table = group.mutations[ordinal].table
-                    spans.append(.init(gtid:group.id,database:table.database,table:table.table,
-                                       firstOrdinal:ordinal,count:end-ordinal,disposition:disposition))
+                    spans.append(
+                        .init(
+                            gtid: group.id, database: table.database, table: table.table,
+                            firstOrdinal: ordinal, count: end - ordinal, disposition: disposition))
                     ordinal = end
                 }
             }
             // Only whole, entirely unissued groups can be downloaded again.
             // A partially acknowledged group remains blocked, even on read failure.
-            let wholeGroups = zip(groups,acknowledged).allSatisfy { $1 == 0 || $1 == $0.mutations.count }
-            return Outcome(acknowledged:acknowledged,failure:error,
-                diagnostic:.init(reason:String(describing:error),statement:statement,rows:spans,ddlGTID:nil,ddlSQL:nil),
-                discardUnwritten:error is TargetConnectionFailure && statement.phase == .notIssued && wholeGroups)
+            let wholeGroups = zip(groups, acknowledged).allSatisfy { $1 == 0 || $1 == $0.mutations.count }
+            return Outcome(
+                acknowledged: acknowledged, failure: error,
+                diagnostic: .init(
+                    reason: String(describing: error), statement: statement, rows: spans, ddlGTID: nil, ddlSQL: nil),
+                discardUnwritten: error is TargetConnectionFailure && statement.phase == .notIssued && wholeGroups)
         }
     }
 
@@ -113,41 +132,50 @@ struct DMLExecution {
     static func canAutocommit(_ group: PreparedDMLGroup, maximumInsertRows: Int, maximumInsertBytes: Int) -> Bool {
         guard let first = group.mutations.first else { return false }
         if first.row.operation == "delete" { return group.mutations.count == 1 }
-        guard !first.table.columns.contains(where: { $0.isGenerated }) else { return false }
+        guard !first.table.columns.contains(where: { $0.isGenerated }),
+            !group.mutations.contains(where: { EnumZeroWrite.required(table: $0.table, after: $0.row.after) })
+        else { return false }
         if first.row.operation == "update" { return group.mutations.count == 1 }
         guard first.row.operation == "insert" else { return false }
-        return insertChunkCount(first,maximumInsertRows:maximumInsertRows,maximumInsertBytes:maximumInsertBytes) { offset in
+        return insertChunkCount(first, maximumInsertRows: maximumInsertRows, maximumInsertBytes: maximumInsertBytes) {
+            offset in
             offset < group.mutations.count ? group.mutations[offset] : nil
         } == group.mutations.count
     }
 
-    private static func insertChunkCount(_ first: Mutation, maximumInsertRows: Int, maximumInsertBytes: Int,
-                                         next: (Int) -> Mutation?) -> Int {
+    private static func insertChunkCount(
+        _ first: Mutation, maximumInsertRows: Int, maximumInsertBytes: Int,
+        next: (Int) -> Mutation?
+    ) -> Int {
         guard first.row.operation == "insert" else { return 1 }
-        var count = 1, bytes = insertBytes(first)
+        var count = 1
+        var bytes = insertBytes(first)
         while count < maximumInsertRows, let mutation = next(count) {
             let cost = insertBytes(mutation)
             guard mutation.row.operation == "insert", mutation.table == first.table,
-                  bytes <= maximumInsertBytes-cost else { break }
-            bytes += cost; count += 1
+                mutation.foreignKeyChecks == first.foreignKeyChecks,
+                bytes <= maximumInsertBytes - cost
+            else { break }
+            bytes += cost
+            count += 1
         }
         // Powers of two bound prepared statement shapes per table.
         var size = 1
-        while size*2 <= count { size *= 2 }
+        while size * 2 <= count { size *= 2 }
         return size
     }
 
     /// Conservative bound for both prepare SQL and execute parameters. Count
     /// the escaped identifier prefix per row too: deliberately overestimates it.
     static func insertBytes(_ mutation: Mutation) -> Int {
-        let identifiers = [mutation.table.database,mutation.table.table] + mutation.table.columns.map(\.name)
-        let prefix = identifiers.reduce(64) { $0 + $1.utf8.count*2 + 4 }
-        return (mutation.row.after ?? []).reduce(prefix) { sum,value in
+        let identifiers = [mutation.table.database, mutation.table.table] + mutation.table.columns.map(\.name)
+        let prefix = identifiers.reduce(64) { $0 + $1.utf8.count * 2 + 4 }
+        return (mutation.row.after ?? []).reduce(prefix) { sum, value in
             switch value {
-            case .text(let s), .decimal(let s), .temporal(let s): return sum+s.utf8.count+16
-            case .json(let d): return sum+d.retainedByteCost*2+64
-            case .binary(let d): return sum+d.count+16
-            default: return sum+24
+            case .text(let s), .decimal(let s), .temporal(let s): return sum + s.utf8.count + 16
+            case .json(let d): return sum + d.retainedByteCost * 2 + 64
+            case .binary(let d): return sum + d.count + 16
+            default: return sum + 24
             }
         }
     }

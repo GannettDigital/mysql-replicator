@@ -48,7 +48,7 @@ def resolve(event_name, event, change_plan=None):
 
 def check_results(scope, results):
     checks = checks_for(scope)
-    expected = {'select-suite': True, 'tool-tests': True, 'unit-tests': checks['unit'],
+    expected = {'select-suite': True, 'tool-tests': True, 'swift-lint': True, 'unit-tests': checks['unit'],
                 'periphery': checks['periphery'], 'lab-tools': checks['integration'],
                 'build-images': checks['integration'], 'integration': checks['integration']}
     for job, required in expected.items():

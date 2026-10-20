@@ -44,6 +44,11 @@ For upgrades, cleanly stop the old process first, back up the full state directo
 and install the new explicit version. Old version directories are retained, but
 an existing version is never overwritten. Resume without `--initialize`.
 
+Source GTID preservation is enabled by default. Check the
+[GTID assignment privileges and Cloud SQL limits](GTID_PRESERVATION.md) before
+starting the applier. Use `target.preserveSourceGTIDs: false` to retain source
+identities only in SQLite. Existing state must keep its recorded setting.
+
 ## Download and verify
 
 Download the `.deb` or `linux-x86_64.tar.gz` and `SHA256SUMS` from the
@@ -264,3 +269,9 @@ older forward-profile state is migrated on resume; beta.1 cannot read the upgrad
 state. A version rollback therefore needs a coordinated state/target recovery,
 not just switching the binary or restoring an old checkpoint after target writes.
 Changing profiles requires a separately prepared baseline and new state directory.
+
+Source and target connections accept the same TLS settings. `requireTLS: true`
+is the default. `tlsVerification: verify-identity` checks the CA chain and
+`serverHostname`. `tlsVerification: verify-ca` checks the CA chain with the
+explicit `caFile`; `serverHostname` is optional. Set `requireTLS: false` to use
+plaintext and remove the other TLS settings. These rules also apply after reconnect.

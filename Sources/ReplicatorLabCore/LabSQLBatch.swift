@@ -37,7 +37,8 @@ struct LabSQLBatch {
             let rows = lines[offset..<end]
             try require(!rows.contains(where: { $0.hasPrefix(token) }), "unexpected SQL batch marker")
             let value = rows.joined(separator: "\n")
-            result[query.name] = query.preserveWhitespace ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
+            result[query.name] =
+                query.preserveWhitespace ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
             offset = end + 1
         }
         try require(offset == lines.count, "extra SQL batch output")

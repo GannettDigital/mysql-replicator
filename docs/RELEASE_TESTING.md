@@ -17,15 +17,16 @@ Current catalog counts are:
 
 | Profile | Applicable catalog obligations |
 | --- | ---: |
-| `mysql84-to-mysql57-myisam` | 366 |
-| `mysql57-to-mysql84-innodb` | 118 |
-| `mysql57-to-mysql57-myisam` | 116 |
-| `mysql57-to-mysql57-innodb` | 118 |
+| `mysql84-to-mysql57-myisam` | 823 |
+| `mysql57-to-mysql84-innodb` | 420 |
+| `mysql57-to-mysql57-myisam` | 410 |
+| `mysql57-to-mysql57-innodb` | 432 |
 
 An obligation is a case for one profile, suite and capture variant. These counts
 measure our catalog. They do not measure all MySQL features.
 
-Full CI has 108 shards, 718 obligations and 23 integration coverage collections.
+The beta.6 full plan has 176 shards, 2085 obligations and 23 integration coverage
+collections.
 It includes database creation, DDL, DML, indexes, bootstrap, foreign keys where
 supported, refusals, ordered DDL, collation, filtering and discovery. It also
 includes failure/recovery/offline/control sequences, reconnect, native-reference
@@ -68,7 +69,8 @@ candidate evidence because the source trees appear equivalent.
 
 ## Measure the full suite on a PR
 
-Create the diagnostic label once, then add it to the top PR:
+The commands below describe the diagnostic workflow. Do not use them for beta.6
+until the expanded matrix limit is fixed. Create the diagnostic label once:
 
 ```sh
 gh label create ci-expanded-coverage --color 1d76db --description 'Measure full-suite Swift coverage; retain release checks'
@@ -95,10 +97,11 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full
 
 For code coverage research, add `-f expanded_coverage=true`. This retains all
 release-binary assertions and adds instrumented correctness and lifecycle runs.
-The current expanded plan has 203 shards and 118 integration collections. It
-covers the same 718 obligations. Expanded coverage measures test-suite behavior.
-It is not an extra release gate. Use the full plan without expanded coverage for
-routine release checks.
+The beta.6 expanded plan has 339 shards. It exceeds GitHub's 256-job matrix
+limit and needs separate matrix jobs before use. Do not add the expanded label
+or dispatch expanded coverage until that change is complete. This limit does not
+affect the ordinary full plan. Expanded coverage measures test-suite behavior;
+it is not an extra release gate.
 
 Use `-f suite=pr-smoke` for a manual smoke check. Expanded coverage requires
 `suite=full`. A manual run does not replace the required main push run.

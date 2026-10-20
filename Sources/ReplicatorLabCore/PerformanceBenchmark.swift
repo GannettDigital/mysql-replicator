@@ -26,26 +26,44 @@ public struct PerformanceOptions: Codable {
     public init(arguments: [String]) throws {
         var args = arguments.makeIterator()
         while let flag = args.next() {
-            if flag == "--skip-build" { build = false; continue }
+            if flag == "--skip-build" {
+                build = false
+                continue
+            }
             guard let value = args.next() else { throw LabError("missing value for " + flag) }
-            if ["--overlap-preparation","--flush-on-table-change","--explicit-table-locks"].contains(flag) {
-                try require(["on","off"].contains(value),flag + " must be on or off")
-                if flag == "--overlap-preparation" { overlapPreparation = value == "on" }
-                else if flag == "--explicit-table-locks" { explicitTableLocks = value == "on" }
-                else { flushOnTableChange = value == "on" }
+            if ["--overlap-preparation", "--flush-on-table-change", "--explicit-table-locks"].contains(flag) {
+                try require(["on", "off"].contains(value), flag + " must be on or off")
+                if flag == "--overlap-preparation" {
+                    overlapPreparation = value == "on"
+                } else if flag == "--explicit-table-locks" {
+                    explicitTableLocks = value == "on"
+                } else {
+                    flushOnTableChange = value == "on"
+                }
                 continue
             }
             if flag == "--applier-profile" {
-                try require(["on","off"].contains(value),"applier-profile must be on or off")
-                applierProfiling = value == "on"; continue
+                try require(["on", "off"].contains(value), "applier-profile must be on or off")
+                applierProfiling = value == "on"
+                continue
             }
             if flag == "--decoder-profile" {
-                try require(["on","off"].contains(value),"decoder-profile must be on or off")
-                decoderProfiling = value == "on"; continue
+                try require(["on", "off"].contains(value), "decoder-profile must be on or off")
+                decoderProfiling = value == "on"
+                continue
             }
-            if flag == "--table-distribution" { tableDistribution = value; continue }
-            if flag == "--workload" { workload = value; continue }
-            if flag == "--target-transport" { targetTransport = value; continue }
+            if flag == "--table-distribution" {
+                tableDistribution = value
+                continue
+            }
+            if flag == "--workload" {
+                workload = value
+                continue
+            }
+            if flag == "--target-transport" {
+                targetTransport = value
+                continue
+            }
             guard let number = Int(value) else { throw LabError("expected integer for " + flag) }
             switch flag {
             case "--tables": tables = number
@@ -63,20 +81,27 @@ public struct PerformanceOptions: Codable {
             }
         }
         try require((1...1_000_000).contains(events), "events must be 1...1000000")
-        try require((1...32).contains(threads) && threads <= events, "threads must be 1...32 and no greater than events")
+        try require(
+            (1...32).contains(threads) && threads <= events, "threads must be 1...32 and no greater than events")
         try require((0...100_000).contains(rate), "rate must be 0...100000 (0 means unlimited)")
         try require((1...100).contains(rowsPerEvent), "rows-per-event must be 1...100")
         try require((0...1024).contains(payloadBytes), "payload-bytes must be 0...1024")
         try require((1...32).contains(tables), "tables must be 1...32")
         try require((1...10000).contains(tableRun), "table-run must be 1...10000")
-        try require(["uniform","hot80"].contains(tableDistribution) && (tableDistribution != "hot80" || tables > 1), "table-distribution must be uniform, or hot80 with at least two tables")
+        try require(
+            ["uniform", "hot80"].contains(tableDistribution) && (tableDistribution != "hot80" || tables > 1),
+            "table-distribution must be uniform, or hot80 with at least two tables")
         try require(["insert", "mixed"].contains(workload), "workload must be insert or mixed")
-        try require(["tcp-tls","unix-tls","unix"].contains(targetTransport),"target-transport must be tcp-tls, unix-tls or unix")
-        try require((1...128).contains(insertRows),"insert-rows must be 1...128")
-        try require((1...256).contains(batchTransactions),"batch-transactions must be 1...256")
+        try require(
+            ["tcp-tls", "unix-tls", "unix"].contains(targetTransport),
+            "target-transport must be tcp-tls, unix-tls or unix")
+        try require((1...128).contains(insertRows), "insert-rows must be 1...128")
+        try require((1...256).contains(batchTransactions), "batch-transactions must be 1...256")
         try require((1...30).contains(sampleSeconds), "sample-seconds must be 1...30")
         try require((10...3600).contains(timeoutSeconds), "timeout must be 10...3600 seconds per load/catch-up phase")
-        try require(rate == 0 || Double(events) / Double(rate) < Double(timeoutSeconds), "requested load exceeds timeout; increase --timeout")
+        try require(
+            rate == 0 || Double(events) / Double(rate) < Double(timeoutSeconds),
+            "requested load exceeds timeout; increase --timeout")
     }
 }
 
@@ -88,28 +113,35 @@ public enum PerformanceBenchmark {
         let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return 0 }
         let parts = text.split(separator: ":", omittingEmptySubsequences: false)
-        try require(parts.count >= 2 && parts[0].lowercased() == sourceUUID.lowercased(), "unexpected benchmark GTID lineage")
-        var count = 0, previous = 0
+        try require(
+            parts.count >= 2 && parts[0].lowercased() == sourceUUID.lowercased(), "unexpected benchmark GTID lineage")
+        var count = 0
+        var previous = 0
         for part in parts.dropFirst() {
             let ends = part.split(separator: "-", omittingEmptySubsequences: false)
             guard (1...2).contains(ends.count), let lower = Int(ends[0]), let upper = Int(ends.last!),
-                  lower > previous, upper >= lower else { throw LabError("invalid benchmark GTID interval") }
+                lower > previous, upper >= lower
+            else { throw LabError("invalid benchmark GTID interval") }
             let (next, overflow) = count.addingReportingOverflow(upper - lower + 1)
             try require(!overflow, "benchmark GTID count overflow")
-            count = next; previous = upper
+            count = next
+            previous = upper
         }
         return count
     }
 
     static func sysbenchTotals(_ log: String) throws -> (events: Int, seconds: Double) {
         func field(_ prefix: String) throws -> String {
-            let matches = log.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix(prefix) }
+            let matches = log.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter {
+                $0.hasPrefix(prefix)
+            }
             try require(matches.count == 1, "missing or ambiguous sysbench total: " + prefix)
             return String(matches[0].dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
         }
         guard let events = Int(try field("total number of events:")),
-              let seconds = Double(try field("total time:").replacingOccurrences(of: "s", with: "")),
-              events > 0, seconds.isFinite, seconds > 0 else { throw LabError("invalid sysbench totals") }
+            let seconds = Double(try field("total time:").replacingOccurrences(of: "s", with: "")),
+            events > 0, seconds.isFinite, seconds > 0
+        else { throw LabError("invalid sysbench totals") }
         return (events, seconds)
     }
 
@@ -129,9 +161,12 @@ public enum PerformanceBenchmark {
         var replicatorBacklogLower: Int { max(0, sourceBefore - replicator) }
         var replicatorBacklogUpper: Int { max(0, sourceAfter - replicator) }
         var tsv: String {
-            [String(format: "%.3f", startSeconds), String(format: "%.3f", endSeconds), phase,
-             String(sourceBefore), String(sourceAfter), String(native), String(replicator), String(replicatorRows),
-             String(nativeBacklogLower), String(nativeBacklogUpper), String(replicatorBacklogLower), String(replicatorBacklogUpper)].joined(separator: "\t") + "\n"
+            [
+                String(format: "%.3f", startSeconds), String(format: "%.3f", endSeconds), phase,
+                String(sourceBefore), String(sourceAfter), String(native), String(replicator), String(replicatorRows),
+                String(nativeBacklogLower), String(nativeBacklogUpper), String(replicatorBacklogLower),
+                String(replicatorBacklogUpper),
+            ].joined(separator: "\t") + "\n"
         }
     }
 
@@ -143,93 +178,146 @@ public enum PerformanceBenchmark {
         let loadTag = "mysql-replicator-benchmark:sysbench"
         var loadContainer: String?
         var failure: Error?
-        var report: [String: Any] = ["schema_version": 2, "result": "failed", "options": try jsonObject(options), "profile":LabProfile.forward.rawValue,"mode":"streaming","topology":LabProfile.forward.topology,
+        var report: [String: Any] = [
+            "schema_version": 2, "result": "failed", "options": try jsonObject(options),
+            "profile": LabProfile.forward.rawValue, "mode": "streaming", "topology": LabProfile.forward.topology,
             "scope": "shared-host source8.4/native8.4/target5.7; release x86_64 applier; no production capacity claim",
-            "timing": "monotonic host polling; source statement latency is not replication latency"]
+            "timing": "monotonic host polling; source statement latency is not replication latency",
+        ]
         var output: URL?
         do {
             if options.build {
-                _ = try runner.run(["docker", "build", "--progress=plain", "-t", loadTag, "docker/performance"], timeout: 600,
-                                   onOutput: { FileHandle.standardError.write($0) })
+                _ = try runner.run(
+                    ["docker", "build", "--progress=plain", "-t", loadTag, "docker/performance"], timeout: 600,
+                    onOutput: { FileHandle.standardError.write($0) })
             }
-            let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"] ).text
+            let loadImage = try runner.run(["docker", "image", "inspect", loadTag, "--format", "{{.Id}}"]).text
             report["load_image"] = loadImage
-            try session.up(build: options.build, targetTransport:options.targetTransport, batchTransactions:options.batchTransactions, decoderProfiling:options.decoderProfiling, applierProfiling:options.applierProfiling, insertRows:options.insertRows, overlapPreparation:options.overlapPreparation, flushOnTableChange:options.flushOnTableChange, explicitTableLocks:options.explicitTableLocks)
+            try session.up(
+                build: options.build, targetTransport: options.targetTransport,
+                batchTransactions: options.batchTransactions, decoderProfiling: options.decoderProfiling,
+                applierProfiling: options.applierProfiling, insertRows: options.insertRows,
+                overlapPreparation: options.overlapPreparation, flushOnTableChange: options.flushOnTableChange,
+                explicitTableLocks: options.explicitTableLocks)
             output = session.h.output
             report["replicator_image"] = session.manifest!.image
             report["revision"] = try runner.run(["git", "rev-parse", "HEAD"]).text
             report["working_tree"] = try runner.run(["git", "status", "--short"]).text
             try writeJSON(DDLCoverageEvidence.inputs(root: root), to: output!.appendingPathComponent("inputs.json"))
-            report["sysbench_version"] = try session.docker(["run", "--rm", "--network", "none", "--entrypoint", "sysbench", loadImage, "--version"]).text
-            report["docker_host"] = try runner.run(["docker", "info", "--format", "architecture={{.Architecture}} kernel={{.KernelVersion}} cpus={{.NCPU}} memory_bytes={{.MemTotal}}"] ).text
+            report["sysbench_version"] = try session.docker([
+                "run", "--rm", "--network", "none", "--entrypoint", "sysbench", loadImage, "--version",
+            ]).text
+            report["docker_host"] = try runner.run([
+                "docker", "info", "--format",
+                "architecture={{.Architecture}} kernel={{.KernelVersion}} cpus={{.NCPU}} memory_bytes={{.MemTotal}}",
+            ]).text
             let services = try session.h.compose(["ps", "-q"]).text.split(separator: "\n").map(String.init)
-            try session.docker(["inspect"] + services).stdout.write(to: output!.appendingPathComponent("containers.json"))
+            try session.docker(["inspect"] + services).stdout.write(
+                to: output!.appendingPathComponent("containers.json"))
             // Permissions are fixture provisioning, deliberately outside the measured binlog.
-            _ = try session.h.sql("source", "SET SESSION sql_log_bin=0; CREATE USER 'benchmark_fixture'@'%' IDENTIFIED BY 'fixture-benchmark-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE ON demo.* TO 'benchmark_fixture'@'%'")
+            _ = try session.h.sql(
+                "source",
+                "SET SESSION sql_log_bin=0; CREATE USER 'benchmark_fixture'@'%' IDENTIFIED BY 'fixture-benchmark-only' REQUIRE SSL; GRANT SELECT,INSERT,UPDATE,DELETE ON demo.* TO 'benchmark_fixture'@'%'"
+            )
             try prepareLoadTLS(session)
             try session.start()
-            let connectionType = try session.h.sql("target57","SELECT CONNECTION_TYPE FROM performance_schema.threads WHERE PROCESSLIST_USER='apply_fixture'")
-            try require(connectionType == (options.targetTransport == "unix" ? "Socket" : "SSL/TLS"),"target connection type differs: " + connectionType)
+            let connectionType = try session.h.sql(
+                "target57",
+                "SELECT CONNECTION_TYPE FROM performance_schema.threads WHERE PROCESSLIST_USER='apply_fixture'")
+            try require(
+                connectionType == (options.targetTransport == "unix" ? "Socket" : "SSL/TLS"),
+                "target connection type differs: " + connectionType)
             report["target_connection_type"] = connectionType
             _ = try session.h.sql("source", "CREATE DATABASE demo CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
             for name in options.tableNames {
-                _ = try session.h.sql("source", "CREATE TABLE demo.\(name)(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,payload VARCHAR(1024) NOT NULL,quantity BIGINT UNSIGNED NOT NULL)")
+                _ = try session.h.sql(
+                    "source",
+                    "CREATE TABLE demo.\(name)(id BIGINT UNSIGNED NOT NULL PRIMARY KEY,payload VARCHAR(1024) NOT NULL,quantity BIGINT UNSIGNED NOT NULL)"
+                )
             }
             let baseline = try session.h.boundary("source")
             let uuid = try session.h.sql("source", "SELECT @@server_uuid")
             let preparationDeadline = Date().addingTimeInterval(30)
-            while try session.state("SELECT applied_file||':'||applied_position FROM state") != baseline.file + ":" + String(baseline.position) {
-                try require(Date() < preparationDeadline && session.replicatorRunning(), "replicator failed preparing benchmark schema")
+            while try session.state("SELECT applied_file||':'||applied_position FROM state") != baseline.file + ":"
+                + String(baseline.position)
+            {
+                try require(
+                    Date() < preparationDeadline && session.replicatorRunning(),
+                    "replicator failed preparing benchmark schema")
                 Thread.sleep(forTimeInterval: 0.2)
             }
-            let waited = try session.h.sql("native", "SELECT SOURCE_POS_WAIT('\(baseline.file)',\(baseline.position),30)")
+            let waited = try session.h.sql(
+                "native", "SELECT SOURCE_POS_WAIT('\(baseline.file)',\(baseline.position),30)")
             try require(waited != "NULL" && waited != "-1", "native failed preparing benchmark schema")
             let baseCounters = try counters(session)
             report["baseline"] = baseline.json
             var configurations: [String: String] = [:]
             for service in session.h.services {
-                configurations[service] = try session.h.sql(service, "SELECT VERSION(),@@GLOBAL.gtid_mode,@@GLOBAL.enforce_gtid_consistency,@@GLOBAL.sync_binlog,@@GLOBAL.innodb_flush_log_at_trx_commit,@@GLOBAL.binlog_format,@@GLOBAL.binlog_row_image,@@GLOBAL.binlog_checksum; SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='demo' AND TABLE_NAME='bench'")
-                try require(configurations[service]!.hasSuffix(service == "source" ? "InnoDB" : "MyISAM"), "benchmark engine differs")
+                configurations[service] = try session.h.sql(
+                    service,
+                    "SELECT VERSION(),@@GLOBAL.gtid_mode,@@GLOBAL.enforce_gtid_consistency,@@GLOBAL.sync_binlog,@@GLOBAL.innodb_flush_log_at_trx_commit,@@GLOBAL.binlog_format,@@GLOBAL.binlog_row_image,@@GLOBAL.binlog_checksum; SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='demo' AND TABLE_NAME='bench'"
+                )
+                try require(
+                    configurations[service]!.hasSuffix(service == "source" ? "InnoDB" : "MyISAM"),
+                    "benchmark engine differs")
             }
             report["database_configuration"] = configurations
             try nativeHealthy(session)
-            var serverBefore: [String:ServerWorkCounters.Snapshot] = [:]
-            for service in ["native","target57"] { serverBefore[service]=try ServerWorkCounters.capture(session.h,service:service,tables:options.tableNames) }
-            try writeJSON(jsonObject(serverBefore),to:output!.appendingPathComponent("server-work-before.json"))
-            let workloadHash = try runner.run(["openssl", "dgst", "-sha256", root.appendingPathComponent("docker/performance/workload.lua").path]).text.suffix(64)
-            let imageHash = try session.docker(["run", "--rm", "--network", "none", "--entrypoint", "sha256sum", loadImage, "/workload.lua"]).text.prefix(64)
+            var serverBefore: [String: ServerWorkCounters.Snapshot] = [:]
+            for service in ["native", "target57"] {
+                serverBefore[service] = try ServerWorkCounters.capture(
+                    session.h, service: service, tables: options.tableNames)
+            }
+            try writeJSON(jsonObject(serverBefore), to: output!.appendingPathComponent("server-work-before.json"))
+            let workloadHash = try runner.run([
+                "openssl", "dgst", "-sha256", root.appendingPathComponent("docker/performance/workload.lua").path,
+            ]).text.suffix(64)
+            let imageHash = try session.docker([
+                "run", "--rm", "--network", "none", "--entrypoint", "sha256sum", loadImage, "/workload.lua",
+            ]).text.prefix(64)
             try require(workloadHash == imageHash, "stale sysbench workload image; rerun without --skip-build")
             report["workload_sha256"] = String(workloadHash)
 
             let name = session.h.project + "-sysbench"
             loadContainer = name
-            let command = ["docker", "run", "-d", "--name", name, "--network", session.h.project + "_fixture",
-                           "--mount", "type=volume,src=\(session.volume),dst=/evidence,readonly", "--workdir", "/evidence/tls", loadImage,
-                           "--mysql-host=source", "--mysql-user=benchmark_fixture", "--mysql-password=fixture-benchmark-only",
-                           "--mysql-db=demo", "--mysql-ssl=on", "--mysql-ignore-errors=", "--db-ps-mode=disable",
-                           "--events=\(options.events)", "--time=0", "--threads=\(options.threads)", "--rate=\(options.rate)",
-                           "--rows-per-event=\(options.rowsPerEvent)", "--payload-bytes=\(options.payloadBytes)",
-                           "--workload=\(options.workload)", "--tables=\(options.tables)", "--table-distribution=\(options.tableDistribution)", "--table-run=\(options.tableRun)", "--report-interval=1", "--percentile=95", "run"]
+            let command = [
+                "docker", "run", "-d", "--name", name, "--network", session.h.project + "_fixture",
+                "--mount", "type=volume,src=\(session.volume),dst=/evidence,readonly", "--workdir", "/evidence/tls",
+                loadImage,
+                "--mysql-host=source", "--mysql-user=benchmark_fixture", "--mysql-password=fixture-benchmark-only",
+                "--mysql-db=demo", "--mysql-ssl=on", "--mysql-ignore-errors=", "--db-ps-mode=disable",
+                "--events=\(options.events)", "--time=0", "--threads=\(options.threads)", "--rate=\(options.rate)",
+                "--rows-per-event=\(options.rowsPerEvent)", "--payload-bytes=\(options.payloadBytes)",
+                "--workload=\(options.workload)", "--tables=\(options.tables)",
+                "--table-distribution=\(options.tableDistribution)", "--table-run=\(options.tableRun)",
+                "--report-interval=1", "--percentile=95", "run",
+            ]
             report["load_command"] = command
             let traceURL = output!.appendingPathComponent("samples.tsv")
-            try "start_seconds\tend_seconds\tphase\tsource_before\tsource_after\tnative_applied\treplicator_applied\treplicator_rows\tnative_backlog_lower\tnative_backlog_upper\treplicator_backlog_lower\treplicator_backlog_upper\n".write(to: traceURL, atomically: true, encoding: .utf8)
+            try
+                "start_seconds\tend_seconds\tphase\tsource_before\tsource_after\tnative_applied\treplicator_applied\treplicator_rows\tnative_backlog_lower\tnative_backlog_upper\treplicator_backlog_lower\treplicator_backlog_upper\n"
+                .write(to: traceURL, atomically: true, encoding: .utf8)
             let trace = try FileHandle(forWritingTo: traceURL)
             defer { try? trace.close() }
             _ = try trace.seekToEnd()
             let clockStart = DispatchTime.now().uptimeNanoseconds
             func elapsed() -> Double { Double(DispatchTime.now().uptimeNanoseconds - clockStart) / 1_000_000_000 }
             func count(_ service: String) throws -> Int {
-                try transactionCount(session.h.sql(service, "SELECT GTID_SUBTRACT(@@GLOBAL.gtid_executed,'\(baseline.gtids)')"), sourceUUID: uuid)
+                try transactionCount(
+                    session.h.sql(service, "SELECT GTID_SUBTRACT(@@GLOBAL.gtid_executed,'\(baseline.gtids)')"),
+                    sourceUUID: uuid)
             }
             var samples: [Sample] = []
-            var loadFinished: Double?, nativeFinished: Double?, replicatorFinished: Double?
+            var loadFinished: Double?
+            var nativeFinished: Double?
+            var replicatorFinished: Double?
             _ = try runner.run(command)
             print("seconds  source  native  replicator  native backlog  replicator backlog")
             while true {
                 let start = elapsed()
-                let running = try session.docker(["inspect", name, "--format", "{{.State.Running}}"] ).text == "true"
+                let running = try session.docker(["inspect", name, "--format", "{{.State.Running}}"]).text == "true"
                 if !running && loadFinished == nil {
-                    let exit = try session.docker(["inspect", name, "--format", "{{.State.ExitCode}}"] ).text
+                    let exit = try session.docker(["inspect", name, "--format", "{{.State.ExitCode}}"]).text
                     try require(exit == "0", "sysbench failed with exit \(exit); see sysbench.log")
                     loadFinished = elapsed()
                 }
@@ -238,23 +326,37 @@ public enum PerformanceBenchmark {
                 let current = try counters(session)
                 try require(current.lifecycle == "RUNNING", "replicator stopped during benchmark: " + current.lifecycle)
                 let after = try count("source")
-                let sample = Sample(phase: running ? "load" : "catch-up", startSeconds: start, endSeconds: elapsed(),
-                                    sourceBefore: before, sourceAfter: after, native: native,
-                                    replicator: current.transactions - baseCounters.transactions, replicatorRows: current.rows - baseCounters.rows)
-                try require(before <= after && native <= after && sample.replicator <= after, "inconsistent benchmark counters")
-                samples.append(sample); try trace.write(contentsOf: Data(sample.tsv.utf8))
-                print(String(format: "%.1f  %d  %d  %d  %d...%d  %d...%d", sample.endSeconds, after, native, sample.replicator,
-                             sample.nativeBacklogLower, sample.nativeBacklogUpper, sample.replicatorBacklogLower, sample.replicatorBacklogUpper))
+                let sample = Sample(
+                    phase: running ? "load" : "catch-up", startSeconds: start, endSeconds: elapsed(),
+                    sourceBefore: before, sourceAfter: after, native: native,
+                    replicator: current.transactions - baseCounters.transactions,
+                    replicatorRows: current.rows - baseCounters.rows)
+                try require(
+                    before <= after && native <= after && sample.replicator <= after, "inconsistent benchmark counters")
+                samples.append(sample)
+                try trace.write(contentsOf: Data(sample.tsv.utf8))
+                print(
+                    String(
+                        format: "%.1f  %d  %d  %d  %d...%d  %d...%d", sample.endSeconds, after, native,
+                        sample.replicator,
+                        sample.nativeBacklogLower, sample.nativeBacklogUpper, sample.replicatorBacklogLower,
+                        sample.replicatorBacklogUpper))
                 try nativeHealthy(session)
                 // Resource collection is deliberately outside the counter observation window.
                 let resources = try session.docker(["stats", "--no-stream", "--format", "{{json .}}"] + services).text
-                try resources.write(to: output!.appendingPathComponent("resources-\(samples.count).ndjson"), atomically: true, encoding: .utf8)
+                try resources.write(
+                    to: output!.appendingPathComponent("resources-\(samples.count).ndjson"), atomically: true,
+                    encoding: .utf8)
                 if !running {
                     try require(after == options.events, "source committed \(after) events, expected \(options.events)")
                     if native == after && nativeFinished == nil { nativeFinished = sample.endSeconds }
-                    if sample.replicator == after && replicatorFinished == nil { replicatorFinished = sample.endSeconds }
+                    if sample.replicator == after && replicatorFinished == nil {
+                        replicatorFinished = sample.endSeconds
+                    }
                     if nativeFinished != nil && replicatorFinished != nil { break }
-                    try require(elapsed() - loadFinished! < Double(options.timeoutSeconds), "replication catch-up timed out; inspect samples.tsv and diagnostics")
+                    try require(
+                        elapsed() - loadFinished! < Double(options.timeoutSeconds),
+                        "replication catch-up timed out; inspect samples.tsv and diagnostics")
                 } else {
                     try require(elapsed() < Double(options.timeoutSeconds), "sysbench load timed out")
                 }
@@ -263,7 +365,9 @@ public enum PerformanceBenchmark {
             let logs = try session.docker(["logs", name])
             let totals = try sysbenchTotals(String(decoding: logs.stdout, as: UTF8.self))
             try require(totals.events == options.events, "sysbench event count differs from committed source GTIDs")
-            try require(samples.last!.replicatorRows == options.events * options.rowsPerEvent, "replicator row count differs from generated workload")
+            try require(
+                samples.last!.replicatorRows == options.events * options.rowsPerEvent,
+                "replicator row count differs from generated workload")
             report["source_events"] = totals.events
             report["source_load_seconds"] = totals.seconds
             report["source_events_per_second"] = Double(totals.events) / totals.seconds
@@ -277,49 +381,68 @@ public enum PerformanceBenchmark {
             report["final_boundary"] = finalBoundary.json
             // Read before verification SELECTs and while applier threads/prepared
             // statements still exist. No reset/truncate or continuous tracing.
-            var serverAfter: [String:ServerWorkCounters.Snapshot] = [:]
-            var serverDelta: [String:[String:ServerWorkCounters.Metric]] = [:]
-            for service in ["native","target57"] {
-                let after=try ServerWorkCounters.capture(session.h,service:service,tables:options.tableNames)
-                serverAfter[service]=after
-                serverDelta[service]=try ServerWorkCounters.delta(before:serverBefore[service]!,after:after)
+            var serverAfter: [String: ServerWorkCounters.Snapshot] = [:]
+            var serverDelta: [String: [String: ServerWorkCounters.Metric]] = [:]
+            for service in ["native", "target57"] {
+                let after = try ServerWorkCounters.capture(session.h, service: service, tables: options.tableNames)
+                serverAfter[service] = after
+                serverDelta[service] = try ServerWorkCounters.delta(before: serverBefore[service]!, after: after)
             }
-            try writeJSON(jsonObject(serverAfter),to:output!.appendingPathComponent("server-work-after.json"))
-            try writeJSON(jsonObject(serverDelta),to:output!.appendingPathComponent("server-work-delta.json"))
+            try writeJSON(jsonObject(serverAfter), to: output!.appendingPathComponent("server-work-after.json"))
+            try writeJSON(jsonObject(serverDelta), to: output!.appendingPathComponent("server-work-delta.json"))
             report["server_work"] = try jsonObject(serverDelta)
-            report["server_work_scope"] = "after schema setup, before load to caught-up before verification; applier-thread statement/status/prepared counters and all benchmark table handler counters; metric families overlap and must not be summed"
-            try verifyRows(session,tables:options.tableNames)
-            try require(session.h.boundary("source").gtids == finalBoundary.gtids, "source changed during final verification")
+            report["server_work_scope"] =
+                "after schema setup, before load to caught-up before verification; applier-thread statement/status/prepared counters and all benchmark table handler counters; metric families overlap and must not be summed"
+            try verifyRows(session, tables: options.tableNames)
+            try require(
+                session.h.boundary("source").gtids == finalBoundary.gtids, "source changed during final verification")
             try session.stopWriter()
             try require(session.state("SELECT lifecycle FROM state") == "STOPPED", "replicator did not stop cleanly")
-            let diagnostic = try session.docker(["exec",session.helper,"cat","/evidence/applier.stderr"]).stdout
-            guard let last = String(decoding:diagnostic,as:UTF8.self).split(separator:"\n").last,
-                  let summary = try JSONSerialization.jsonObject(with:Data(last.utf8)) as? [String:Any],
-                  let timings = summary["stageTimings"] as? [String:Any] else { throw LabError("missing final stage timings") }
+            let diagnostic = try session.docker(["exec", session.helper, "cat", "/evidence/applier.stderr"]).stdout
+            guard let last = String(decoding: diagnostic, as: UTF8.self).split(separator: "\n").last,
+                let summary = try JSONSerialization.jsonObject(with: Data(last.utf8)) as? [String: Any],
+                let timings = summary["stageTimings"] as? [String: Any]
+            else { throw LabError("missing final stage timings") }
             report["stage_timings"] = timings
             report["pipeline"] = summary["pipeline"]
-            report["stage_timing_scope"] = "worker-local monotonic elapsed durations, including startup and stop; seconds is inclusive, selfSeconds excludes nested stages on that worker; capture and apply overlap, so their sum is not wall time; neither is CPU time"
-            let outputCounts = try session.docker(["exec",session.helper,"wc","-lc","/evidence/applier.ndjson"]).text.split(whereSeparator: { $0.isWhitespace })
-            guard outputCounts.count >= 2, let lines=Int(outputCounts[0]), let bytes=Int(outputCounts[1]) else { throw LabError("invalid progress output counts") }
-            report["progress_output"] = ["destination":"Docker volume file /evidence/applier.ndjson (not Docker logging driver)","synchronous":true,"lines":lines,"bytes":bytes]
-            try writeJSON(timings,to:output!.appendingPathComponent("stage-timings.json"))
+            report["stage_timing_scope"] =
+                "worker-local monotonic elapsed durations, including startup and stop; seconds is inclusive, selfSeconds excludes nested stages on that worker; capture and apply overlap, so their sum is not wall time; neither is CPU time"
+            let outputCounts = try session.docker(["exec", session.helper, "wc", "-lc", "/evidence/applier.ndjson"])
+                .text.split(whereSeparator: { $0.isWhitespace })
+            guard outputCounts.count >= 2, let lines = Int(outputCounts[0]), let bytes = Int(outputCounts[1]) else {
+                throw LabError("invalid progress output counts")
+            }
+            report["progress_output"] = [
+                "destination": "Docker volume file /evidence/applier.ndjson (not Docker logging driver)",
+                "synchronous": true, "lines": lines, "bytes": bytes,
+            ]
+            try writeJSON(timings, to: output!.appendingPathComponent("stage-timings.json"))
             if options.decoderProfiling {
-                try require(timings["decode.call.event"] != nil && timings["decode.rust.crc32"] != nil,
-                            "missing decoder profile; rebuild the runtime image")
+                try require(
+                    timings["decode.call.event"] != nil && timings["decode.rust.crc32"] != nil,
+                    "missing decoder profile; rebuild the runtime image")
                 let profile = try decoderProfile(timings)
-                try profile.write(to:output!.appendingPathComponent("decoder-profile.tsv"),atomically:true,encoding:.utf8)
-                print("Decoder stages by self time (milliseconds; counts include probes):\n" + profile.split(separator:"\n").prefix(11).joined(separator:"\n"))
+                try profile.write(
+                    to: output!.appendingPathComponent("decoder-profile.tsv"), atomically: true, encoding: .utf8)
+                print(
+                    "Decoder stages by self time (milliseconds; counts include probes):\n"
+                        + profile.split(separator: "\n").prefix(11).joined(separator: "\n"))
             }
             if options.applierProfiling {
-                try require(timings["apply.detail.relay.metadata"] != nil && timings["apply.detail.sqlite.step"] != nil,
-                            "missing applier profile; rebuild the runtime image")
+                try require(
+                    timings["apply.detail.relay.metadata"] != nil && timings["apply.detail.sqlite.step"] != nil,
+                    "missing applier profile; rebuild the runtime image")
                 let profile = try applierProfile(timings)
-                try profile.write(to:output!.appendingPathComponent("applier-profile.tsv"),atomically:true,encoding:.utf8)
-                print("Applier stages by self time (milliseconds; includes startup and stop):\n" + profile.split(separator:"\n").prefix(11).joined(separator:"\n"))
+                try profile.write(
+                    to: output!.appendingPathComponent("applier-profile.tsv"), atomically: true, encoding: .utf8)
+                print(
+                    "Applier stages by self time (milliseconds; includes startup and stop):\n"
+                        + profile.split(separator: "\n").prefix(11).joined(separator: "\n"))
             }
             report["result"] = "passed"
         } catch {
-            failure = error; report["error"] = String(describing: error)
+            failure = error
+            report["error"] = String(describing: error)
             if output == nil { output = session.harness?.output }
         }
         if let name = loadContainer, let output {
@@ -331,8 +454,13 @@ public enum PerformanceBenchmark {
             _ = try? session.docker(["rm", "-f", name], checked: false)
         }
         if FileManager.default.fileExists(atPath: session.manifestURL.path) {
-            do { try session.down(); report["cleanup"] = "passed" }
-            catch { report["cleanup_error"] = String(describing: error); if failure == nil { failure = error } }
+            do {
+                try session.down()
+                report["cleanup"] = "passed"
+            } catch {
+                report["cleanup_error"] = String(describing: error)
+                if failure == nil { failure = error }
+            }
         }
         if let output {
             if failure != nil { report["result"] = "failed" }
@@ -342,14 +470,14 @@ public enum PerformanceBenchmark {
         if let failure { throw failure }
     }
 
-    static func decoderProfile(_ timings: [String:Any]) throws -> String {
+    static func decoderProfile(_ timings: [String: Any]) throws -> String {
         try stageProfile(timings.filter { $0.key.hasPrefix("decode.") })
     }
-    static func applierProfile(_ timings: [String:Any]) throws -> String {
-        let prefixes = ["apply.","relay.","sqlite.","target.","storage.","progress."]
-        return try stageProfile(timings.filter { name,_ in prefixes.contains { name.hasPrefix($0) } })
+    static func applierProfile(_ timings: [String: Any]) throws -> String {
+        let prefixes = ["apply.", "relay.", "sqlite.", "target.", "storage.", "progress."]
+        return try stageProfile(timings.filter { name, _ in prefixes.contains { name.hasPrefix($0) } })
     }
-    private static func stageProfile(_ timings: [String:Any]) throws -> String {
+    private static func stageProfile(_ timings: [String: Any]) throws -> String {
         struct Timing: Decodable {
             let count: UInt64
             let failures: UInt64
@@ -357,19 +485,32 @@ public enum PerformanceBenchmark {
             let selfSeconds: Double
             let maximumSeconds: Double
         }
-        let data = try JSONSerialization.data(withJSONObject:timings)
-        let stages = try JSONDecoder().decode([String:Timing].self,from:data)
+        let data = try JSONSerialization.data(withJSONObject: timings)
+        let stages = try JSONDecoder().decode([String: Timing].self, from: data)
         var lines = ["stage\tcount\tfailures\ttotal_ms\tself_ms\tmean_us\tmax_us"]
-        for (name,s) in stages.sorted(by: { $0.value.selfSeconds == $1.value.selfSeconds ? $0.key < $1.key : $0.value.selfSeconds > $1.value.selfSeconds }) {
-            let durations = [s.seconds*1e3,s.selfSeconds*1e3,s.count == 0 ? 0 : s.seconds*1e6/Double(s.count),s.maximumSeconds*1e6]
-            lines.append(([name,String(s.count),String(s.failures)] + durations.map { String(format:"%.3f",locale:Locale(identifier:"en_US_POSIX"),$0) }).joined(separator:"\t"))
+        for (name, s) in stages.sorted(by: {
+            $0.value.selfSeconds == $1.value.selfSeconds ? $0.key < $1.key : $0.value.selfSeconds > $1.value.selfSeconds
+        }) {
+            let durations = [
+                s.seconds * 1e3, s.selfSeconds * 1e3, s.count == 0 ? 0 : s.seconds * 1e6 / Double(s.count),
+                s.maximumSeconds * 1e6,
+            ]
+            lines.append(
+                ([name, String(s.count), String(s.failures)]
+                    + durations.map { String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), $0) }).joined(
+                        separator: "\t"))
         }
-        return lines.joined(separator:"\n") + "\n"
+        return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func counters(_ session: ForwardBenchmarkFixture) throws -> (transactions: Int, rows: Int, lifecycle: String) {
-        let parts = try session.state("SELECT transactions_applied||'|'||rows_applied||'|'||lifecycle FROM state").components(separatedBy: "|")
-        guard parts.count == 3, let transactions = Int(parts[0]), let rows = Int(parts[1]) else { throw LabError("invalid benchmark SQLite counters") }
+    private static func counters(_ session: ForwardBenchmarkFixture) throws -> (
+        transactions: Int, rows: Int, lifecycle: String
+    ) {
+        let parts = try session.state("SELECT transactions_applied||'|'||rows_applied||'|'||lifecycle FROM state")
+            .components(separatedBy: "|")
+        guard parts.count == 3, let transactions = Int(parts[0]), let rows = Int(parts[1]) else {
+            throw LabError("invalid benchmark SQLite counters")
+        }
         return (transactions, rows, parts[2])
     }
 
@@ -378,40 +519,59 @@ public enum PerformanceBenchmark {
         // Supply a fixture client certificate, signed by the existing fixture CA.
         let tls = session.h.output.appendingPathComponent("tls")
         func path(_ name: String) -> String { tls.appendingPathComponent(name).path }
-        _ = try session.h.runner.run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-sha256", "-subj", "/CN=benchmark_fixture",
-                                      "-keyout", path("client-key.pem"), "-out", path("client.csr")])
-        try "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=clientAuth\n".write(toFile: path("client.cnf"), atomically: true, encoding: .utf8)
-        _ = try session.h.runner.run(["openssl", "x509", "-req", "-in", path("client.csr"), "-CA", path("ca.pem"), "-CAkey", path("ca-key.pem"),
-                                      "-CAcreateserial", "-days", "2", "-sha256", "-extfile", path("client.cnf"), "-out", path("client-cert.pem")])
-        for (source, destination) in [("ca.pem", "cacert.pem"), ("client-key.pem", "client-key.pem"), ("client-cert.pem", "client-cert.pem")] {
+        _ = try session.h.runner.run([
+            "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-sha256", "-subj", "/CN=benchmark_fixture",
+            "-keyout", path("client-key.pem"), "-out", path("client.csr"),
+        ])
+        try "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=clientAuth\n".write(
+            toFile: path("client.cnf"), atomically: true, encoding: .utf8)
+        _ = try session.h.runner.run([
+            "openssl", "x509", "-req", "-in", path("client.csr"), "-CA", path("ca.pem"), "-CAkey", path("ca-key.pem"),
+            "-CAcreateserial", "-days", "2", "-sha256", "-extfile", path("client.cnf"), "-out", path("client-cert.pem"),
+        ])
+        for (source, destination) in [
+            ("ca.pem", "cacert.pem"), ("client-key.pem", "client-key.pem"), ("client-cert.pem", "client-cert.pem"),
+        ] {
             _ = try session.docker(["cp", path(source), session.helper + ":/evidence/tls/" + destination])
         }
     }
 
     private static func nativeHealthy(_ session: ForwardBenchmarkFixture) throws {
         let status = try session.h.status()
-        try require(status["Replica_IO_Running"] == "Yes" && status["Replica_SQL_Running"] == "Yes" && status["Last_IO_Errno"] == "0" && status["Last_SQL_Errno"] == "0", "native replication stopped; see native-status.txt")
+        try require(
+            status["Replica_IO_Running"] == "Yes" && status["Replica_SQL_Running"] == "Yes"
+                && status["Last_IO_Errno"] == "0" && status["Last_SQL_Errno"] == "0",
+            "native replication stopped; see native-status.txt")
     }
 
     /// Compare ordered exact values in bounded pages after both appliers catch up.
     private static func verifyRows(_ session: ForwardBenchmarkFixture, tables: [String]) throws {
-        var totals: [String:Int] = [:]
+        var totals: [String: Int] = [:]
         for table in tables {
-            var cursor: UInt64 = 0, rows = 0
+            var cursor: UInt64 = 0
+            var rows = 0
             while true {
                 let sql = "SELECT id,HEX(payload),quantity FROM demo.\(table) WHERE id>\(cursor) ORDER BY id LIMIT 1000"
                 let source = try session.h.sql("source", sql)
                 for service in ["native", "target57"] {
-                    try require(session.h.sql(service, sql) == source, "\(service) row mismatch in \(table) after id \(cursor)")
+                    try require(
+                        session.h.sql(service, sql) == source, "\(service) row mismatch in \(table) after id \(cursor)")
                 }
                 let lines = source.split(separator: "\n")
                 if lines.isEmpty { break }
-                guard let id = lines.last?.split(separator: "\t").first, let next = UInt64(id), next > cursor else { throw LabError("invalid row verification cursor") }
-                cursor = next; rows += lines.count
+                guard let id = lines.last?.split(separator: "\t").first, let next = UInt64(id), next > cursor else {
+                    throw LabError("invalid row verification cursor")
+                }
+                cursor = next
+                rows += lines.count
             }
             totals[table] = rows
         }
-        try writeJSON(["result": "passed", "rows_compared": totals.values.reduce(0,+), "table_rows": totals, "comparison": "ordered id, HEX(payload), quantity; source equals native and target57"],
-                      to: session.h.output.appendingPathComponent("verification.json"))
+        try writeJSON(
+            [
+                "result": "passed", "rows_compared": totals.values.reduce(0, +), "table_rows": totals,
+                "comparison": "ordered id, HEX(payload), quantity; source equals native and target57",
+            ],
+            to: session.h.output.appendingPathComponent("verification.json"))
     }
 }

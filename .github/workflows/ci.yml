@@ -100,6 +100,8 @@ jobs:
         run: python3 tools/swift_cache.py restore --scratch-path .build/code-coverage
       - name: Run unit test suites
         run: make coverage-unit
+      - name: Test SQL syntax without app dependencies
+        run: make syntax-coverage
       - name: Save successful Swift build timestamps
         run: python3 tools/swift_cache.py save --scratch-path .build/code-coverage
 
@@ -119,6 +121,17 @@ jobs:
 
       - name: Verify DDL coverage catalog
         run: .build/code-coverage/debug/replicator-lab ddl-catalog check
+
+      - name: Upload isolated SQL syntax coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Keep this diagnostic report outside the coverage-* merge inputs.
+          # The normal unit collection already includes this target.
+          name: mysql-syntax-unit-coverage
+          overwrite: true
+          path: artifacts/coverage/syntax-unit/
+          if-no-files-found: error
 
   lab-tools:
     needs: select-suite
@@ -400,7 +413,7 @@ jobs:
   packaging-and-smoke:
     # Preserve the required check name. Full scope also requires packages.
     name: Debian Packaging & Integration Smoke
-    needs: [select-suite, tool-tests, unit-tests, periphery, lab-tools, build-images, integration]
+    needs: [select-suite, tool-tests, unit-tests, periphery, swift-lint, lab-tools, build-images, integration]
     if: always() && needs.select-suite.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
@@ -451,6 +464,16 @@ jobs:
           path: artifacts/coverage/combined/metrics.json
           if-no-files-found: error
 
+  swift-lint:
+    needs: select-suite
+    name: Swift Syntax and Format
+    runs-on: ubuntu-24.04
+    container: swift:6.2.1-jammy@sha256:6e33c70a59180c9b518f67728538312975cb3891177d20215cd2e31bdfe70791
+    steps:
+      - uses: actions/checkout@v4
+      # The Swift SDK image has the formatter, but does not include make.
+      - run: swift format lint --strict --parallel --recursive Sources tests
+
   periphery:
     needs: select-suite
     if: needs.select-suite.outputs.periphery == 'true'
@@ -498,7 +521,7 @@ jobs:
 
   measurements:
     name: Timing & Profile Coverage Report
-    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery]
+    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, swift-lint]
     if: always() && !cancelled() && needs.lab-tools.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
@@ -545,7 +568,7 @@ jobs:
 
   release-evidence:
     name: Full Suite / Release Evidence
-    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, measurements]
+    needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, swift-lint, measurements]
     if: always() && !cancelled() && needs.lab-tools.outputs.scope == 'full'
     runs-on: ubuntu-24.04
     steps:

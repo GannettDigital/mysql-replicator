@@ -68,7 +68,10 @@ struct DDLUpstream: Decodable {
     let references: [Reference]
     let candidates: [Candidate]
     struct Repository: Decodable { let id, url, revision, localPath: String }
-    struct Locator: Decodable { let anchor: String; let startLine, endLine: Int }
+    struct Locator: Decodable {
+        let anchor: String
+        let startLine, endLine: Int
+    }
     struct Reference: Decodable {
         let id, repository, path, kind, sha256: String
         let locator: Locator

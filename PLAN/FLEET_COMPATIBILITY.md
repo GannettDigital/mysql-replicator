@@ -25,8 +25,8 @@ names or row data.
   as SQL literals. The target reads them numerically for exact before-image checks.
   One-/two-byte ENUM and up to 64-bit SET values are supported. Ordered source
   labels must exactly match target labels and collation. ENUM's special error
-  ordinal zero is rejected before writes under the strict-target contract; an
-  explicitly declared empty-string label remains supported at its real ordinal.
+  ordinal zero uses a scoped non-strict write and full after-image checks. An
+  explicitly declared empty-string label retains its separate ordinal.
 - ENUM/SET require source `binlog_row_metadata=FULL`, because MINIMAL omits label
   definitions. Missing or reordered labels fail before writing. Other existing
   types retain their MINIMAL/FULL metadata behavior.

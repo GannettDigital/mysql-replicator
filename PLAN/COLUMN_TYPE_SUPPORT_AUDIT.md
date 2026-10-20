@@ -7,7 +7,9 @@ integration qualification. The limits below describe that baseline. The subseque
 and adds tests. The subsequent [BIT increment](BIT_SUPPORT.md) adds BIT support
 and unit tests. [FLOAT/DOUBLE support](FLOATING_POINT_SUPPORT.md) is also
 implemented with unit tests. Integration qualification for these increments
-is pending. Other type gaps in this audit remain open.
+was pending at that stage. This is a historical audit, not the current gap list.
+Later beta.6 branches implement many items below. Use
+[current support and status](../docs/SUPPORT.md#support-status) for present limits.
 
 ## Findings
 
@@ -62,7 +64,7 @@ in offline recovery output. Recovery does not make an automatic commit decision.
 | BINARY, VARBINARY | Yes, bytes | Yes | Yes | Yes, bytes | BINARY width 0–255; VARBINARY width 1–16383. BINARY padding is preserved. |
 | TINYTEXT, TEXT, MEDIUMTEXT, LONGTEXT | Yes, UTF-8 | Yes | Yes | Yes | Declared family limits and the decoder's 1 MiB value limit both apply. Non-NULL DDL defaults are rejected. |
 | TINYBLOB, BLOB, MEDIUMBLOB, LONGBLOB | Yes, bytes | Yes | Yes | Yes | Same decoder value limit. Non-NULL DDL defaults are rejected. |
-| ENUM, SET | Yes, ordinal or bitmask | Yes | Yes, limited labels | Yes, unsigned numeric read | ENUM error ordinal 0 is rejected. SET permits all 64 bits. 8.4 requires FULL label metadata. DDL rejects supplementary-plane labels. |
+| ENUM, SET | Yes, ordinal or bitmask | Yes | Yes, limited labels | Yes, unsigned numeric read | ENUM ordinal 0 uses scoped non-strict SQL and after-image checks. SET permits all 64 bits. 8.4 requires FULL label metadata. Native temporary columns retain exact encoded labels and defaults. |
 | NULL values | Yes | Yes, nullable columns | Yes | Yes | NULL and empty values remain distinct. NULL is not a separately supported declared column type. |
 | BIT | No | No | No | No | Wire type 16 is outside the decoder allowlist. |
 | FLOAT, DOUBLE | No | No | No | No | Wire types 4 and 5 are outside the decoder allowlist. No floating-point value case exists in the Swift codec API. |

@@ -1,12 +1,15 @@
-import Foundation
 import CReplicatorCodec
+import Foundation
 
 /// File positions are only meaningful within the same source history. This
 /// value carries no assertion about durability, execution, or source lineage.
 public struct BinlogCoordinate: Equatable, Encodable {
     public let file: String
     public let position: UInt64
-    public init(file: String, position: UInt64) { self.file = file; self.position = position }
+    public init(file: String, position: UInt64) {
+        self.file = file
+        self.position = position
+    }
     private enum Keys: String, CodingKey { case file, position }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -15,10 +18,39 @@ public struct BinlogCoordinate: Equatable, Encodable {
     }
 }
 
+/// Source identity. The sequence is independent for each UUID/tag pair.
 public struct SourceGTID: Equatable, Encodable {
     public let sid: String
     public let sequence: String
     public let flags: UInt32
+    public let tag: String?
+    public init(sid: String, sequence: String, flags: UInt32, tag: String? = nil) {
+        self.sid = sid.lowercased()
+        self.sequence = sequence
+        self.flags = flags
+        self.tag = tag?.lowercased()
+    }
+    public var canonical: String { sid + (tag.map { ":" + $0 } ?? "") + ":" + sequence }
+    public static func normalizedTag(_ text: String) throws -> String {
+        let b = Array(text.utf8)
+        func letter(_ c: UInt8) -> Bool { (65...90).contains(c) || (97...122).contains(c) || c == 95 }
+        guard (1...32).contains(b.count), letter(b[0]), b.allSatisfy({ letter($0) || (48...57).contains($0) }) else {
+            throw DecoderError(code: 2, offset: 0, reason: "invalid GTID tag")
+        }
+        return text.lowercased()
+    }
+    public init(parsing text: String) throws {
+        let parts = text.split(separator: ":", omittingEmptySubsequences: false)
+        guard (2...3).contains(parts.count), let uuid = UUID(uuidString: String(parts[0])),
+            let last = parts.last, !last.isEmpty, last.utf8.allSatisfy({ (48...57).contains($0) }),
+            let number = UInt64(last), number > 0, number < UInt64(Int64.max)
+        else {
+            throw DecoderError(code: 2, offset: 0, reason: "invalid singleton GTID")
+        }
+        self.init(
+            sid: uuid.uuidString, sequence: String(number), flags: 0,
+            tag: try parts.count == 3 ? Self.normalizedTag(String(parts[1])) : nil)
+    }
 }
 
 public struct QueryControl: Equatable, Encodable {
@@ -27,6 +59,9 @@ public struct QueryControl: Equatable, Encodable {
     public let errorCode: UInt32
     /// Byte-exact status; typed context is available through the Rust adapter.
     public let statusVariables: Data
+    public func replacingSQL(_ bytes: Data) -> Self {
+        .init(database: database, sql: bytes, errorCode: errorCode, statusVariables: statusVariables)
+    }
 }
 
 public enum BinlogControl: Equatable, Encodable {
@@ -45,20 +80,27 @@ public enum BinlogControl: Equatable, Encodable {
         case .previousGTIDs: try c.encode("previousGTIDs", forKey: .kind)
         case .stop: try c.encode("stop", forKey: .kind)
         case .gtid(let gtid):
-            try c.encode("gtid", forKey: .kind); try c.encode(gtid, forKey: .gtid)
+            try c.encode("gtid", forKey: .kind)
+            try c.encode(gtid, forKey: .gtid)
         case .anonymousGTID(let flags):
-            try c.encode("anonymousGTID", forKey: .kind); try c.encode(flags, forKey: .flags)
+            try c.encode("anonymousGTID", forKey: .kind)
+            try c.encode(flags, forKey: .flags)
         case .query(let query):
-            try c.encode("query", forKey: .kind); try c.encode(query, forKey: .query)
+            try c.encode("query", forKey: .kind)
+            try c.encode(query, forKey: .query)
         case .xid(let xid):
-            try c.encode("xid", forKey: .kind); try c.encode(xid, forKey: .xid)
+            try c.encode("xid", forKey: .kind)
+            try c.encode(xid, forKey: .xid)
         case .rotate(let destination):
-            try c.encode("rotate", forKey: .kind); try c.encode(destination, forKey: .destination)
+            try c.encode("rotate", forKey: .kind)
+            try c.encode(destination, forKey: .destination)
         }
     }
 }
 
 public struct QuerySessionContext {
+    public let autoIncrementIncrement: UInt32
+    public let autoIncrementOffset: UInt32
     public let foreignKeyChecks: Bool
     public let sqlMode: UInt64
     public let clientCharset: UInt32
@@ -70,21 +112,31 @@ public struct QuerySessionContext {
     public let microseconds: UInt32
     public let explicitDefaultsForTimestamp: Bool?
     public init(query: QueryControl) throws {
-        var value=rc_query_context()
-        let status=query.statusVariables.withUnsafeBytes {bytes in
-            rc_query_context_decode(bytes.bindMemory(to:UInt8.self).baseAddress,UInt64(bytes.count),&value)
+        var value = rc_query_context()
+        let status = query.statusVariables.withUnsafeBytes { bytes in
+            rc_query_context_decode(bytes.bindMemory(to: UInt8.self).baseAddress, UInt64(bytes.count), &value)
         }
-        let required:UInt32=(1<<1)|(1<<4) // Q_SQL_MODE_CODE and Q_CHARSET_CODE
-        guard status==0, value.present & required == required else {
-            throw NSError(domain:"QuerySessionContext",code:Int(status),userInfo:[NSLocalizedDescriptionKey:"missing, unknown or malformed DDL query context"])
+        let required: UInt32 = (1 << 1) | (1 << 4)  // Q_SQL_MODE_CODE and Q_CHARSET_CODE
+        guard status == 0, value.present & required == required else {
+            throw NSError(
+                domain: "QuerySessionContext", code: Int(status),
+                userInfo: [NSLocalizedDescriptionKey: "missing, unknown or malformed DDL query context"])
         }
+        autoIncrementIncrement = value.present & (1 << 3) != 0 ? value.auto_increment_increment : 1
+        autoIncrementOffset = value.present & (1 << 3) != 0 ? value.auto_increment_offset : 1
         foreignKeyChecks = value.flags2 & (1 << 26) == 0
-        sqlMode=value.sql_mode;clientCharset=value.charset_client
-        connectionCollation=value.collation_connection;serverCollation=value.collation_server
-        databaseCollation=value.present & (1<<8) != 0 ? value.collation_database : nil
-        defaultUTF8MB4Collation=value.present & (1<<18) != 0 ? value.default_collation_utf8mb4 : 45
-        microseconds=value.microseconds
-        explicitDefaultsForTimestamp=value.present & (1<<16) != 0 ? value.explicit_defaults_timestamp != 0 : nil
-        timeZone=value.present & (1<<5) != 0 ? withUnsafeBytes(of:&value.time_zone) { String(decoding:$0.prefix(Int(value.time_zone_length)),as:UTF8.self) } : nil
+        sqlMode = value.sql_mode
+        clientCharset = value.charset_client
+        connectionCollation = value.collation_connection
+        serverCollation = value.collation_server
+        databaseCollation = value.present & (1 << 8) != 0 ? value.collation_database : nil
+        defaultUTF8MB4Collation = value.present & (1 << 18) != 0 ? value.default_collation_utf8mb4 : 45
+        microseconds = value.microseconds
+        explicitDefaultsForTimestamp = value.present & (1 << 16) != 0 ? value.explicit_defaults_timestamp != 0 : nil
+        timeZone =
+            value.present & (1 << 5) != 0
+            ? withUnsafeBytes(of: &value.time_zone) {
+                String(decoding: $0.prefix(Int(value.time_zone_length)), as: UTF8.self)
+            } : nil
     }
 }

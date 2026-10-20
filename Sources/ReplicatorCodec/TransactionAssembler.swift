@@ -1,4 +1,5 @@
 import Foundation
+import MySQLSyntax
 
 public struct TransactionError: Error, CustomStringConvertible {
     public enum Code: String { case sequence, unsupported, incomplete, limit, poisoned }
@@ -7,7 +8,9 @@ public struct TransactionError: Error, CustomStringConvertible {
     public let transactionStart: BinlogCoordinate?
     public let lastCompleteBoundary: BinlogCoordinate?
     public let reason: String
-    public var description: String { "transaction \(code.rawValue) at \(coordinate.file):\(coordinate.position): \(reason)" }
+    public var description: String {
+        "transaction \(code.rawValue) at \(coordinate.file):\(coordinate.position): \(reason)"
+    }
 }
 
 /// A complete source binlog group, not an applied or durable transaction.
@@ -32,9 +35,13 @@ public final class TransactionAssembler {
         public let events: Int
         public let wireBytes: UInt64
         public let retainedBytes: Int
-        public init(events: Int = 4096, wireBytes: UInt64 = BinlogLimits.defaultTransactionBytes,
-                    retainedBytes: Int = Int(BinlogLimits.defaultTransactionBytes)*4) {
-            self.events = events; self.wireBytes = wireBytes; self.retainedBytes = retainedBytes
+        public init(
+            events: Int = 4096, wireBytes: UInt64 = BinlogLimits.defaultTransactionBytes,
+            retainedBytes: Int = Int(BinlogLimits.defaultTransactionBytes) * 4
+        ) {
+            self.events = events
+            self.wireBytes = wireBytes
+            self.retainedBytes = retainedBytes
         }
     }
     private enum State { case idle, gtid, transaction }
@@ -62,20 +69,29 @@ public final class TransactionAssembler {
     public init(file: String, limits: Limits = Limits()) throws {
         let coordinate = BinlogCoordinate(file: file, position: 4)
         guard !file.isEmpty, !file.utf8.contains(0), limits.events > 0,
-              limits.wireBytes > 0, limits.retainedBytes > 0 else {
-            throw TransactionError(code: .limit, coordinate: coordinate, transactionStart: nil,
+            limits.wireBytes > 0, limits.retainedBytes > 0
+        else {
+            throw TransactionError(
+                code: .limit, coordinate: coordinate, transactionStart: nil,
                 lastCompleteBoundary: nil, reason: "invalid file identity or transaction limits")
         }
-        expected = coordinate; self.limits = limits
+        expected = coordinate
+        self.limits = limits
     }
 
     /// Live transport has already validated the dump FDE and supplied a source
     /// start boundary. Transport announcements are not physical file events.
-    public convenience init(validatedStreamStart: BinlogCoordinate, allowPreviousGTIDs: Bool,
-                            acceptsExcludedRanges: Bool, limits: Limits = Limits()) throws {
+    public convenience init(
+        validatedStreamStart: BinlogCoordinate, allowPreviousGTIDs: Bool,
+        acceptsExcludedRanges: Bool, limits: Limits = Limits()
+    ) throws {
         try self.init(file: validatedStreamStart.file, limits: limits)
-        guard validatedStreamStart.position >= 4 else { throw error(.sequence, validatedStreamStart, "invalid stream start") }
-        expected = validatedStreamStart; needsFormat = false; allowsPrevious = allowPreviousGTIDs
+        guard validatedStreamStart.position >= 4 else {
+            throw error(.sequence, validatedStreamStart, "invalid stream start")
+        }
+        expected = validatedStreamStart
+        needsFormat = false
+        allowsPrevious = allowPreviousGTIDs
         self.acceptsExcludedRanges = acceptsExcludedRanges
         lastCompleteBoundary = validatedStreamStart
     }
@@ -86,21 +102,31 @@ public final class TransactionAssembler {
     public func advanceExcludedRange(to coordinate: BinlogCoordinate) throws {
         if failed { throw error(.poisoned, coordinate, "assembler failed") }
         do {
-            try require(acceptsExcludedRanges && !finished && !stopped && !needsFormat && state == .idle,
-                        coordinate, "excluded-range advance outside an idle GTID stream")
-            try require(coordinate.file == expected.file && coordinate.position >= expected.position,
-                        coordinate, "excluded-range coordinate moves backward or changes file")
-            expected = coordinate; allowsPrevious = false
+            try require(
+                acceptsExcludedRanges && !finished && !stopped && !needsFormat && state == .idle,
+                coordinate, "excluded-range advance outside an idle GTID stream")
+            try require(
+                coordinate.file == expected.file && coordinate.position >= expected.position,
+                coordinate, "excluded-range coordinate moves backward or changes file")
+            expected = coordinate
+            allowsPrevious = false
             // lastCompleteBoundary stays at an actually validated group/preamble.
-        } catch { failed = true; events.removeAll(keepingCapacity: false); throw error }
+        } catch {
+            failed = true
+            events.removeAll(keepingCapacity: false)
+            throw error
+        }
     }
 
     private func error(_ code: TransactionError.Code, _ at: BinlogCoordinate, _ reason: String) -> TransactionError {
-        TransactionError(code: code, coordinate: at, transactionStart: start,
+        TransactionError(
+            code: code, coordinate: at, transactionStart: start,
             lastCompleteBoundary: lastCompleteBoundary, reason: reason)
     }
-    private func require(_ condition: Bool, _ at: BinlogCoordinate, _ reason: String,
-                         code: TransactionError.Code = .sequence) throws {
+    private func require(
+        _ condition: Bool, _ at: BinlogCoordinate, _ reason: String,
+        code: TransactionError.Code = .sequence
+    ) throws {
         if !condition { throw error(code, at, reason) }
     }
 
@@ -113,12 +139,17 @@ public final class TransactionAssembler {
             try require(!finished && !stopped, at, "event after end of stream")
             try require(at == expected, at, "noncontiguous file/position")
             let (endPosition, overflow) = at.position.addingReportingOverflow(UInt64(event.eventSize))
-            try require(!overflow && event.eventSize >= 23 && endPosition == UInt64(event.nextPosition), at,
-                        "header next-position differs from physical event end")
+            try require(
+                !overflow && event.eventSize >= 23 && endPosition == UInt64(event.nextPosition), at,
+                "header next-position differs from physical event end")
             let end = BinlogCoordinate(file: file, position: endPosition)
             if needsFormat {
-                try require(event.control == .formatDescription && at.position == 4, at, "file must start with FDE at position 4")
-                needsFormat = false; allowsPrevious = true; expected = end
+                try require(
+                    event.control == .formatDescription && at.position == 4, at,
+                    "file must start with FDE at position 4")
+                needsFormat = false
+                allowsPrevious = true
+                expected = end
                 lastCompleteBoundary = end
                 return nil
             }
@@ -131,26 +162,35 @@ public final class TransactionAssembler {
                 lastCompleteBoundary = end
             case .rotate(let destination):
                 try require(state == .idle, at, "physical rotation inside incomplete transaction")
-                try require(destination.file != file && destination.position == 4, at,
-                            "rotation must identify a different file at position 4", code: .unsupported)
-                expected = destination; needsFormat = true; allowsPrevious = false
+                try require(
+                    destination.file != file && destination.position == 4, at,
+                    "rotation must identify a different file at position 4", code: .unsupported)
+                expected = destination
+                needsFormat = true
+                allowsPrevious = false
                 lastCompleteBoundary = destination
                 return nil
             case .stop:
                 try require(state == .idle, at, "STOP inside incomplete transaction")
-                stopped = true; lastCompleteBoundary = end
+                stopped = true
+                lastCompleteBoundary = end
             case .gtid(let identity):
                 try require(state == .idle, at, "GTID before previous transaction completed")
                 try require(identity.flags & ~1 == 0, at, "unknown GTID flags", code: .unsupported)
-                start = at; gtid = identity; state = .gtid
+                start = at
+                gtid = identity
+                state = .gtid
                 try append(event, at: at)
             case .anonymousGTID(let flags):
                 try require(state == .idle, at, "anonymous GTID before previous transaction completed")
                 try require(flags & ~1 == 0, at, "unknown anonymous GTID flags", code: .unsupported)
-                start = at; anonymous = true; state = .gtid
+                start = at
+                anonymous = true
+                state = .gtid
                 try append(event, at: at)
             case .query(let query):
-                try require(query.errorCode == 0, at, "source query error requires explicit handling", code: .unsupported)
+                try require(
+                    query.errorCode == 0, at, "source query error requires explicit handling", code: .unsupported)
                 let kind = try classify(query.sql, at: at)
                 switch kind {
                 case .begin:
@@ -159,13 +199,17 @@ public final class TransactionAssembler {
                     state = .transaction
                     try append(event, at: at)
                 case .commit, .rollback:
-                    try require(state == .transaction && !statementOpen, at, "transaction end without BEGIN or before statement end")
-                    try require(kind != .rollback || !hasRows, at,
-                                "rollback containing row effects requires nontransactional-source policy", code: .unsupported)
+                    try require(
+                        state == .transaction && !statementOpen, at,
+                        "transaction end without BEGIN or before statement end")
+                    try require(
+                        kind != .rollback || !hasRows, at,
+                        "rollback containing row effects requires nontransactional-source policy", code: .unsupported)
                     try append(event, at: at)
                     completed = complete(at: end, outcome: kind == .rollback ? .rolledBack : .committed)
                 case .statement:
-                    try require(state != .transaction, at, "query inside row transaction is not qualified", code: .unsupported)
+                    try require(
+                        state != .transaction, at, "query inside row transaction is not qualified", code: .unsupported)
                     if start == nil { start = at }
                     try append(event, at: at)
                     completed = complete(at: end, outcome: .statement)
@@ -178,15 +222,23 @@ public final class TransactionAssembler {
                 try require(state == .transaction, at, "table map/rows outside BEGIN")
                 if event.eventType == 19 {
                     statementOpen = true
-                } else if let flags = event.rowFlags, [23,24,25,30,31,32,39].contains(event.eventType) {
-                    try require(statementOpen && (!event.rows.isEmpty || event.replicationFiltered), at, "rows without an open mapped statement")
-                    try require(flags & ~1 == 0, at, "row flags other than STMT_END are not qualified", code: .unsupported)
+                } else if let flags = event.rowFlags, [23, 24, 25, 30, 31, 32, 39].contains(event.eventType) {
+                    try require(
+                        statementOpen && (!event.rows.isEmpty || event.replicationFiltered), at,
+                        "rows without an open mapped statement")
+                    try require(
+                        flags & ~3 == 0, at,
+                        "row flags other than STMT_END and NO_FOREIGN_KEY_CHECKS are not qualified", code: .unsupported)
                     // STMT_END clears table maps, but does NOT complete a transaction.
-                    statementOpen = flags & 1 == 0; hasRows = true
-                } else { throw error(.unsupported, at, "unclassified transaction event") }
+                    statementOpen = flags & 1 == 0
+                    hasRows = true
+                } else {
+                    throw error(.unsupported, at, "unclassified transaction event")
+                }
                 try append(event, at: at)
             }
-            allowsPrevious = false; expected = end
+            allowsPrevious = false
+            expected = end
             return completed
         } catch {
             failed = true
@@ -201,7 +253,8 @@ public final class TransactionAssembler {
         if failed { throw error(.poisoned, expected, "assembler failed") }
         if finished { return }
         guard state == .idle, lastCompleteBoundary != nil else {
-            failed = true; events.removeAll(keepingCapacity: false)
+            failed = true
+            events.removeAll(keepingCapacity: false)
             throw error(.incomplete, expected, "EOF before a complete transaction or file preamble")
         }
         finished = true
@@ -210,32 +263,46 @@ public final class TransactionAssembler {
     private enum QueryKind { case begin, commit, rollback, statement }
     private func classify(_ sql: Data, at: BinlogCoordinate) throws -> QueryKind {
         // MySQL writes canonical BEGIN/COMMIT controls. Do not rewrite arbitrary
-        // SQL, strip comments, or treat ROLLBACK TO SAVEPOINT as transaction end.
+        // SQL or treat ROLLBACK TO SAVEPOINT as transaction end. Comments can wrap
+        // standalone DDL, but never turn a noncanonical control into a commit.
         if sql == Data("BEGIN".utf8) { return .begin }
         if sql == Data("COMMIT".utf8) { return .commit }
         if sql == Data("ROLLBACK".utf8) { return .rollback }
-        let prefix = String(decoding: sql.prefix(128), as: UTF8.self).uppercased()
-        let token = prefix.prefix { $0.isASCII && ($0.isLetter || $0 == "_") }
-        try require(!token.isEmpty && !["BEGIN", "COMMIT", "ROLLBACK", "XA", "START", "SAVEPOINT", "RELEASE"].contains(String(token)),
-                    at, "noncanonical or unsupported SQL control statement", code: .unsupported)
+        let token = SQLExecutableComments.leadingKeyword(sql)
+        try require(
+            token != nil
+                && !["BEGIN", "COMMIT", "ROLLBACK", "XA", "START", "SAVEPOINT", "RELEASE"].contains(token ?? ""),
+            at, "noncanonical or unsupported SQL control statement", code: .unsupported)
         return .statement
     }
 
     private func append(_ event: DecodedEvent, at: BinlogCoordinate) throws {
         let (wire, overflow) = wireBytes.addingReportingOverflow(UInt64(event.eventSize))
-        try require(!overflow && wire <= limits.wireBytes && events.count < limits.events, at,
-                    "transaction event/wire-byte limit exceeded", code: .limit)
+        try require(
+            !overflow && wire <= limits.wireBytes && events.count < limits.events, at,
+            "transaction event/wire-byte limit exceeded", code: .limit)
         let cost = event.retainedByteCost
-        try require(cost <= limits.retainedBytes - retainedBytes, at,
-                    "transaction retained-data limit exceeded", code: .limit)
-        wireBytes = wire; retainedBytes += cost; events.append(event)
+        try require(
+            cost <= limits.retainedBytes - retainedBytes, at,
+            "transaction retained-data limit exceeded", code: .limit)
+        wireBytes = wire
+        retainedBytes += cost
+        events.append(event)
     }
 
     private func complete(at end: BinlogCoordinate, outcome: CompleteTransaction.Outcome) -> CompleteTransaction {
-        let transaction = CompleteTransaction(start: start!, end: end, gtid: gtid,
+        let transaction = CompleteTransaction(
+            start: start!, end: end, gtid: gtid,
             anonymous: anonymous, outcome: outcome, events: events)
-        events = []; start = nil; gtid = nil; anonymous = false; state = .idle
-        statementOpen = false; hasRows = false; wireBytes = 0; retainedBytes = 0
+        events = []
+        start = nil
+        gtid = nil
+        anonymous = false
+        state = .idle
+        statementOpen = false
+        hasRows = false
+        wireBytes = 0
+        retainedBytes = 0
         lastCompleteBoundary = end
         return transaction
     }

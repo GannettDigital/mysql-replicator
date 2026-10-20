@@ -19,8 +19,12 @@ public struct CaptureConfiguration: Decodable {
     public let passwordEnvironment: String?
     public let password: String?
     public let requireTLS: Bool
+    public var tlsVerification: TLSVerification = .verifyIdentity
     public let serverHostname: String?
     public let caFile: String?
+    /// Must match both servers. Mode 2 needs a case-insensitive filesystem.
+    public var lowerCaseTableNames: Int? = nil
+    public var tableNameCaseSetting: Int { lowerCaseTableNames ?? 0 }
     public let serverID: UInt32
     public let sourceUUID: String
     public let mode: String
@@ -38,7 +42,7 @@ public struct CaptureConfiguration: Decodable {
     public var eventByteLimit: UInt32 { maximumEventBytes ?? BinlogLimits.defaultEventBytes }
     public var transactionLimits: TransactionAssembler.Limits {
         let bytes = maximumTransactionBytes ?? BinlogLimits.defaultTransactionBytes
-        return .init(wireBytes:bytes,retainedBytes:Int(bytes)*4)
+        return .init(wireBytes: bytes, retainedBytes: Int(bytes) * 4)
     }
     /// Optional detailed worker-local decoder timings; absent/false keeps coarse timings only.
     public let decoderProfiling: Bool?
@@ -46,43 +50,62 @@ public struct CaptureConfiguration: Decodable {
     public let downloadCacheBytes: Int?
 
     /// Keep connection/protocol options, replacing only the authoritative boundary.
-    public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil) -> CaptureConfiguration {
-        CaptureConfiguration(version:version,host:host,port:port,username:username,
-            passwordEnvironment:passwordEnvironment,password:password,requireTLS:requireTLS,serverHostname:serverHostname,caFile:caFile,
-            serverID:serverID,sourceUUID:sourceUUID,mode:mode,
-            start:Start(file:file,position:position,executedGTIDs:executedGTIDs),tables:tables,
-            nonBlocking:nonBlocking,stopAfterTransactions:remainingTransactions ?? stopAfterTransactions,
-            stopAfterGTIDs:stopAfterGTIDs,
-            idleTimeoutSeconds:idleTimeoutSeconds,maximumEventBytes:maximumEventBytes,maximumTransactionBytes:maximumTransactionBytes,decoderProfiling:decoderProfiling,downloadCacheBytes:downloadCacheBytes)
+    public func resuming(file: String?, position: UInt32?, executedGTIDs: String, remainingTransactions: Int? = nil)
+        -> CaptureConfiguration
+    {
+        CaptureConfiguration(
+            version: version, host: host, port: port, username: username,
+            passwordEnvironment: passwordEnvironment, password: password, requireTLS: requireTLS,
+            tlsVerification: tlsVerification, serverHostname: serverHostname, caFile: caFile,
+            lowerCaseTableNames: lowerCaseTableNames, serverID: serverID, sourceUUID: sourceUUID, mode: mode,
+            start: Start(file: file, position: position, executedGTIDs: executedGTIDs), tables: tables,
+            nonBlocking: nonBlocking, stopAfterTransactions: remainingTransactions ?? stopAfterTransactions,
+            stopAfterGTIDs: stopAfterGTIDs,
+            idleTimeoutSeconds: idleTimeoutSeconds, maximumEventBytes: maximumEventBytes,
+            maximumTransactionBytes: maximumTransactionBytes, decoderProfiling: decoderProfiling,
+            downloadCacheBytes: downloadCacheBytes)
     }
 
     public func validate(connection: Bool = true) throws -> DumpStart {
-        _ = try StopConditions(transactions:stopAfterTransactions,gtids:stopAfterGTIDs)
-        if connection { try PasswordConfiguration.validate(password:password,environmentVariable:passwordEnvironment,endpoint:"source") }
-        if requireTLS {
-            guard !(serverHostname ?? "").isEmpty else { throw CaptureError("source verified TLS requires serverHostname") }
-        } else {
-            guard serverHostname == nil && caFile == nil else { throw CaptureError("remove source serverHostname and caFile when requireTLS is false") }
+        guard [0, 1].contains(tableNameCaseSetting) else {
+            throw CaptureError("source.lowerCaseTableNames must be 0 or 1; mode 2 is not qualified")
         }
-        guard [1,2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
-              serverID > 0, UUID(uuidString: sourceUUID) != nil,
-              ["file-position", "gtid"].contains(mode), (version == 2 ? tables == nil : !(tables ?? []).isEmpty), (tables?.count ?? 0) <= 256,
-              (1...300).contains(idleTimeoutSeconds ?? 15),
-              (23...BinlogLimits.maximumEventBytes).contains(eventByteLimit),
-              (UInt64(eventByteLimit)...UInt64(BinlogLimits.maximumEventBytes)).contains(maximumTransactionBytes ?? BinlogLimits.defaultTransactionBytes),
-              (20*1024*1024...1024*1024*1024).contains(downloadCacheBytes ?? 256*1024*1024),
-              stopAfterTransactions == nil || (1...1_000_000).contains(stopAfterTransactions!) else {
+        _ = try StopConditions(transactions: stopAfterTransactions, gtids: stopAfterGTIDs)
+        if connection {
+            try PasswordConfiguration.validate(
+                password: password, environmentVariable: passwordEnvironment, endpoint: "source")
+        }
+        try ConnectionTLS.validate(
+            required: requireTLS, verification: tlsVerification, hostname: serverHostname, caFile: caFile,
+            endpoint: "source")
+        guard [1, 2].contains(version), !host.isEmpty, (1...65535).contains(port), !username.isEmpty,
+            serverID > 0, UUID(uuidString: sourceUUID) != nil,
+            ["file-position", "gtid"].contains(mode), version == 2 ? tables == nil : !(tables ?? []).isEmpty,
+            (tables?.count ?? 0) <= 256,
+            (1...300).contains(idleTimeoutSeconds ?? 15),
+            (23...BinlogLimits.maximumEventBytes).contains(eventByteLimit),
+            (UInt64(eventByteLimit)...UInt64(BinlogLimits.maximumEventBytes)).contains(
+                maximumTransactionBytes ?? BinlogLimits.defaultTransactionBytes),
+            (20 * 1024 * 1024...1024 * 1024 * 1024).contains(downloadCacheBytes ?? 256 * 1024 * 1024),
+            stopAfterTransactions == nil || (1...1_000_000).contains(stopAfterTransactions!)
+        else {
             throw CaptureError("invalid live capture configuration")
         }
         var seen: Set<String> = []
         for table in tables ?? [] {
-            guard !table.database.isEmpty, !table.table.isEmpty, !table.database.utf8.contains(0), !table.table.utf8.contains(0),
-                  !table.columns.isEmpty, table.columns.count <= 256,
-                  seen.insert(table.database + "\0" + table.table).inserted else { throw CaptureError("invalid/duplicate live schema entry") }
+            guard !table.database.isEmpty, !table.table.isEmpty, !table.database.utf8.contains(0),
+                !table.table.utf8.contains(0),
+                !table.columns.isEmpty, table.columns.count <= 256,
+                seen.insert(table.database + "\0" + table.table).inserted
+            else { throw CaptureError("invalid/duplicate live schema entry") }
         }
         if let file = start.file, let position = start.position {
-            guard !file.isEmpty, !file.utf8.contains(0), file.utf8.count <= 255, position >= 4 else { throw CaptureError("invalid start coordinate") }
-        } else if mode != "gtid" || start.file != nil || start.position != nil { throw CaptureError("file-position requires both fields; GTID mode permits neither") }
+            guard !file.isEmpty, !file.utf8.contains(0), file.utf8.count <= 255, position >= 4 else {
+                throw CaptureError("invalid start coordinate")
+            }
+        } else if mode != "gtid" || start.file != nil || start.position != nil {
+            throw CaptureError("file-position requires both fields; GTID mode permits neither")
+        }
         let set = try GTIDSet(start.executedGTIDs)
         return mode == "gtid" ? .gtid(set) : .position(file: start.file!, position: start.position!)
     }
@@ -90,8 +113,10 @@ public struct CaptureConfiguration: Decodable {
 
 extension CaptureConfiguration {
     enum CodingKeys: String, CodingKey {
-        case version, host, port, username, passwordEnvironment, password, requireTLS, serverHostname, caFile
-        case serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions, stopAfterGTIDs
+        case version, host, port, username, passwordEnvironment, password, requireTLS, tlsVerification, serverHostname,
+            caFile
+        case lowerCaseTableNames, serverID, sourceUUID, mode, start, tables, nonBlocking, stopAfterTransactions,
+            stopAfterGTIDs
         case idleTimeoutSeconds, maximumEventBytes, maximumTransactionBytes, decoderProfiling, downloadCacheBytes
     }
 
@@ -104,8 +129,10 @@ extension CaptureConfiguration {
         passwordEnvironment = try c.decodeIfPresent(String.self, forKey: .passwordEnvironment)
         password = try c.decodeIfPresent(String.self, forKey: .password)
         requireTLS = try c.decodeIfPresent(Bool.self, forKey: .requireTLS) ?? true
+        tlsVerification = try c.decodeIfPresent(TLSVerification.self, forKey: .tlsVerification) ?? .verifyIdentity
         serverHostname = try c.decodeIfPresent(String.self, forKey: .serverHostname)
         caFile = try c.decodeIfPresent(String.self, forKey: .caFile)
+        lowerCaseTableNames = try c.decodeIfPresent(Int.self, forKey: .lowerCaseTableNames)
         serverID = try c.decode(UInt32.self, forKey: .serverID)
         sourceUUID = try c.decode(String.self, forKey: .sourceUUID)
         mode = try c.decode(String.self, forKey: .mode)
@@ -127,9 +154,15 @@ public final class CaptureCancellation: @unchecked Sendable {
     private var value = false
     private let parent: CaptureCancellation?
     public init(parent: CaptureCancellation? = nil) { self.parent = parent }
-    public func cancel() { lock.lock(); value = true; lock.unlock() }
+    public func cancel() {
+        lock.lock()
+        value = true
+        lock.unlock()
+    }
     public var isCancelled: Bool {
-        lock.lock(); let local = value; lock.unlock()
+        lock.lock()
+        let local = value
+        lock.unlock()
         return local || (parent?.isCancelled ?? false)
     }
 }

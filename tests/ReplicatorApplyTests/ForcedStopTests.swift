@@ -1,20 +1,22 @@
-import XCTest
 import Foundation
+import XCTest
+
 @testable import ReplicatorApply
 @testable import ReplicatorCapture
 @testable import ReplicatorCodec
+
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 #else
-import Glibc
+    import Glibc
 #endif
 
 final class ForcedStopTests: XCTestCase {
     private var fixture: ResumeTests {
         #if os(Linux)
-        return ResumeTests(name: "fixtures", testClosure: { _ in })
+            return ResumeTests(name: "fixtures", testClosure: { _ in })
         #else
-        return ResumeTests()
+            return ResumeTests()
         #endif
     }
 
@@ -23,8 +25,10 @@ final class ForcedStopTests: XCTestCase {
     func testWriterProcessFixture() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let path = environment["REPLICATOR_FORCED_STOP_STATE"],
-              let mode = environment["REPLICATOR_FORCED_STOP_MODE"] else { return }
-        let f = fixture, groups = try f.helper.groups()
+            let mode = environment["REPLICATOR_FORCED_STOP_MODE"]
+        else { return }
+        let f = fixture
+        let groups = try f.helper.groups()
         let store = try StateStore(configuration: f.config(path))
         try store.bindTargetIdentity(f.target)
         try store.running()
@@ -32,8 +36,10 @@ final class ForcedStopTests: XCTestCase {
         if mode == "pending" {
             let group = groups[1]
             for event in group.events {
-                try store.append(LiveRecord(kind: "event", file: group.start.file,
-                                            observedPosition: String(event.nextPosition), event: event, rawBase64: nil))
+                try store.append(
+                    LiveRecord(
+                        kind: "event", file: group.start.file,
+                        observedPosition: String(event.nextPosition), event: event, rawBase64: nil))
             }
             try store.begin(group)
             try store.intent(0, DMLPlan.make(group, tables: f.helper.tables())[0])
@@ -51,36 +57,45 @@ final class ForcedStopTests: XCTestCase {
             let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
             addTeardownBlock { try FileManager.default.removeItem(at: parent) }
-            let f = fixture, path = parent.appendingPathComponent("state"), configuration = try f.config(path.path)
+            let f = fixture
+            let path = parent.appendingPathComponent("state")
+            let configuration = try f.config(path.path)
             let log = path.deletingLastPathComponent().appendingPathComponent("child.log")
             FileManager.default.createFile(atPath: log.path, contents: nil)
             let output = try FileHandle(forWritingTo: log)
             defer { try? output.close() }
-            let input = Pipe(), child = Process()
+            let input = Pipe()
+            let child = Process()
             let selected = "ReplicatorApplyTests.ForcedStopTests/testWriterProcessFixture"
             #if os(macOS)
-            child.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            child.arguments = ["xctest", "-XCTest", selected, Bundle(for: Self.self).bundlePath]
+                child.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+                child.arguments = ["xctest", "-XCTest", selected, Bundle(for: Self.self).bundlePath]
             #else
-            child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-            child.arguments = [selected]
+                child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+                child.arguments = [selected]
             #endif
             // XCTest can dump its environment on startup errors. Pass only
             // toolchain/runtime settings, never unrelated developer credentials.
-            let allowed: Set<String> = ["PATH", "HOME", "TMPDIR", "DEVELOPER_DIR", "SDKROOT",
-                                        "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_LIBRARY_PATH",
-                                        "LLVM_PROFILE_FILE", "ASAN_OPTIONS"]
+            let allowed: Set<String> = [
+                "PATH", "HOME", "TMPDIR", "DEVELOPER_DIR", "SDKROOT",
+                "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "LD_LIBRARY_PATH",
+                "LLVM_PROFILE_FILE", "ASAN_OPTIONS",
+            ]
             var environment = ProcessInfo.processInfo.environment.filter { allowed.contains($0.key) }
             environment["REPLICATOR_FORCED_STOP_STATE"] = path.path
             environment["REPLICATOR_FORCED_STOP_MODE"] = mode
             child.environment = environment
             child.standardInput = input
-            child.standardOutput = output; child.standardError = output
+            child.standardOutput = output
+            child.standardError = output
             let exited = expectation(description: "killed writer exits: " + mode)
             child.terminationHandler = { _ in exited.fulfill() }
             try child.run()
             defer {
-                if child.isRunning { _ = kill(child.processIdentifier, SIGKILL); child.waitUntilExit() }
+                if child.isRunning {
+                    _ = kill(child.processIdentifier, SIGKILL)
+                    child.waitUntilExit()
+                }
             }
             let deadline = Date().addingTimeInterval(20)
             while !FileManager.default.fileExists(atPath: path.path + ".ready") {
@@ -99,9 +114,11 @@ final class ForcedStopTests: XCTestCase {
             let before = try f.helper.sqlite(database, query)
             XCTAssertEqual(before, [["RUNNING", "1", mode == "pending" ? f.helper.sid + ":12" : "NULL", "1885"]])
             let intents = try f.helper.sqlite(database, "SELECT gtid,status FROM row_intents ORDER BY gtid")
-            XCTAssertEqual(intents, mode == "pending"
-                           ? [[f.helper.sid + ":11", "DONE"], [f.helper.sid + ":12", "PENDING"]]
-                           : [[f.helper.sid + ":11", "DONE"]])
+            XCTAssertEqual(
+                intents,
+                mode == "pending"
+                    ? [[f.helper.sid + ":11", "DONE"], [f.helper.sid + ":12", "PENDING"]]
+                    : [[f.helper.sid + ":11", "DONE"]])
             let relay = try Data(contentsOf: path.appendingPathComponent("relay.frames"))
             XCTAssertThrowsError(try StateStore(configuration: configuration, initialize: false)) {
                 XCTAssertTrue(String(describing: $0).contains("cleanly STOPPED"))

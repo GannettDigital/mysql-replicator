@@ -18,24 +18,27 @@ public struct SkipErrorPolicy: Decodable {
     public init() {}
     enum CodingKeys: String, CodingKey { case codes, recordSkippedTransactions }
     public init(from decoder: Decoder) throws {
-        let c=try decoder.container(keyedBy:CodingKeys.self)
-        codes=try c.decodeIfPresent([ApplyErrorCode].self,forKey:.codes) ?? []
-        recordSkippedTransactions=try c.decodeIfPresent(Bool.self,forKey:.recordSkippedTransactions) ?? true
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        codes = try c.decodeIfPresent([ApplyErrorCode].self, forKey: .codes) ?? []
+        recordSkippedTransactions = try c.decodeIfPresent(Bool.self, forKey: .recordSkippedTransactions) ?? true
     }
     func validate() throws {
-        try require(Set(codes).count == codes.count && !codes.contains(.targetSQL),"skipErrors requires distinct, supported error codes; target.sql is not skippable")
+        try require(
+            Set(codes).count == codes.count && !codes.contains(.targetSQL),
+            "skipErrors requires distinct, supported error codes; target.sql is not skippable")
     }
     enum Boundary { case beforeWrites, rolledBack }
     func match(_ error: Error, at boundary: Boundary) -> SkippedApplyError? {
-        guard let error=error as? ApplyError,let code=error.code,codes.contains(code) else { return nil }
+        guard let error = error as? ApplyError, let code = error.code, codes.contains(code) else { return nil }
         switch boundary {
         case .beforeWrites:
             guard code != .duplicateKey && code != .targetSQL else { return nil }
         case .rolledBack:
             guard code == .duplicateKey else { return nil }
         }
-        return .init(code:code,reason:error.message,mysqlErrorNumber:error.mysqlErrorNumber,
-                     sqlState:error.sqlState,outcome:boundary == .beforeWrites ? "notIssued" : "rolledBack")
+        return .init(
+            code: code, reason: error.message, mysqlErrorNumber: error.mysqlErrorNumber,
+            sqlState: error.sqlState, outcome: boundary == .beforeWrites ? "notIssued" : "rolledBack")
     }
 }
 

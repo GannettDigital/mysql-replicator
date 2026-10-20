@@ -8,14 +8,21 @@ extension MySQLDatabase {
         }.map { rows }
     }
     
+    /// Execute SQL in its logged client encoding without a UTF-8 round trip.
+    public func simpleQueryBytes(_ sql: [UInt8]) -> EventLoopFuture<[MySQLRow]> {
+        nonisolated(unsafe) var rows = [MySQLRow]()
+        let query = MySQLSimpleQueryCommand(sqlBytes: sql, onRow: { rows.append($0) })
+        return self.send(query, logger: self.logger).map { rows }
+    }
+
     public func simpleQuery(_ sql: String, onRow: @escaping (MySQLRow) -> ()) -> EventLoopFuture<Void> {
         let query = MySQLSimpleQueryCommand(sql: sql, onRow: onRow)
         return self.send(query, logger: self.logger)
     }
 }
 
-private final class MySQLSimpleQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
-    let sql: String
+final class MySQLSimpleQueryCommand: MySQLCommand, @unchecked Sendable { // this is cheating
+    let sqlBytes: [UInt8]
     
     enum State {
         case ready
@@ -28,9 +35,13 @@ private final class MySQLSimpleQueryCommand: MySQLCommand, @unchecked Sendable {
     var columns: [MySQLProtocol.ColumnDefinition41]
     let onRow: (MySQLRow) -> ()
     
-    init(sql: String, onRow: @escaping (MySQLRow) -> ()) {
+    convenience init(sql: String, onRow: @escaping (MySQLRow) -> ()) {
+        self.init(sqlBytes: Array(sql.utf8), onRow: onRow)
+    }
+
+    init(sqlBytes: [UInt8], onRow: @escaping (MySQLRow) -> ()) {
         self.state = .ready
-        self.sql = sql
+        self.sqlBytes = sqlBytes
         self.columns = []
         self.onRow = onRow
     }
@@ -88,7 +99,15 @@ private final class MySQLSimpleQueryCommand: MySQLCommand, @unchecked Sendable {
     
     func activate(capabilities: MySQLProtocol.CapabilityFlags) throws -> MySQLCommandState {
         try .response([
-            .encode(MySQLProtocol.COM_QUERY(query: self.sql), capabilities: capabilities)
+            .encode(MySQLRawQuery(bytes: self.sqlBytes), capabilities: capabilities)
         ])
+    }
+}
+
+private struct MySQLRawQuery: MySQLPacketEncodable {
+    let bytes: [UInt8]
+    func encode(to packet: inout MySQLPacket, capabilities: MySQLProtocol.CapabilityFlags) throws {
+        packet.payload.writeInteger(UInt8(0x03))
+        packet.payload.writeBytes(bytes)
     }
 }

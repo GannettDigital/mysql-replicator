@@ -19,8 +19,9 @@ profile: mysql57-to-mysql84-innodb
 ```
 
 Both servers require GTID mode ON, enforce_gtid_consistency ON, ROW/FULL logging
-and CRC32 checksums. Target binary logging remains enabled with target-local
-GTIDs. The source GTID checkpoint lives exclusively in SQLite. Connections use
+and CRC32 checksums. Target binary logging remains enabled. The default
+`target.preserveSourceGTIDs: true` retains source GTIDs on the target. SQLite
+remains the source checkpoint. Connections use
 verified TLS by default. To disable TLS, see [connection settings](INSTALL.md#connection-security).
 Do not configure collation translation or explicit table
 locks for this profile. GTID positioning is required.
@@ -38,17 +39,17 @@ table-map metadata, so the destination schema supplies missing signedness,
 encoding and ENUM/SET definitions. Independent destination writes or schema
 changes invalidate this assumption.
 
-The supported scalar types, collations and primary-key requirements remain the
-existing applier subset. This does not imply support for every 5.7 type. In
-particular, text is limited to the supported utf8mb4 collations. DDL ENUM/SET labels
-outside the Unicode BMP are rejected: MySQL COLUMN_TYPE metadata replaces them
-with `?`, preventing reliable definition verification. Ordinary utf8mb4 text can
-still contain supplementary characters such as emoji. Composite keys,
+See [current support](SUPPORT.md) for scalar types, native 5.7 charsets and
+collations, and primary/unique lookup-key requirements. ENUM/SET discovery reads exact labels
+through temporary target columns. This includes non-UTF-8 and supplementary
+labels. The target account needs `CREATE TEMPORARY TABLES` on replicated databases.
+Composite keys,
 PK updates, multiple source statements and multiple tables per transaction are
 supported in this profile. Target triggers are rejected. InnoDB foreign keys
 support complete primary/unique parent keys, composite references, RESTRICT/NO
-ACTION, CASCADE and SET NULL. Self-references, cycles, nonunique/partial parent
-keys and checks-disabled source events remain unsupported. Bootstrap must preserve
+ACTION, CASCADE and SET NULL. Self-references, cycles and source
+`foreign_key_checks` settings are supported. Nonunique/partial parent keys remain
+unsupported. Bootstrap must preserve
 matching source relationships; filters cannot split a connected relationship.
 See [foreign-key scope](../PLAN/MYSQL57_FOREIGN_KEYS.md) for DDL limits and tests.
 Supported database/table DDL, generated columns,
@@ -68,12 +69,17 @@ The source needs its normal replication privileges. The target needs DML and
 schema visibility privileges, including explicit global REFERENCES (complete incoming FK
 discovery), explicit TRIGGER visibility and
 REPLICATION CLIENT to exclude native replication. DDL also needs the corresponding
-CREATE/ALTER/DROP/index/view/routine privileges. Preserving source DEFINER clauses
+CREATE/ALTER/DROP/index/view/routine privileges. View renaming also requires
+SHOW VIEW to read the current definition. Preserving source DEFINER clauses
 may need `SET_ANY_DEFINER` on 8.4; stored functions with binary logging have additional
 server privilege/flag requirements. The disposable harness grants ALL PRIVILEGES
-plus SET_ANY_DEFINER; this is not a least-privilege Cloud SQL recipe. The applier
-does not assign GTID_NEXT. Managed-service
+plus SET_ANY_DEFINER; this is not a least-privilege Cloud SQL recipe.
+GTID preservation assigns `GTID_NEXT` and needs additional privileges. See
+[required privileges and Cloud SQL limits](GTID_PRESERVATION.md). Managed-service
 privileges, network access and failover must still be tested on Cloud SQL.
+For Cloud SQL, set `target.preserveSourceGTIDs: false`. The documented customer
+privileges do not establish permission to assign source GTIDs. SQLite still
+tracks the complete source checkpoint.
 
 ## Transaction and failure behavior
 
@@ -111,12 +117,20 @@ mysql-replicator run --config apply.yaml
 ```
 
 Inspection lists every pending group, GTID and source/relay boundary, retained
-schemas, each mutation's old/new primary key and before/after row images, and
+schemas, each mutation's old/new lookup key and before/after row images, and
 saved failure/statement diagnostics. Decimal and integer values remain strings
 with explicit types; binary values are base64. Expectations fold repeated writes
-and primary-key changes within each transaction into initial/final images. A
+and lookup-key changes within each transaction into initial/final images. The
+`rowIdentity` field names the index and its ordered columns. `primaryKeyColumns`
+retains the declared primary key and is empty for a unique-key fallback. A
 missing initial/final field means no row at that key. SQL NULL is a typed value
 inside a row, distinct from an absent row.
+
+For a table without a usable unique key, `rowIdentity.kind` is `fullRow`.
+`beforeKey` and `afterKey` are absent. `fullRowChanges` retains each operation in
+order, including identical images. These rows are not folded into `expectations`.
+The records do not identify one physical copy or prove the total target row
+count. Reconcile duplicate counts as well as values before a recovery action.
 
 Compare this evidence to target rows while independent writes are stopped.
 Expectations use exact encoded keys: collation-equivalent keys may alias, and
@@ -148,12 +162,15 @@ unreferenced tail archive; preserve it with the rest of the state directory.
 `transactionsApplied` counts processed groups, including explicitly skipped ones;
 skips add no applied rows. The audit distinguishes skipped groups from accepted
 commits. Audit history is not automatically pruned; include it in storage planning.
-Recovery currently accepts format-9 reverse-profile DML only. DDL reconciliation,
+Recovery currently accepts formats 9 through 12 for InnoDB-profile DML only. DDL reconciliation,
 MyISAM recovery and automatic repair remain outside this command's scope.
 
-SQLite state format 9 pins the profile. Cleanly stopped older MyISAM state can
-upgrade in place; older state cannot be adopted as an InnoDB checkpoint. Older
-runtimes reject format 9. Back up the stopped state before upgrading.
+SQLite state format 13 records the GTID preservation setting and table filters. It also retains
+tagged source GTIDs and the profile and table-name
+case settings from format 10. Older state requires `target.preserveSourceGTIDs: false` and
+can upgrade with `source.lowerCaseTableNames: 0`. It cannot adopt mode 1 or a
+different replication profile. Runtimes without format-13 support reject this state. Back up the
+stopped state before upgrading.
 
 ## Demo
 

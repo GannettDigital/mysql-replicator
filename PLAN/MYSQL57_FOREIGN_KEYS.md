@@ -1,7 +1,8 @@
 # MySQL 5.7 foreign keys and reverse replication
 
-Status: implemented for the qualified subset in `mysql57-to-mysql84-innodb`
-and `mysql57-to-mysql57-innodb`.
+Status: implemented for the stated rules in `mysql57-to-mysql84-innodb`
+and `mysql57-to-mysql57-innodb`. Selected tests pass. The complete relationship
+and failure matrix is not release-qualified. See [status definitions](../docs/SUPPORT.md#support-status).
 Validation results are recorded below.
 
 ## Scope and current behavior
@@ -13,8 +14,8 @@ The external target is 8.4 or 5.7 InnoDB, as selected by the profile.
 
 The InnoDB target contract discovers both outgoing and incoming relationships.
 Each saved table schema includes its complete connected relationship component,
-including ordered columns and update/delete rules. Target sessions enable
-`foreign_key_checks`; checks-disabled row events and DDL are rejected. MyISAM
+including ordered columns and update/delete rules. Target sessions restore the
+source `foreign_key_checks` setting for row events and DDL. MyISAM
 profiles retain the foreign-key DDL refusal.
 
 ## MySQL behavior to preserve
@@ -27,16 +28,15 @@ profiles retain the foreign-key DDL refusal.
   cascading updates. Do not treat these effects like separately logged trigger
   row changes or disable target FK checks globally.
 - Native replication restores the source's foreign-key-check setting from row
-  event flags. Supporting source sessions with checks disabled needs explicit
-  handling; otherwise retain a clear rejection.
+  event flags. The applier retains the setting for each mutation.
 - Matching destination relationships are part of the replication contract.
   Missing or different constraints can omit cascades or change their effects.
   Bootstrap must preserve those definitions, and replication filters must not
   silently exclude tables required by a relationship.
 - MySQL 5.7 permits foreign keys referencing non-unique indexes and certain
-  partial keys. MySQL 8.4 restricts that legacy extension by default through
-  `restrict_fk_on_non_standard_key`. Start with references to complete primary
-  or unique keys; reject incompatible definitions explicitly.
+  partial keys. MySQL 8.4 client sessions restrict that extension by default.
+  Native replica threads disable `restrict_fk_on_non_standard_key`. Branch 50
+  uses the same session setting and [parent-key rules](FOREIGN_KEY_PARENT_KEYS.md).
 
 ## Implementation
 
@@ -55,8 +55,8 @@ profiles retain the foreign-key DDL refusal.
    they cannot reconstruct every cascaded child's before/after image. Give the
    DBA enough context to inspect or restore affected tables without presenting
    that evidence as proof of commit or complete automatic recovery.
-5. Handle source `foreign_key_checks=0` as a separate qualified extension, or
-   retain its explicit refusal. Do not silently force different source semantics.
+5. Restore source `foreign_key_checks` from row and Query events. See
+   [the extension and remaining limits](FOREIGN_KEY_CONTROLS.md).
 
 ## Correctness tests
 
@@ -72,21 +72,24 @@ target 8.4. The suite covers:
 - Single-column and composite references to primary/unique keys.
 - Parent/child inserts and explicit deletes in one transaction.
 - `RESTRICT`, delete/update `CASCADE`, and `SET NULL`, including cascade chains.
-- Self-reference refusal remains in `reject-foreign-key`; graph unit tests cover
-  cycles, filter splits, nonunique/partial keys and schema-history round trips.
+- Self-references and cycles use the `ddl-compat-foreign-key-controls` workflow.
+  Graph unit tests cover filter splits, nonunique/partial keys and saved schemas.
 - Constraint add/drop, supporting indexes, table rename, and saved-schema restart.
-- Rejection of incompatible target constraints and unsupported legacy references.
+- Rejection of incompatible target constraints. Nonunique, leading composite
+  and extended parent keys use the implemented native parent-key rules.
 - Target-side constraint failure with complete transaction rollback; recovery
   inspection that exposes possible cascade effects after an uncertain commit.
-- Source checks-disabled events: correct handling if implemented, otherwise
-  rejection without advancing past the event.
+- Source check settings, including changes within a transaction and offline replay.
 
 ## Bounds and operational contract
 
-- All participating tables need supported columns, primary keys and no target
-  triggers. Relationships must reference complete primary/unique keys. Foreign-key
-  column types and encodings must match exactly. Generated FK columns, partitioned
-  participants, self-references and cycles are excluded.
+- All participating tables need supported columns and no target triggers.
+  Parent indexes follow [native InnoDB rules](FOREIGN_KEY_PARENT_KEYS.md).
+  Missing-parent behavior is described [here](MISSING_PARENT_FOREIGN_KEYS.md). FK
+  columns follow [native storage and collation rules](FOREIGN_KEY_SYNTAX_COLUMNS.md).
+  Stored generated FK columns use [native action limits](GENERATED_COLUMN_FOREIGN_KEYS.md).
+  Virtual FK columns and partitioned participants have native restrictions.
+  Self-references and cycles are supported.
 - Components are bounded to 64 tables and 256 relationships. Metadata work occurs
   at discovery, restart and DDL barriers; it is not a per-row check.
 - The target account needs explicit global `REFERENCES` privilege so metadata discovery
@@ -97,18 +100,19 @@ target 8.4. The suite covers:
   responsibility, including offline replay.
 - CREATE/ALTER ADD/DROP FOREIGN KEY, automatic child indexes, CREATE LIKE (without
   copied constraints), table rename and dependency-ordered DROP are supported.
-  FK-column renames, replacement supporting indexes that could silently remove
-  an automatically created index, and DROP DATABASE with remaining relationships
-  need further qualification. Remove constraints before DROP DATABASE; for
-  unsupported index replacements, remove the old supporting index explicitly too.
-  Standalone ADD FOREIGN KEY can replace an equal, nonunique generated supporting
-  index. Because information_schema does not expose the generated flag, the DDL
-  intent records both narrowly defined outcomes in `afterAlternatives`; post-DDL
-  validation chooses an exact match and saves that schema. Other index, column
-  or constraint differences still fail. Compound ALTERs with this ambiguity are
-  rejected before execution.
-- A FOREIGN KEY index name requires an explicit CONSTRAINT name: 5.7 and 8.4
-  interpret the unnamed spelling differently. MATCH clauses remain unsupported.
+  FK-column renames, supporting-index additions and DROP DATABASE with internal
+  or external relationships are implemented. The journal records permitted removals
+  of generated supporting indexes, then saves the exact target result.
+  See [FK DDL transitions](FOREIGN_KEY_DDL.md) for scope and tests.
+  See [cross-database DROP](CROSS_DATABASE_FOREIGN_KEYS.md) for source check
+  requirements. Branch 54 adds [compound index changes](COMPOUND_FOREIGN_KEY_INDEXES.md).
+  ADD FOREIGN KEY can replace equal, nonunique automatic supporting indexes.
+  The journal records exact `supportingIndexReplacements` before execution.
+  Post-DDL validation matches these choices and saves the actual schema.
+  Other column, index or constraint differences still fail.
+- FOREIGN KEY index names can appear without an explicit CONSTRAINT name. The
+  server generates the constraint name. MySQL 5.7 MATCH clauses ignore following
+  actions. The applier preserves that behavior on both InnoDB targets.
 - DDL updates relationship snapshots and invalidates prepared plans for affected
   tables at a drained barrier. Autocommit and multi-row INSERT execution retain
   source transaction boundaries; prepared queues do not reorder writes.

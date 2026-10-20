@@ -29,6 +29,39 @@ before metadata comparison. The actual servers, settings, image IDs,
 and applier binary hash are recorded. The native reference is a behavior/control
 comparison; its version matches the source. In the 5.7 → 5.7 profiles, all three servers use 5.7.
 
+Test SQL uses file-backed standard input. This preserves UTF-8 bytes on macOS,
+where process arguments can change composed Unicode characters. The mysql client
+uses one delimiter for each request, including stored routine bodies.
+
+The `matrix-exactchoices` and `matrix-choiceboundaries` cases check exact ENUM/SET
+labels, defaults and ordinal writes. The corresponding `bootstrap-matrix-*` cases
+check discovery from an existing schema. These replace the old non-BMP DDL refusal
+cases. They cover latin1, UTF16, UTF16LE, UTF32, GB18030 and supplementary UTF-8.
+
+The `binarychoices` live and bootstrap cases check raw binary ENUM labels, binary
+SET labels, hex/bit literals and defaults. The `legacybinaryset` cases add non-UTF-8
+SET bytes on the two 5.7-to-5.7 profiles. MySQL 8.4.8 rejects that SET definition
+with native error 3507. Binary choice schema comparisons read raw SHOW CREATE
+output through a separate test parser.
+
+The `ddl-compat-tagged-gtids` case uses the 8.4 source profile with
+`--variant without-source-gtids` (`target.preserveSourceGTIDs: false`). It compares tagged
+DDL/DML results with the native reference, then checks rotation, process restart,
+archive replay and a tagged stop limit. It checks source GTIDs in SQLite
+separately from the target server's GTIDs.
+
+The `gtids` family contains these two cases. The `without-source-gtids` variant
+selects only the tagged case; it does not repeat the full correctness suite.
+
+The `ddl-compat-source-gtid-preservation` case uses the default setting
+`target.preserveSourceGTIDs: true`. It checks the target GTID set after DDL,
+multi-row INSERT/UPDATE/DELETE, keyless duplicate rows, restart, and archive replay.
+Run it for all four profiles:
+
+```sh
+make lab-test ARGS="--profile all --suite correctness --case ddl-compat-source-gtid-preservation"
+```
+
 ## List and run
 
 Build prerequisites are in [CONTRIBUTING](../CONTRIBUTING.md). From the checkout:
@@ -79,13 +112,65 @@ recovery inspection. It requires GTID mode. See [large-value limits and tests](L
 
 `matrix-bits` and `bootstrap-matrix-bits` use the same BIT workload for replicated
 CREATE and existing-table discovery. They check widths through 64 bits, defaults,
-primary-key changes, ADD/MODIFY, and DML. These new cases await integration
-qualification. See the [BIT increment](../PLAN/BIT_SUPPORT.md).
+primary-key changes, ADD/MODIFY, and DML. Full CI includes these cases; inspect
+the results for the exact commit. See [BIT support](../PLAN/BIT_SUPPORT.md).
 
 `matrix-floating` and `bootstrap-matrix-floating` add FLOAT/DOUBLE DML and DDL
-cases for all four profiles. The fixed-scale refusal cases are now
-`reject-float-fixed-scale` and `matrix-reject-float-fixed-scale`. These cases await
-integration qualification. See the [floating-point increment](../PLAN/FLOATING_POINT_SUPPORT.md).
+cases for all four profiles. `matrix-fixedfloating` and
+`bootstrap-matrix-fixedfloating` check fixed-scale forms, defaults, rounding and
+ALTER. They replace the fixed-scale refusal cases. Full CI includes these cases; inspect the results for the exact commit. See
+[FLOAT/DOUBLE support](../PLAN/FLOATING_POINT_SUPPORT.md).
+
+`matrix-decimaldefaults` and `bootstrap-matrix-decimaldefaults` check native
+DECIMAL default rounding, scientific notation, quoted constants, unsigned and
+ZEROFILL forms. They include CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
+
+`matrix-binarydefaults` and `bootstrap-matrix-binarydefaults` check exact binary
+default bytes, NUL, empty values, BINARY padding, CREATE and ALTER. The lab reads
+stored native defaults because displayed metadata can omit bytes.
+
+`matrix-textdefaults` and `bootstrap-matrix-textdefaults` check CHAR/VARCHAR
+defaults with supplementary characters, NUL, byte literals, numeric constants,
+legacy/wide encodings and CHAR padding modes. Metadata comparisons use stored
+defaults and preserve exact Unicode bytes.
+
+`matrix-zerowidth` and `bootstrap-matrix-zerowidth` check zero-width CHAR,
+VARCHAR, BINARY and VARBINARY columns. They distinguish empty values from NULL
+and exercise width changes before and after DML.
+
+`json-year-compatibility` checks the optional 5.7 to 8.4 YEAR conversion inside
+JSON. It includes default refusal, native type checks, restart, UPDATE/DELETE,
+policy-change refusal and offline replay. Run it with:
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case json-year-compatibility"
+```
+
+`ddl-compat-json-indexes` checks indexed generated columns, JSON extraction,
+ALTER, CREATE LIKE, row changes, and restart on all four profiles. It uses a
+STORED indexed column on MyISAM targets and a VIRTUAL indexed column on InnoDB
+targets. It also adds a STORED indexed column on all profiles.
+
+`json-target57-limits` uses the 8.4 source and native InnoDB replica to accept
+JSON expression defaults, functional indexes, and an indexed VIRTUAL column.
+The 5.7 MyISAM target must reject each statement before target SQL. The test
+checks that no target table exists and the transaction count remains zero.
+
+`json-target84-schema` checks an existing 8.4 target table with functional
+indexes and a JSON expression default. It checks INSERT, UPDATE, DELETE,
+restart, indexed queries, and offline replay. The source and native reference
+are 5.7; their tables have the same visible columns, without the 8.4-only index
+and default definitions. Target-side queries verify these extra definitions.
+
+`expression-target84-dependencies` uses the same target-baseline method. It
+checks column renames and drops with dependent index/default removal, both clause
+orders, index replacement, later DML, restart and offline replay. It also checks
+that unchanged dependencies stop apply without a target change or checkpoint advance.
+Run it with `--profile mysql57-to-mysql84-innodb --suite correctness --case expression-target84-dependencies`.
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-json-indexes --case json-target84-schema"
+```
 
 `matrix-json` and `bootstrap-matrix-json` check ordinary JSON values.
 `matrix-typedjson` and `bootstrap-matrix-typedjson` check DECIMAL, temporal and
@@ -93,18 +178,28 @@ binary JSON types. All four profiles select these cases. `matrix-jsonpartial`
 and `bootstrap-matrix-jsonpartial` check partial updates on an 8.4 source.
 They inspect mysqlbinlog output to confirm that the source emitted a change
 record. These cases passed on the applicable profiles. The old `matrix-reject-json-opaque` case
-is removed. See [JSON paths and remaining limits](../PLAN/JSON_SUPPORT.md).
+is removed. See [JSON support and limits](JSON_SUPPORT.md).
 
 `matrix-spatial` and `bootstrap-matrix-spatial` check all eight spatial types,
 SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key
 changes, added columns, and SPATIAL index changes. They compare stored bytes
 and SRIDs with the native replica. They do not compare WKT output across server
 versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
-The former `reject-geometry` case is now `reject-fulltext`.
+The former `reject-geometry` and `reject-fulltext` refusal cases have positive
+coverage. The refusal selection now uses `reject-engine`.
+
+`ddl-compat-fulltext` checks index creation, changes, parser metadata, search
+results, CREATE TABLE LIKE and restart. `matrix-fulltext` and
+`bootstrap-matrix-fulltext` check row changes and discovery with the ngram
+parser. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md).
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
-after the changes on all profiles. CHECK constraints remain outside the supported DDL contract.
+after the changes on all profiles.
+`ddl-compat-ignored-checks` checks ignored 5.7 CHECK clauses, compound DDL,
+violating rows, the durable no-op ALTER record, restart and offline replay.
+`check-target57-limits` checks that an enforced 8.4 constraint stops before
+target DDL. See [native compatibility rules](NATIVE_COMPATIBILITY.md).
 InnoDB profiles support foreign keys with the limits below.
 
 The `foreign-keys` family applies to both InnoDB target profiles. It compares
@@ -113,7 +208,36 @@ replication, exercises cascades, composite references, ordered DDL and restart,
 and checks exclusions, rollback and offline recovery relationship evidence.
 It runs as its own parallel CI area. Use
 `make correctness PROFILE=mysql57-to-mysql84-innodb ARGS="--family foreign-keys"`.
-MyISAM profiles retain `reject-foreign-key`.
+The family also includes `ddl-compat-foreign-key-controls`. It checks
+self-references, cycles, source check settings, restart and offline replay.
+`ddl-compat-foreign-key-ddl` checks supporting indexes, FK-column renames, internal
+database DROP and replay through the saved schema history. It also checks journal
+records for FK tables with no captured events. The safety case adds an incoming
+FK only on the target. It checks that DROP fails before SQL and keeps the checkpoint.
+`ddl-compat-foreign-key-missing-parent` checks missing parents, parent recreation,
+restart and replay while the parent is absent.
+`ddl-compat-foreign-key-parent-keys` checks native nonunique, composite-prefix and
+extended parent keys, cascades, restart and replay.
+`ddl-compat-foreign-key-syntax-columns` checks constraint and index names, MATCH
+action translation, native-compatible column types, cascades, restart and replay.
+`ddl-compat-foreign-key-cross-database` checks child database DROP, parent DROP
+with source checks disabled, surviving relationships, parent recreation, restart
+and replay while the parent database is absent. It compares both databases.
+`ddl-compat-foreign-key-generated` checks stored generated parent and child columns,
+cascades, native virtual/action rejection, restart and replay.
+`ddl-compat-generated-dependencies` checks compound generated-column changes,
+stored/ordinary conversion, text literals, later DML, restart and offline replay
+on all four profiles. Native 5.7 DROP restrictions remain.
+
+`ddl-compat-alter-column-keys` checks inline primary keys, implicit values,
+AUTO_INCREMENT session settings, later DML, restart and offline replay on all
+four profiles. Native rebuild order remains a cross-engine limit.
+
+`ddl-compat-foreign-key-compound-indexes` checks multiple FK additions mixed with
+index and column changes. It checks the index-choice journal, actual saved schema,
+restart and replay.
+`reject-foreign-key` tests a missing parent index on InnoDB and
+foreign-key DDL refusal on MyISAM.
 
 The `filters` family runs wildcard exclusions, saved-state resume and included-DDL
 refusal on all profiles. It keeps the independent native/target binlog oracle as
@@ -232,9 +356,14 @@ make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite lifecycle --skip-b
 The 11 lifecycle cases use equivalent bootstrapped integer tables and default to
 GTIDs; capture variants below also exercise file-position starts.
 They cover source socket loss, rotation, clean/crash restart, interruption during
-an 8,000-row group, backoff cancellation, and changed source settings; target
+an active group, backoff cancellation, and changed source settings; target
 socket loss/restart, active-group drain, saved-state resume with an unavailable
 target, backoff drain, lost mutation replies and changed target settings.
+InnoDB tests wait for partial progress in an 8,000-row group. MyISAM tests first
+apply one row to load table metadata. They then hold a table lock and wait for
+an issued 128-row helper-function request before the interruption. This removes
+the need to catch a short interval between individual writes. The lock is released
+after the interruption or drain request.
 Successful cases compare source/native/target rows and saved checkpoints.
 The InnoDB lost-reply case observes a provisional write before disconnecting,
 then checks rollback and durable pending-row evidence. The applier still reports
@@ -257,7 +386,7 @@ the original gaps, measured migration checkpoints and final removal evidence.
 
 ### Capture variants and catalog evidence
 
-Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|all`.
+Correctness and lifecycle accept `--variant default|position-minimal|gtid-full|lowercase-tables|without-source-gtids|all`.
 The default keeps each topology's usual GTID start with a file/offset. The two
 historical forward variants use file-position with MINIMAL optional row metadata,
 or GTID-only start with FULL metadata. `--variant all` lists/runs each separately;
@@ -265,6 +394,18 @@ the historical variants are explicitly not applicable to the 5.7-source profile.
 MySQL 5.7 has no `binlog_row_metadata` setting. Lifecycle's default integer-only
 workload uses MINIMAL on the 8.4 source; explicit variants preserve their setting
 across restarts. Matrix fixtures that require FULL labels declare that override.
+
+DDL cases that write ENUM/SET values also request FULL metadata: encoded SQL,
+charset conversion, and keyless rows. They still use file-position capture when
+that variant is selected. They do not test ENUM/SET with MINIMAL metadata. Other
+DDL cases restore the variant's metadata setting. The existing types-case rule
+excludes that case from the position-minimal variant.
+
+Offline replay uses GTID positioning, including the replay phase of a live
+file-position test. It uses the saved starting GTID set. When a case restores
+target seed data for an independent replay, it also resets the disposable target's
+GTID history to that starting set. Resume tests retain both target GTIDs and
+SQLite state. These fixture resets are not production recovery instructions.
 
 ```sh
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--variant position-minimal --family filters --coverage"
@@ -587,3 +728,159 @@ catalog results, expanded line coverage, and test-area cost comparisons.
 The same catalog drives PR smoke, full and expanded CI. Full and expanded plans
 retain release-binary checks. These measurements do not change the supported
 profiles or assertions.
+
+## Support requirements
+
+Use `make ddl-catalog-check` to validate the DDL and support inventories. Use
+`make ddl-catalog-report ARGS="--format json"` to inspect the `support` section.
+It separates specific tool gaps, target limits, native restrictions, policies and
+incomplete tests for the four profiles. `untested` means not fully tested; selected
+cases can already pass. The summary counts confirmed tool gaps and incomplete
+test groups separately. These are inventory counts, not a support percentage.
+Code coverage measures executed code, not MySQL feature support.
+The audit is partial. Candidate tests do not qualify a requirement. Implementation
+status and exact-build qualification are separate. See
+[status definitions](SUPPORT.md#support-status).
+See [the catalog guide](../tests/DDLCoverage/README.md#beta6-support-audit).
+
+`matrix-enumzero` and `bootstrap-matrix-enumzero` distinguish ENUM ordinal zero
+from a declared empty-string label. They check multi-row INSERT, ordinal changes,
+NULL, primary-key changes, DELETE and schema restart on all four profiles. The
+former `matrix-reject-enum-error-value` case is removed. Ordered-label and
+missing-label refusal cases remain.
+
+`matrix-zerofill` and `bootstrap-matrix-zerofill` check integer display widths,
+implicit UNSIGNED, padded defaults, numeric boundaries, ALTER and DML. The
+included-DDL refusal case uses an explicit engine outside the selected profile.
+This keeps a real policy failure after ZEROFILL becomes supported.
+
+The `matrix-collations` and `bootstrap-matrix-collations` cases test all 63 native
+5.7 collations for utf8mb4, utf8mb3, latin1 and ASCII. They compare schema metadata
+and bytes after each phase. The case includes a collated key, defaults, NULL,
+INSERT, UPDATE, ALTER and DELETE. It does not test every language-specific sort rule.
+
+The `matrix-nativeencodings` and `bootstrap-matrix-nativeencodings` cases add the
+remaining 36 native 5.7 text encodings. They check raw CHAR/VARCHAR/TEXT bytes,
+encoding-specific CHAR padding, NUL, defaults, NULL and DML/DDL phases. A UTF16
+primary key checks binary parameter conversion in key predicates.
+
+The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
+The live and bootstrap cases run on both 5.7-to-5.7 profiles. The inventory gives
+native error 1063 as the exclusion reason for a profile with an 8.4 source or target.
+The common selection code and both execution paths use these profile exclusions.
+
+The `lowercase-tables` variant starts all three MySQL servers with
+`lower_case_table_names=1`. Use `--case ddl-compat-table-name-case` to check
+mixed-case database/table references, native lowercase storage, LIKE, RENAME,
+row events and restart. This is separate from the default mode-0 Unicode case.
+
+Selected table-option and conversion checks:
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-table-options --case ddl-compat-alter-conversions"
+```
+
+These shared cases check comments, row format, AUTO_INCREMENT, CREATE LIKE,
+selected cross-family column conversions, following row changes and restart.
+They apply to all four profiles. Other physical options and conversion pairs
+need separate qualification.
+
+`ddl-compat-multi-table` checks cross-schema moves, swaps, DROP lists, name
+reuse and saved schema retirement. `ddl-compat-cross-schema-relationships`
+checks parent/child moves and ordered DROP. InnoDB profiles also check a
+foreign-key cascade. MyISAM profiles use the same table layout without FKs.
+Both cases include saved-state restart.
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-multi-table --case ddl-compat-cross-schema-relationships"
+```
+
+### Partition cases
+
+Select `ddl-compat-subpartitions` for subpartition metadata and data-changing
+DDL on all four profiles. It also tests restart and offline replay through a
+TRUNCATE boundary. Select `ddl-compat-partition-hash-forms` for named HASH/KEY
+partitions, ADD counts and implicit KEY columns. Existing `ddl-compat-partitions`
+and `ddl-compat-hash-list` cover the earlier partition operations. See
+[partition scope](../PLAN/PARTITION_SUPPORT.md) for limits and native references.
+
+Select `ddl-compat-partition-key-algorithm` to check KEY algorithm 1 row
+placement, ALTER, CREATE LIKE, saved schemas and offline stop/resume. Select
+`ddl-compat-partition-maintenance` to check logged partition administration,
+unlogged CHECK and LOCAL operations, and DML after restart. All four profiles
+use an InnoDB native reference for these partition cases. The external target
+uses the profile engine.
+
+Select `ddl-compat-partition-expressions` for computed partition bounds and
+native metadata comparison. Select `ddl-compat-partition-exchange-unchecked`
+for unchecked exchange, misplaced rows, the two-table journal and following
+DML. Both cases restart the applier and use offline stop/resume. The unchecked
+exchange case stops replay while the row is still in the wrong partition.
+
+`ddl-compat-partition-column-bounds` checks binary RANGE and latin1 LIST
+bounds, REORGANIZE, partition routing, DATE spelling, connection-charset
+literals, explicit charset introducers, escaped and empty bytes, restart, and
+offline replay. For single
+binary-column fixtures, the harness reads raw SHOW CREATE bounds with its
+own parser. It does not rely on the truncated I_S values that 5.7 can return.
+
+`ddl-compat-column-index-syntax` runs on all four profiles. It checks inline keys,
+grouped ADD, native index names, serial columns, index/execution options, following
+row changes, saved-state restart and offline replay. Select it with
+`--suite correctness --case ddl-compat-column-index-syntax`.
+
+`ddl-compat-alter-table-rename` runs on all four profiles. It checks standalone
+and compound ALTER renames, column changes, final-name selection, cross-schema
+moves, restart and replay. InnoDB variants also check FK metadata and cascades.
+
+`alter-rename-target84-refusal` runs on the 5.7 to 8.4 profile. It checks that
+the native parent-rename defect stops before target SQL. It also checks the
+saved checkpoint and unchanged target. This case runs after the normal writer
+stops, so its intentional failure does not enter another case.
+
+`ddl-compat-grouped-constraints` tests grouped FK and ignored CHECK clauses on
+the three 5.7-source profiles. It also checks reserved index names, later rows,
+restart and replay.
+
+`ddl-compat-primary-key-parts` checks primary-key prefixes, updates within a
+prefix, key replacement, column rename, CREATE LIKE, restart and replay.
+
+The selected cases `ddl-compat-column-renames` and `ddl-compat-alter-options`
+check translated column renames, ORDER BY and validation clauses. They include
+later DML, saved-state restart and offline stop/resume. Column renames require
+a MySQL 8.4 source.
+
+`target84-index-spatial-metadata` checks an existing 8.4 target with invisible
+indexes and SRID constraints. `ddl-compat-absent-definers` checks invoker results
+and native error 1449. Both include restart and offline replay.
+
+### Simultaneous column renames
+
+Select `ddl-compat-column-swaps` to test CHANGE swaps and rename chains on any
+profile. The case checks key identities, FIRST/AFTER placement, new columns,
+generated expressions and following DML. `ddl-compat-column-renames` also tests
+a RENAME COLUMN swap from MySQL 8.4.
+
+Select `ddl-compat-foreign-key-column-swaps` on an InnoDB target to test parent,
+child and self-reference swaps. The case checks cascades and FKs added during
+the swap. These cases include saved-state restart and offline replay with an
+unreachable source. See [scope and limits](../PLAN/SIMULTANEOUS_COLUMN_RENAMES.md).
+
+### Partition-column renames
+
+Select `ddl-compat-partition-column-renames` on any profile. The case checks
+CHANGE with replacement/removal of partitioning, subpartitions, swaps, implicit
+KEY(), row movement and later DML. Select `ddl-compat-partition-rename-syntax`
+on the forward profile to check RENAME COLUMN translation. Both cases include
+saved-state restart and offline replay. See
+[scope and results](../PLAN/PARTITION_COLUMN_RENAMES.md).
+
+### Executable comment cases
+
+Select `ddl-compat-executable-comments` for active comments, literal preservation,
+DML, restart and replay on all four profiles. Add
+`ddl-compat-executable-comments-target-gate` for a whole statement ignored by the
+5.7 target, and `ddl-compat-executable-comments-source-gate` for comments disabled
+by a 5.7 source. The latter includes the 8.4 target. The tests compare the saved
+source and target SQL and check native gate outcomes. See
+[the implementation contract](../PLAN/EXECUTABLE_COMMENTS.md).
