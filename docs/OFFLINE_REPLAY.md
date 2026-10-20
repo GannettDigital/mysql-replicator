@@ -260,7 +260,9 @@ condition satisfied is an error; reaching EOF with no limits is `endOfInput`.
 
 Use `ctl stop` for an acknowledged clean drain. The existing fail-stop rules still apply: blocked
 or uncertain writes require explicit operator resolution, not an automatic
-retry. Skips and recovery remain subject to their existing profile restrictions.
+retry. All four profiles support [retry of DDL rejected before a target write](OPERATIONS.md#retry-ddl-rejected-before-a-target-write).
+Resume replay with the same state and archive, without `--initialize`.
+Other skips and recovery actions retain their profile restrictions.
 
 Offline replay does not expand supported schemas or DDL. In particular, target
 trigger and foreign-key checks remain active. Successful replay establishes that

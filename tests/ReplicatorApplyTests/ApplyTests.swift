@@ -16,14 +16,14 @@ final class ApplyTests: XCTestCase {
         _ path: String = "/tmp/unused-state", storage: [String: Any]? = nil, applierProfiling: Bool? = nil,
         collations: [String: String]? = nil, profile: String? = nil, skipErrors: [String: Any]? = nil,
         mode: String = "gtid", jsonYearToInteger: Bool = false, preserveSourceGTIDs: Bool = false,
-        transport: String = "sql"
+        transport: String = "sql", baselineGTIDs: String? = nil
     ) throws -> ApplyConfiguration {
         var object: [String: Any] = [
             "version": 1, "stateDirectory": path,
             "source": [
                 "version": 1, "host": "source", "port": 3306, "username": "capture",
                 "passwordEnvironment": "SOURCE_PASSWORD", "serverHostname": "source", "serverID": 9001,
-                "sourceUUID": sid, "mode": "gtid", "start": ["executedGTIDs": sid + ":1-10"],
+                "sourceUUID": sid, "mode": "gtid", "start": ["executedGTIDs": baselineGTIDs ?? sid + ":1-10"],
                 "tables": [["database": "poc", "table": "items", "columns": ["signed", "utf8", "unsigned"]]],
             ],
             "target": [
@@ -56,7 +56,7 @@ final class ApplyTests: XCTestCase {
         var source = object["source"] as! [String: Any]
         source["mode"] = mode
         if mode == "file-position" {
-            source["start"] = ["file": "binlog.000001", "position": 4, "executedGTIDs": sid + ":1-10"]
+            source["start"] = ["file": "binlog.000001", "position": 4, "executedGTIDs": baselineGTIDs ?? sid + ":1-10"]
         }
         source["version"] = 2
         source.removeValue(forKey: "tables")

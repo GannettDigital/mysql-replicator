@@ -189,7 +189,9 @@ private struct Reload: RequestCommand {
 private struct Recovery: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "recovery",
-        abstract: "Inspect or resolve saved records for uncertain target writes.",
+        abstract: "Inspect or resolve blocked replication state.",
+        discussion:
+            "Stop the applier first. These commands read local state and do not connect to MySQL. Use recovery inspect before recovery resolve.",
         subcommands: [RecoveryInspect.self, RecoveryResolve.self])
 }
 
@@ -211,7 +213,15 @@ private struct RecoveryResolve: RequestCommand {
         commandName: "resolve",
         abstract: "Record a DBA decision for a blocked transaction group.",
         discussion:
-            "Check the target and saved records before resolution. Supply the affected GTID set and a reason for the decision."
+            """
+            Stop the applier and check the saved records first. Supply the exact pending GTID set and a reason for the decision.
+
+            DDL rejected before a target write intent was saved permits retry only. This applies to all supported profiles. Correct the cause first. DDL with a saved intent cannot use this command.
+
+            For uncertain InnoDB row writes, check and repair the target before you select an action. MyISAM row recovery is not supported.
+
+            Retry keeps the applied checkpoint unchanged. Resume run or replay without --initialize.
+            """
     )
     @Argument(help: "Resolution: mark-applied, retry, or skip.") var action: RecoveryAction
     @OptionGroup var config: Config

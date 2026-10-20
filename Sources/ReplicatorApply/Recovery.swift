@@ -37,6 +37,10 @@ public enum Recovery {
         let before: [DecodedValue]?
         let after: [DecodedValue]?
     }
+    public struct RejectedDDL: Encodable {
+        let sql: String
+        let sqlBase64: String
+    }
     public struct Group: Encodable {
         let sequence: Int64
         let gtid: String
@@ -45,6 +49,7 @@ public enum Recovery {
         let endPosition: String
         let relayStart: UInt64
         let relayEnd: UInt64
+        var rejectedDDL: RejectedDDL? = nil
         var rows: [Row] = []
         var expectations: [Expectation] = []
         // A full-row image is not a unique key. Preserve duplicate operations.
@@ -57,7 +62,7 @@ public enum Recovery {
         }
         enum CodingKeys: String, CodingKey {
             case sequence, gtid, file, startPosition, endPosition, relayStart, relayEnd, rows, expectations,
-                foreignKeyRelationships, fullRowChanges
+                foreignKeyRelationships, fullRowChanges, rejectedDDL
         }
         public func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -68,6 +73,7 @@ public enum Recovery {
             try c.encode(endPosition, forKey: .endPosition)
             try c.encode(relayStart, forKey: .relayStart)
             try c.encode(relayEnd, forKey: .relayEnd)
+            try c.encodeIfPresent(rejectedDDL, forKey: .rejectedDDL)
             try c.encode(rows, forKey: .rows)
             try c.encode(expectations, forKey: .expectations)
             try c.encode(foreignKeyRelationships, forKey: .foreignKeyRelationships)

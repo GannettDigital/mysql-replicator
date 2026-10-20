@@ -78,7 +78,38 @@ contain row values. Treat these diagnostics as private operational data.
 `targetFailure.statement.phase` still describes the data-write outcome.
 For example, a failed session SET leaves the source DDL phase at `notIssued`.
 Use the recovery commands to inspect a BLOCKED state before restart.
-`recovery resolve retry` currently requires journaled DML. It cannot retry DDL
-rejected before a DDL intent was saved. A direct restart also rejects that
-BLOCKED state. This session-setting fix does not change those recovery limits.
+A direct restart rejects a BLOCKED state. For DDL rejected before an intent was
+saved, use the procedure below.
 Do not infer that a write is safe to retry from the MySQL error number alone.
+
+## Retry DDL rejected before a target write
+
+All four profiles can retry a source statement rejected during DDL preparation.
+This applies to both `run` and `replay`. First stop the process and correct the
+cause, such as a missing privilege or an incorrect target session default.
+Keep the state directory and its relay files.
+
+```sh
+mysql-replicator recovery inspect --config /etc/mysql-replicator/apply.yaml
+mysql-replicator recovery resolve retry --config /etc/mysql-replicator/apply.yaml \
+  --gtids 'SOURCE_UUID:NUMBER' --reason 'Corrected the target session default'
+mysql-replicator replay --config /etc/mysql-replicator/apply.yaml
+```
+
+Replace `SOURCE_UUID:NUMBER` with the exact pending GTID from inspection. Use
+`run` in the last command for live replication. Resume without `--initialize`.
+The source or archive must still contain the rejected transaction.
+
+Inspection reports `pending[].rejectedDDL`, with the SQL and its original bytes
+in `sqlBase64`. Retry requires one complete source statement in the retained
+relay, a matching saved failure with phase `notIssued`, and no row or DDL intent.
+A missing diagnostic, damaged relay, mismatched GTID, or possible target write
+prevents this action. The command works offline and takes the state writer lock.
+
+Retry writes an audit record and changes the lifecycle to `STOPPED`. It keeps
+the applied GTID set, file position, counters, and saved schemas unchanged.
+Resume reads the statement again and repeats the normal DDL checks. This action
+does not execute DDL, skip a GTID, or mark the statement as applied.
+
+DDL with a saved intent still requires separate schema reconciliation. MyISAM
+row recovery remains outside the `recovery resolve` command's scope.

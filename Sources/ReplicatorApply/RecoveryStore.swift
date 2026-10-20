@@ -21,7 +21,6 @@ final class RecoveryStore {
     private let writable: Bool
     init(configuration: ApplyConfiguration, writable: Bool) throws {
         try configuration.validate(offline: true)
-        try require(configuration.replicationProfile.transactional, "audited recovery requires an InnoDB target")
         self.configuration = configuration
         self.writable = writable
         directory = URL(fileURLWithPath: configuration.stateDirectory)
@@ -197,6 +196,12 @@ final class RecoveryStore {
             try table.validate()
             tables[r[0]!] = table
         }
+        var failure: TargetFailureDiagnostic?
+        if try exists("target_failure"),
+            let text = try q("SELECT diagnostic_json FROM target_failure WHERE id=1").first?.first ?? nil
+        {
+            failure = try JSONDecoder().decode(TargetFailureDiagnostic.self, from: Data(text.utf8))
+        }
         var intents: [RecoveryRelay.Intent] = []
         for (index, g) in pending.enumerated() {
             try require(
@@ -217,20 +222,19 @@ final class RecoveryStore {
                         group: index, ordinal: ordinal, status: status, schemaID: id, table: table, offset: offset,
                         row: row))
             }
-            try require(
-                intents.contains { $0.group == index },
-                "recovery requires journaled DML; use the existing no-intent skip command for rejected DDL")
         }
-        if !pending.isEmpty {
+        if pending.indices.contains(where: { index in !intents.contains { $0.group == index } }) {
+            // Standalone DDL is a barrier. It cannot share a prepared DML batch.
+            try require(
+                pending.count == 1 && intents.isEmpty && reportableDDLFailure(failure, state: s, group: pending[0]),
+                "retry requires a matching rejected DDL diagnostic with no target write intents")
+            pending[0].rejectedDDL = try RejectedDDLRecovery.decode(
+                file: directory.appendingPathComponent("relay.frames"), group: pending[0], failure: failure!)
+        } else if !pending.isEmpty {
+            try require(configuration.replicationProfile.transactional, "row recovery requires an InnoDB target")
             try RecoveryRelay.decode(
                 file: directory.appendingPathComponent("relay.frames"), groups: &pending, intents: intents,
                 tables: Array(tables.values))
-        }
-        var failure: TargetFailureDiagnostic?
-        if try exists("target_failure"),
-            let text = try q("SELECT diagnostic_json FROM target_failure WHERE id=1").first?.first ?? nil
-        {
-            failure = try JSONDecoder().decode(TargetFailureDiagnostic.self, from: Data(text.utf8))
         }
         var audit: [Recovery.Audit] = []
         if try exists("recovery_audit") {
@@ -245,6 +249,13 @@ final class RecoveryStore {
             unjournaledTailBytes: actual - durable, diagnostic: s[11], targetFailure: failure, pending: pending,
             audit: audit)
     }
+    private func reportableDDLFailure(_ failure: TargetFailureDiagnostic?, state: [String?], group: Recovery.Group)
+        -> Bool
+    {
+        guard let failure else { return false }
+        return state[0] == "BLOCKED" && failure.ddlGTID == group.gtid
+            && failure.statement.phase == .notIssued && failure.rows.isEmpty && failure.ddlSQL != nil
+    }
     func resolve(action: Recovery.Action, gtids: String, reason: String) throws -> Recovery.Resolution {
         try require(writable, "recovery store is read-only")
         try require(
@@ -255,6 +266,13 @@ final class RecoveryStore {
         try require(
             ["BLOCKED", "RUNNING", "STARTING"].contains(report.lifecycle),
             "resolution requires blocked or crashed state")
+        let rejectedDDL = report.pending.contains { $0.rejectedDDL != nil }
+        try require(
+            !rejectedDDL || action == .retry,
+            "rejected DDL supports retry only; use the no-intent skip command to omit it")
+        try require(
+            configuration.replicationProfile.transactional || rejectedDDL,
+            "MyISAM recovery supports only DDL rejected before an intent was saved")
         let requested = try GTIDSet(gtids == "none" ? "" : gtids)
         var selected = try GTIDSet("")
         if action == .retry {

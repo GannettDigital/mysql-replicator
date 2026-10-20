@@ -62,12 +62,42 @@ extension SharedCorrectness.Run {
                     .target,
                     "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddl_permissions' AND TABLE_NAME='copied'"
                 ) == "0", "failed session setup created a table")
-            // No writes occurred. Keep the blocked state and start from the same
-            // baseline in a fresh state. Rejected DDL has no retry resolver yet.
+            func resolveRetry(_ label: String, failure: [String: Any]) throws {
+                guard let progress = failure["progress"] as? [String: Any],
+                    let pending = progress["pendingGTID"] as? String,
+                    let baseline = progress["appliedGTIDSet"] as? String
+                else { throw LabError("missing rejected DDL progress") }
+                func recover(_ arguments: [String]) throws -> [String: Any] {
+                    let result = try f.docker(
+                        [
+                            "run", "--rm", "--platform", "linux/amd64", "--network", "none", "--mount",
+                            "type=volume,src=\(f.volume),dst=/evidence", "--entrypoint",
+                            "/usr/local/bin/mysql-replicator", f.image,
+                            "recovery",
+                        ] + arguments + ["--config", "/evidence/" + label + ".yaml"])
+                    try result.stdout.write(to: f.output.appendingPathComponent(label + "-" + arguments[0] + ".json"))
+                    return try JSONSerialization.jsonObject(with: result.stdout) as! [String: Any]
+                }
+                let inspected = try recover(["inspect"])
+                let pendingGroups = inspected["pending"] as? [[String: Any]]
+                try require(
+                    pendingGroups?.count == 1 && pendingGroups?[0]["rejectedDDL"] != nil,
+                    "inspection did not report rejected DDL")
+                let resolved = try recover([
+                    "resolve", "retry", "--gtids", pending, "--reason",
+                    "fixture confirmed no DDL intent or target write; DBA enabled the timestamp default",
+                ])
+                try require(
+                    resolved["lifecycle"] as? String == "STOPPED"
+                        && resolved["resumeGTIDSet"] as? String == baseline, "DDL retry advanced the checkpoint")
+            }
             _ = try f.sql(.target, "SET GLOBAL explicit_defaults_for_timestamp=1")
-            config["stateDirectory"] = "/evidence/ddl-permissions-enabled"
-            let resumed = try isolated.start("ddl-permissions-enabled", config: config)
+            try resolveRetry("ddl-permissions-denied", failure: failure)
+            let resumed = try isolated.start("ddl-permissions-enabled", config: config, initialize: false)
             _ = try isolated.finish(resumed, label: "ddl-permissions-enabled", config: config)
+            try require(
+                isolated.state("ddl-permissions-enabled", "SELECT action FROM recovery_audit") == "retry",
+                "missing persisted DDL retry audit")
             let rows = "SELECT id,ts FROM ddl_permissions.copied ORDER BY id"
             try require(f.sql(.target, rows) == f.sql(.native, rows), "restricted DDL/DML differ from native")
             _ = try f.sql(.source, session + "ALTER TABLE ddl_permissions.copied ADD COLUMN n INT DEFAULT 7")
@@ -81,6 +111,47 @@ extension SharedCorrectness.Run {
             let updated = "SELECT id,ts,n FROM ddl_permissions.copied ORDER BY id"
             try require(
                 f.sql(.target, updated) == f.sql(.native, updated), "restarted restricted DDL differs from native")
+            // Repeat the rejected DDL and retry through replay. The source
+            // address is unreachable during replay and recovery runs offline.
+            var replayConfig = isolated.configuration("ddl-permissions-replay", at: start, count: 3)
+            replayConfig["target"] = target
+            replayConfig["archive"] = ["directory": "/evidence/ddl-permissions-archive", "firstFile": start.file]
+            func startCommand(_ label: String, _ command: String, initialize: Bool) throws -> String {
+                let original = f.config
+                defer { f.config = original }
+                f.config = replayConfig
+                try f.installConfig(label)
+                return try f.startClient(
+                    label,
+                    arguments: [command, "--config", "/evidence/" + label + ".yaml"]
+                        + (initialize ? ["--initialize"] : []))
+            }
+            let fetch = try startCommand("ddl-permissions-fetch", "fetch", initialize: false)
+            let fetchExit = try f.runner.run(["docker", "wait", fetch], timeout: 90).text
+            let fetchLogs = try f.docker(["logs", fetch])
+            try (fetchLogs.stdout + fetchLogs.stderr).write(
+                to: f.output.appendingPathComponent("ddl-permissions-fetch.ndjson"))
+            try require(fetchExit == "0", "DDL permissions archive fetch failed")
+            _ = try f.sql(
+                .target,
+                "SET sql_log_bin=0; DROP TABLE ddl_permissions.copied; SET GLOBAL explicit_defaults_for_timestamp=0")
+            var offlineSource = replayConfig["source"] as! [String: Any]
+            offlineSource["host"] = "127.0.0.1"
+            offlineSource["port"] = 1
+            offlineSource.removeValue(forKey: "passwordEnvironment")
+            offlineSource.removeValue(forKey: "password")
+            replayConfig["source"] = offlineSource
+            let replayDenied = try startCommand("ddl-permissions-replay-denied", "replay", initialize: true)
+            let replayFailure = try isolated.finish(
+                replayDenied, label: "ddl-permissions-replay-denied", config: replayConfig,
+                reason: "DDL requires explicit_defaults_for_timestamp=ON")
+            _ = try f.sql(.target, "SET GLOBAL explicit_defaults_for_timestamp=1")
+            try resolveRetry("ddl-permissions-replay-denied", failure: replayFailure)
+            let replay = try startCommand("ddl-permissions-replay-resumed", "replay", initialize: false)
+            let replayed = try isolated.finish(replay, label: "ddl-permissions-replay-resumed", config: replayConfig)
+            try require(replayed["transactionsApplied"] as? Int == 3, "replayed DDL checkpoint differs")
+            try require(f.sql(.target, updated) == f.sql(.native, updated), "replayed DDL/data differ from native")
+
         }
     }
 }

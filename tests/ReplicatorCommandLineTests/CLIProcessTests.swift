@@ -25,6 +25,7 @@ final class CLIProcessTests: XCTestCase {
     func testHelpAndVersionUseStdoutAndExitZero() throws {
         for args in [
             [], ["--help"], ["--version"], ["replay", "--help"], ["ctl", "--help"], ["ctl", "stop", "--help"],
+            ["recovery", "--help"], ["recovery", "inspect", "--help"], ["recovery", "resolve", "--help"],
             ["help", "recovery", "resolve"],
         ] {
             let (status, out, error) = try run(args)

@@ -162,8 +162,10 @@ unreferenced tail archive; preserve it with the rest of the state directory.
 `transactionsApplied` counts processed groups, including explicitly skipped ones;
 skips add no applied rows. The audit distinguishes skipped groups from accepted
 commits. Audit history is not automatically pruned; include it in storage planning.
-Recovery currently accepts formats 9 through 14 for InnoDB-profile DML only. DDL reconciliation,
-MyISAM recovery and automatic repair remain outside this command's scope.
+Recovery accepts formats 9 through 14 for InnoDB-profile DML. All four profiles
+also support [retry of DDL rejected before an intent was saved](OPERATIONS.md#retry-ddl-rejected-before-a-target-write).
+DDL with a saved intent, MyISAM row recovery, and automatic repair remain outside
+this command's scope.
 
 SQLite state format 14 records the GTID preservation setting, table filters, and DML transport. It also retains
 tagged source GTIDs and the profile and table-name
