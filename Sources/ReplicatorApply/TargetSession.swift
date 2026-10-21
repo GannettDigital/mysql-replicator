@@ -7,7 +7,10 @@ import ReplicatorLogging
 
 final class TargetSession {
     let group: MultiThreadedEventLoopGroup
-    let connection: MySQLConnection
+    let metadataConnection: MySQLConnection
+    private let writeConnection: MySQLConnection?
+    // Existing session-local operations keep the writer. Preview has no writer.
+    var connection: MySQLConnection { writeConnection ?? metadataConnection }
     let timings: StageTimings
     let jsonScratchID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))
     var jsonScratchTables = Set<String>()
@@ -29,26 +32,48 @@ final class TargetSession {
     var lockEpoch = TableLockEpoch()
     var packetByteLimit = MySQLPacket.maximumMessageBytes
     var contract: TargetContract { config.replicationProfile.targetContract }
+    let metadataOnly: Bool
+    let queries: TargetQueryConnections
     let config: ApplyConfiguration
-    init(configuration: ApplyConfiguration, password: String, timings: StageTimings = .init()) throws {
+    init(
+        configuration: ApplyConfiguration, password: String, timings: StageTimings = .init(), metadataOnly: Bool = false
+    ) throws {
+        self.metadataOnly = metadataOnly
         self.timings = timings
         config = configuration
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        var opened: [MySQLConnection] = []
         do {
             let c = configuration.target
             try c.validate()
             let address =
                 try c.unixSocket.map { try SocketAddress(unixDomainSocketPath: $0) }
                 ?? SocketAddress.makeAddressResolvingHost(c.host!, port: c.port!)
-            let loop = group.next()
-            connection = try timings.measure("target.connect") {
-                try MySQLConnection.connect(
-                    to: address, username: c.username, database: "", password: password,
-                    tlsConfiguration: c.tlsConfiguration(), serverHostname: c.serverHostname, requireTLS: c.requireTLS,
-                    handshakeTimeout: .seconds(10), on: loop
-                ).wait()
+            let eventLoops = group
+            func connect() throws -> MySQLConnection {
+                let connection = try timings.measure("target.connect") {
+                    try MySQLConnection.connect(
+                        to: address, username: c.username, database: "", password: password,
+                        tlsConfiguration: c.tlsConfiguration(), serverHostname: c.serverHostname,
+                        requireTLS: c.requireTLS,
+                        handshakeTimeout: .seconds(10), on: eventLoops.next()
+                    ).wait()
+                }
+                opened.append(connection)
+                return connection
             }
+            metadataConnection = try connect()
+            writeConnection = try metadataOnly ? nil : connect()
+            let reader = MySQLTargetQueryConnection(metadataConnection)
+            let writer: any TargetQueryConnection
+            if let writeConnection {
+                writer = MySQLTargetQueryConnection(writeConnection)
+            } else {
+                writer = DiscardTargetQueryConnection()
+            }
+            queries = TargetQueryConnections(reads: reader, writes: writer, metadataOnly: metadataOnly)
         } catch {
+            for connection in opened { try? connection.close().wait() }
             try? group.syncShutdownGracefully()
             let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT
             if isTargetTransportFailure(error) || missingSocket {
@@ -58,7 +83,8 @@ final class TargetSession {
         }
     }
     deinit {
-        try? connection.close().wait()
+        try? writeConnection?.close().wait()
+        try? metadataConnection.close().wait()
         try? group.syncShutdownGracefully()
     }
     func profile<T>(_ stage: String, _ body: () throws -> T) rethrows -> T {
@@ -66,14 +92,29 @@ final class TargetSession {
         return try timings.measure("apply.detail." + stage, body)
     }
     func checkConnection() throws {
-        if connection.isClosed { throw TargetConnectionFailure(description: "target connection closed") }
+        if metadataConnection.isClosed || writeConnection?.isClosed == true {
+            throw TargetConnectionFailure(description: "target connection closed")
+        }
     }
     /// Never retry SQL. A timeout closes the socket and leaves the outstanding
     /// intent uncertain. Recovery is a later, separately qualified increment.
     func query(
         _ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10,
-        mutation: Bool = false, rawSQL: Data? = nil
+        mutation: Bool = false, rawSQL: Data? = nil, metadata: Bool = false
     ) throws -> ([MySQLRow], UInt64?) {
+        let queryConnection =
+            queries.usesMetadataConnection(sql, mutation: mutation, rawSQL: rawSQL, metadata: metadata)
+            ? metadataConnection : connection
+        if metadataOnly {
+            // Preview results must not enter the mutation trace or GTID wrapper.
+            try checkConnection()
+            let timer = queryConnection.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
+                _ = queryConnection.close()
+            }
+            defer { timer.cancel() }
+            return try queries.execute(
+                sql, binds: binds, textProtocol: textProtocol, rawSQL: rawSQL, mutation: mutation, metadata: metadata)
+        }
         if mutation, let identity = statementSourceGTID {
             statementSourceGTID = nil
             try assignSourceGTID(identity)
@@ -103,17 +144,16 @@ final class TargetSession {
                 "target request is \(requestBytes) bytes; max_allowed_packet permits \(packetByteLimit) bytes; increase the target setting and reconnect"
             )
         }
-        let timer = connection.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
-            _ = self.connection.close()
+        let timer = queryConnection.eventLoop.scheduleTask(in: .seconds(Int64(timeoutSeconds))) {
+            _ = queryConnection.close()
         }
         defer { timer.cancel() }
-        var affected: UInt64?
         if mutation {
             statementTrace = TargetStatementTrace(
                 phase: .possiblyExecuted, sql: sql, sqlBase64: rawSQL?.base64EncodedString())
         }
         do {
-            let rows = try ApplicationLog.measure(
+            let result = try ApplicationLog.measure(
                 "Target query", level: .debug,
                 metadata: [
                     "purpose": .string(TargetQueryPurpose.classify(sql, mutation: mutation)),
@@ -122,20 +162,31 @@ final class TargetSession {
             ) {
                 try timings.measure("target.sql") {
                     try profile(textProtocol ? "sql.text" : "sql.prepared") {
-                        if let rawSQL { return try connection.simpleQueryBytes(Array(rawSQL)).wait() }
-                        return try textProtocol
-                            ? connection.simpleQuery(sql).wait()
-                            : connection.cachedQuery(sql, binds, onMetadata: { affected = $0.affectedRows }).wait()
+                        try queries.execute(
+                            sql, binds: binds, textProtocol: textProtocol, rawSQL: rawSQL, mutation: mutation,
+                            metadata: metadata)
                     }
                 }
             }
             if mutation { statementTrace.phase = .acknowledged }
-            return (rows, affected)
+            return result
         } catch let e where isTargetTransportFailure(e) {
             throw TargetConnectionFailure(description: "target connection interrupted")
         } catch let e as MySQLError {
             throw TargetSQLDiagnostic.applyError(e, sql: sql)
         } catch { throw ApplyError("target transport failure; SQL outcome may be uncertain") }
+    }
+    /// Server metadata only. Session variables, scratch tables, row reads and
+    /// lock ownership must use query() on the application connection.
+    func metadataQuery(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false) throws
+        -> ([MySQLRow], UInt64?)
+    {
+        // A second session can wait on our own explicit table lock. Preserve
+        // the locked session for these reads; ordinary discovery unlocks first.
+        try query(sql, binds, textProtocol: textProtocol, metadata: lockEpoch.table == nil)
+    }
+    func metadataScalar(_ sql: String, _ binds: [MySQLData] = []) throws -> String? {
+        try metadataQuery(sql, binds).0.first?.column("v")?.string
     }
     func scalar(_ sql: String, _ binds: [MySQLData] = []) throws -> String? {
         try query(sql, binds).0.first?.column("v")?.string
@@ -149,7 +200,7 @@ final class TargetSession {
             "replication_applier_status_by_coordinator",
         ]
         .map { "SELECT SERVICE_STATE FROM performance_schema." + $0 }.joined(separator: " UNION ALL ")
-        let rows = try query(sql).0
+        let rows = try metadataQuery(sql).0
         try require(
             rows.allSatisfy { $0.column("SERVICE_STATE")?.string == "OFF" },
             "native replication worker/receiver is active or indeterminate")
@@ -176,6 +227,13 @@ final class TargetSession {
         }
         try require(uuid != config.source.sourceUUID.lowercased(), "source and target UUID must differ")
         targetUUID = uuid
+        if !metadataOnly {
+            let identity = try metadataQuery("SELECT @@server_uuid AS uuid,VERSION() AS version").0.first
+            try require(
+                identity?.column("uuid")?.string?.lowercased() == uuid
+                    && identity?.column("version")?.string == r?.column("version")?.string,
+                "target read and write connections must use the same MySQL server")
+        }
         try require(
             r?.column("mode")?.string == contract.gtidMode
                 && r?.column("consistency")?.string == contract.gtidConsistency,
@@ -227,7 +285,12 @@ final class TargetSession {
         _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
     }
     private(set) var insertByteLimit = 1024 * 1024
-    var discovered: [SQLNameKey: ApplyTable] = [:]
+    let schemaCache = SchemaMetadataCache()
+    var discovered: [SQLNameKey: ApplyTable] {
+        get { schemaCache.tables }
+        set { schemaCache.tables = newValue }
+        _modify { yield &schemaCache.tables }
+    }
     // Dedicated replica: target-local schema/grant/channel changes during a run
     // are outside the contract. Keep validated plans across bounded lock epochs.
     // A new connection starts empty; ordered DDL clears these before and after.
@@ -237,24 +300,16 @@ final class TargetSession {
             guard let database = event.database, let name = event.table, event.wireColumns != nil else {
                 throw ApplyError("missing table-map metadata")
             }
-            let identity = SQLNameKey.table(database, name)
-            let table: ApplyTable
-            if let cached = discovered[identity] {
-                ApplicationLog.logger.debug(
-                    "Use cached target schema",
-                    metadata: ["cache": "hit", "database": .string(database), "table": .string(name)])
-                table = cached
-            } else {
-                try require(discovered.count < maximumCachedTables, "discovered schema limit reached")
-                // Discovery is a drained barrier. Release any prior table lock
-                // before querying metadata for a previously unseen table.
+            let tableName = TableName(database: database, table: name)
+            let table = try schemaCache.table(tableName) { name in
+                // Discovery is a drained barrier. Release prior table locks
+                // before a metadata read, including on a separate connection.
                 try unlock()
-                table = try readSchema(database: database, name: name)
-            }
+                return try readSchema(database: name.database, name: name.table)
+            }!
             try Self.validateTableMap(
                 event, table: table, compatibility: config.compatibilityPolicy,
                 legacyMetadata: config.replicationProfile.sourceContract.requiresHistoricalSchema)
-            discovered[identity] = table
             return table
         }
     }
@@ -274,11 +329,11 @@ final class TargetSession {
         ) {
             try profile("target.read_schema") {
                 let binds = [MySQLData(string: database), MySQLData(string: name)]
-                let columns = try query(
+                let columns = try metadataQuery(
                     "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
                     binds
                 ).0
-                let keys = try query(
+                let keys = try metadataQuery(
                     "SELECT COLUMN_NAME,SUB_PART,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",
                     binds
                 ).0
@@ -378,7 +433,7 @@ final class TargetSession {
     }
     func readIndexes(database: String, name: String, primaryKey: [ApplyIndexPart]) throws -> [ApplyIndex] {
         let expressionColumn = contract.versionPrefix == "8.4." ? ",EXPRESSION,IS_VISIBLE" : ""
-        let rows = try query(
+        let rows = try metadataQuery(
             "SELECT INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,INDEX_TYPE,COLLATION\(expressionColumn) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",
             [.init(string: database), .init(string: name)]
         ).0
@@ -462,7 +517,7 @@ final class TargetSession {
     private func verifyTargetSchema(_ t: ApplyTable, validateRelationships: Bool) throws {
         try contract.validateSchemaFeatures(t)
         let binds = [MySQLData(string: t.database), MySQLData(string: t.table)]
-        let metadata = try query(
+        let metadata = try metadataQuery(
             "SELECT ENGINE,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?", binds
         ).0.first
         try require(
@@ -473,7 +528,7 @@ final class TargetSession {
         try require(
             metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,
             "target table defaults differ from historical schema")
-        let columns = try query(
+        let columns = try metadataQuery(
             "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
             binds
         ).0
@@ -488,7 +543,7 @@ final class TargetSession {
                 == t.secondaryIndexes, "target indexes differ from historical schema")
         try verifyTriggerVisibility(t)
         try require(
-            try query(
+            try metadataQuery(
                 "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?",
                 binds
             ).0.isEmpty, "target triggers are unsupported")
@@ -501,7 +556,7 @@ final class TargetSession {
         // Without TRIGGER privilege an empty information_schema result can hide
         // triggers. Require visibility explicitly before asserting their absence.
         let grantee = "CONCAT(CHAR(39),REPLACE(CURRENT_USER(),'@',CONCAT(CHAR(39),'@',CHAR(39))),CHAR(39))"
-        let grants = try scalar(
+        let grants = try metadataScalar(
             "SELECT (EXISTS(SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='TRIGGER') OR EXISTS(SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='TRIGGER' AND TABLE_SCHEMA=?) OR EXISTS(SELECT 1 FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='TRIGGER' AND TABLE_SCHEMA=? AND TABLE_NAME=?)) AS v",
             [binds[0], binds[0], binds[1]])
         try require(grants == "1", "TRIGGER visibility privilege required for target schema validation")

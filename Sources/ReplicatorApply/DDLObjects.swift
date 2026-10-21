@@ -149,7 +149,7 @@ extension TargetSession {
             sql =
                 "SELECT COUNT(*) AS v FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=? AND ROUTINE_TYPE='\(object.kind.rawValue)'"
         }
-        return try scalar(sql, [.init(string: name.database), .init(string: name.table)]) != "0"
+        return try metadataScalar(sql, [.init(string: name.database), .init(string: name.table)]) != "0"
     }
     func prepareObjectDDL(
         _ statement: DDLStatement, object: ObjectDDL, source: QueryControl, context: QuerySessionContext

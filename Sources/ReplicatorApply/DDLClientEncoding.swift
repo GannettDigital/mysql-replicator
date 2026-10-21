@@ -49,7 +49,7 @@ extension TargetSession {
                 : CharacterSetRegistry.charsetName(connection, on: server)
             let from = CharacterSetRegistry.charsetName(client, on: server)
             let expression = "CONVERT(CONVERT(? USING " + from + ") USING " + destination + ")"
-            let rows = try self.query(
+            let rows = try self.metadataQuery(
                 "SELECT CONVERT(v USING utf8mb4) AS text_value,CAST(v AS BINARY) AS raw_value FROM (SELECT "
                     + expression + " AS v) AS converted", [MySQLData(type: .blob, buffer: ByteBuffer(bytes: bytes))]
             ).0

@@ -215,7 +215,7 @@ extension PartitionChange {
 
 extension TargetSession {
     func readPartitions(database: String, name: String, columns: [ApplyColumn]) throws -> [ApplyPartition] {
-        let rows = try query(
+        let rows = try metadataQuery(
             "SELECT PARTITION_NAME,SUBPARTITION_NAME,PARTITION_METHOD,SUBPARTITION_METHOD,PARTITION_EXPRESSION,SUBPARTITION_EXPRESSION,PARTITION_DESCRIPTION FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND PARTITION_NAME IS NOT NULL ORDER BY PARTITION_ORDINAL_POSITION,SUBPARTITION_ORDINAL_POSITION",
             [.init(string: database), .init(string: name)]
         ).0

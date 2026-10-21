@@ -46,7 +46,7 @@ then removes the probe. It does not create the configured state directory. It
 also probes the support bundle directory when `supportBundle.onBlocked` is true.
 These probes do not prove filesystem crash durability.
 
-Target checks use a new connection. They check authentication, version, UUID,
+Target checks use new metadata and write connections. They check authentication, version, UUID,
 GTID and binlog settings, TLS, packet size, engine availability, native channels,
 and required session settings. Session probes include `GTID_NEXT=AUTOMATIC` when
 required by the profile and `explicit_defaults_for_timestamp`. They do not assign
@@ -70,6 +70,54 @@ tagged-GTID privileges, BINLOG event privileges, or MyISAM scratch-object access
 Run and replay still perform their startup and per-operation checks. See
 [installation requirements](INSTALL.md), [GTID permissions](GTID_PRESERVATION.md),
 and [BINLOG requirements](BINLOG_TRANSPORT.md).
+
+## Dry run
+
+Decode and inspect a range without target writes:
+
+```sh
+mysql-replicator replay --config replay.yaml --dry-run | jq
+mysql-replicator run --config apply.yaml --dry-run | jq
+```
+
+`--dry-run` is a flag on `run` and `replay`. Use the normal YAML
+configuration. Live mode requires `source.stopAfterTransactions`, `source.stopAfterGTIDs`, or
+`source.nonBlocking: true`. Replay stops at the configured limit or archive EOF.
+Replay does not resolve source credentials or connect to the source.
+
+The command uses the configured source baseline. It does not read or write
+SQLite, create the state directory, take the target writer lock, or advance an
+applied checkpoint. It rejects the combination of `--dry-run` and `--initialize`.
+Metadata reads use a real target connection. Writes go to a dummy executor, which discards them. No target DDL,
+DML, GTID assignment, BINLOG command, or scratch-table write reaches MySQL.
+
+The command checks decoded events, filters, table-map compatibility, DDL syntax,
+SQL templates, and SQL/BINLOG transport selection. It checks BINLOG framing and
+packet limits when it selects BINLOG. It writes sorted JSON records to stdout:
+`dry_run_transaction` for each inspected group, followed by `dry_run_summary`.
+The summary reports inspected GTIDs and position. These are not applied GTIDs.
+`executor: skip` identifies a filtered group or a DDL policy skip. An inspection
+failure stops the preview. It does not exercise `skipErrors`.
+
+DDL invalidates the metadata cache. The next lookup reads the actual target
+schema again. Because DDL was discarded, that schema has not changed. For
+example, CREATE TABLE can pass inspection and the next INSERT can fail because
+the table is absent. ALTER TABLE can cause a later table-map mismatch. A
+successful preview does not prove that the complete range can be applied.
+The command does not simulate schema changes or inspect target row values.
+
+Exit status is 0 when inspection finishes, or 1 on failure. An inspection
+failure includes `reason`, `pendingGTID` when known, and the last inspected
+position. `status: unresolved` means required metadata could not be obtained
+without an operation outside the allowed metadata reads. Other inspection
+errors use `status: failed`. Cancellation uses `status: cancelled`. Setup errors
+use stderr. Logs also use stderr. Use `set -o pipefail` to retain failure status
+when piping output to `jq`.
+
+The summary lists unchecked behavior. This includes final SQL bindings, JSON
+scratch expressions, batching, execution privileges, constraints, triggers,
+generated values, and row matches. Use a disposable target with run or replay
+to check actual execution. See [offline replay](OFFLINE_REPLAY.md).
 
 ## Application logs
 

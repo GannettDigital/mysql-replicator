@@ -185,7 +185,7 @@ extension TargetSession {
             // starts db_charset from global collation_database, not the logged
             // collation_server. Source and target baseline defaults must match.
             guard
-                let row = try query(
+                let row = try metadataQuery(
                     "SELECT c.CHARACTER_SET_NAME,c.COLLATION_NAME FROM information_schema.COLLATIONS c WHERE c.COLLATION_NAME=@@GLOBAL.collation_database"
                 ).0.first,
                 let charset = row.column("CHARACTER_SET_NAME")?.string,

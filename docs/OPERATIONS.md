@@ -138,3 +138,34 @@ does not execute DDL, skip a GTID, or mark the statement as applied.
 
 DDL with a saved intent still requires separate schema reconciliation. MyISAM
 row recovery remains outside the `recovery resolve` command's scope.
+
+## Inspect a range without writes
+
+Use `mysql-replicator replay --config replay.yaml --dry-run` to inspect
+a local archive. Use `run --dry-run` for a finite live range. The command reads
+target metadata and discards writes. It does not open replication state.
+Discarded DDL can cause later events to fail against the unchanged target schema.
+See [dry-run checks and limits](COMMAND_LINE.md#dry-run).
+
+## Target connections and schema cache
+
+Run and replay open two target connections with the same configured credentials
+and TLS or socket settings. One connection reads server schema metadata. The
+other executes DML, DDL, and session commands. Startup requires the same server
+UUID and version on both connections. A connection failure uses the existing
+target failure and reconnect path. The tool does not retry individual SQL
+statements on a new connection.
+
+Session variables, temporary-table reads, lock checks, and SHOW CREATE operations
+that depend on session settings stay on the write connection. Metadata checks
+under an explicit table lock also use that connection to avoid waiting on the
+tool's own lock. Ordinary discovery releases the old table lock before lookup.
+
+The shared schema cache uses database and table names as keys. Entries have no
+time-based expiry or periodic refresh. The tool assumes that it is the only
+target writer. Entries remain until DDL invalidates or replaces them, or a new
+target session rebuilds the cache. The size limit stops growth; it does not evict
+entries. Normal apply
+updates the cache with verified schema changes after DDL. Dry run clears its
+cache after discarded DDL and reads the unchanged target again. No schema is
+predicted in dry run. Metadata read-ahead is not implemented yet.

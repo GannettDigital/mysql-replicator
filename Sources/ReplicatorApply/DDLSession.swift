@@ -22,7 +22,7 @@ extension TargetSession {
         let clientEncodingID = CharacterSetRegistry.clientEncodingID(
             context.clientCharset,
             target: contract.versionPrefix == "5.7." ? .mysql57 : .mysql84)
-        let charset = try query(
+        let charset = try metadataQuery(
             "SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",
             [.init(string: String(clientEncodingID))]
         ).0.first
@@ -32,7 +32,7 @@ extension TargetSession {
             )
         }
         _ = try query("SET SESSION character_set_client=?", [.init(string: client)])
-        if let collation = try scalar(
+        if let collation = try metadataScalar(
             "SELECT COLLATION_NAME AS v FROM information_schema.COLLATIONS WHERE ID=?",
             [.init(string: String(config.compatibilityPolicy.targetID(context.connectionCollation)))])
         {
@@ -51,7 +51,7 @@ extension TargetSession {
         _ statement: DDLStatement, name: String, conditional: Bool, source: QueryControl, context: QuerySessionContext
     ) throws -> PreparedDDL {
         let exists =
-            try scalar(
+            try metadataScalar(
                 "SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?", [.init(string: name)])
             != "0"
         try require(exists || conditional, "DDL DROP DATABASE target is absent")
@@ -61,7 +61,7 @@ extension TargetSession {
             try requireForeignKeyVisibility()
             // Include every FK participant in this database, even if no row
             // event has loaded it. The graph planner also loads outside tables.
-            let rows = try query(
+            let rows = try metadataQuery(
                 "SELECT DISTINCT BINARY TABLE_NAME AS name FROM information_schema.KEY_COLUMN_USAGE WHERE BINARY TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL UNION SELECT DISTINCT BINARY REFERENCED_TABLE_NAME AS name FROM information_schema.KEY_COLUMN_USAGE WHERE BINARY REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL",
                 [.init(string: name), .init(string: name)]
             ).0

@@ -27,7 +27,8 @@ final class CLIProcessTests: XCTestCase {
             [], ["--help"], ["--version"], ["replay", "--help"], ["ctl", "--help"], ["ctl", "stop", "--help"],
             ["recovery", "--help"], ["recovery", "inspect", "--help"], ["recovery", "resolve", "--help"],
             ["help", "recovery", "resolve"],
-            ["validate", "--help"], ["config-help", "--command", "validate"],
+            ["run", "--dry-run", "--help"], ["replay", "--dry-run", "--help"], ["validate", "--help"],
+            ["config-help", "--command", "validate"],
             ["config-help", "--help"], ["config-help"], ["config-help", "--command", "ctl"],
             ["run", "--debug", "--help"], ["config-help", "--verbose", "--command", "ctl"],
         ] {
@@ -58,6 +59,8 @@ final class CLIProcessTests: XCTestCase {
 
     func testArgumentFailuresKeepJSONOnStderrAndExitOne() throws {
         for args in [
+            ["run", "--dry-run", "--initialize", "--config", "/missing.yaml"],
+            ["replay", "--dry-run", "--initialize", "--config", "/missing.yaml"],
             ["run"], ["replay"], ["ctl"], ["recovery"], ["ctl", "wrong"],
             ["recovery", "resolve", "invalid"], ["skip"], ["fetch"], ["support-bundle"], ["inspect"],
             ["inspect", "--source-config"], ["not-a-command"], ["reply", "--config", "/missing.yaml"],
@@ -205,6 +208,19 @@ final class CLIProcessTests: XCTestCase {
             archive: {directory: '\(archive.path)'}
             """
         try Data(yaml.utf8).write(to: config)
+        for mode in ["run", "replay"] {
+            let (previewStatus, previewOut, previewError) = try run(
+                [
+                    mode, "--config", config.path, "--dry-run", "--source.stopAfterTransactions", "1",
+                ] + (mode == "run" ? ["--source.password", secret] : []))
+            XCTAssertEqual(previewStatus, 1)
+            XCTAssertTrue(previewOut.isEmpty)
+            let failure = try XCTUnwrap(JSONSerialization.jsonObject(with: previewError) as? [String: Any])
+            XCTAssertEqual(failure["error"] as? String, "dry_run_failed")
+            XCTAssertEqual(failure["reason"] as? String, "target connection unavailable")
+            XCTAssertFalse(String(decoding: previewError, as: UTF8.self).contains(secret))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("state").path))
+        }
         let (validationStatus, validationOut, validationError) = try run([
             "validate", "--config", config.path, "--mode", "replay",
         ])

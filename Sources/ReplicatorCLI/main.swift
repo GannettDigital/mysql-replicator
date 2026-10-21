@@ -104,6 +104,39 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         }
         try FileHandle.standardOutput.write(contentsOf: data + Data([10]))
         return
+    case .dryRun(let path, let mode):
+        let file = URL(fileURLWithPath: path)
+        let data = try overrides.read(from: file)
+        let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: data, sourceURL: file)
+        struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration? }
+        let archive =
+            try mode == "replay"
+            ? ConfigurationFile.decode(ArchiveOptions.self, from: data, sourceURL: file).archive : nil
+        let cancellation = CaptureCancellation()
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+        let signals = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler { cancellation.cancel() }
+            source.resume()
+            return source
+        }
+        defer { signals.forEach { $0.cancel() } }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        do {
+            let summary = try DryRun.run(
+                configuration: config, offline: mode == "replay", archive: archive,
+                cancellation: cancellation,
+                emit: {
+                    try FileHandle.standardOutput.write(contentsOf: encoder.encode($0) + Data([10]))
+                })
+            try FileHandle.standardOutput.write(contentsOf: encoder.encode(summary) + Data([10]))
+        } catch let failure as DryRunFailure {
+            try FileHandle.standardOutput.write(contentsOf: encoder.encode(failure.summary) + Data([10]))
+            throw failure
+        }
+        return
     case .validate(let path, let mode):
         let report: ValidationReport
         do {
@@ -289,6 +322,7 @@ func recover(
     return
 }
 
+var dryRunRequested = false
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
     let overrides: ConfigurationOverrides
@@ -296,6 +330,7 @@ do {
         throw CLIParseError(description: error.description)
     }
     let invocation = try ReplicatorCommandLine.parseInvocation(overrides.arguments)
+    if case .dryRun = invocation.request { dryRunRequested = true }
     ApplicationLog.configure(level: invocation.logLevel)
     switch invocation.request {
     case .help, .version, .configurationHelp:
@@ -307,7 +342,7 @@ do {
         }
     }
 } catch {
-    if error is ValidationReport { exit(1) }  // The complete checklist is already on stdout.
+    if error is ValidationReport || error is DryRunFailure { exit(1) }  // The complete checklist is already on stdout.
     var diagnostic: [String: Any]
     if let failure = error as? CLIParseError {
         diagnostic = ["error": "argument_error", "reason": failure.description]
@@ -317,6 +352,8 @@ do {
         if let path = failure.keyPath { diagnostic["keyPath"] = path }
         if let line = failure.line { diagnostic["line"] = line }
         if let column = failure.column { diagnostic["column"] = column }
+    } else if dryRunRequested {
+        diagnostic = ["error": "dry_run_failed", "reason": String(describing: error)]
     } else if CommandLine.arguments.dropFirst().drop(while: { $0 == "--verbose" || $0 == "--debug" }).first == "skip" {
         diagnostic = ["error": "skip_failed", "reason": String(describing: error)]
     } else if let failure = error as? DecoderError {

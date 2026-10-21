@@ -22,10 +22,11 @@ The findings below describe the initial review. Use this table for current statu
 | OP-08 | Partial | Audited retry for DDL rejected before an intent was saved (`3f3d3d0`). Unit tests cover all four profiles. Live and replay tests pass on 5.7 → 5.7 InnoDB. Coordinate output and the full failure matrix remain. |
 | OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
 | OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
-| OP-04 | Implemented, uncommitted | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
-| OP-05–07, OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
+| OP-04 | Committed (`6cf57c3`) | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
+| OP-05 | Implemented | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
+| OP-06–07, OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
 
-Next: OP-05 dry-run semantics. Continue the delivery order below.
+Next: OP-06 replay startup ordering.
 
 ## Issue list
 
@@ -154,7 +155,7 @@ Validation is a readiness check, not proof that all future DDL/DML will succeed.
 
 ## OP-05 — Dry run with separate state
 
-Proposed scope: decode the selected range, apply filters and compatibility rules,
+Implemented scope: decode the selected range, apply filters and compatibility rules,
 and report the planned executor and operations. Do not issue target DML, DDL,
 GTID assignments, or scratch-table writes. Target metadata reads are permitted.
 
@@ -164,8 +165,10 @@ writes and DDL are not generally rollbackable.
 - Never initialize, lock as a writer, or update the production apply checkpoint.
 - Keep preview state in memory, or in an explicitly separate directory. Any saved
   preview position must be labelled as inspected, never applied.
-- Define how the preview models CREATE/ALTER/DROP for later row events. Use a
-  separate schema model; report unresolved server-generated metadata honestly.
+- Use the shared `SchemaMetadataCache` with a supplied metadata reader. Discard
+  DDL and clear the preview cache. Read the actual, unchanged target schema on
+  the next lookup. Do not predict schema changes. Later events can fail because
+  CREATE, ALTER, DROP, or RENAME was not executed.
 - Mark target checks that need actual execution as unchecked. A dry run cannot
   guarantee constraints, generated values, triggers, or target execution behavior.
 - Define finite stop rules and reject ambiguous combinations with `--initialize`.
@@ -173,6 +176,26 @@ writes and DDL are not generally rollbackable.
 Acceptance: record all issued target commands in tests and prove there are no
 writes or GTID changes. Production state stays byte-for-byte unchanged. Test DDL
 followed by DML, filters, SQL/BINLOG selection, and early stop.
+
+Read and write interfaces are separate. Normal apply opens two physical MySQL
+connections. Server schema queries use the metadata connection. The write
+connection owns transactions, session settings, locks, and temporary tables.
+Session-dependent reads and reads under an explicit table lock stay on that
+connection. Both connections must report the same server UUID and version.
+Dry run opens only the metadata connection and replaces the writer with a
+connection that discards commands. It inspects SQL templates; it does
+not verify final bindings, scratch expressions, or target execution behavior.
+
+Cache policy: no TTL, periodic refresh, or automatic eviction. Entries remain
+until explicit DDL invalidation/replacement or target-session reconstruction.
+The applier is the only target writer. The table limit bounds memory use.
+
+Future work: add bounded metadata read-ahead on the separate connection.
+A DDL barrier must discard old metadata and prepared work that depends on it.
+New metadata reads must wait for the DDL to complete. Invalidate both names for
+rename and include FK dependencies and database DDL. Session-local reads must
+stay on the write session. A separate connection cannot bypass server metadata
+locks. Measure this change before enabling it.
 
 Dependency: OP-04 supplies reusable checks; OP-03 supplies readable progress.
 
@@ -350,8 +373,9 @@ harness. Large table counts must not produce unbounded memory or status response
 
 1. Address the production DDL blocker and its diagnostics: OP-10 and OP-09.
 2. Improve CLI errors/help and add logging: OP-01, OP-02, OP-03.
-3. Add reusable validation checks, then dry run: OP-04 and OP-05. These remain
-   distinct commands because readiness checks and replay previews have different cost.
+3. Add reusable validation checks, then dry run: OP-04 and OP-05. Use the
+   `validate` command for readiness checks and `run --dry-run` or `replay --dry-run`
+   for event inspection. These checks have different costs.
 4. Improve replay startup, index persistence, and recovery output: OP-06–OP-08.
 5. Measure schema-discovery cost and reduce verified round trips: OP-11. Query
    attribution from OP-10 can start this investigation earlier.

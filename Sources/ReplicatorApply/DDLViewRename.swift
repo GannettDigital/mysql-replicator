@@ -50,7 +50,7 @@ extension TargetSession {
             "VIEW_DEFINITION", "DEFINER", "SECURITY_TYPE", "CHECK_OPTION", "CHARACTER_SET_CLIENT",
             "COLLATION_CONNECTION",
         ]
-        let rows = try query(
+        let rows = try metadataQuery(
             "SELECT " + fields.joined(separator: ",")
                 + " FROM information_schema.VIEWS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",
             [.init(string: name.database), .init(string: name.table)]

@@ -111,7 +111,9 @@ extension TargetSession {
             }
         }
         for change in plan.additional {
-            if let before = change.before { discovered.removeValue(forKey: before.identity) }
+            if let before = change.before {
+                schemaCache.invalidate(TableName(database: before.database, table: before.table))
+            }
         }
         for change in plan.additional { if let after = change.after { discovered[after.identity] = after } }
         try invalidateStatements()

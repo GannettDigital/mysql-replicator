@@ -3,6 +3,25 @@ import XCTest
 @testable import ReplicatorCommandLine
 
 final class CommandLineTests: XCTestCase {
+    func testDryRunFlagSelectsModeAndRejectsInitialize() throws {
+        for mode in ["run", "replay"] {
+            XCTAssertEqual(
+                try ReplicatorCommandLine.parse([mode, "--config", "preview.yaml", "--dry-run"]),
+                .dryRun(config: "preview.yaml", mode: mode))
+            XCTAssertEqual(
+                try ReplicatorCommandLine.parse([mode, "--dry-run", "--config", "preview.yaml"]),
+                .dryRun(config: "preview.yaml", mode: mode))
+            for flags in [
+                ["--initialize", "--dry-run"], ["--dry-run", "--initialize"],
+                ["--dry-run", "--dry-run"], ["--dry-run", "--mode", "replay"],
+            ] {
+                XCTAssertThrowsError(try ReplicatorCommandLine.parse([mode, "--config", "preview.yaml"] + flags))
+            }
+        }
+        XCTAssertThrowsError(
+            try ReplicatorCommandLine.parse(["dry-run", "--config", "preview.yaml", "--mode", "replay"]))
+        XCTAssertThrowsError(try ReplicatorCommandLine.parse(["fetch", "--config", "preview.yaml", "--dry-run"]))
+    }
     func testValidationModeIsExplicitAndTyped() throws {
         for mode in ["run", "replay"] {
             XCTAssertEqual(

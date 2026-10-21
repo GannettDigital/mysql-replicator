@@ -6,6 +6,7 @@ public enum CLIRequest: Equatable {
     case configurationHelp(command: String?, section: String?)
     case version
     case apply(config: String, initialize: Bool, offline: Bool)
+    case dryRun(config: String, mode: String)
     case validate(config: String, mode: String)
     case fetch(config: String)
     case supportBundle(config: String)
@@ -45,7 +46,7 @@ public enum ReplicatorCommandLine {
                 // Argument Parser permits repeated scalar options. Keep the
                 // CLI's existing rejection of duplicates that can hide mistakes.
                 let options: Set<String> = [
-                    "--config", "--initialize", "--source-config", "--schema",
+                    "--config", "--initialize", "--dry-run", "--source-config", "--schema",
                     "--include-raw", "--transactions", "--binlog-file", "--gtids", "--reason", "--timeout", "--version",
                     "--command", "--section", "--mode", "--verbose", "--debug",
                 ]
@@ -144,6 +145,21 @@ private struct ApplyOptions: ParsableArguments {
     @OptionGroup var config: Config
     @Flag(help: "Create new state from the configured baseline. Omit to resume saved state.")
     var initialize = false
+    @Flag(help: "Inspect the configured range without target writes or saved-state changes.")
+    var dryRun = false
+
+    func validate() throws {
+        if dryRun && initialize {
+            throw ValidationError(
+                "--dry-run cannot be combined with --initialize; it uses the configured baseline without creating state."
+            )
+        }
+    }
+    func request(offline: Bool) -> CLIRequest {
+        dryRun
+            ? .dryRun(config: config.path, mode: offline ? "replay" : "run")
+            : .apply(config: config.path, initialize: initialize, offline: offline)
+    }
 }
 
 private struct Run: RequestCommand {
@@ -155,9 +171,12 @@ private struct Run: RequestCommand {
             Resume clean STOPPED state unless --initialize is set. Source and safe target
             reconnect are automatic. Uncertain target writes leave the applier BLOCKED.
             Use ctl stop for a graceful drain. SIGTERM and SIGUSR1 also request a drain.
+            --dry-run reads metadata and discards writes. It uses the configured baseline,
+            not saved state. Set a stop limit or source.nonBlocking=true. Discarded DDL can
+            cause later events to fail against the unchanged target schema.
             """)
     @OptionGroup var options: ApplyOptions
-    var request: CLIRequest { .apply(config: options.config.path, initialize: options.initialize, offline: false) }
+    var request: CLIRequest { options.request(offline: false) }
 }
 
 private struct Replay: RequestCommand {
@@ -169,9 +188,12 @@ private struct Replay: RequestCommand {
             Configure the archive directory and baseline in YAML. Replay checks archive
             history and event CRCs before target writes. Use source.stopAfterGTIDs or
             source.stopAfterTransactions in YAML to stop at a transaction boundary.
+            --dry-run reads metadata and discards writes. It uses the configured baseline,
+            not saved state, and stops at the limit or archive EOF. Discarded DDL can cause
+            later events to fail against the unchanged target schema.
             """)
     @OptionGroup var options: ApplyOptions
-    var request: CLIRequest { .apply(config: options.config.path, initialize: options.initialize, offline: true) }
+    var request: CLIRequest { options.request(offline: true) }
 }
 
 private struct Validate: RequestCommand {

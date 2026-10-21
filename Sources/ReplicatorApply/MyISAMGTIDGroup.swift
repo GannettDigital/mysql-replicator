@@ -102,14 +102,14 @@ extension TargetSession {
         let p = MyISAMGTIDProgram.parameters
         let db = "_mysql_replicator_gtid"
         let owner = MyISAMGTIDProgram.owner
-        let existing = try scalar(
+        let existing = try metadataScalar(
             "SELECT TABLE_COMMENT AS v FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME='parameters'",
             [.init(string: db)])
         if let existing {
             try require(existing == owner, "reserved GTID scratch table belongs to another application")
         } else {
             try require(
-                try scalar(
+                try metadataScalar(
                     "SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?", [.init(string: db)])
                     == "0",
                 "reserved GTID scratch database exists without its ownership marker")
@@ -118,7 +118,7 @@ extension TargetSession {
                 "CREATE TABLE \(p) (`id` BIGINT UNSIGNED PRIMARY KEY,`i` BIGINT,`u` BIGINT UNSIGNED,`f` FLOAT,`d` DOUBLE,`t` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,`b` LONGBLOB,`dt` DATE,`tm` TIME(6),`ts` DATETIME(6)) ENGINE=MyISAM COMMENT='\(owner)'",
                 textProtocol: true)
         }
-        if let comment = try scalar(
+        if let comment = try metadataScalar(
             "SELECT ROUTINE_COMMENT AS v FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME='apply_group'",
             [.init(string: db)])
         {

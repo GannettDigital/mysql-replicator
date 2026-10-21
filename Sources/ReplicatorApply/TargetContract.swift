@@ -27,7 +27,7 @@ extension MySQL57TargetContract {
     func configureDDL(_ target: TargetSession, context: QuerySessionContext) throws {}
     func ddlSQLMode(_ mode: UInt64) -> UInt64 { mode }
     func defaultUTF8MB4Collation(_ target: TargetSession) throws -> String? {
-        try target.scalar(
+        try target.metadataScalar(
             "SELECT DEFAULT_COLLATE_NAME AS v FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME='utf8mb4'"
         )
     }

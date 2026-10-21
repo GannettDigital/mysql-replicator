@@ -125,13 +125,13 @@ struct DDLEncoding: Equatable, Codable {
 
 extension TargetSession {
     func tableExists(_ name: TableName) throws -> Bool {
-        try scalar(
+        try metadataScalar(
             "SELECT COUNT(*) AS v FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",
             [.init(string: name.database), .init(string: name.table)]) != "0"
     }
     func tableEncoding(_ name: TableName) throws -> DDLEncoding {
         guard
-            let row = try query(
+            let row = try metadataQuery(
                 "SELECT c.CHARACTER_SET_NAME,t.TABLE_COLLATION FROM information_schema.TABLES t JOIN information_schema.COLLATIONS c ON c.COLLATION_NAME=t.TABLE_COLLATION WHERE t.TABLE_SCHEMA=? AND t.TABLE_NAME=?",
                 [.init(string: name.database), .init(string: name.table)]
             ).0.first,
@@ -142,7 +142,7 @@ extension TargetSession {
     }
     func databaseEncoding(_ name: String) throws -> DDLEncoding {
         guard
-            let row = try query(
+            let row = try metadataQuery(
                 "SELECT DEFAULT_CHARACTER_SET_NAME,DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",
                 [.init(string: name)]
             ).0.first,
@@ -163,12 +163,12 @@ extension TargetSession {
         let collation = collation.map { CharacterSetRegistry.collationName($0, on: server) }
         let rows: [MySQLRow]
         if let collation {
-            rows = try query(
+            rows = try metadataQuery(
                 "SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE COLLATION_NAME=?",
                 [.init(string: collation)]
             ).0
         } else if charset == "utf8mb4" {
-            rows = try query(
+            rows = try metadataQuery(
                 "SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",
                 [.init(string: String(context.defaultUTF8MB4Collation))]
             ).0
@@ -180,7 +180,7 @@ extension TargetSession {
                 "source default utf8mb4 collation is unsupported by target: default_collation_for_utf8mb4=\(DDLQueryContextDiagnostic.collation(context.defaultUTF8MB4Collation)), target default=\(actual ?? "unavailable"); no collation substitution",
                 code: .unsupportedCollation)
         } else {
-            rows = try query(
+            rows = try metadataQuery(
                 "SELECT CHARACTER_SET_NAME,DEFAULT_COLLATE_NAME AS COLLATION_NAME FROM information_schema.CHARACTER_SETS WHERE CHARACTER_SET_NAME=?",
                 [.init(string: charset!)]
             ).0
@@ -500,7 +500,7 @@ extension TargetSession {
         _ statement: DDLStatement, definition: CreateDatabase, source: QueryControl, context: QuerySessionContext
     ) throws -> PreparedDDL {
         let exists =
-            try scalar(
+            try metadataScalar(
                 "SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",
                 [.init(string: definition.name)]) != "0"
         let altering: Bool
@@ -516,7 +516,7 @@ extension TargetSession {
             after = before
         } else if definition.characterSet == nil && definition.collation == nil {
             guard
-                let row = try query(
+                let row = try metadataQuery(
                     "SELECT CHARACTER_SET_NAME,COLLATION_NAME FROM information_schema.COLLATIONS WHERE ID=?",
                     [.init(string: String(config.compatibilityPolicy.targetID(context.serverCollation)))]
                 ).0.first,
@@ -568,7 +568,7 @@ extension TargetSession {
                 try require(try databaseEncoding(database.name) == after, "DDL target database defaults mismatch")
             } else {
                 try require(
-                    try scalar(
+                    try metadataScalar(
                         "SELECT COUNT(*) AS v FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?",
                         [.init(string: database.name)]) == "0", "DROP DATABASE left target database present")
                 for change in plan.additional {
@@ -578,7 +578,7 @@ extension TargetSession {
                             "DROP DATABASE surviving FK schema mismatch")
                     }
                 }
-                discovered = discovered.filter { !SQLTextBytes.equal($0.value.database, database.name) }
+                schemaCache.invalidate(database: database.name)
                 for change in plan.additional { if let after = change.after { discovered[after.identity] = after } }
             }
             try invalidateStatements()
@@ -646,7 +646,7 @@ extension TargetSession {
                 discovered[after.identity] = after
             }
         }
-        discovered.removeValue(forKey: name.identity)
+        schemaCache.invalidate(name)
         if let after = plan.after { discovered[after.identity] = after }
         try invalidateStatements()
     }

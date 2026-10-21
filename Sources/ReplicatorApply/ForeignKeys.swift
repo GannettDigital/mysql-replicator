@@ -148,7 +148,7 @@ extension TargetSession {
         // only tables already encountered in the binlog.
         let grantee = "CONCAT(CHAR(39),REPLACE(CURRENT_USER(),'@',CONCAT(CHAR(39),'@',CHAR(39))),CHAR(39))"
         try require(
-            try scalar(
+            try metadataScalar(
                 "SELECT EXISTS(SELECT 1 FROM information_schema.USER_PRIVILEGES WHERE GRANTEE=\(grantee) AND PRIVILEGE_TYPE='REFERENCES') AS v"
             ) == "1", "global REFERENCES privilege required for complete foreign-key discovery")
     }
@@ -162,7 +162,7 @@ extension TargetSession {
             if !seen.insert(next.identity).inserted { continue }
             try require(seen.count <= 64, "foreign-key component exceeds 64 tables")
             let binds: [MySQLData] = [.init(string: next.database), .init(string: next.table)]
-            let rows = try query(
+            let rows = try metadataQuery(
                 "SELECT k.CONSTRAINT_NAME,k.TABLE_SCHEMA,k.TABLE_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,k.ORDINAL_POSITION,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON BINARY r.CONSTRAINT_SCHEMA=BINARY k.CONSTRAINT_SCHEMA AND BINARY r.CONSTRAINT_NAME=BINARY k.CONSTRAINT_NAME AND BINARY r.TABLE_NAME=BINARY k.TABLE_NAME WHERE k.REFERENCED_TABLE_NAME IS NOT NULL AND ((BINARY k.TABLE_SCHEMA=? AND BINARY k.TABLE_NAME=?) OR (BINARY k.REFERENCED_TABLE_SCHEMA=? AND BINARY k.REFERENCED_TABLE_NAME=?)) ORDER BY BINARY k.TABLE_SCHEMA,BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION",
                 binds + binds
             ).0
