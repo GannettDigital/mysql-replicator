@@ -23,10 +23,12 @@ The findings below describe the initial review. Use this table for current statu
 | OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
 | OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
 | OP-04 | Committed (`6cf57c3`) | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
-| OP-05 | Implemented | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
-| OP-06–07, OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
+| OP-05 | Committed (`1d27330`) | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
+| OP-06 | Slice 1 implemented | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases remain under OP-12. |
+| OP-07 | Implemented | Save completed file validation and start metadata in SQLite. Resume at the saved applied byte offset after reading format metadata. GTID-only starts select a file by `Previous_gtids`. No per-transaction archive index or file hash. Focused tests and isolated SQL/BINLOG stop-and-resume checks pass. |
+| OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
 
-Next: OP-06 replay startup ordering.
+Next: finish OP-08 recovery coordinate output and failure cases. Then proceed to OP-11, OP-12, and OP-13 in the delivery order below.
 
 ## Issue list
 
@@ -135,7 +137,21 @@ Test parseable output and log backpressure; do not assume output is free.
 
 ## OP-04 — Validate configuration and environment
 
-Implemented interface: `mysql-replicator validate --config FILE --mode run|replay`.
+Implemented and committed in `6cf57c3`. This command is available now:
+
+```sh
+mysql-replicator validate --config apply.yaml --mode run
+mysql-replicator validate --config replay.yaml --mode replay
+```
+
+The command writes a JSON checklist. Each check is `passed`, `failed`, or
+`notChecked`. Failed checks include a suggested next step. Exit status is 1
+when a check fails. `notChecked` identifies work that needs a full event scan,
+a binlog stream, saved-state access, or actual target writes.
+
+OP-04 is the standalone readiness command. OP-05 adds `--dry-run` to inspect
+events without writes. OP-06 reuses target readiness checks during normal replay
+startup, before the full archive scan. These are separate purposes.
 See [validation behavior and limits](../docs/COMMAND_LINE.md#configuration-and-environment-validation).
 
 - Check syntax, credentials resolution, TLS files, profiles, limits, and paths.
@@ -201,10 +217,27 @@ Dependency: OP-04 supplies reusable checks; OP-03 supplies readable progress.
 
 ## OP-06 — Replay startup order and validation scope
 
-`ApplyRun` opens state and the control endpoint, then calls `archive.validate`
-before connecting to the target. That validator walks the full archive. It checks
-frame integrity, transaction structure, file continuity, the baseline, and stop
-GTID availability. This work is not just filename enumeration or file hashing.
+Initial behavior: `ApplyRun` opened state and the control endpoint, then called
+`archive.validate` before connecting to the target. That validator walks the
+full archive. It checks frame integrity, transaction structure, file continuity,
+the baseline, and stop GTID availability.
+
+Slice 1: after opening state and control, connect to the target and run reusable
+readiness checks before `archive.validate`. Check a saved target UUID without
+binding a new identity. Permit only session changes during these probes. Keep
+writer ownership, scratch setup, GTID repair, and application writes after full
+validation. Keep existing target retry policy and complete in-memory validation
+reuse. Cancellation before or during validation saves a resumable STOPPED state.
+Logs show `Validate target readiness` before archive scan progress. The control
+endpoint remains available; detailed phase reporting is still OP-12 work.
+
+Retain complete prevalidation. OP-07 now saves completed file checks and uses
+saved replay offsets. Lazy validation remains outside this change.
+
+Focused checks passed: unavailable-target ordering (including a late corrupt
+frame), cancellation before connection/scan, and isolated MySQL 5.7 checks for
+invalid binlog settings, a late CRC error before target writes, and successful
+one-transaction replay. Full profile testing remains for CI.
 
 - Run quick configuration, inventory, and target-readiness checks first.
 - Separate connection/readiness checks from write-capable target setup.
@@ -219,29 +252,44 @@ Acceptance: invalid target settings fail before the full scan. Valid archives
 retain integrity checks. A later corrupt file behaves according to the documented
 validation policy. Replay never needs a source connection.
 
-## OP-07 — Persistent archive index and restart seek
+## OP-07 — Saved file metadata and restart offsets
 
-`ArchiveReplay.validation` is an in-memory cache. It helps retries within one
-process, but a new process scans again. `run()` also walks from the first selected
-file and skips already executed GTIDs. A saved apply position is not yet a direct
-seek optimization.
+Implemented. Keep one record per file; do not build a per-transaction
+archive index. Binlog `position` is a byte offset within the file.
 
-- Store an archive index in SQLite, separate from applied-state records. Record
-  file identity, validation progress, completed GTID ranges, transaction offsets,
-  and the context needed to start decoding safely.
-- Save validation progress at complete boundaries. Resume interrupted indexing
-  without marking scanned transactions as applied.
-- Detect replaced, changed, truncated, missing, or reordered files. Invalidate
-  only what can safely be invalidated. Retain CRC checks while reading events.
-- Follow the prior decision not to add whole-file SHA-256 hashing. State the
-  immutable-archive assumption and the limits of filesystem identity checks.
-- Start replay near the last durable boundary. Restore the FDE and any required
-  table-map context. Use GTID-set membership to handle holes and multiple UUIDs;
-  a single maximum sequence number is not enough.
+- Save completed validation in `archive_validation` in the existing SQLite
+  database. Include file size, identity, timestamps, `Previous_gtids`, first
+  transaction GTID/offset, completed GTIDs, rotation, and validation settings.
+- Compare file metadata on restart. Reuse unchanged file checks. Rescan changed
+  files or incomplete scans. Do not hash files. Operators must keep input files
+  immutable; filesystem metadata cannot prove byte-for-byte equality.
+- Keep file order, rotation, GTID continuity, baseline, and stop-limit checks.
+  Validate all uncached files before target writes.
+- Use existing durable coordinates: `state.applied_file/applied_position`,
+  `groups.source_file/start_position/end_position`, and
+  `snapshots.source_file/source_position`. GTIDs and offsets already advance
+  together. Do not duplicate them in a new checkpoint table.
+- Read the format and `Previous_gtids` events, then seek to the saved applied
+  offset. Retain event framing and CRC checks after the seek. A cold validation
+  scan also verifies that the offset is a complete boundary and that its prefix
+  contains no unapplied GTIDs. Saved checkpoints come from verified SQLite state.
+- Without a saved applied offset, use file `Previous_gtids` sets to select the
+  resume file. Scan that file for missing GTIDs. Keep holes, UUIDs, and tags.
+- Save file records only after a complete file scan. These records do not advance
+  application state. Keep persistence callbacks in serial startup validation;
+  the capture producer does not access SQLite.
 
-Acceptance: restart with a large applied prefix reads substantially less data;
-measure bytes read, not just elapsed time. Test interruption, rotation, file
-replacement, incomplete tails, GTID holes, stop limits, and external raw archives.
+The 29 focused unit and CLI tests pass. They cover SQLite reopen, cancellation between files, corrupt and
+truncated files, atomic replacement, invalid cache versions/settings, file
+ordering, GTID holes, inclusive stop limits, direct seek, EOF, and rotation.
+Two older startup tests now request cancellation before target setup, because
+OP-06 moved target checks before archive scanning.
+
+Isolated MySQL 5.7 MyISAM checks pass for SQL and BINLOG transport. Both stop at
+GTID 12 / offset 2213, restart with the same state, and apply GTIDs 13–14. Final
+rows and SQLite checkpoints match. The warm validation reads no event payloads.
+The replay pass reads 870 bytes, including format metadata, from a 2,885-byte
+fixture. Evidence: `/tmp/beta7-op07-live/`. Full profile suites remain for CI.
 
 ## OP-08 — Recovery coordinates and operator workflow
 
@@ -261,6 +309,27 @@ It does not mean that the failed source transaction was lost.
 Acceptance: inject pre-write DDL rejection, uncertain DML, and decode failure in
 middle archive files. Status, bundles, and recovery inspection identify the
 correct boundaries. Tests distinguish logical resume from OP-07's seek speed.
+
+Next implementation slice:
+
+1. Keep the existing applied checkpoint fields. Add explicit failed transaction
+   start/end coordinates to status and final errors where they are known.
+   `Recovery.Report.pending` already contains these coordinates; reuse that data.
+2. Include the saved `source_failure` coordinate in recovery inspection, including
+   failures before a pending transaction exists. Do not invent an end offset for
+   an incomplete or undecodable transaction.
+3. Report the reason for `BLOCKED` and the next supported operator action. Keep
+   pre-write DDL retry separate from uncertain target outcomes. Do not recommend
+   automatic retry or `--initialize` for an uncertain write.
+4. Add focused middle-file cases for rejected DDL, uncertain DML, and decode
+   failure. Compare status, inspection, and support-bundle coordinates. After an
+   allowed resolution, verify resume without repeating completed transactions.
+
+Current scan and prepared positions must remain distinct from the applied
+checkpoint. Their continuous live reporting belongs to OP-12. OP-09 still needs
+its target-version reconnect checks. OP-10 still needs complete failure-purpose
+output and error cases; DEBUG query-purpose labels already exist in TargetSession.
+Carry these checks into the relevant focused cases before OP-11 measurements.
 
 ## OP-09 — DDL session privilege failure
 
@@ -376,7 +445,7 @@ harness. Large table counts must not produce unbounded memory or status response
 3. Add reusable validation checks, then dry run: OP-04 and OP-05. Use the
    `validate` command for readiness checks and `run --dry-run` or `replay --dry-run`
    for event inspection. These checks have different costs.
-4. Improve replay startup, index persistence, and recovery output: OP-06–OP-08.
+4. Improve replay startup, file metadata persistence, and recovery output: OP-06–OP-08.
 5. Measure schema-discovery cost and reduce verified round trips: OP-11. Query
    attribution from OP-10 can start this investigation earlier.
 6. Add phase-aware status and bounded detailed statistics: OP-12 and OP-13.

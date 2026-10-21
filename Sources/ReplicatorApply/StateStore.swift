@@ -1435,3 +1435,33 @@ final class StateStore {
     }
     var gtids: String { completedGTIDs.canonical }
 }
+
+extension StateStore {
+    /// Derived file-validation records share SQLite's size/durability limits but
+    /// never update applied GTIDs, positions, groups, or recovery decisions.
+    func archiveValidationPersistence() -> ArchiveValidationPersistence {
+        ArchiveValidationPersistence(
+            prepare: { paths in
+                try self.execute(
+                    "CREATE TABLE IF NOT EXISTS archive_validation(path TEXT PRIMARY KEY,payload TEXT NOT NULL)")
+                let retained = Set(paths)
+                for row in try self.query("SELECT path FROM archive_validation") {
+                    if let path = row[0], !retained.contains(path) {
+                        try self.execute("DELETE FROM archive_validation WHERE path=?", [path])
+                    }
+                }
+            },
+            load: { path in
+                try self.query("SELECT payload FROM archive_validation WHERE path=?", [path]).first?.first
+                    .flatMap { $0 }.map { Data($0.utf8) }
+            },
+            save: { path, data in
+                try require(data.count <= 8 * 1024 * 1024, "archive validation record exceeds 8 MiB")
+                guard let json = String(data: data, encoding: .utf8) else {
+                    throw ApplyError("invalid archive validation record")
+                }
+                try self.execute(
+                    "INSERT OR REPLACE INTO archive_validation(path,payload) VALUES(?,?)", [path, json])
+            })
+    }
+}

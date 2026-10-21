@@ -203,24 +203,39 @@ public enum ApplyRun {
         do {
             control?.publish(summary("STARTING"))
             try control?.start(directory: state.directory)
-            if let archive {
-                do {
-                    try archive.validate(
-                        baseline: state.gtids, stopAfterGTIDs: limits.stopAfterGTIDs,
-                        isCancelled: { cancellation.isCancelled || drain.isCancelled })
-                } catch is CaptureCancelled {
-                    try state.archiveValidationStopped()
-                    return stoppedResult()
-                }
-            }
             while true {
                 do {
+                    if archive != nil && !started && (cancellation.isCancelled || drain.isCancelled) {
+                        try state.archiveValidationStopped()
+                        return stoppedResult()
+                    }
                     let target = try ApplicationLog.measure("Connect to target", metadata: ["phase": "target_connect"])
                     {
                         try TargetSession(
                             configuration: configuration, password: targetPassword, timings: targetTimings)
                     }
                     defer { try? target.unlock() }
+                    if let archive {
+                        try ApplicationLog.measure("Validate target readiness", metadata: ["phase": "target_validate"])
+                        {
+                            try TargetReadiness.checkForReplay(target)
+                            if let savedUUID = state.targetUUID {
+                                try require(target.targetUUID == savedUUID, "target UUID differs from saved checkpoint")
+                            }
+                        }
+                        do {
+                            // Retain complete validation before writer ownership,
+                            // scratch setup, GTID repair, or application writes.
+                            // Reconnect reuses ArchiveReplay's in-memory result.
+                            try archive.validate(
+                                baseline: state.gtids, stopAfterGTIDs: limits.stopAfterGTIDs, resumeFrom: state.applied,
+                                persistence: state.archiveValidationPersistence(),
+                                isCancelled: { cancellation.isCancelled || drain.isCancelled })
+                        } catch is CaptureCancelled {
+                            try state.archiveValidationStopped()
+                            return stoppedResult()
+                        }
+                    }
                     try ApplicationLog.measure("Check target", metadata: ["phase": "target_setup"]) {
                         try target.preflight()
                     }
@@ -566,6 +581,7 @@ public enum ApplyRun {
                             configuration.source, remainingTransactions: remaining)
                         capture.stopAfterTransactions = remaining
                         capture.stopAfterGTIDs = limits.stopAfterGTIDs
+                        let replayCheckpoint = state.applied
                         do {
                             try pipeline.run(
                                 cancellation: cancellation, producerTimings: producerTimings,
@@ -582,6 +598,7 @@ public enum ApplyRun {
                                     if let archive {
                                         try archive.run(
                                             configuration: capture, cancellation: stop, retainRawBytes: true,
+                                            resumeFrom: replayCheckpoint,
                                             emitEvent: { try send(.event($0)) },
                                             emitTransaction: { try send(.transaction($0)) },
                                             resolveSchema: resolver, timings: producerTimings,
@@ -758,8 +775,12 @@ public enum ApplyRun {
                     consumerPending = false
                     targetReason = String(describing: error)
                     if cancellation.isCancelled || drain.isCancelled {
-                        try require(state.targetUUID != nil, "target unavailable before identity was established")
-                        try state.stopped()
+                        if archive != nil && !started {
+                            try state.archiveValidationStopped()
+                        } else {
+                            try require(state.targetUUID != nil, "target unavailable before identity was established")
+                            try state.stopped()
+                        }
                         return stoppedResult()
                     }
                     let delay: Int
@@ -777,8 +798,12 @@ public enum ApplyRun {
                         SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
                     }
                     if cancellation.isCancelled || drain.isCancelled {
-                        try require(state.targetUUID != nil, "target unavailable before identity was established")
-                        try state.stopped()
+                        if archive != nil && !started {
+                            try state.archiveValidationStopped()
+                        } else {
+                            try require(state.targetUUID != nil, "target unavailable before identity was established")
+                            try state.stopped()
+                        }
                         return stoppedResult()
                     }
                     pipeline = ApplyPipeline(

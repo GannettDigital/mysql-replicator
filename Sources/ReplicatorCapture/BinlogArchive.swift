@@ -136,7 +136,7 @@ public struct ArchiveReadError: Error, CustomStringConvertible {
 struct ArchiveFileReader {
     let file: URL
     let maximumEventBytes: UInt32
-    func scan(_ emit: (Data, UInt64) throws -> Void) throws {
+    func scan(afterPreamble resumeOffset: UInt64? = nil, _ emit: (Data, UInt64) throws -> Void) throws {
         _ = try ArchiveIO.regularFile(file)
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
@@ -179,6 +179,13 @@ struct ArchiveFileReader {
             }
             try emit(frame, offset)
             offset += UInt64(length)
+            if frame[4] == 35, let resumeOffset {
+                guard resumeOffset >= offset, resumeOffset <= UInt64(try handle.seekToEnd()) else {
+                    throw failure("archive resume offset is outside transaction data")
+                }
+                try handle.seek(toOffset: resumeOffset)
+                offset = resumeOffset
+            }
         }
         guard offset > 4 else { throw failure("empty binlog archive file") }
     }
@@ -220,7 +227,7 @@ public struct ArchivePreamble: Encodable {
 
 /// Detect replacement and ordinary edits between validation and replay.
 /// The operator must keep the input files immutable for the whole session.
-struct ArchiveFileIdentity: Equatable {
+struct ArchiveFileIdentity: Equatable, Codable {
     let size: UInt64
     let device: UInt64
     let inode: UInt64

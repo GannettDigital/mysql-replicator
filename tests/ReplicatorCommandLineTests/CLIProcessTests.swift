@@ -241,12 +241,28 @@ final class CLIProcessTests: XCTestCase {
         }
         let logs = records.filter { $0["kind"] as? String == "log" }
         let messages = logs.compactMap { $0["message"] as? String }
-        XCTAssertTrue(messages.contains("Archive scan progress"), String(decoding: error, as: UTF8.self))
+        XCTAssertFalse(messages.contains("Archive scan progress"), String(decoding: error, as: UTF8.self))
         XCTAssertTrue(messages.contains("Connect to target started"), messages.description)
         XCTAssertTrue(messages.contains("Connect to target finished"), messages.description)
         XCTAssertFalse(messages.contains("Connect to source started"))
         XCTAssertEqual(records.last?["error"] as? String, "apply_failed")
         XCTAssertFalse(String(decoding: error, as: UTF8.self).contains(secret))
+        // A bad frame late in the archive must not hide an unavailable target.
+        let file = archive.appendingPathComponent("binlog.000003")
+        var corrupt = try Data(contentsOf: file)
+        corrupt[corrupt.count - 1] ^= 1
+        try corrupt.write(to: file)
+        let (corruptStatus, _, corruptError) = try run([
+            "replay", "--config", config.path, "--initialize", "--verbose",
+            "--stateDirectory", directory.appendingPathComponent("corrupt-state").path,
+        ])
+        XCTAssertEqual(corruptStatus, 1)
+        let corruptRecords = try corruptError.split(separator: 10).map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any])
+        }
+        XCTAssertEqual(corruptRecords.last?["reason"] as? String, "target connection unavailable")
+        XCTAssertFalse(corruptRecords.contains { $0["kind"] as? String == "archive_progress" })
+        XCTAssertFalse(corruptRecords.contains { $0["message"] as? String == "Archive scan progress" })
         let (skipStatus, _, skipError) = try run([
             "--verbose", "skip", "8ba09bde-bc41-11f1-8272-ba06e9024a03:11", "--config", config.path,
         ])

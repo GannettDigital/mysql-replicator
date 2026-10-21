@@ -24,11 +24,9 @@ final class ArchiveStartupTests: XCTestCase {
             ArchiveConfiguration.self, from: JSONSerialization.data(withJSONObject: ["directory": directory.path]))
         for initialize in [true, false] {
             let drain = CaptureCancellation()
+            drain.cancel()
             let archive = try ArchiveReplay(
-                configuration: archiveConfig, source: c.source, contract: .mysql84,
-                progress: { progress in
-                    if progress.phase == "validation" { drain.cancel() }
-                })
+                configuration: archiveConfig, source: c.source, contract: .mysql84)
             let result = try ApplyRun.run(
                 configuration: c, sourcePassword: "", targetPassword: "", initialize: initialize, drain: drain,
                 archive: archive)
@@ -46,7 +44,7 @@ final class ArchiveStartupTests: XCTestCase {
         XCTAssertEqual(bound.targetUUID, "00000000-0000-0000-0000-000000000002")
     }
 
-    func testReplayUsesSavedGTIDsAndCanStopValidationWithoutTargetAccess() throws {
+    func testReplayUsesSavedGTIDsAfterCancellationBeforeTargetAccess() throws {
         #if os(Linux)
             let helper = ApplyTests(name: "fixtures", testClosure: { _ in })
         #else
@@ -87,22 +85,24 @@ final class ArchiveStartupTests: XCTestCase {
         let archiveConfig = try JSONDecoder().decode(
             ArchiveConfiguration.self, from: JSONSerialization.data(withJSONObject: ["directory": directory.path]))
         let drain = CaptureCancellation()
+        drain.cancel()
         var phases: [String] = []
         let archive = try ArchiveReplay(
             configuration: archiveConfig, source: c.source, contract: .mysql84,
             progress: { progress in
                 phases.append(progress.phase)
-                if progress.phase == "validation" { drain.cancel() }
             })
         let result = try ApplyRun.run(
             configuration: c, sourcePassword: "", targetPassword: "", drain: drain, archive: archive)
         XCTAssertEqual(result.lifecycle, "STOPPED")
         XCTAssertEqual(result.appliedGTIDSet, helper.sid + ":1-11")
         XCTAssertEqual(result.stopReason, "drainRequested")
-        XCTAssertTrue(phases.contains("validation"))
-        XCTAssertFalse(phases.contains("validated"))
+        XCTAssertTrue(phases.isEmpty)
         // The saved state remains suitable for a later resume.
         let reopened = try StateStore(configuration: c, initialize: false)
         XCTAssertEqual(reopened.gtids, helper.sid + ":1-11")
+        XCTAssertThrowsError(try archive.validate(baseline: c.source.start.executedGTIDs))
+        try archive.validate(baseline: reopened.gtids, resumeFrom: reopened.applied)
+        XCTAssertEqual(archive.availableGTIDs, helper.sid + ":1-11")
     }
 }

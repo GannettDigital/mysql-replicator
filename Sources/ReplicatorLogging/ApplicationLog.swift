@@ -61,7 +61,8 @@ final class JSONLogSink: @unchecked Sendable {
         let allowed: Set<String> = [
             "phase", "purpose", "durationMilliseconds", "outcome", "transactions", "rows", "profile", "mode",
             "transport", "file", "position", "gtid", "table", "database", "attempt", "delaySeconds",
-            "filesCompleted", "filesTotal", "bytesRead", "bytesTotal", "cache", "reasonCode", "lifecycle",
+            "filesCompleted", "filesTotal", "filesSkipped", "bytesRead", "bytesTotal", "preambleBytesRead",
+            "cache", "reasonCode", "lifecycle",
         ]
         func bounded(_ text: String, bytes: Int) -> String {
             String(decoding: text.utf8.prefix(bytes), as: UTF8.self)

@@ -49,7 +49,8 @@ final class ApplicationLogTests: XCTestCase {
         logger.info(
             "Read schema\nstarted",
             metadata: [
-                "phase": "schema", "password": "secret", "sql": "SELECT secret", "binds": "private-value",
+                "phase": "schema", "filesSkipped": "3", "preambleBytesRead": "198", "password": "secret",
+                "sql": "SELECT secret", "binds": "private-value",
                 "table": .string(String(repeating: "x", count: 10000)),
             ])
         let bytes = try XCTUnwrap(buffer.snapshot().first)
@@ -60,6 +61,8 @@ final class ApplicationLogTests: XCTestCase {
         XCTAssertEqual(bytes.filter { $0 == 10 }.count, 1)
         let fields = try XCTUnwrap(record["fields"] as? [String: String])
         XCTAssertEqual(fields["phase"], "schema")
+        XCTAssertEqual(fields["filesSkipped"], "3")
+        XCTAssertEqual(fields["preambleBytesRead"], "198")
         XCTAssertEqual(fields["table"]?.utf8.count, 512)
         XCTAssertNil(fields["password"])
         XCTAssertNil(fields["sql"])

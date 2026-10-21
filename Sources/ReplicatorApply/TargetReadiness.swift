@@ -2,6 +2,28 @@ import Foundation
 
 /// Uses a new connection. Never call the writer-ownership or scratch-table preflight here.
 enum TargetReadiness {
+    /// Early replay probes may change only this session. Do not acquire writer
+    /// ownership, assign source GTIDs, or create scratch objects before validation.
+    static func checkForReplay(_ target: TargetSession) throws {
+        try target.preflightSettings()
+        try checkEngine(target)
+        try target.nativeExclusion()
+        try target.preflightSession()
+        try checkTimestampDefaults(target)
+    }
+    private static func checkEngine(_ target: TargetSession) throws {
+        let rows = try target.query("SHOW ENGINES").0
+        try require(
+            rows.contains {
+                $0.column("Engine")?.string?.lowercased() == target.contract.engine.lowercased()
+                    && ["YES", "DEFAULT"].contains($0.column("Support")?.string ?? "")
+            }, "target engine \(target.contract.engine) is not available")
+    }
+    private static func checkTimestampDefaults(_ target: TargetSession) throws {
+        try target.timestampDefaults.prepare(
+            read: { try target.scalar("SELECT @@SESSION.explicit_defaults_for_timestamp AS v") },
+            enable: { _ = try target.query("SET SESSION explicit_defaults_for_timestamp=1") })
+    }
     static func inspect(_ configuration: ApplyConfiguration, _ password: String, _ report: ValidationReport) {
         var target: TargetSession?
         guard
@@ -23,12 +45,7 @@ enum TargetReadiness {
                 })
         else { return }
         report.check("target.engine", nextStep: "Enable the target storage engine required by the profile.") {
-            let rows = try target.query("SHOW ENGINES").0
-            try require(
-                rows.contains {
-                    $0.column("Engine")?.string?.lowercased() == target.contract.engine.lowercased()
-                        && ["YES", "DEFAULT"].contains($0.column("Support")?.string ?? "")
-                }, "target engine \(target.contract.engine) is not available")
+            try checkEngine(target)
             return "Target engine \(target.contract.engine) is available. Existing table engines are not inspected."
         }
         report.check(
@@ -49,9 +66,7 @@ enum TargetReadiness {
             "target.timestampDefaults",
             nextStep: "Ask the DBA to set explicit_defaults_for_timestamp=ON, then reconnect."
         ) {
-            try target.timestampDefaults.prepare(
-                read: { try target.scalar("SELECT @@SESSION.explicit_defaults_for_timestamp AS v") },
-                enable: { _ = try target.query("SET SESSION explicit_defaults_for_timestamp=1") })
+            try checkTimestampDefaults(target)
             return "Target session explicit_defaults_for_timestamp is ON."
         }
         report.unchecked(

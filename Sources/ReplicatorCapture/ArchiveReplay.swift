@@ -13,10 +13,12 @@ public final class ArchiveReplay {
         public let filesTotal: Int
         public let bytesRead: UInt64
         public let bytesTotal: UInt64
+        public var preambleBytesRead: UInt64 = 0
         public let elapsedSeconds: Double
     }
     private let progress: (Progress) -> Void
-    private var validation: (identities: [ArchiveFileIdentity], previous: GTIDSet, available: GTIDSet)?
+    private var validation:
+        (identities: [ArchiveFileIdentity], previous: GTIDSet, available: GTIDSet, files: [ArchiveFileValidation])?
     public var availableGTIDs: String? { validation?.available.canonical }
     private let directory: URL
     private let maximumEventBytes: UInt32
@@ -109,12 +111,14 @@ public final class ArchiveReplay {
     /// Validate the complete archive before issuing target writes. Control-only
     /// decoding deliberately does not interpret historical row values.
     public func validate(
-        baseline: String, stopAfterGTIDs: String? = nil,
+        baseline: String, stopAfterGTIDs: String? = nil, resumeFrom: BinlogCoordinate? = nil,
+        persistence: ArchiveValidationPersistence? = nil,
         isCancelled: () -> Bool = { false }
     ) throws {
         let excluded = try GTIDSet(baseline)
         let started = DispatchTime.now().uptimeNanoseconds
         let total = manifest.files.reduce(UInt64(0)) { $0 + $1.bytes }
+        var preambleBytesRead: UInt64 = 0
         func report(_ phase: String, _ file: String, _ completed: Int, _ bytes: UInt64) {
             ApplicationLog.logger.info(
                 "Archive scan progress",
@@ -122,11 +126,12 @@ public final class ArchiveReplay {
                     "phase": .string(phase), "file": .string(file),
                     "filesCompleted": .string(String(completed)), "filesTotal": .string(String(manifest.files.count)),
                     "bytesRead": .string(String(bytes)), "bytesTotal": .string(String(total)),
+                    "preambleBytesRead": .string(String(preambleBytesRead)),
                 ])
             progress(
                 Progress(
                     phase: phase, file: file, filesCompleted: completed, filesTotal: manifest.files.count,
-                    bytesRead: bytes, bytesTotal: total,
+                    bytesRead: bytes, bytesTotal: total, preambleBytesRead: preambleBytesRead,
                     elapsedSeconds: Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9))
         }
         func checkBaseline(_ previous: GTIDSet) throws {
@@ -151,23 +156,55 @@ public final class ArchiveReplay {
             return
         }
         let identities = try manifest.files.map { try ArchiveFileIdentity(directory.appendingPathComponent($0.name)) }
+        try persistence?.prepare(manifest.files.map { directory.appendingPathComponent($0.name).path })
         report("preamble", manifest.files[0].name, 0, 0)
-        let first = try ArchivePreamble.read(
-            file: directory.appendingPathComponent(manifest.files[0].name), maximumEventBytes: maximumEventBytes)
-        let previous = try GTIDSet(first.previousGTIDs)
+        let previous: GTIDSet
+        if let cached = try loadValidation(index: 0, identities: identities, persistence: persistence) {
+            previous = try GTIDSet(cached.previousGTIDs)
+        } else {
+            let first = try ArchivePreamble.read(
+                file: directory.appendingPathComponent(manifest.files[0].name), maximumEventBytes: maximumEventBytes)
+            preambleBytesRead = first.bytesRead
+            previous = try GTIDSet(first.previousGTIDs)
+        }
         try checkBaseline(previous)
         try checkIdentities(identities)
+        var records: [ArchiveFileValidation] = []
+        // A saved applied boundary comes from the same durable transaction as
+        // the GTID checkpoint. On a cold scan, also verify its prefix coverage.
+        var resumeChecked = resumeFrom == nil || !manifest.files.contains { $0.name == resumeFrom?.file }
+        func checkResume(file: String, offset: UInt64, covered: GTIDSet) throws {
+            if let resumeFrom, resumeFrom.file == file, resumeFrom.position == offset {
+                guard excluded.covers(covered) else {
+                    throw CaptureError("saved replay offset skips unapplied GTIDs")
+                }
+                resumeChecked = true
+            }
+        }
         var available = previous
         var read: UInt64 = 0
         var completed = 0
         var lastReport = started
         var nextReportByte: UInt64 = 0
         report("validation", manifest.files[0].name, 0, 0)
-        try walk(identities: identities) { frame, offset, file, gtid, complete in
+        try walk(
+            identities: identities, persistence: persistence, isCancelled: isCancelled,
+            reused: { file, covered in
+                available = covered
+                if file == resumeFrom?.file { resumeChecked = true }
+                report("validation_file_reused", file, completed + 1, read)
+            }, validated: { records.append($0) }
+        ) { frame, offset, file, gtid, complete in
             if isCancelled() { throw CaptureCancelled() }
             if offset == 4 { read += 4 }
             read += UInt64(frame.count)
+            if [33, 42, 4, 3].contains(frame[4]) {
+                try checkResume(file: file, offset: offset, covered: available)
+            }
             if complete, let gtid { try available.include(gtid) }
+            if complete || frame[4] == 35 {
+                try checkResume(file: file, offset: offset + UInt64(frame.count), covered: available)
+            }
             if read >= nextReportByte {
                 nextReportByte = read + 1024 * 1024
                 let now = DispatchTime.now().uptimeNanoseconds
@@ -184,7 +221,8 @@ public final class ArchiveReplay {
         }
         try checkIdentities(identities)
         try checkStop(available)
-        validation = (identities, previous, available)
+        guard resumeChecked else { throw CaptureError("saved replay offset is not a complete transaction boundary") }
+        validation = (identities, previous, available, records)
         report("validated", manifest.files.last!.name, completed, read)
     }
 
@@ -199,8 +237,34 @@ public final class ArchiveReplay {
         }
     }
 
+    private func loadValidation(
+        index: Int, identities: [ArchiveFileIdentity], persistence: ArchiveValidationPersistence?
+    ) throws -> ArchiveFileValidation? {
+        let entry = manifest.files[index]
+        guard let persistence, let data = try persistence.load(directory.appendingPathComponent(entry.name).path),
+            let cached = try? JSONDecoder().decode(ArchiveFileValidation.self, from: data),
+            cached.matches(manifest, identity: identities[index], maximumEventBytes: maximumEventBytes),
+            let prior = try? GTIDSet(cached.previousGTIDs),
+            let complete = try? GTIDSet(cached.completedGTIDs), complete.covers(prior),
+            cached.preambleEndOffset > 4, cached.preambleEndOffset <= entry.bytes
+        else { return nil }
+        if let first = cached.firstGTID {
+            guard let gtid = try? SourceGTID(parsing: first), complete.contains(gtid), !prior.contains(gtid),
+                let offset = cached.firstTransactionOffset, offset >= cached.preambleEndOffset, offset < entry.bytes
+            else { return nil }
+        } else if cached.firstTransactionOffset != nil || complete != prior {
+            return nil
+        }
+        return cached
+    }
+
     private func walk(
+        startIndex: Int = 0, firstFileOffset: UInt64? = nil,
         identities: [ArchiveFileIdentity]? = nil,
+        persistence: ArchiveValidationPersistence? = nil,
+        isCancelled: () -> Bool = { false },
+        reused: (String, GTIDSet) -> Void = { _, _ in },
+        validated: ((ArchiveFileValidation) -> Void)? = nil,
         _ emit: (Data, UInt64, String, SourceGTID?, Bool) throws -> Void,
         previous: (GTIDSet, Bool) throws -> Void = { _, _ in },
         finished: (String) -> Void = { _ in }
@@ -208,13 +272,18 @@ public final class ArchiveReplay {
         var covered: GTIDSet?
         var rotated: BinlogCoordinate?
         var previousName: String?
-        for (index, entry) in manifest.files.enumerated() {
+        for (index, entry) in manifest.files.enumerated().dropFirst(startIndex) {
+            if isCancelled() { throw CaptureCancelled() }
             if let identities { try checkIdentity(entry, identities[index]) }
             let decoder = try BinlogDecoder(maximumEventBytes: maximumEventBytes)
             var decoderOffset: UInt64 = 4
             var pending: SourceGTID?
             var begun = false
             var hasPrevious = false
+            var filePrevious: GTIDSet?
+            var preambleEndOffset: UInt64 = 0
+            var firstGTID: String?
+            var firstTransactionOffset: UInt64?
             var ended = false
             if let rotated {
                 guard rotated.file == entry.name && rotated.position == 4 else {
@@ -231,10 +300,32 @@ public final class ArchiveReplay {
                     b.1 == a.1 + 1
                 else { throw CaptureError("missing or unordered archive files") }
             }
+            let path = directory.appendingPathComponent(entry.name).path
+            if let identities,
+                let cached = try loadValidation(index: index, identities: identities, persistence: persistence)
+            {
+                let prior = try GTIDSet(cached.previousGTIDs)
+                let complete = try GTIDSet(cached.completedGTIDs)
+                if let covered, covered != prior { throw CaptureError("archive GTID history gap between files") }
+                try previous(prior, covered == nil)
+                try checkIdentity(entry, identities[index])
+                covered = complete
+                rotated = cached.rotation?.coordinate
+                previousName = entry.name
+                validated?(cached)
+                reused(entry.name, complete)
+                finished(entry.name)
+                continue
+            }
             rotated = nil
             try ArchiveFileReader(
                 file: directory.appendingPathComponent(entry.name), maximumEventBytes: maximumEventBytes
-            ).scan { frame, offset in
+            ).scan(afterPreamble: index == startIndex ? firstFileOffset : nil) { frame, offset in
+                if index == startIndex, offset == firstFileOffset,
+                    ![33, 42, 4, 3].contains(frame[4])
+                {
+                    throw CaptureError("saved replay offset does not start a transaction or file end event")
+                }
                 guard !ended else { throw CaptureError("archive event after rotation or STOP") }
                 var control: BinlogControl?
                 if [2, 3, 4, 15, 16, 33, 34, 35, 42].contains(frame[4]) {
@@ -262,12 +353,18 @@ public final class ArchiveReplay {
                     }
                     try previous(prior, covered == nil)
                     covered = prior
+                    filePrevious = prior
+                    preambleEndOffset = offset + UInt64(frame.count)
                     hasPrevious = true
                 case .gtid(let gtid):
                     guard hasPrevious, pending == nil, let covered, !covered.contains(gtid) else {
                         throw CaptureError("missing preamble, duplicate GTID, or incomplete archive transaction")
                     }
                     pending = gtid
+                    if firstGTID == nil {
+                        firstGTID = gtid.canonical
+                        firstTransactionOffset = offset
+                    }
                     begun = false
                 case .anonymousGTID: throw CaptureError("anonymous transaction in GTID archive")
                 case .query(let query):
@@ -313,14 +410,48 @@ public final class ArchiveReplay {
             guard hasPrevious, pending == nil else {
                 throw CaptureError("incomplete archive preamble or transaction at EOF: \(entry.name)")
             }
+            if index == startIndex, firstFileOffset != nil {
+                // The prefix was already applied. Full-file validation supplied
+                // its history; use that history for the next file's continuity.
+                covered = try GTIDSet(validation!.files[index].completedGTIDs)
+            }
             if let identities { try checkIdentity(entry, identities[index]) }
+            if let identities, let filePrevious, let covered, persistence != nil || validated != nil {
+                let record = ArchiveFileValidation(
+                    version: 1, identity: identities[index], sourceUUID: manifest.sourceUUID,
+                    sourceVersion: manifest.sourceVersion, settings: manifest.settings,
+                    maximumEventBytes: maximumEventBytes, previousGTIDs: filePrevious.canonical,
+                    preambleEndOffset: preambleEndOffset, firstGTID: firstGTID,
+                    firstTransactionOffset: firstTransactionOffset,
+                    completedGTIDs: covered.canonical, rotation: rotated.map(ArchiveFileValidation.Rotation.init))
+                try persistence?.save(path, JSONEncoder().encode(record))
+                validated?(record)
+            }
             previousName = entry.name
             finished(entry.name)
         }
     }
 
+    /// Previous_gtids covers all transactions before a file. Use set coverage,
+    /// not the largest sequence number, to retain holes and UUID/tag streams.
+    /// Full validation has already checked continuity across these files.
+    private func replayStart(excluded: GTIDSet, cancellation: CaptureCancellation) throws -> Int {
+        var index = 0
+        for candidate in manifest.files.indices.dropFirst() {
+            if cancellation.isCancelled { throw CaptureCancelled() }
+            let preamble = validation!.files[candidate]
+            guard excluded.covers(try GTIDSet(preamble.previousGTIDs)) else { break }
+            index = candidate
+        }
+        return index
+    }
+
+    /// resumeFrom must be the completed boundary from the same durable state
+    /// as configuration.start.executedGTIDs, not an arbitrary user offset.
+    /// A GTID-only bootstrap uses file metadata and membership checks instead.
     public func run(
         configuration: CaptureConfiguration, cancellation: CaptureCancellation, retainRawBytes: Bool = false,
+        resumeFrom: BinlogCoordinate? = nil,
         emitEvent: @escaping (LiveRecord) throws -> Void,
         emitTransaction: @escaping (CompleteTransaction) throws -> Void,
         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?,
@@ -328,7 +459,7 @@ public final class ArchiveReplay {
     ) throws {
         let excluded = try GTIDSet(configuration.start.executedGTIDs)
         try validate(
-            baseline: excluded.canonical, stopAfterGTIDs: configuration.stopAfterGTIDs,
+            baseline: excluded.canonical, stopAfterGTIDs: configuration.stopAfterGTIDs, resumeFrom: resumeFrom,
             isCancelled: { cancellation.isCancelled })
         let processor = try StreamProcessor(
             config: configuration, includeRaw: !retainRawBytes, retainRawBytes: retainRawBytes, emitEvent: emitEvent,
@@ -336,8 +467,48 @@ public final class ArchiveReplay {
             ignoreTable: ignoreTable)
         struct Limit: Error {}
         if processor.stopReason != nil { return }
+        let start: Int
+        let resumeOffset: UInt64?
+        if let resumeFrom, let index = manifest.files.firstIndex(where: { $0.name == resumeFrom.file }) {
+            let file = validation!.files[index]
+            guard resumeFrom.position >= file.preambleEndOffset, resumeFrom.position <= file.identity.size else {
+                throw CaptureError("saved replay offset is outside transaction data")
+            }
+            start = index
+            resumeOffset = resumeFrom.position
+        } else {
+            start = try replayStart(excluded: excluded, cancellation: cancellation)
+            resumeOffset = nil
+        }
+        ApplicationLog.logger.info(
+            "Archive replay start",
+            metadata: [
+                "file": .string(manifest.files[start].name),
+                "filesSkipped": .string(String(start)),
+                "position": .string(String(resumeOffset ?? 4)),
+                "preambleBytesRead": .string("0"),
+            ])
+        let started = DispatchTime.now().uptimeNanoseconds
+        var bytesRead: UInt64 = 0
+        var completed = start
+        var currentFile = manifest.files[start].name
+        defer {
+            progress(
+                Progress(
+                    phase: "replay_read", file: currentFile, filesCompleted: completed,
+                    filesTotal: manifest.files.count, bytesRead: bytesRead,
+                    bytesTotal: manifest.files.reduce(UInt64(0)) { $0 + $1.bytes },
+                    preambleBytesRead: 0,
+                    elapsedSeconds: Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9))
+        }
         do {
-            try walk(identities: validation!.identities) { frame, offset, file, gtid, complete in
+            try walk(
+                startIndex: start, firstFileOffset: resumeOffset, identities: validation!.identities,
+                isCancelled: { cancellation.isCancelled }
+            ) { frame, offset, file, gtid, complete in
+                currentFile = file
+                if offset == 4 { bytesRead += 4 }
+                bytesRead += UInt64(frame.count)
                 if cancellation.isCancelled { throw CaptureCancelled() }
                 if processor.stopReason != nil { throw Limit() }
                 if offset == 4 { try processor.consume(ArchiveIO.announce(file)) }
@@ -348,7 +519,12 @@ public final class ArchiveReplay {
                     }
                 } else {
                     try timings.measure("archive.decode") { try processor.consume(frame) }
+                    if file == manifest.files[start].name, frame[4] == 35, let resumeOffset {
+                        try processor.skipArchivedGroup(to: .init(file: file, position: resumeOffset))
+                    }
                 }
+            } finished: { _ in
+                completed += 1
             }
         } catch is Limit {}
         try processor.finish()

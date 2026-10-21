@@ -150,16 +150,61 @@ SQLite checkpoint. A new run uses `source.start.executedGTIDs`. If history is
 missing, the error includes the file name, required GTIDs, and applied GTIDs.
 This check does not read the transaction payloads.
 
-After this check, replay validates the full archive before target writes. It
-reads each file once for event checks. It reuses
-this result during the same run if file identity, size, and modification times
-have not changed. It also checks file metadata before and after each replayed
-file. These checks do not permit concurrent changes to the archive.
+Before the full event scan, replay opens the target metadata and write
+connections. It checks server identity, profile settings, engine availability,
+native replication state, and required session permissions. A saved target UUID
+must match. These probes can change session settings, but do not acquire the
+writer lock, assign source GTIDs, or create scratch objects. Invalid target
+settings fail before the full scan. Connection failures follow the configured
+target reconnect policy.
+
+Replay validates the full archive before target writes. On the first run, a
+corrupt event late in the archive stops replay before any earlier transaction is
+applied, even when a stop limit selects an earlier point.
+
+SQLite saves one validation record per completed file in `archive_validation`.
+The record contains the file size and filesystem identity, timestamps,
+`Previous_gtids`, the first transaction's GTID and byte offset, the completed
+GTID set, and the rotation destination. It also identifies the source contract
+and event size limit used for validation. These records do not mark transactions
+as applied. There is no per-transaction archive index.
+
+On restart, replay reuses each record if the file and validation settings match.
+It compares file size, timestamps, device, and inode. It does not hash files.
+Changed files and records from an unsupported cache version require a new scan.
+An interrupted scan keeps the records for completed files. The incomplete file
+is scanned again. Missing files, invalid order, and gaps between files still
+fail validation. Filesystem metadata does not prove byte-for-byte equality;
+keep the archive immutable while replay runs.
+
+Replay uses the applied file and byte offset saved in SQLite. It reads the file's
+format and `Previous_gtids` events, then seeks to that offset. It does not scan
+earlier transaction payloads. The offset is the end of the last completed source
+transaction, which is the start of the next event. Each event read after the seek
+still passes framing and CRC checks. File identity is checked before and after
+reading each file.
+
+Without a saved applied offset, replay uses the cached `Previous_gtids` sets to
+select the start file. It then scans that file for the first missing GTID. GTID
+set membership preserves holes, UUIDs, and tags. If the checkpoint file is no
+longer in the selected archive, replay uses this same path and requires the saved
+GTID set to cover all history before the first supplied file.
+
+After validation, replay rechecks target readiness and performs writer setup.
+Only then can it repair pending GTID markers or apply transactions. Target
+reconnects repeat readiness checks and reuse complete archive validation when
+file identities and limits still permit reuse. Session probes do not prove that
+future DML or DDL will succeed.
 
 JSON `archive_progress` records on stderr show the phase, current file, completed
-file count, bytes read, total bytes, and elapsed seconds. Long scans report at
-approximately one-second intervals and at file boundaries. `validation_reused`
-means that no payload scan was needed. stdout remains the result stream.
+file count, bytes read, total bytes, and elapsed seconds. Long validation scans
+report at approximately one-second intervals and at file boundaries.
+`validation_file_reused` means that SQLite supplied a completed file check.
+`validation_reused` means that the current process already checked the archive.
+Both avoid a new payload scan. `replay_read` reports bytes read by the replay pass,
+including its format metadata. `preambleBytesRead` counts separate preamble probes
+during validation. These counts exclude the initial file inventory's version
+probe. stdout remains the result stream.
 
 ## Stop, resume, and failures
 
@@ -241,6 +286,13 @@ Omit it to resume cleanly stopped state:
 ```sh
 mysql-replicator replay --config apply.yaml
 ```
+
+Resume uses the saved GTIDs and file/offset, not the original YAML baseline.
+The `state` table holds the applied file and offset. The `groups` table holds
+each retained transaction's GTID and start/end offsets. The `snapshots` table
+holds a GTID set with its matching file/offset. These offsets advance with the
+applied checkpoint. Pending or uncertain target writes still require recovery;
+a saved validation record does not make them safe to retry.
 
 `source.stopAfterTransactions` optionally bounds one replay invocation. Remove or
 adjust it for the next invocation. `source.stopAfterGTIDs` stops inclusively once
