@@ -26,10 +26,11 @@ The findings below describe the initial review. Use this table for current statu
 | OP-05 | Committed (`1d27330`) | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
 | OP-06 | Slice 1 committed (`8e17740`) | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases remain under OP-12. |
 | OP-07 | Committed (`8e17740`) | Save completed file validation and start metadata in SQLite. Resume at the saved applied byte offset after reading format metadata. GTID-only starts select a file by `Previous_gtids`. No per-transaction archive index or file hash. Focused tests and isolated SQL/BINLOG stop-and-resume checks pass. |
-| OP-11 | Implemented | Metadata-family timings, per-discovery query reuse, and configurable `maximumCachedTables` (default 6000). SQL/BINLOG runs on 5.7 → 8.4 InnoDB and 8.4 → 5.7 MyISAM pass at zero/20 ms added RTT, with DDL and restart checks. See [measurements](OP11_SCHEMA_DISCOVERY_RESULTS.md). Larger table-count measurements remain future work. |
-| OP-12–13 | Not started under this plan | Existing behavior remains as described below. |
+| OP-11 | Committed (`f7eed57`) | Metadata-family timings, per-discovery query reuse, and configurable `maximumCachedTables` (default 6000). SQL/BINLOG runs on 5.7 → 8.4 InnoDB and 8.4 → 5.7 MyISAM pass at zero/20 ms added RTT, with DDL and restart checks. See [measurements](OP11_SCHEMA_DISCOVERY_RESULTS.md). Larger table-count measurements remain future work. |
+| OP-12 | Implemented | Live worker phases, monotonic ages, separate read/prepared/applied positions, and provisional ETA samples. Status reads memory only. |
+| OP-13 | Not started under this plan | Existing behavior remains as described below. |
 
-Next: OP-12 live phase and wait reporting, then OP-13 table/operation statistics. OP-09/OP-10 still have the focused checks described below.
+Next: OP-13 table/operation statistics. OP-09/OP-10 still have the focused checks described below.
 
 ## Issue list
 
@@ -436,6 +437,31 @@ The reported ETA varies greatly at low transaction rates.
 Acceptance: status remains responsive during a long metadata query or archive
 scan. Test sparse progress, stalls, reconnects, paused execution, and time changes.
 Do not sum inclusive stage timings to calculate wall time.
+
+Implemented: `activity` reports live phases for the coordinator, capture, and
+target workers. Each phase has a monotonic duration. Status also reports reply
+time, checkpoint age, last-progress time, and separate read and prepared
+positions. The applied position still comes from the SQLite checkpoint.
+Status copies memory only. It does not call SQLite or MySQL. Sparse ETA samples
+are provisional. Old samples retain their approximate ETA with age and stale
+status. Paused runs still have no active ETA unless the goal is complete.
+
+Focused checks on 2026-10-20:
+
+- Eleven unit tests passed. They cover status replies while a worker is held
+  in a metadata, archive-validation, reconnect, or execution phase; nested phase
+  cleanup; separate positions; sparse rates; stalls; and clock changes.
+- A local 5.7 → 8.4 InnoDB replay passed with 4 related tables and 32 row
+  transactions, at zero and 20 ms added RTT. Final rows matched the source.
+  The follow-up UPDATE, ALTER, INSERT, and saved-state restart also passed.
+- During the delayed initial replay, 74 status requests returned. The maximum
+  response time was 2.5 ms. Replies showed real schema queries and target
+  execution, with read and prepared positions. This is a local socket result,
+  not a guarantee for every host.
+- Evidence: `artifacts/operability/op12-live-status-20261021/`. The status
+  samples are in `20ms/status-initial.json`; per-case results contain final
+  summaries. The held-worker unit test covers a long archive-validation wait;
+  this small archive does not measure a multi-day validation scan.
 
 ## OP-13 — Statistics by schema, table, and operation
 

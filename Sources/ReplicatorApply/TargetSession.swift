@@ -12,6 +12,7 @@ final class TargetSession {
     // Existing session-local operations keep the writer. Preview has no writer.
     var connection: MySQLConnection { writeConnection ?? metadataConnection }
     let timings: StageTimings
+    let activity: RunActivity?
     let jsonScratchID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))
     var jsonScratchTables = Set<String>()
     var jsonScratchOrdinal: UInt64 = 0
@@ -36,8 +37,11 @@ final class TargetSession {
     let queries: TargetQueryConnections
     let config: ApplyConfiguration
     init(
-        configuration: ApplyConfiguration, password: String, timings: StageTimings = .init(), metadataOnly: Bool = false
+        configuration: ApplyConfiguration, password: String, timings: StageTimings = .init(),
+        metadataOnly: Bool = false,
+        activity: RunActivity? = nil
     ) throws {
+        self.activity = activity
         self.metadataOnly = metadataOnly
         self.timings = timings
         config = configuration
@@ -101,8 +105,15 @@ final class TargetSession {
     /// intent uncertain. Recovery is a later, separately qualified increment.
     func query(
         _ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, timeoutSeconds: Int = 10,
-        mutation: Bool = false, rawSQL: Data? = nil, metadata: Bool = false
+        mutation: Bool = false, rawSQL: Data? = nil, metadata: Bool = false, reportActivity: Bool = true
     ) throws -> ([MySQLRow], UInt64?) {
+        let reportQuery = reportActivity && !metadata && discoveryReads.table == nil
+        if reportQuery {
+            activity?.begin(
+                .target, mutation ? "targetExecution" : "targetReadOrControl",
+                purpose: TargetQueryPurpose.classify(sql, mutation: mutation))
+        }
+        defer { if reportQuery { activity?.end(.target) } }
         let queryConnection =
             queries.usesMetadataConnection(sql, mutation: mutation, rawSQL: rawSQL, metadata: metadata)
             ? metadataConnection : connection
@@ -190,6 +201,8 @@ final class TargetSession {
         try discoveryReads.read(sql, binds: binds, textProtocol: textProtocol, timings: timings) {
             let purpose = TargetQueryPurpose.classify(sql, mutation: false)
             let queryTable = table ?? discoveryReads.table
+            activity?.begin(.target, "schemaDiscovery", table: queryTable, purpose: purpose)
+            defer { activity?.end(.target) }
             let start = DispatchTime.now().uptimeNanoseconds
             var completed = false
             defer {
@@ -207,7 +220,9 @@ final class TargetSession {
             }
             do {
                 let result = try timings.measure("target.metadata." + purpose) {
-                    try query(sql, binds, textProtocol: textProtocol, metadata: lockEpoch.table == nil)
+                    try query(
+                        sql, binds, textProtocol: textProtocol, metadata: lockEpoch.table == nil,
+                        reportActivity: false)
                 }
                 completed = true
                 return result
@@ -358,6 +373,8 @@ final class TargetSession {
     }
 
     func readSchema(database: String, name: String, validateRelationships: Bool = true) throws -> ApplyTable {
+        activity?.begin(.target, "schemaDiscovery", table: TableName(database: database, table: name))
+        defer { activity?.end(.target) }
         let outer = discoveryReads.table == nil
         let before = outer ? metadataTotals() : (queries: UInt64(0), seconds: 0.0, hits: UInt64(0))
         defer {

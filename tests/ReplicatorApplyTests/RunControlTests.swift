@@ -4,6 +4,16 @@ import XCTest
 
 @testable import ReplicatorApply
 
+func controlTestSummary(_ lifecycle: String) -> ApplySummary {
+    ApplySummary(
+        lifecycle: lifecycle, transactionsApplied: 2, rowsApplied: 2, ddlApplied: 0, appliedPosition: nil,
+        appliedGTIDSet: "00000000-0000-0000-0000-000000000001:1-2", pendingGTID: nil, stateDirectory: "test",
+        stageTimings: nil, pipeline: nil, sourceReconnectEnabled: false, sourceReconnectAttempts: 0,
+        sourceReconnectReason: nil,
+        targetReconnectEnabled: false, targetReconnectAttempts: 0, targetReconnectReason: nil, targetFailure: nil,
+        drainRequested: lifecycle == "STOPPED")
+}
+
 final class RunControlTests: XCTestCase {
     func testControlCLIOutputsOneSortedJSONDocument() throws {
         let directory = URL(fileURLWithPath: "/tmp/repl-cli-" + UUID().uuidString.prefix(8))
@@ -54,15 +64,6 @@ final class RunControlTests: XCTestCase {
         }
     }
 
-    func summary(_ lifecycle: String) -> ApplySummary {
-        ApplySummary(
-            lifecycle: lifecycle, transactionsApplied: 2, rowsApplied: 2, ddlApplied: 0, appliedPosition: nil,
-            appliedGTIDSet: "00000000-0000-0000-0000-000000000001:1-2", pendingGTID: nil, stateDirectory: "test",
-            stageTimings: nil, pipeline: nil, sourceReconnectEnabled: false, sourceReconnectAttempts: 0,
-            sourceReconnectReason: nil,
-            targetReconnectEnabled: false, targetReconnectAttempts: 0, targetReconnectReason: nil, targetFailure: nil,
-            drainRequested: lifecycle == "STOPPED")
-    }
     func testLocalCommandsAcknowledgeCoordinatorAndCleanUpSocket() throws {
         let directory = URL(fileURLWithPath: "/tmp/repl-ctl-" + UUID().uuidString.prefix(8))
         try FileManager.default.createDirectory(
@@ -72,7 +73,7 @@ final class RunControlTests: XCTestCase {
         let limits = try StopConditions(transactions: 10, gtids: nil)
         let control = RunControl(limits: limits, drain: drain) { try StopConditions(transactions: 20, gtids: nil) }
         try control.start(directory: directory)
-        control.publish(summary("RUNNING"))
+        control.publish(controlTestSummary("RUNNING"))
         func reply(_ command: String) throws -> [String: Any] {
             try JSONSerialization.jsonObject(
                 with: ControlClient.request(.init(command: command, timeoutSeconds: 5), stateDirectory: directory.path))
@@ -106,10 +107,61 @@ final class RunControlTests: XCTestCase {
         let stopUntil = Date().addingTimeInterval(3)
         while !drain.isCancelled && Date() < stopUntil { Thread.sleep(forTimeInterval: 0.01) }
         XCTAssertTrue(drain.isCancelled)
-        control.finish(summary("STOPPED"))
+        control.finish(controlTestSummary("STOPPED"))
         wait(for: [stopped], timeout: 5)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("control.sock").path))
         XCTAssertThrowsError(try reply("status"))
+    }
+    func testStatusRespondsWhileWorkerIsBlocked() throws {
+        let directory = URL(fileURLWithPath: "/tmp/repl-live-" + UUID().uuidString.prefix(8))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let control = RunControl(limits: try .init(transactions: nil, gtids: nil), drain: .init()) {
+            try .init(transactions: nil, gtids: nil)
+        }
+        control.activity.checkpoint(transactions: 2)
+        control.publish(controlTestSummary("RUNNING"))
+        try control.start(directory: directory)
+        defer { control.finish(controlTestSummary("STOPPED")) }
+        // Hold the worker in the same scoped status operation used around slow
+        // reads. The socket must return before that operation is released.
+        for (worker, phase) in [
+            (RunActivity.Worker.target, "schemaDiscovery"),
+            (.coordinator, "archiveValidation"), (.coordinator, "targetReconnectWait"),
+            (.target, "targetExecution"),
+        ] {
+            let entered = DispatchSemaphore(value: 0)
+            let release = DispatchSemaphore(value: 0)
+            let completed = expectation(description: phase)
+            DispatchQueue.global().async {
+                control.activity.measure(worker, phase) {
+                    entered.signal()
+                    _ = release.wait(timeout: .now() + 10)
+                }
+                completed.fulfill()
+            }
+            XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+            do {
+                let start = ProcessInfo.processInfo.systemUptime
+                let data = try ControlClient.request(
+                    .init(command: "status", timeoutSeconds: 1),
+                    stateDirectory: directory.path)
+                XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 1)
+                let reply = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let progress = try XCTUnwrap(reply["progress"] as? [String: Any])
+                let activity = try XCTUnwrap(progress["activity"] as? [String: Any])
+                let phases = try XCTUnwrap(activity["phases"] as? [String: Any])
+                XCTAssertEqual((phases[worker.rawValue] as? [String: Any])?["name"] as? String, phase)
+                XCTAssertNotNil(activity["generatedAt"])
+                XCTAssertEqual(progress["transactionsApplied"] as? Int, 2)
+            } catch {
+                release.signal()
+                wait(for: [completed], timeout: 2)
+                throw error
+            }
+            release.signal()
+            wait(for: [completed], timeout: 2)
+        }
     }
     func testControlDoesNotReplaceRegularFile() throws {
         let directory = URL(fileURLWithPath: "/tmp/repl-ctl-" + UUID().uuidString.prefix(8))

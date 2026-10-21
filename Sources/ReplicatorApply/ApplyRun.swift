@@ -31,6 +31,7 @@ public struct ApplySummary: Encodable {
     public var pendingTransactionCount: Int = 0
     public var recovery: RecoveryAdvice? = nil
     public var estimate: ProgressEstimate? = nil
+    public var activity: RunActivitySnapshot? = nil
     public var counters: ApplyCounters? = nil
     public var applyQueue: ApplyQueueSnapshot? = nil
     // Crash recovery / uncertain target replay remains unsupported.
@@ -74,6 +75,9 @@ public enum ApplyRun {
         let filter = try TableFilter(
             configuration.replicateWildIgnoreTable ?? [], including: configuration.replicateWildDoTable ?? [],
             lowerCaseTableNames: configuration.source.tableNameCaseSetting)
+        let activity = control?.activity ?? RunActivity()
+        activity.begin(.coordinator, "starting")
+        defer { activity.end(.coordinator) }
         let timings = StageTimings()
         let producerTimings = StageTimings()
         let targetTimings = StageTimings()
@@ -97,6 +101,7 @@ public enum ApplyRun {
         let state = try ApplicationLog.measure("Open replication state", metadata: ["phase": "state"]) {
             try StateStore(configuration: configuration, initialize: initialize, timings: timings)
         }
+        activity.resetPositions(to: state.applied)
         let statistics = configuration.statistics ?? StatisticsPolicy()
         let estimator = ProgressEstimator(window: statistics.rateWindowSeconds)
         let monitor = archive == nil ? SourceMonitor() : nil
@@ -115,6 +120,7 @@ public enum ApplyRun {
                 completed: state.gtids, goal: goal, replay: archive != nil, lifecycle: lifecycle,
                 observation: observation)
             value.sourceObservation = observation
+            value.sourceObservationStaleAfterSeconds = statistics.sourcePollIntervalSeconds * 2
             value.monitoringError = sample?.error
             if let observation {
                 let age = max(0, Date().timeIntervalSince1970 - observation.observedAt)
@@ -122,8 +128,8 @@ public enum ApplyRun {
                 value.sourceObservationStale =
                     age > Double(statistics.sourcePollIntervalSeconds * 2) || sample?.error != nil
                 if value.sourceObservationStale {
-                    value.estimatedSecondsRemaining = nil
-                    value.status = "staleSourceSample"
+                    value.provisional = true
+                    if value.status != "paused" { value.status = "staleSourceSample" }
                 }
                 if let applied = state.applied {
                     value.remainingBinlogBytes = observation.bytesRemaining(after: applied)
@@ -139,7 +145,8 @@ public enum ApplyRun {
             return merged.snapshot
         }
         func summary(_ lifecycle: String) -> ApplySummary {
-            ApplySummary(
+            activity.checkpoint(transactions: state.transactions)
+            return ApplySummary(
                 lifecycle: lifecycle, transactionsApplied: state.transactions, rowsApplied: state.rows,
                 ddlApplied: state.ddlApplied,
                 appliedPosition: state.applied, appliedGTIDSet: state.gtids, pendingGTID: state.pendingGTID,
@@ -156,7 +163,8 @@ public enum ApplyRun {
                 sourceFailurePosition: sourceFailurePosition,
                 pendingTransactions: state.pendingTransactions, pendingTransactionCount: state.pendingTransactionCount,
                 recovery: recoveryAdvice, estimate: estimate(lifecycle),
-                counters: state.counters, applyQueue: executionQueue?.snapshot)
+                counters: state.counters, applyQueue: executionQueue?.snapshot
+            ).refreshingActivity(from: activity)
         }
         var lastLogLifecycle: String?
         var lastLogTime: UInt64 = 0
@@ -217,8 +225,11 @@ public enum ApplyRun {
                     }
                     let target = try ApplicationLog.measure("Connect to target", metadata: ["phase": "target_connect"])
                     {
-                        try TargetSession(
-                            configuration: configuration, password: targetPassword, timings: targetTimings)
+                        try activity.measure(.target, "connecting") {
+                            try TargetSession(
+                                configuration: configuration, password: targetPassword, timings: targetTimings,
+                                activity: activity)
+                        }
                     }
                     defer { try? target.unlock() }
                     if let archive {
@@ -233,17 +244,20 @@ public enum ApplyRun {
                             // Retain complete validation before writer ownership,
                             // scratch setup, GTID repair, or application writes.
                             // Reconnect reuses ArchiveReplay's in-memory result.
-                            try archive.validate(
-                                baseline: state.gtids, stopAfterGTIDs: limits.stopAfterGTIDs, resumeFrom: state.applied,
-                                persistence: state.archiveValidationPersistence(),
-                                isCancelled: { cancellation.isCancelled || drain.isCancelled })
+                            try activity.measure(.coordinator, "archiveValidation") {
+                                try archive.validate(
+                                    baseline: state.gtids, stopAfterGTIDs: limits.stopAfterGTIDs,
+                                    resumeFrom: state.applied,
+                                    persistence: state.archiveValidationPersistence(),
+                                    isCancelled: { cancellation.isCancelled || drain.isCancelled })
+                            }
                         } catch is CaptureCancelled {
                             try state.archiveValidationStopped()
                             return stoppedResult()
                         }
                     }
                     try ApplicationLog.measure("Check target", metadata: ["phase": "target_setup"]) {
-                        try target.preflight()
+                        try activity.measure(.coordinator, "targetSetup") { try target.preflight() }
                     }
                     try state.bindTargetIdentity(target.targetUUID!)
                     for identity in try state.pendingGTIDMarkers() {
@@ -267,6 +281,8 @@ public enum ApplyRun {
                     }
                     try state.running()
                     started = true
+                    activity.end(.coordinator)
+                    activity.begin(.coordinator, "running")
                     targetReason = nil
                     try progress()
                     let executor = DMLExecutor(
@@ -289,7 +305,13 @@ public enum ApplyRun {
                     func finishOneExecution() throws {
                         guard executor.active else { return }
                         do {
-                            guard let outcome = timings.measure("apply.execution_wait", { executor.join() }) else {
+                            guard
+                                let outcome = activity.measure(
+                                    .coordinator, "targetCompletionWait",
+                                    {
+                                        timings.measure("apply.execution_wait", { executor.join() })
+                                    })
+                            else {
                                 throw ApplyError("prepared batch was not executed after an earlier failure")
                             }
                             var outcomes = [outcome]
@@ -340,12 +362,17 @@ public enum ApplyRun {
                         if executor.ready { try finishOneExecution() }
                         while executor.available < batches.count { try finishOneExecution() }
                         try checkSourceFailure()
-                        try timings.measure("apply.batch.prepare") { try state.beginBatches(batches) }
+                        try activity.measure(.coordinator, "savingPreparedBatches") {
+                            try timings.measure("apply.batch.prepare") { try state.beginBatches(batches) }
+                        }
+                        if let last = groups.last { activity.didPrepare(last.group.end) }
                         activeBatchTransactions += groups.count
                         control?.publish(summary("RUNNING"))
                         for prepared in batches {
                             executor.start {
-                                targetTimings.measure("apply.batch.execute") {
+                                activity.begin(.target, "executingBatch")
+                                defer { activity.end(.target) }
+                                return targetTimings.measure("apply.batch.execute") {
                                     target.execute(
                                         prepared, cancellation: executionStop, maximumInsertBytes: byteLimit,
                                         checkSourceFailure: checkSourceFailure)
@@ -414,6 +441,7 @@ public enum ApplyRun {
                             try barrier()
                             target.statementTrace = .init()
                             try state.begin(group)
+                            activity.didPrepare(group.end)
                             control?.publish(summary("RUNNING"))
                             var hasDDLIntent = false
                             do {
@@ -540,7 +568,9 @@ public enum ApplyRun {
                             }
                         } catch {
                             try barrier()
-                            try state.begin(group)  // Keep rejected, unwritten groups explicitly skippable.
+                            // Keep rejected, unwritten groups explicitly skippable.
+                            try state.begin(group)
+                            activity.didPrepare(group.end)
                             if !cancellation.isCancelled,
                                 let skip = configuration.skipErrorPolicy.match(error, at: .beforeWrites)
                             {
@@ -555,6 +585,7 @@ public enum ApplyRun {
                             try barrier()
                             try target.unlock()
                             try state.begin(group)
+                            activity.didPrepare(group.end)
                             try target.checkSourceGTID(group.gtid!)
                             try target.emptySourceGTID(group.gtid!, rolledBack: group.outcome == .rolledBack)
                             try state.complete(group, rowCount: 0, filtered: true)
@@ -570,6 +601,7 @@ public enum ApplyRun {
                         if drain.isCancelled {
                             try report(summary("DRAINING"))
                             try state.discardUnappliedCapture()
+                            activity.resetPositions(to: state.applied)
                             break
                         }
                         if let reason = limits.reason(
@@ -589,12 +621,26 @@ public enum ApplyRun {
                         capture.stopAfterGTIDs = limits.stopAfterGTIDs
                         let replayCheckpoint = state.applied
                         do {
+                            activity.begin(.coordinator, "waitingForInput")
+                            defer { activity.end(.coordinator) }
                             try pipeline.run(
                                 cancellation: cancellation, producerTimings: producerTimings,
                                 produce: { stop, send in
+                                    activity.begin(
+                                        .capture, archive == nil ? "sourceReadAndDecode" : "archiveReadAndDecode")
+                                    defer { activity.end(.capture) }
+                                    func sendEvent(_ record: LiveRecord) throws {
+                                        if record.kind != "formatContext", let offset = UInt64(record.observedPosition)
+                                        {
+                                            activity.didRead(.init(file: record.file, position: offset))
+                                        }
+                                        try activity.measure(.capture, "queueWait") { try send(.event(record)) }
+                                    }
                                     let resolver: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? =
                                         legacyMetadata
                                         ? { event, _ in
+                                            activity.begin(.capture, "schemaWait")
+                                            defer { activity.end(.capture) }
                                             let request = ApplySchemaRequest(event)
                                             try send(.schema(request))
                                             return try producerTimings.measure("capture.schema_wait") {
@@ -605,8 +651,13 @@ public enum ApplyRun {
                                         try archive.run(
                                             configuration: capture, cancellation: stop, retainRawBytes: true,
                                             resumeFrom: replayCheckpoint,
-                                            emitEvent: { try send(.event($0)) },
-                                            emitTransaction: { try send(.transaction($0)) },
+                                            emitEvent: sendEvent,
+                                            emitTransaction: { group in
+                                                activity.didRead(group.end)
+                                                try activity.measure(.capture, "queueWait") {
+                                                    try send(.transaction(group))
+                                                }
+                                            },
                                             resolveSchema: resolver, timings: producerTimings,
                                             ignoreTable: filter.isEmpty
                                                 ? nil : { filter.ignores(database: $0, table: $1) },
@@ -615,8 +666,13 @@ public enum ApplyRun {
                                         _ = try LiveInspection.run(
                                             configuration: capture, password: sourcePassword, retainRawBytes: true,
                                             cancellation: stop,
-                                            emitEvent: { try send(.event($0)) },
-                                            emitTransaction: { try send(.transaction($0)) },
+                                            emitEvent: sendEvent,
+                                            emitTransaction: { group in
+                                                activity.didRead(group.end)
+                                                try activity.measure(.capture, "queueWait") {
+                                                    try send(.transaction(group))
+                                                }
+                                            },
                                             resolveSchema: resolver,
                                             timings: producerTimings, onIdle: { try send(.idle) }, allowDDL: true,
                                             ignoreTable: filter.isEmpty
@@ -626,6 +682,8 @@ public enum ApplyRun {
                                     }
                                 },
                                 consume: { message in
+                                    activity.begin(.coordinator, "preparing")
+                                    defer { activity.end(.coordinator) }
                                     if drain.isCancelled { throw ApplyDrainRequested() }
                                     if control?.reloadRequested == true { throw ApplyReloadRequested() }
                                     try timings.measure("apply.consume") {
@@ -668,6 +726,7 @@ public enum ApplyRun {
                                 try report(summary("DRAINING"))
                                 try finishExecution()
                                 try state.discardUnappliedCapture()
+                                activity.resetPositions(to: state.applied)
                                 batch.discard()
                             } else {
                                 try barrier("end")
@@ -693,12 +752,14 @@ public enum ApplyRun {
                             }
                             if draining {
                                 try state.discardUnappliedCapture()
+                                activity.resetPositions(to: state.applied)
                                 batch.discard()
                                 consumerPending = false
                                 break
                             }
                             if reloading, let control {
                                 try state.discardUnappliedCapture()
+                                activity.resetPositions(to: state.applied)
                                 batch.discard()
                                 consumerPending = false
                                 try target.unlock()
@@ -711,8 +772,10 @@ public enum ApplyRun {
                                         "new stop condition is already satisfied after issued work; it cannot rewind the target"
                                     )
                                     if let archive {
-                                        try archive.validate(
-                                            baseline: state.gtids, stopAfterGTIDs: candidate.stopAfterGTIDs)
+                                        try activity.measure(.coordinator, "archiveValidation") {
+                                            try archive.validate(
+                                                baseline: state.gtids, stopAfterGTIDs: candidate.stopAfterGTIDs)
+                                        }
                                     }
                                     limits = candidate
                                     control.publish(summary("RUNNING"))
@@ -730,6 +793,7 @@ public enum ApplyRun {
                                 // The pipeline and receiver have joined. Only acknowledged,
                                 // journaled target work may advance the restart boundary.
                                 try state.discardUnappliedCapture()
+                                activity.resetPositions(to: state.applied)
                                 batch.discard()
                                 consumerPending = false
                                 try target.unlock()
@@ -754,7 +818,9 @@ public enum ApplyRun {
                                         "delaySeconds": .string(String(delay)),
                                     ])
                                 timings.measure("source.reconnect_wait") {
-                                    SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
+                                    activity.measure(.coordinator, "sourceReconnectWait") {
+                                        SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
+                                    }
                                 }
                                 if cancellation.isCancelled || drain.isCancelled { break }
                                 pipeline = ApplyPipeline(
@@ -780,6 +846,7 @@ public enum ApplyRun {
                     // The old target session and its executor have been destroyed before
                     // reconnect. Only fully acknowledged groups can advance this boundary.
                     try state.discardUnappliedCapture()
+                    activity.resetPositions(to: state.applied)
                     consumerPending = false
                     targetReason = String(describing: error)
                     if cancellation.isCancelled || drain.isCancelled {
@@ -803,7 +870,9 @@ public enum ApplyRun {
                             "delaySeconds": .string(String(delay)),
                         ])
                     timings.measure("target.reconnect_wait") {
-                        SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
+                        activity.measure(.coordinator, "targetReconnectWait") {
+                            SourceRetryState.wait(seconds: delay, cancellation: cancellation, drain: drain)
+                        }
                     }
                     if cancellation.isCancelled || drain.isCancelled {
                         if archive != nil && !started {

@@ -43,10 +43,43 @@ separate meanings:
 | Field | Meaning |
 | --- | --- |
 | `appliedPosition` | End of the last transaction recorded as completed in SQLite. |
+| `activity.readPosition` | Last file offset reported by the decoder. It can be ahead of prepared and applied work. It is not the download position. |
+| `activity.preparedPosition` | End of the last transaction for which preparation or an unresolved intent was saved. It does not confirm a target write. |
 | `pendingTransactions[]` | GTID, `start`, and `end` coordinates of unresolved transactions, in source order. The list contains at most 16 entries. |
 | `pendingTransactionCount` | Total number of unresolved transactions, including entries omitted from the compact list. |
 | `sourceFailurePosition` | Physical file and event offset of an archive read, decode, or transaction assembly error, when known. |
 | `recovery` | Failure category, whether target reconciliation is required, and operator next steps. Present when available after a blocked run. |
+
+The `activity` object changes while a worker waits. It includes:
+
+- `generatedAt`: time when this reply was built, as Unix seconds.
+- `checkpointUpdatedAt` and `checkpointAgeSeconds`: time and age of the
+  coordinator's last progress snapshot. A fresh reply can contain an old
+  checkpoint snapshot.
+- `lastProgressAt` and `secondsSinceLastProgress`: time and age of the last
+  observed increase in completed transactions in this process. These fields are
+  absent until the process makes progress. They include filtered and skipped
+  transactions.
+- `phases`: current work for each active worker, with `name` and
+  `elapsedSeconds`. Schema queries also include their purpose and table when
+  known. The coordinator, capture worker, and target worker can be active at
+  the same time. Do not add their durations.
+
+Typical phases are `archiveValidation`, `schemaDiscovery`, `targetExecution`,
+`targetCompletionWait`, `sourceReconnectWait`, and `targetReconnectWait`.
+`archiveReadAndDecode` and `sourceReadAndDecode` include input waits and decoding.
+`schemaWait` and `queueWait` identify capture waits. `targetReadOrControl`
+includes session setup and transaction control. Other short phases identify
+startup, preparation, and state writes. A schema phase with a query purpose
+measures that query. A schema phase without a purpose measures the enclosing
+lookup. Completed or blocked summaries have no
+active phases. Phase durations and ages use a monotonic clock. Wall-clock
+corrections do not change them.
+
+Read and prepared positions are observations for the current run. They can move
+back to the applied position when reconnect or reload discards queued work.
+Use `appliedPosition` for resume. A pending intent can contain rejected SQL;
+`preparedPosition` does not mean that SQL is executable.
 
 Pending transactions can include work that was prepared but never issued. They
 can also include writes that the target committed before SQLite recorded the
@@ -81,7 +114,13 @@ recovery decisions remain in the recovery audit and are not inferred as SQL writ
 
 `progress.estimate` gives recent transactions per second, binlog bytes per second,
 remaining transactions and estimated seconds remaining. The rate window defaults
-to 60 seconds. Estimates change when transaction sizes or target load change.
+to 60 seconds. `sampleDurationSeconds` and `sampleTransactions` show the
+observations used for the rate. An estimate is `provisional` until the sample
+covers at least 5 seconds and 20 transactions. `sampleAgeSeconds` shows the age
+of this rate calculation. If the coordinator has not refreshed it within the
+rate window, status becomes `staleRateSample`. The last ETA remains visible as
+a provisional value. It is not a countdown. Estimates change when transaction
+sizes or target load change.
 Filtered and skipped groups count as processed transactions for this rate.
 
 Replay uses `source.stopAfterGTIDs` as the goal. A single endpoint such as
@@ -96,7 +135,9 @@ Live mode polls source status and actual binlog file sizes every 15 seconds on
 a separate connection. The source user needs `REPLICATION CLIENT` for this
 metadata. Observations are saved in SQLite for diagnosis. The status contains
 the observation time, age and any monitoring error. A failed or stale sample
-does not stop replication, but it suppresses the catch-up estimate. Missing or
+does not stop replication. It marks the estimate `staleSourceSample` and
+`provisional`. The estimate uses the last observed source goal; new source work
+can make it too small. Missing or
 purged files can prevent a byte-backlog measurement. Live catch-up estimates
 subtract the observed source transaction rate from the apply rate. If new work
 arrives at least as fast as apply, status is `notCatchingUp`.

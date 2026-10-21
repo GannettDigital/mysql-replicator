@@ -8,6 +8,7 @@ struct ApplyReloadRequested: Error {}
 /// reload after its active executor has joined and unapplied capture is dropped.
 public final class RunControl: @unchecked Sendable {
     private let condition = NSCondition()
+    let activity = RunActivity()
     private let drain: CaptureCancellation
     private let reload: () throws -> StopConditions
     private let instance = UUID().uuidString
@@ -73,7 +74,7 @@ public final class RunControl: @unchecked Sendable {
         let reply = Reply(
             ok: error == nil, command: command, error: error, pid: ProcessInfo.processInfo.processIdentifier,
             instance: instance, running: !finished, configurationGeneration: generation, limits: limits,
-            progress: progress)
+            progress: progress?.refreshingActivity(from: activity))
         return (try? JSONEncoder().encode(reply)) ?? ControlSocket.error("cannot encode control status")
     }
     private func request(_ request: ControlRequest) -> Data {

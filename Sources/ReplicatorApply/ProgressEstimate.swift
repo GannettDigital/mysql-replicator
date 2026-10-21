@@ -29,6 +29,12 @@ public struct ProgressEstimate: Encodable {
     public var sourceObservation: SourceObservation?
     public var sourceObservationAgeSeconds: Double?
     public var sourceObservationStale: Bool = false
+    public var sourceObservationStaleAfterSeconds: Int = 30
+    public var sampleDurationSeconds: Double = 0
+    public var sampleTransactions: Int = 0
+    public var sampleAgeSeconds: Double = 0
+    public var rateWindowSeconds: Int = 60
+    public var provisional: Bool = true
     public var monitoringError: String?
 }
 /// Use monotonic time for rates. GTID set counts include filtered/skipped groups.
@@ -47,6 +53,9 @@ final class ProgressEstimator {
         now: Double, transactions: Int, bytes: Int64, completed: String, goal: String?, replay: Bool, lifecycle: String,
         observation: SourceObservation? = nil
     ) -> ProgressEstimate {
+        if let last = samples.last, now < last.time || transactions < last.transactions || bytes < last.bytes {
+            samples.removeAll()
+        }
         let sample = Sample(time: now, transactions: transactions, bytes: bytes)
         if let last = samples.last, now - last.time < 0.25 { /* Keep bounded sampling at frequent DDL boundaries. */
         } else {
@@ -55,6 +64,12 @@ final class ProgressEstimator {
         while samples.count > 2 && samples[1].time < now - window { samples.removeFirst() }
         var result = ProgressEstimate(
             mode: replay ? "replay" : "live", status: "collectingRateSample", goalGTIDSet: goal)
+        result.rateWindowSeconds = Int(window)
+        if let first = samples.first {
+            result.sampleDurationSeconds = max(0, now - first.time)
+            result.sampleTransactions = max(0, transactions - first.transactions)
+            result.provisional = result.sampleDurationSeconds < 5 || result.sampleTransactions < 20
+        }
         if let first = samples.first, now - first.time >= 1 {
             result.transactionsPerSecond = max(0, Double(transactions - first.transactions) / (now - first.time))
             result.binlogBytesPerSecond = max(0, Double(bytes - first.bytes) / (now - first.time))

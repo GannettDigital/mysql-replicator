@@ -29,6 +29,36 @@ final class ProgressEstimateTests: XCTestCase {
             lifecycle: "STOPPED")
         XCTAssertEqual(done.estimatedSecondsRemaining, 0)
     }
+    func testSparseSamplesStallAndCounterOrClockReset() {
+        let e = ProgressEstimator(window: 60)
+        func update(_ time: Double, _ count: Int, _ lifecycle: String = "RUNNING") -> ProgressEstimate {
+            e.update(
+                now: time, transactions: count, bytes: Int64(count * 10), completed: sid + ":1-\(100 + count)",
+                goal: sid + ":200", replay: true, lifecycle: lifecycle)
+        }
+        _ = update(0, 0)
+        let sparse = update(10, 1)
+        XCTAssertEqual(sparse.sampleDurationSeconds, 10)
+        XCTAssertEqual(sparse.sampleTransactions, 1)
+        XCTAssertEqual(sparse.estimatedSecondsRemaining, 990)
+        XCTAssertTrue(sparse.provisional)
+        let measured = update(20, 20)
+        XCTAssertFalse(measured.provisional)
+        XCTAssertEqual(measured.sampleTransactions, 20)
+        XCTAssertEqual(update(21, 20, "TARGET_RECONNECTING").status, "paused")
+        XCTAssertNil(update(22, 20, "RECONNECTING").estimatedSecondsRemaining)
+        _ = update(90, 20)
+        let stalled = update(151, 20)
+        XCTAssertEqual(stalled.status, "noRecentProgress")
+        XCTAssertEqual(stalled.sampleTransactions, 0)
+        XCTAssertNil(stalled.estimatedSecondsRemaining)
+        let clockReset = update(1, 21)
+        XCTAssertEqual(clockReset.sampleDurationSeconds, 0)
+        XCTAssertEqual(clockReset.transactionsPerSecond, 0)
+        let counterReset = update(2, 0)
+        XCTAssertEqual(counterReset.sampleTransactions, 0)
+        XCTAssertEqual(counterReset.binlogBytesPerSecond, 0)
+    }
     func testTaggedIntervalsAndHolesAreSeparate() throws {
         let goal = try GTIDSet(sid + ":1-10:blue:1-10:green:1-2")
         let done = try GTIDSet(sid + ":1-3:5-10:blue:1-5")
