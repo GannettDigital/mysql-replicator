@@ -136,6 +136,9 @@ extension ConfigurationOptions {
         add("supportBundle.maximumBytes", .integer, default: "2147483648", units: "bytes")
         add("supportBundle.logs", .stringList, default: "[]", example: "['/var/log/mysql-replicator.log']")
         add("statistics.sourcePollIntervalSeconds", .integer, default: "15", units: "seconds")
+        add("statistics.tableDetails", .boolean, default: "false")
+        add("statistics.maximumTableEntries", .integer, default: "6000", units: "entries")
+        add("statistics.snapshotIntervalSeconds", .integer, default: "30", units: "seconds")
         add("statistics.rateWindowSeconds", .integer, default: "60", units: "seconds")
         return result
     }()

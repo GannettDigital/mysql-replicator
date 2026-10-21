@@ -48,16 +48,20 @@ extension ApplyTests {
         }
     }
     func withBatchFixture(
-        profiling: Bool = false, profile: String? = nil, skipErrors: [String: Any]? = nil,
+        profiling: Bool = false, profile: String? = nil, skipErrors: [String: Any]? = nil, statistics: Bool = false,
         _ body: (StateStore, [PreparedDMLGroup]) throws -> Void
     ) throws {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: parent) }
-        let store = try StateStore(
-            configuration: config(
-                parent.appendingPathComponent("state").path, applierProfiling: profiling, profile: profile,
-                skipErrors: skipErrors))
+        var configuration = try config(
+            parent.appendingPathComponent("state").path, applierProfiling: profiling,
+            profile: profile, skipErrors: skipErrors)
+        if statistics {
+            configuration.statistics = StatisticsPolicy()
+            configuration.statistics?.tableDetails = true
+        }
+        let store = try StateStore(configuration: configuration)
         try body(store, batchFixture(store))
     }
     func testBatchPreparesEveryIntentBeforeWritesAndCompletesWithTwoCommits() throws {

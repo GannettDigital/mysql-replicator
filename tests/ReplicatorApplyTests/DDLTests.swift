@@ -335,8 +335,10 @@ final class DDLTests: XCTestCase {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: parent) }
-        let c = try helpers.config(
+        var c = try helpers.config(
             parent.appendingPathComponent("state").path, storage: ["historyRetentionSeconds": 60])
+        c.statistics = StatisticsPolicy()
+        c.statistics?.tableDetails = true
         var now = Date(timeIntervalSince1970: 1_700_000_000)
         var free = Int64.max / 4
         let store = try StateStore(configuration: c, now: { now }, freeDisk: { _ in free })
@@ -386,5 +388,8 @@ final class DDLTests: XCTestCase {
         XCTAssertEqual(try helpers.sqlite(db, "SELECT current FROM schemas"), [["1"]])
         XCTAssertEqual(try store.durableAppliedGTIDs(), helpers.sid + ":1-13")
         XCTAssertEqual(try helpers.sqlite(db, "SELECT COUNT(*) FROM row_intents"), [["0"]])
+        let detail = try XCTUnwrap(store.tableStatistics?.all.first { $0.table == table.table })
+        XCTAssertEqual(detail.durable.ddl, ["CREATE_TABLE": 1, "ALTER_TABLE": 1])
+        XCTAssertNil(detail.durable.ddl["DROP_TABLE"])  // Still pending; no inferred target success.
     }
 }

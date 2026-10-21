@@ -4,14 +4,26 @@ import ReplicatorCapture
 public struct StatisticsPolicy: Decodable {
     public var sourcePollIntervalSeconds: Int = 15
     public var rateWindowSeconds: Int = 60
+    public var tableDetails = false
+    public var maximumTableEntries = 6000
+    public var snapshotIntervalSeconds = 30
     public init() {}
-    enum CodingKeys: String, CodingKey { case sourcePollIntervalSeconds, rateWindowSeconds }
+    enum CodingKeys: String, CodingKey {
+        case sourcePollIntervalSeconds, rateWindowSeconds, tableDetails, maximumTableEntries, snapshotIntervalSeconds
+    }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         sourcePollIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .sourcePollIntervalSeconds) ?? 15
         rateWindowSeconds = try c.decodeIfPresent(Int.self, forKey: .rateWindowSeconds) ?? 60
+        tableDetails = try c.decodeIfPresent(Bool.self, forKey: .tableDetails) ?? false
+        maximumTableEntries = try c.decodeIfPresent(Int.self, forKey: .maximumTableEntries) ?? 6000
+        snapshotIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .snapshotIntervalSeconds) ?? 30
     }
     func validate() throws {
+        try require(
+            (1...100000).contains(maximumTableEntries), "statistics.maximumTableEntries must be 1 through 100000")
+        try require(
+            (5...3600).contains(snapshotIntervalSeconds), "statistics.snapshotIntervalSeconds must be 5 through 3600")
         try require(
             (5...3600).contains(sourcePollIntervalSeconds) && (5...3600).contains(rateWindowSeconds),
             "statistics intervals must be 5 through 3600 seconds")

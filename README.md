@@ -100,7 +100,8 @@ replication continues.
   or disable these records. The DBA remains responsible for data consistency
   after a skip.
 - **Statistics and troubleshooting:** retain transaction, row, event and byte
-  counts. Read backlog and estimated catch-up time with `ctl status`. Measure
+  counts. Read backlog and estimated catch-up time with `ctl status`. Enable
+  optional table statistics and read them with `ctl status --details`. Measure
   time spent downloading, decoding, and applying binlog events. Export logs,
   configuration, and saved state as a **support bundle** for troubleshooting.
   Create a bundle manually or enable automatic collection when an error stops

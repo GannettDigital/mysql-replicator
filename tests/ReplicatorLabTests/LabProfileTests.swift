@@ -8,9 +8,11 @@ final class LabProfileTests: XCTestCase {
         try LabBenchmark.validate(
             arguments: base + [
                 "--tables", "8", "--foreign-key-group-size", "4", "--target-rtt-ms", "20", "--dml-transport", "binlog",
+                "--table-statistics", "on",
             ])
         for extra in [
-            ["--tables", "0"], ["--target-rtt-ms", "-1"], ["--foreign-key-group-size", "9"], ["--events", "1"],
+            ["--table-statistics", "invalid"], ["--tables", "0"], ["--target-rtt-ms", "-1"],
+            ["--foreign-key-group-size", "9"], ["--events", "1"],
             ["--skip-build"], ["--binary", "/tmp/second"],
         ] {
             XCTAssertThrowsError(try LabBenchmark.validate(arguments: base + extra))

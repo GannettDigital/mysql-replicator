@@ -39,6 +39,9 @@ final class StateStore {
     private var groupStart: UInt64 = 0
     private var completedGTIDs: GTIDSet
     private(set) var counters = ApplyCounters()
+    let tableStatistics: TableStatistics?
+    private let statisticsSnapshotInterval: Double
+    private var lastStatisticsSnapshot: Double = 0
     private(set) var transactions = 0
     private(set) var rows = 0
     private(set) var ddlApplied = 0
@@ -94,6 +97,10 @@ final class StateStore {
         uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
         freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace
     ) throws {
+        let statistics = c.statistics ?? StatisticsPolicy()
+        try statistics.validate()
+        tableStatistics = statistics.tableDetails ? TableStatistics(maximum: statistics.maximumTableEntries) : nil
+        statisticsSnapshotInterval = Double(statistics.snapshotIntervalSeconds)
         self.timings = timings
         maximumCachedTables = c.schemaCacheTableLimit
         applierProfiling = c.applierProfiling ?? false
@@ -243,6 +250,50 @@ final class StateStore {
             counters = ApplyCounters(sinceTransaction: Int64(transactions))
             try saveCounters(counters)
         }
+        try openTableStatistics()
+    }
+    private func openTableStatistics() throws {
+        guard let statistics = tableStatistics else { return }
+        try execute("CREATE TABLE IF NOT EXISTS table_statistics(id INTEGER PRIMARY KEY,entry_json TEXT NOT NULL)")
+        try execute(
+            "CREATE TABLE IF NOT EXISTS table_statistics_meta(id INTEGER PRIMARY KEY CHECK(id=1),since_transaction INTEGER NOT NULL,last_transaction INTEGER NOT NULL,omitted_transactions INTEGER NOT NULL)"
+        )
+        let meta = try query(
+            "SELECT since_transaction,last_transaction,omitted_transactions FROM table_statistics_meta WHERE id=1"
+        ).first
+        let since = meta.flatMap { $0[0].flatMap(Int.init) } ?? transactions
+        let last = meta.flatMap { $0[1].flatMap(Int.init) } ?? transactions
+        let omitted = (meta.flatMap { $0[2].flatMap(Int.init) } ?? 0) + max(0, transactions - last)
+        try require(
+            since >= 0 && last >= since && last <= transactions && omitted >= 0,
+            "invalid saved table statistics transaction counts")
+        try require(
+            try number("SELECT COUNT(*) FROM table_statistics") <= Int64(statistics.maximum + 2),
+            "saved table statistics exceed statistics.maximumTableEntries; increase the setting")
+        let entries = try query("SELECT entry_json FROM table_statistics ORDER BY id").map { row in
+            try JSONDecoder().decode(TableStatisticsEntry.self, from: Data((row[0] ?? "").utf8))
+        }
+        try statistics.restore(entries, since: since, omitted: omitted)
+        try atomic { try saveTableStatistics([:], transactions: transactions, force: true) }
+    }
+    private func saveTableStatistics(_ updates: [Int: TableStatisticsEntry], transactions: Int, force: Bool = false)
+        throws
+    {
+        guard let statistics = tableStatistics else { return }
+        var values = updates
+        if force || uptime() - lastStatisticsSnapshot >= statisticsSnapshotInterval {
+            for entry in statistics.all where values[entry.id] == nil { values[entry.id] = entry }
+            lastStatisticsSnapshot = uptime()
+        }
+        for var entry in values.values {
+            entry.sampledAt = now().timeIntervalSince1970
+            let json = String(decoding: try JSONEncoder().encode(entry), as: UTF8.self)
+            try execute("INSERT OR REPLACE INTO table_statistics VALUES(?,?)", [String(entry.id), json])
+        }
+        let summary = statistics.summary
+        try execute(
+            "INSERT OR REPLACE INTO table_statistics_meta VALUES(1,?,?,?)",
+            [String(summary.sinceTransaction), String(transactions), String(summary.transactionsNotRecorded)])
     }
     private func saveCounters(_ value: ApplyCounters) throws {
         try execute("INSERT OR REPLACE INTO apply_totals VALUES(1,?,?,?,?,?,?,?,?,?,?)", value.values)
@@ -1053,6 +1104,13 @@ final class StateStore {
                     incomplete = true
                 }
             }
+            let details =
+                tableStatistics?.completing(
+                    batch.prefix(completed).enumerated().map { index, item in
+                        .init(
+                            group: item.group, rows: acknowledgedRows[index],
+                            outcome: skipped[index] == nil ? .applied : .errorSkipped)
+                    }) ?? [:]
             let active = completed < pendingBatch.count ? pendingBatch[completed].id : nil
             let end = completed > 0 ? batch[completed - 1].group.end : applied
             let time = timestamp()
@@ -1077,6 +1135,7 @@ final class StateStore {
                     }
                 }
                 try saveCounters(totals)
+                try saveTableStatistics(details, transactions: transactions + completed)
                 if !skipped.isEmpty {
                     try coverSkippedPrefix(next, sequence: sequence + Int64(completed), end: end!, time: time)
                 }
@@ -1088,6 +1147,7 @@ final class StateStore {
                         time,
                     ])
             }
+            tableStatistics?.accept(details)
             counters = totals
             completedGTIDs = next
             applied = end
@@ -1157,9 +1217,11 @@ final class StateStore {
         try next.include(identity)
         var totals = counters
         totals.complete(group, rows: 0, outcome: .errorSkipped)
+        let details = tableStatistics?.completing([.init(group: group, rows: 0, outcome: .errorSkipped)]) ?? [:]
         let time = timestamp()
         try atomic {
             try saveCounters(totals)
+            try saveTableStatistics(details, transactions: transactions + 1)
             try recordSkip(group, error: error, time: time)
             try coverSkippedPrefix(next, sequence: pendingSequence, end: group.end, time: time)
             try execute("DELETE FROM groups WHERE gtid=? AND status='PENDING'", [id])
@@ -1170,6 +1232,7 @@ final class StateStore {
                     time,
                 ])
         }
+        tableStatistics?.accept(details)
         completedGTIDs = next
         applied = group.end
         sequence = pendingSequence
@@ -1279,9 +1342,16 @@ final class StateStore {
         var totals = counters
         totals.complete(
             group, rows: rowCount, outcome: skippedDDL != nil ? .policySkipped : (filtered ? .filtered : .applied))
+        let details =
+            tableStatistics?.completing([
+                .init(
+                    group: group, rows: rowCount,
+                    outcome: skippedDDL != nil ? .policySkipped : (filtered ? .filtered : .applied), ddl: ddl)
+            ]) ?? [:]
         let time = timestamp()
         try atomic {
             try saveCounters(totals)
+            try saveTableStatistics(details, transactions: transactions + 1)
             if let skippedDDL {
                 try execute(
                     "INSERT INTO ddl_skips VALUES(?,?,?,?,?,?)",
@@ -1351,6 +1421,11 @@ final class StateStore {
             if let after = ddl.after, let newSchemaID { schemas[after.identity] = (newSchemaID, after) }
             ddlApplied += 1
         }
+        tableStatistics?.accept(details)
+        if let ddl {
+            if let after = ddl.after { tableStatistics?.schema(after) }
+            for change in ddl.additional { if let after = change.after { tableStatistics?.schema(after) } }
+        }
         counters = totals
         completedGTIDs = next
         applied = group.end
@@ -1371,6 +1446,9 @@ final class StateStore {
         try require(pendingGTID == nil, "cannot stop cleanly with a pending apply group")
         try timings.measure("relay.sync") { try relay!.synchronize() }
         if sequence != snapshotSequence { try snapshot() }
+        if tableStatistics != nil {
+            try atomic { try saveTableStatistics([:], transactions: transactions, force: true) }
+        }
         try execute(
             "UPDATE state SET lifecycle='STOPPED',durable_relay_length=?,updated_at=? WHERE id=1",
             [String(relayLength), timestamp()])
@@ -1429,6 +1507,10 @@ final class StateStore {
             [position.file, String(position.position), String(reason.prefix(1024))])
     }
     func block(_ reason: String) throws {
+        tableStatistics?.failure()
+        if tableStatistics != nil {
+            try? atomic { try saveTableStatistics([:], transactions: transactions, force: true) }
+        }
         try timings.measure("relay.sync") { try relay!.synchronize() }
         // Best effort within existing page/WAL caps. Do not attempt retention or
         // a new large snapshot while recording a storage-pressure diagnostic.

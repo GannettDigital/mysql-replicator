@@ -10,6 +10,13 @@ swift run replicator-lab benchmark --mode discovery \
   --tables 8 --events 128 --foreign-key-group-size 4 --target-rtt-ms 20
 ```
 
+Set `--table-statistics on` to measure optional per-table collection. The default
+is `off`. Use `--events 10000 --target-rtt-ms 0` for a 10K comparison. Repeat with
+both settings and reverse their order to reduce warm-up effects. This compares
+collection cost; it does not compare the applier with native replication.
+With collection enabled, the harness checks saved INSERT/UPDATE and ALTER counts
+after the restart phase. It exports `table-statistics.json` in each case folder.
+
 Set `--dml-transport binlog` to repeat the same workload with BINLOG transport.
 All four profiles are accepted. FK groups require an InnoDB target. A group has
 one parent and the remaining tables reference that parent. Tables have primary

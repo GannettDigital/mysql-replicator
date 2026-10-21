@@ -183,9 +183,11 @@ extension ApplyTests {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: parent) }
-        let c = try config(
+        var c = try config(
             parent.appendingPathComponent("state").path,
             skipErrors: ["codes": ["ddl.unsupported_statement"], "recordSkippedTransactions": false])
+        c.statistics = StatisticsPolicy()
+        c.statistics?.tableDetails = true
         let failure = try XCTUnwrap(
             c.skipErrorPolicy.match(ApplyError("unsupported", code: .unsupportedDDL), at: .beforeWrites))
         let template = try groups()[0]
@@ -222,6 +224,9 @@ extension ApplyTests {
         XCTAssertEqual(reopened.rows, 0)
         XCTAssertEqual(reopened.gtids, sid + ":1-2010")
         XCTAssertEqual(reopened.skippedTransactionsByCode, ["ddl.unsupported_statement": 2000])
+        XCTAssertEqual(reopened.tableStatistics!.all.reduce(0) { $0 + $1.durable.errorSkippedTransactions }, 2000)
+        XCTAssertLessThanOrEqual(reopened.tableStatistics!.all.count, 4)
+        XCTAssertTrue(reopened.tableStatistics!.all.allSatisfy { $0.durable.insertRows == 0 })
     }
     func testSkipErrorCheckpointFailureRollsBackAuditAndCoverage() throws {
         for audit in [false, true] {

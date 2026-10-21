@@ -1,7 +1,7 @@
 # Beta.7 operator issues
 
 Status: implementation in progress on `beta/7/04-compatible-sql-routing`.
-Initial review: 2026-10-20, commit `636bedb`. Progress updated on 2026-10-20.
+Initial review: 2026-10-20, commit `636bedb`. Progress updated on 2026-10-21.
 The supplied incident bundle is from `0.1.0-beta.6`.
 
 Inputs: the local `PLAN/beta7-opearability.md` notes and the supplied
@@ -24,13 +24,24 @@ The findings below describe the initial review. Use this table for current statu
 | OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
 | OP-04 | Committed (`6cf57c3`) | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
 | OP-05 | Committed (`1d27330`) | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
-| OP-06 | Slice 1 committed (`8e17740`) | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases remain under OP-12. |
+| OP-06 | Slice 1 committed (`8e17740`) | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases were added in OP-12. |
 | OP-07 | Committed (`8e17740`) | Save completed file validation and start metadata in SQLite. Resume at the saved applied byte offset after reading format metadata. GTID-only starts select a file by `Previous_gtids`. No per-transaction archive index or file hash. Focused tests and isolated SQL/BINLOG stop-and-resume checks pass. |
 | OP-11 | Committed (`f7eed57`) | Metadata-family timings, per-discovery query reuse, and configurable `maximumCachedTables` (default 6000). SQL/BINLOG runs on 5.7 → 8.4 InnoDB and 8.4 → 5.7 MyISAM pass at zero/20 ms added RTT, with DDL and restart checks. See [measurements](OP11_SCHEMA_DISCOVERY_RESULTS.md). Larger table-count measurements remain future work. |
-| OP-12 | Implemented | Live worker phases, monotonic ages, separate read/prepared/applied positions, and provisional ETA samples. Status reads memory only. |
-| OP-13 | Not started under this plan | Existing behavior remains as described below. |
+| OP-12 | Committed (`cfcf917`) | Live worker phases, monotonic ages, separate read/prepared/applied positions, and provisional ETA samples. Status reads memory only. |
+| OP-13 | Implemented | Optional table statistics, 6000-entry default with a one-time limit warning and overflow totals, atomic applied counts, process snapshots, and paged status. Focused tests and four 10K replay runs pass. See [measurements](OP13_TABLE_STATISTICS_RESULTS.md). |
 
-Next: OP-13 table/operation statistics. OP-09/OP-10 still have the focused checks described below.
+Remaining work before this plan can be closed:
+
+- OP-09: check CREATE TABLE LIKE with a restricted account on MySQL 5.7 and
+  8.4. Cover matching and mismatched timestamp session settings, both on a
+  fresh connection and after reconnect.
+- OP-10: complete query-purpose details in final errors and support bundles.
+  Check restricted SET, missing table, denied SELECT, timeout, and lost COMMIT.
+  Confirm that preparation failures retain `notIssued` for the source mutation.
+- Run the full profile suite in GitHub Actions. Local checks remain focused.
+
+Larger table-count and release-build performance measurements remain future
+work. They are separate from these remaining error-handling checks.
 
 ## Issue list
 
@@ -231,7 +242,7 @@ writer ownership, scratch setup, GTID repair, and application writes after full
 validation. Keep existing target retry policy and complete in-memory validation
 reuse. Cancellation before or during validation saves a resumable STOPPED state.
 Logs show `Validate target readiness` before archive scan progress. The control
-endpoint remains available; detailed phase reporting is still OP-12 work.
+endpoint remains available. OP-12 now supplies detailed phase reporting.
 
 Retain complete prevalidation. OP-07 now saves completed file checks and uses
 saved replay offsets. Lazy validation remains outside this change.
@@ -344,10 +355,10 @@ Validation:
   documentation, and recovery command help describe the new output and limits.
 
 Current scan and prepared positions must remain distinct from the applied
-checkpoint. Their continuous live reporting belongs to OP-12. OP-09 still needs
+checkpoint. OP-12 now supplies their continuous live reporting. OP-09 still needs
 its target-version reconnect checks. OP-10 still needs complete failure-purpose
 output and error cases; DEBUG query-purpose labels already exist in TargetSession.
-Carry these checks into the relevant focused cases before OP-11 measurements.
+Complete these focused checks before closing this plan.
 
 ## OP-09 — DDL session privilege failure
 
@@ -482,6 +493,28 @@ categories. Do not treat a column type as a per-row event.
 Acceptance: INSERT/UPDATE/DELETE, DDL, filters, skips, failures, restart, and rename
 produce defined counts. Measure overhead and output size on the existing 10K
 harness. Large table counts must not produce unbounded memory or status responses.
+
+Implemented with `statistics.tableDetails` (default false),
+`statistics.maximumTableEntries` (default 6000), and
+`statistics.snapshotIntervalSeconds` (default 30). Applied counts share the
+checkpoint commit. Event observations, plans, failures, types, and query times
+are process-local measurements with saved snapshots. Entries retain name history
+after RENAME/DROP. New names use an overflow entry after the limit. The tool
+warns once per process when the limit is reached.
+
+Normal status stays compact. `ctl status --details --offset N --limit N` returns
+at most 100 entries from memory. Support bundles include the saved entries in
+SQLite. Filtered events without decoded rows have a separate counter; the tool
+does not infer their row count. See [operations](../docs/OPERATIONS.md#table-statistics)
+for count definitions, persistence, gaps while collection is disabled, and export.
+
+Validation: 21 focused Swift tests and 4 Python helper tests pass. Four 10K
+5.7 → 8.4 InnoDB replay runs pass, including DDL, restart, and saved row-counter
+checks. Collection increased mean elapsed time in this local debug run by 26%.
+Most of the difference appeared in target SQL time; the runs do not isolate
+counter CPU cost. Keep collection optional. Status replies stayed below 7 ms.
+The [measurement report](OP13_TABLE_STATISTICS_RESULTS.md) records exact scope,
+output sizes, and limitations. The full profile suite remains for CI.
 
 ## Suggested delivery order
 

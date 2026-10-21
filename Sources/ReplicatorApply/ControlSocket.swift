@@ -5,12 +5,33 @@ import NIOPosix
 public struct ControlRequest: Codable {
     public let command: String
     public let timeoutSeconds: Int
-    public init(command: String, timeoutSeconds: Int = 60) {
+    public let details: Bool
+    public let offset: Int
+    public let limit: Int
+    public init(command: String, timeoutSeconds: Int = 60, details: Bool = false, offset: Int = 0, limit: Int = 100) {
         self.command = command
         self.timeoutSeconds = timeoutSeconds
+        self.details = details
+        self.offset = offset
+        self.limit = limit
+    }
+    enum CodingKeys: String, CodingKey { case command, timeoutSeconds, details, offset, limit }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            command: try c.decode(String.self, forKey: .command),
+            timeoutSeconds: try c.decode(Int.self, forKey: .timeoutSeconds),
+            details: try c.decodeIfPresent(Bool.self, forKey: .details) ?? false,
+            offset: try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0,
+            limit: try c.decodeIfPresent(Int.self, forKey: .limit) ?? 100)
     }
     func validate() throws {
         try require(["status", "stop", "reload"].contains(command), "unknown control command")
+        try require(
+            (0...100002).contains(offset) && (1...100).contains(limit), "statistics page offset or limit is invalid")
+        try require(
+            (command == "status" || !details) && (details || (offset == 0 && limit == 100)),
+            "statistics pages require status with details")
         try require((1...86400).contains(timeoutSeconds), "control timeout must be 1 to 86400 seconds")
     }
 }

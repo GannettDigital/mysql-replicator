@@ -14,6 +14,12 @@ public final class RunControl: @unchecked Sendable {
     private let instance = UUID().uuidString
     private var socket: ControlSocket?
     private var progress: ApplySummary?
+    private var tableStatistics: TableStatistics?
+    func setTableStatistics(_ value: TableStatistics?) {
+        condition.lock()
+        defer { condition.unlock() }
+        tableStatistics = value
+    }
     private var limits: StopConditions
     private var finished = false, pending = false
     private var ticket = 0, completed = 0, generation = 1
@@ -69,18 +75,26 @@ public final class RunControl: @unchecked Sendable {
         let configurationGeneration: Int
         let limits: StopConditions
         let progress: ApplySummary?
+        let tableStatistics: TableStatisticsPage?
     }
-    private func reply(_ command: String, error: String? = nil) -> Data {
+    private func reply(_ command: String, error: String? = nil, details: TableStatisticsPage? = nil) -> Data {
         let reply = Reply(
             ok: error == nil, command: command, error: error, pid: ProcessInfo.processInfo.processIdentifier,
             instance: instance, running: !finished, configurationGeneration: generation, limits: limits,
-            progress: progress?.refreshingActivity(from: activity))
+            progress: progress?.refreshingActivity(from: activity), tableStatistics: details)
         return (try? JSONEncoder().encode(reply)) ?? ControlSocket.error("cannot encode control status")
     }
     private func request(_ request: ControlRequest) -> Data {
         condition.lock()
         defer { condition.unlock() }
-        if request.command == "status" { return reply(request.command) }
+        if request.command == "status" {
+            if request.details && tableStatistics == nil {
+                return reply("status", error: "table statistics are disabled; set statistics.tableDetails and restart")
+            }
+            return reply(
+                "status",
+                details: request.details ? tableStatistics?.page(offset: request.offset, limit: request.limit) : nil)
+        }
         if finished { return reply(request.command, error: "process is stopping or stopped") }
         let deadline = Date().addingTimeInterval(TimeInterval(request.timeoutSeconds))
         if request.command == "stop" {

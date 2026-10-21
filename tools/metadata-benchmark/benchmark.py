@@ -14,6 +14,7 @@ import shutil
 import tempfile
 import statistics
 import struct
+import sqlite3
 import subprocess
 import sys
 import time
@@ -152,6 +153,7 @@ def run_case(args, source, target, archive, resume_archive, baseline, expected, 
             target=dict(host="127.0.0.1", port=proxy.listen_port, username="bench", password=PASSWORD,
                         requireTLS=False, preserveSourceGTIDs=False, nativeAutoStartDisabled=True,
                         transport=args.dml_transport),
+            statistics=dict(tableDetails=args.table_statistics == "on"),
             targetReconnect=dict(enabled=False), archive=dict(directory=str(archive)),
             supportBundle=dict(onBlocked=True, directory=str(output / "bundles"), format="directory"))
         path = output / "apply.yaml"
@@ -190,6 +192,16 @@ def run_case(args, source, target, archive, resume_archive, baseline, expected, 
         resume_summary = final_summary(resumed)
         if resume_summary["rowsApplied"] != args.events + 2 or resume_summary["ddlApplied"] != 1 or snapshot(target, args.tables) != after_ddl:
             raise RuntimeError("DDL/resume rows or counters differ")
+        if args.table_statistics == "on":
+            with sqlite3.connect("file:" + str(temporary / "state/state.sqlite") + "?mode=ro", uri=True) as database:
+                entries = [json.loads(row[0]) for row in database.execute("SELECT entry_json FROM table_statistics")]
+            durable = [entry["durable"] for entry in entries]
+            if sum(entry["insertRows"] for entry in durable) != args.events + 1 or sum(entry["updateRows"] for entry in durable) != 1:
+                raise RuntimeError("table statistics do not match applied source rows")
+            if sum(entry["ddl"].get("ALTER_TABLE", 0) for entry in durable) != 1:
+                raise RuntimeError("table statistics do not include ALTER")
+            report["table_statistics_check"] = "passed"
+            (output / "table-statistics.json").write_text(json.dumps(entries, indent=2) + "\n")
         report["ddl_and_new_session_check"] = "passed"
         report["resume_summary"] = resume_summary
         (output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -210,6 +222,7 @@ def main():
     parser.add_argument("--events", type=int, default=128)
     parser.add_argument("--foreign-key-group-size", type=int, default=0)
     parser.add_argument("--target-rtt-ms", type=int, default=20)
+    parser.add_argument("--table-statistics", choices=["on", "off"], default="off")
     parser.add_argument("--dml-transport", choices=["sql", "binlog"], default="sql")
     args = parser.parse_args()
     args.binary = args.binary.resolve(strict=True)
@@ -226,7 +239,7 @@ def main():
     source = FixtureServer("metadata-source-" + token, source_version, "InnoDB", images[source_version])
     target = FixtureServer("metadata-target-" + token, target_version, engine, images[target_version])
     report = dict(profile=args.profile, binary=str(args.binary), transport=args.dml_transport,
-                  tables=args.tables, events=args.events, foreign_key_group_size=args.foreign_key_group_size,
+                  table_statistics=args.table_statistics, tables=args.tables, events=args.events, foreign_key_group_size=args.foreign_key_group_size,
                   delay_model="Each direction delays received bytes by half the added RTT. No bandwidth or loss model.",
                   timing_scope="Local debug/release binary replay wall time, including startup; no native performance comparison.",
                   cases=[])

@@ -83,6 +83,12 @@ public enum ConfigurationOptions {
         "sourceReconnect.maximumDelaySeconds": "Backoff cap; initialDelaySeconds..300 seconds.",
         "stateDirectory": "Required for run/replay/support-bundle/ctl; new with --initialize.",
         "statistics": "Status rates and live source metadata polling; replay never polls the source.",
+        "statistics.tableDetails":
+            "Collect bounded table statistics; default false. Restart to change. Applied counts share checkpoint commits.",
+        "statistics.maximumTableEntries":
+            "1 through 100000 named entries; default 6000. Warn at the limit; additional names use overflow totals.",
+        "statistics.snapshotIntervalSeconds":
+            "5 through 3600 seconds; save process statistics at the next completion commit, and on stop or block.",
         "statistics.rateWindowSeconds": "5 through 3600 seconds; rolling window for progress estimates.",
         "statistics.sourcePollIntervalSeconds": "5 through 3600 seconds; uses a separate source connection.",
         "storage": "SQLite capacity, history retention, and disk reserve.",

@@ -7,6 +7,7 @@ enum MetadataBenchmark {
         var binary = ""
         var tables = 8, events = 128, targetRTT = 20, foreignKeyGroupSize = 0
         var transport = "sql"
+        var tableStatistics = "off"
         init(profile: LabProfile, arguments: [String]) throws {
             var args = arguments.makeIterator()
             var seen = Set<String>()
@@ -16,6 +17,7 @@ enum MetadataBenchmark {
                 switch flag {
                 case "--binary": binary = value
                 case "--dml-transport": transport = value
+                case "--table-statistics": tableStatistics = value
                 case "--tables", "--events", "--target-rtt-ms", "--foreign-key-group-size":
                     guard let number = Int(value) else { throw LabError("expected integer for " + flag) }
                     switch flag {
@@ -27,6 +29,7 @@ enum MetadataBenchmark {
                 default: throw LabError("unsupported discovery option: " + flag)
                 }
             }
+            try require(["on", "off"].contains(tableStatistics), "table-statistics must be on or off")
             try require(!binary.isEmpty, "discovery requires --binary PATH; build the local applier first")
             try require(
                 (1...6_000).contains(tables) && (tables...100_000).contains(events),

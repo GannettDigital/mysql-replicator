@@ -65,7 +65,9 @@ extension ResumeTests {
     }
     func testSkippedDDLAuditAndCheckpointAreAtomicAndResumeWithoutReplay() throws {
         let path = try directory()
-        let c = try config(path.path)
+        var c = try config(path.path)
+        c.statistics = StatisticsPolicy()
+        c.statistics?.tableDetails = true
         let group = triggerGroup(try helper.groups()[0])
         var store: StateStore? = try StateStore(configuration: c)
         try store!.bindTargetIdentity(target)
@@ -98,6 +100,8 @@ extension ResumeTests {
         store = nil
         let resumed = try StateStore(configuration: c, initialize: false)
         XCTAssertEqual(resumed.applied, group.end)
+        XCTAssertEqual(resumed.tableStatistics!.all.reduce(0) { $0 + $1.durable.policySkippedTransactions }, 1)
+        XCTAssertTrue(resumed.tableStatistics!.all.allSatisfy { $0.durable.ddl.isEmpty })
         XCTAssertEqual(try resumed.captureConfiguration(c.source).start.executedGTIDs, helper.sid + ":1-11")
         XCTAssertThrowsError(try resumed.begin(group))
         XCTAssertEqual(try helper.sqlite(db, "SELECT COUNT(*) FROM ddl_skips"), [["1"]])

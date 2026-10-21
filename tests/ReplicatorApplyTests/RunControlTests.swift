@@ -163,6 +163,38 @@ final class RunControlTests: XCTestCase {
             wait(for: [completed], timeout: 2)
         }
     }
+    func testDetailedStatusIsOptionalPagedAndUsesMemory() throws {
+        let directory = URL(fileURLWithPath: "/tmp/repl-stats-" + UUID().uuidString.prefix(8))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let control = RunControl(limits: try .init(transactions: nil, gtids: nil), drain: .init()) {
+            try .init(transactions: nil, gtids: nil)
+        }
+        control.publish(controlTestSummary("RUNNING"))
+        try control.start(directory: directory)
+        defer { control.finish(controlTestSummary("STOPPED")) }
+        func request(details: Bool, offset: Int = 0, limit: Int = 100) throws -> [String: Any] {
+            try JSONSerialization.jsonObject(
+                with: ControlClient.request(
+                    .init(command: "status", details: details, offset: offset, limit: limit),
+                    stateDirectory: directory.path)) as! [String: Any]
+        }
+        XCTAssertNil(try request(details: false)["tableStatistics"])
+        XCTAssertEqual(try request(details: true)["ok"] as? Bool, false)
+        let stats = TableStatistics(maximum: 6000)
+        stats.query(seconds: 1, schema: true, table: .init(database: "db", table: "t"), failed: true)
+        control.setTableStatistics(stats)
+        XCTAssertNil(try request(details: false)["tableStatistics"])
+        let detail = try XCTUnwrap(request(details: true, limit: 2)["tableStatistics"] as? [String: Any])
+        XCTAssertEqual((detail["entries"] as? [Any])?.count, 2)
+        XCTAssertEqual(detail["nextOffset"] as? Int, 2)
+        let second = try XCTUnwrap(request(details: true, offset: 2, limit: 2)["tableStatistics"] as? [String: Any])
+        XCTAssertEqual((second["entries"] as? [[String: Any]])?.first?["table"] as? String, "t")
+        XCTAssertThrowsError(try ControlRequest(command: "status", details: true, limit: 101).validate())
+        XCTAssertThrowsError(try ControlRequest(command: "stop", details: true).validate())
+        XCTAssertThrowsError(try ControlRequest(command: "status", offset: -1).validate())
+    }
+
     func testControlDoesNotReplaceRegularFile() throws {
         let directory = URL(fileURLWithPath: "/tmp/repl-ctl-" + UUID().uuidString.prefix(8))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

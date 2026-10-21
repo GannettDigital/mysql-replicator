@@ -13,6 +13,7 @@ final class TargetSession {
     var connection: MySQLConnection { writeConnection ?? metadataConnection }
     let timings: StageTimings
     let activity: RunActivity?
+    let tableStatistics: TableStatistics?
     let jsonScratchID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))
     var jsonScratchTables = Set<String>()
     var jsonScratchOrdinal: UInt64 = 0
@@ -39,8 +40,9 @@ final class TargetSession {
     init(
         configuration: ApplyConfiguration, password: String, timings: StageTimings = .init(),
         metadataOnly: Bool = false,
-        activity: RunActivity? = nil
+        activity: RunActivity? = nil, tableStatistics: TableStatistics? = nil
     ) throws {
+        self.tableStatistics = tableStatistics
         self.activity = activity
         self.metadataOnly = metadataOnly
         self.timings = timings
@@ -114,6 +116,16 @@ final class TargetSession {
                 purpose: TargetQueryPurpose.classify(sql, mutation: mutation))
         }
         defer { if reportQuery { activity?.end(.target) } }
+        let countQuery = reportActivity && !(mutation && statementSourceGTID != nil)
+        let statisticsStart = tableStatistics == nil ? 0 : DispatchTime.now().uptimeNanoseconds
+        var querySucceeded = false
+        defer {
+            if countQuery, let statistics = tableStatistics {
+                statistics.query(
+                    seconds: Double(DispatchTime.now().uptimeNanoseconds - statisticsStart) / 1e9,
+                    schema: false, failed: !querySucceeded)
+            }
+        }
         let queryConnection =
             queries.usesMetadataConnection(sql, mutation: mutation, rawSQL: rawSQL, metadata: metadata)
             ? metadataConnection : connection
@@ -124,8 +136,10 @@ final class TargetSession {
                 _ = queryConnection.close()
             }
             defer { timer.cancel() }
-            return try queries.execute(
+            let result = try queries.execute(
                 sql, binds: binds, textProtocol: textProtocol, rawSQL: rawSQL, mutation: mutation, metadata: metadata)
+            querySucceeded = true
+            return result
         }
         if mutation, let identity = statementSourceGTID {
             statementSourceGTID = nil
@@ -183,6 +197,7 @@ final class TargetSession {
                 }
             }
             if mutation { statementTrace.phase = .acknowledged }
+            querySucceeded = true
             return result
         } catch let e where isTargetTransportFailure(e) {
             throw TargetConnectionFailure(description: "target connection interrupted")
@@ -207,6 +222,7 @@ final class TargetSession {
             var completed = false
             defer {
                 let seconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
+                tableStatistics?.query(seconds: seconds, schema: true, table: queryTable, failed: !completed)
                 if !completed || seconds >= 1 {
                     ApplicationLog.logger.warning(
                         "Target metadata query was slow or failed",

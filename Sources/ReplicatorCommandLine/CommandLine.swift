@@ -10,7 +10,7 @@ public enum CLIRequest: Equatable {
     case validate(config: String, mode: String)
     case fetch(config: String)
     case supportBundle(config: String)
-    case control(config: String, action: String, timeout: Int)
+    case control(config: String, action: String, timeout: Int, details: Bool = false, offset: Int = 0, limit: Int = 100)
     case recoveryInspect(config: String)
     case recoveryResolve(config: String, action: String, gtids: String, reason: String)
     case skip(config: String, gtids: String)
@@ -258,7 +258,19 @@ private struct Status: RequestCommand {
     static let configuration = CommandConfiguration(
         commandName: "status", abstract: "Show the running process state and progress.")
     @OptionGroup var options: ControlOptions
-    var request: CLIRequest { .control(config: options.config.path, action: "status", timeout: options.timeout) }
+    @Flag(help: "Include a page of table statistics; requires statistics.tableDetails.") var details = false
+    @Option(help: "Table statistics page offset (0 through 100002); requires --details.") var offset = 0
+    @Option(help: "Table statistics entries per page (1 through 100); requires --details.") var limit = 100
+    mutating func validate() throws {
+        guard (0...100002).contains(offset), (1...100).contains(limit), details || (offset == 0 && limit == 100) else {
+            throw ValidationError("Use --details with --offset 0...100002 and --limit 1...100.")
+        }
+    }
+    var request: CLIRequest {
+        .control(
+            config: options.config.path, action: "status", timeout: options.timeout,
+            details: details, offset: offset, limit: limit)
+    }
 }
 
 private struct Stop: RequestCommand {

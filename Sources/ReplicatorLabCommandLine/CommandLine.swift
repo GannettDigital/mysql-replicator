@@ -274,6 +274,7 @@ private struct Benchmark: LabRequestCommand {
     var batchTransactions: Int?
     @Option(name: .customLong("prepared-batches"), help: "Backlog: 1...16 prepared batches.") var preparedBatches: Int?
     @Option(name: .customLong("tables"), help: "Streaming: 1...32 tables; discovery: 1...6000.") var tables: Int?
+    @Option(help: "Discovery: collect table statistics (on/off; default off).") var tableStatistics: Toggle?
     @Option(help: "Discovery: path to the local mysql-replicator binary (required).") var binary: String?
     @Option(help: "Discovery: added RTT in ms, 0...1000; also runs a zero-delay baseline (default 20).")
     var targetRttMs: Int?
@@ -319,6 +320,7 @@ private struct Benchmark: LabRequestCommand {
         arguments += option("binary", binary)
         arguments += option("target-rtt-ms", targetRttMs)
         arguments += option("foreign-key-group-size", foreignKeyGroupSize)
+        arguments += option("table-statistics", tableStatistics?.rawValue)
         arguments += option("table-run", tableRun)
         arguments += option("threads", threads)
         arguments += option("rate", rate)

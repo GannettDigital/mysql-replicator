@@ -64,11 +64,12 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         try FileHandle.standardOutput.write(contentsOf: encoder.encode(summary) + Data([10]))
         return
-    case .control(let path, let action, let timeout):
+    case .control(let path, let action, let timeout, let details, let offset, let limit):
         struct Config: Decodable { let stateDirectory: String }
         let config = try overrides.load(Config.self, from: URL(fileURLWithPath: path))
         let response = try ControlClient.request(
-            .init(command: action, timeoutSeconds: timeout), stateDirectory: config.stateDirectory)
+            .init(command: action, timeoutSeconds: timeout, details: details, offset: offset, limit: limit),
+            stateDirectory: config.stateDirectory)
         let object = try JSONSerialization.jsonObject(with: response)
         let output = try JSONSerialization.data(
             withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])

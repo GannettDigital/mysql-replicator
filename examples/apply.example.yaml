@@ -199,3 +199,6 @@ maximumCachedTables: 6000          # Schema cache and saved-schema limit; 1..100
 # statistics:                      # Status rates and live source metadata polling; replay never polls the source.
 #   sourcePollIntervalSeconds: 15  # 5 through 3600 seconds; uses a separate source connection.
 #   rateWindowSeconds: 60          # 5 through 3600 seconds; rolling window for progress estimates.
+#   tableDetails: false            # Optional table statistics; restart to change. Applied counts share checkpoint commits.
+#   maximumTableEntries: 6000       # 1 through 100000 named entries. Warn at the limit; additional names use overflow totals.
+#   snapshotIntervalSeconds: 30     # 5 through 3600; save process counts at the next completion commit, and on stop or block.

@@ -33,6 +33,7 @@ public struct ApplySummary: Encodable {
     public var estimate: ProgressEstimate? = nil
     public var activity: RunActivitySnapshot? = nil
     public var counters: ApplyCounters? = nil
+    public var tableStatistics: TableStatisticsSummary? = nil
     public var applyQueue: ApplyQueueSnapshot? = nil
     // Crash recovery / uncertain target replay remains unsupported.
     public let automaticRecovery = false
@@ -101,6 +102,7 @@ public enum ApplyRun {
         let state = try ApplicationLog.measure("Open replication state", metadata: ["phase": "state"]) {
             try StateStore(configuration: configuration, initialize: initialize, timings: timings)
         }
+        control?.setTableStatistics(state.tableStatistics)
         activity.resetPositions(to: state.applied)
         let statistics = configuration.statistics ?? StatisticsPolicy()
         let estimator = ProgressEstimator(window: statistics.rateWindowSeconds)
@@ -163,7 +165,8 @@ public enum ApplyRun {
                 sourceFailurePosition: sourceFailurePosition,
                 pendingTransactions: state.pendingTransactions, pendingTransactionCount: state.pendingTransactionCount,
                 recovery: recoveryAdvice, estimate: estimate(lifecycle),
-                counters: state.counters, applyQueue: executionQueue?.snapshot
+                counters: state.counters, tableStatistics: state.tableStatistics?.summary,
+                applyQueue: executionQueue?.snapshot
             ).refreshingActivity(from: activity)
         }
         var lastLogLifecycle: String?
@@ -228,7 +231,7 @@ public enum ApplyRun {
                         try activity.measure(.target, "connecting") {
                             try TargetSession(
                                 configuration: configuration, password: targetPassword, timings: targetTimings,
-                                activity: activity)
+                                activity: activity, tableStatistics: state.tableStatistics)
                         }
                     }
                     defer { try? target.unlock() }
@@ -278,6 +281,7 @@ public enum ApplyRun {
                         // DDL barriers must see every validated saved table, including
                         // tables with no row event since resume (e.g. DROP DATABASE).
                         target.discovered[table.identity] = table
+                        state.tableStatistics?.schema(table)
                     }
                     try state.running()
                     started = true
@@ -395,6 +399,7 @@ public enum ApplyRun {
                         }
                     }
                     func event(_ record: LiveRecord) throws {
+                        if let event = record.event { state.tableStatistics?.observe(event) }
                         if !cancellation.isCancelled { try batch.flushIfExpired() }
                         try maintainExecution()
                         try timings.measure("relay.append") { try state.append(record) }
@@ -417,6 +422,7 @@ public enum ApplyRun {
                                 } else {
                                     try barrier()
                                     table = try target.discover(decoded)
+                                    state.tableStatistics?.schema(table)
                                     try planningCache.insert(table)
                                     _ = try planningCache.validate(decoded)
                                 }
@@ -491,6 +497,7 @@ public enum ApplyRun {
                                         "source DDL conflicts with the reserved GTID scratch database")
                                 }
                                 if view.sql != query.sql { plan.compatibilityRules.append(LoggedDDL.commentRule) }
+                                state.tableStatistics?.planDDL(plan)
                                 try state.ddlIntent(plan, event: group.events[1], coordinate: group.start)
                                 hasDDLIntent = true
                                 try require(!cancellation.isCancelled, "apply cancelled")
@@ -512,6 +519,7 @@ public enum ApplyRun {
                                 try progress()
                                 return
                             } catch {
+                                if !hasDDLIntent { state.tableStatistics?.failure(planning: true) }
                                 if !hasDDLIntent && target.statementTrace.phase == .notIssued
                                     && !cancellation.isCancelled,
                                     let skip = configuration.skipErrorPolicy.match(error, at: .beforeWrites)
@@ -547,6 +555,7 @@ public enum ApplyRun {
                                 try DMLPlan.make(
                                     group, tables: planningCache.tables, transactional: profile.transactional)
                             }
+                            state.tableStatistics?.plan(mutations)
                             if configuration.target.transport == .binlog && !mutations.isEmpty {
                                 sqlReason = DMLSQLReason.select(
                                     group, mutations: mutations, compatibility: configuration.compatibilityPolicy)
@@ -567,6 +576,7 @@ public enum ApplyRun {
                                     ])
                             }
                         } catch {
+                            state.tableStatistics?.failure(planning: true)
                             try barrier()
                             // Keep rejected, unwritten groups explicitly skippable.
                             try state.begin(group)
@@ -698,6 +708,7 @@ public enum ApplyRun {
                                                 if planningCache.tables[identity] == nil {
                                                     try barrier("schema")
                                                     let table = try target.discover(request.event)
+                                                    state.tableStatistics?.schema(table)
                                                     try planningCache.insert(table)
                                                 }
                                                 let table = try planningCache.validate(request.event)

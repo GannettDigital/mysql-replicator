@@ -9,12 +9,13 @@ final class LabCommandLineTests: XCTestCase {
             case .run(let command, let arguments) = try ReplicatorLabCommandLine.parse([
                 "benchmark", "--profile", "mysql57-to-mysql84-innodb", "--mode", "discovery",
                 "--binary", "/tmp/applier", "--tables", "5000", "--events", "10000", "--target-rtt-ms", "20",
-                "--foreign-key-group-size", "4", "--dml-transport", "binlog",
+                "--foreign-key-group-size", "4", "--dml-transport", "binlog", "--table-statistics", "on",
             ])
         else { return XCTFail("No benchmark request") }
         XCTAssertEqual(command, "benchmark")
         for value in [
             "discovery", "--binary", "/tmp/applier", "--target-rtt-ms", "--foreign-key-group-size", "binlog", "5000",
+            "--table-statistics", "on",
         ] {
             XCTAssertTrue(arguments.contains(value))
         }

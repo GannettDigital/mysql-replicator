@@ -923,6 +923,10 @@ checks repeated writes, FK groups, DDL invalidation, and reopening saved state.
 Use the same profile names and `--dml-transport sql|binlog` options as backlog
 benchmarks. Supply `--binary` with the local applier path.
 
+Use `--table-statistics on` to measure optional table statistics; the default is
+`off`. For a 10K comparison, use `--events 10000 --target-rtt-ms 0` with each
+setting. The harness also checks the saved counters after DDL and restart.
+
 See [the discovery benchmark guide](../tools/metadata-benchmark/README.md) for
 commands, output fields, and timing limits. This focused measurement does not
 replace the correctness suite or native-replication performance comparisons.

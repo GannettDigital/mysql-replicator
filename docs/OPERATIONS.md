@@ -110,6 +110,94 @@ Counters share the SQLite checkpoint commit and survive restart and history prun
 starts these counters at upgrade; old operations are not reconstructed. Operator
 recovery decisions remain in the recovery audit and are not inferred as SQL writes.
 
+## Table statistics
+
+Enable detailed collection in the configuration. These settings require a restart.
+
+```yaml
+statistics:
+  tableDetails: true
+  maximumTableEntries: 6000
+  snapshotIntervalSeconds: 30
+```
+
+`tableDetails` defaults to false. `maximumTableEntries` accepts 1 through 100000.
+`snapshotIntervalSeconds` accepts 5 through 3600. Normal status adds only a small
+`progress.tableStatistics` summary. Read or export one page with:
+
+```sh
+mysql-replicator ctl status --config apply.yaml --details --limit 100 --offset 0 \
+  | jq '.tableStatistics' > table-statistics-page.json
+```
+
+Use `nextOffset` for the next page. A null value means there are no more entries.
+Pages contain at most 100 entries. They read memory and do not query MySQL or
+SQLite. Pages can change while replication runs; multiple pages are not one
+atomic snapshot. After stop, export all saved entries from `state.sqlite`:
+
+```sh
+sqlite3 -readonly /path/to/state/state.sqlite \
+  'SELECT entry_json FROM table_statistics ORDER BY id;' > table-statistics.ndjson
+```
+
+This export has one JSON object per line. The same tables are in a support bundle's `state.sqlite`. Collection does not
+create another per-row audit log.
+
+Each entry has two groups of counters:
+
+| Group | Meaning |
+| --- | --- |
+| `durable` | INSERT, UPDATE, and DELETE rows in completed source transactions; completed, filtered/empty, policy-skipped, and error-skipped transactions; applied DDL by operation. These updates share the SQLite checkpoint commit. They survive restart. Partial or uncertain transactions do not add applied rows. |
+| `process` | Events delivered to the coordinator, decoded rows, known filtered rows, planned row operations and DDL, failed queries, planning failures, blocked runs, query counts and elapsed time, and encountered target column/index types. These start at zero in each process. Reconnects can repeat observations and planning attempts. |
+
+`filteredTransactions` includes fully filtered groups and empty or rolled-back
+groups completed without included row writes. It does not measure rows rejected
+by a filter.
+
+`durable.completedTransactions` counts participation by name. A transaction that
+touches two tables counts once for each table. Do not sum these counts to obtain
+the global transaction count. Row-operation counts can be summed. A multi-name
+DDL counts once for each name in its prepared plan. A schema entry has an empty
+`table` string. View and routine names share the same database/name grouping.
+Group entries by `database` to compare schemas. The overflow entry has no schema
+attribution.
+
+The first configured number of names get stable entry IDs. The tool keeps these
+entries; it does not evict them. It emits one warning per process when the limit
+is reached, including after restart with a full registry. The warning gives the
+limit and `statistics.maximumTableEntries`. Further names use entry `-1`, the
+overflow total. Identifiers longer than 256 UTF-8 bytes also use overflow.
+Entry `0` contains work with no known name, including general target queries and
+blocked-run counts. These two entries do not consume named slots.
+
+RENAME keeps the old name's history and records the new name separately. DROP
+keeps history. A later CREATE with the same name uses that name's existing entry.
+If you lower the limit below the number of saved entries, startup fails with an
+instruction to increase it. Increasing it permits new entries. It cannot split
+old overflow totals back into names.
+
+Filters can discard a row event without decoding its rows. Such an event adds to
+`filteredRowEventsWithoutRowCount`. `filteredRows` counts only rows whose count is
+known; it is not a complete count when that event counter is nonzero. Column and
+index types are sets from target schema lookups, not per-row counters.
+`schemaQuerySeconds` measures metadata queries for the named table when known.
+`targetQuerySeconds` measures other target queries in entry `0`. Both include
+server and network waits. A failed query and a later blocked run are separate
+counters; neither counts unique failed source transactions.
+
+Applied counts are recorded only while detailed collection is enabled.
+`sinceTransaction` gives the starting global transaction count.
+`transactionsNotRecorded` reports later gaps, for example when collection was
+disabled or an operator resolved transactions outside normal apply. Counts do
+not reconstruct earlier work.
+
+Process statistics are best effort. Changed entries can be saved with completion
+commits. A full process snapshot is saved at the next completion commit after the
+configured interval, and on clean stop. Saving on BLOCKED is best effort.
+A crash can lose recent process measurements. Saved entries include `processID`
+and `sampledAt` (Unix seconds), so you can identify old samples. After restart,
+live process counters start at zero. Durable counts continue from saved totals.
+
 ## Backlog and estimated catch-up time
 
 `progress.estimate` gives recent transactions per second, binlog bytes per second,

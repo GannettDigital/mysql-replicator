@@ -3,6 +3,18 @@ import XCTest
 @testable import ReplicatorCommandLine
 
 final class CommandLineTests: XCTestCase {
+    func testTableStatisticsStatusOptions() throws {
+        XCTAssertEqual(
+            try ReplicatorCommandLine.parse([
+                "ctl", "status", "--config", "apply.yaml", "--details", "--offset", "100", "--limit", "50",
+            ]),
+            .control(config: "apply.yaml", action: "status", timeout: 60, details: true, offset: 100, limit: 50))
+        for args in [["--limit", "101"], ["--offset", "-1"], ["--limit", "0"]] {
+            XCTAssertThrowsError(try ReplicatorCommandLine.parse(["ctl", "status", "--details"] + args))
+        }
+        XCTAssertThrowsError(try ReplicatorCommandLine.parse(["ctl", "status", "--offset", "1"]))
+        XCTAssertThrowsError(try ReplicatorCommandLine.parse(["ctl", "stop", "--details"]))
+    }
     func testDryRunFlagSelectsModeAndRejectsInitialize() throws {
         for mode in ["run", "replay"] {
             XCTAssertEqual(
