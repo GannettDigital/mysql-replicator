@@ -192,6 +192,32 @@ final class ResumeTests: XCTestCase {
         store = nil
         XCTAssertNoThrow(try StateStore(configuration: c, initialize: false))
     }
+    func testConfiguredSchemaLimitAppliesToInsertAndResume() throws {
+        let path = try directory()
+        var c = try config(path.path)
+        c.maximumCachedTables = 2
+        let group = try helper.groups()[0]
+        let event = group.events.first(where: { $0.eventType == 19 })!
+        var store: StateStore? = try StateStore(configuration: c)
+        try store!.bindTargetIdentity(target)
+        try store!.running()
+        for i in 0..<2 {
+            let table = helper.tables()[0].renamed(to: .init(database: "poc", table: "t\(i)"))
+            try store!.schema(table, event: event, coordinate: group.start)
+        }
+        let third = helper.tables()[0].renamed(to: .init(database: "poc", table: "third"))
+        XCTAssertThrowsError(try store!.schema(third, event: event, coordinate: group.start))
+        try store!.stopped()
+        store = nil
+        c.maximumCachedTables = 1
+        XCTAssertThrowsError(try StateStore(configuration: c, initialize: false))
+        c.maximumCachedTables = 3
+        let resumed = try StateStore(configuration: c, initialize: false)
+        XCTAssertEqual(resumed.currentSchemas.count, 2)
+        try resumed.schema(third, event: event, coordinate: group.start)
+        XCTAssertEqual(resumed.currentSchemas.count, 3)
+    }
+
     func testResumeRestoresMoreThan64TableSchemas() throws {
         let path = try directory()
         let c = try config(path.path)

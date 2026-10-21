@@ -75,7 +75,7 @@ extension TargetSession {
         }
         let finalNames = changes.compactMap { $0.after?.identity }
         try require(
-            Set(discovered.keys).subtracting(names.keys).union(finalNames).count <= maximumCachedTables,
+            Set(discovered.keys).subtracting(names.keys).union(finalNames).count <= config.schemaCacheTableLimit,
             "discovered schema limit reached")
         let plan = try prepareForeignKeyTransitions(
             PreparedDDL(

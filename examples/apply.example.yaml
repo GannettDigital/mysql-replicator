@@ -156,6 +156,7 @@ batch:                             # Prepare and apply bounded groups of source 
                                     # Oversized groups run alone without being split.
 
 # maximumRelayBytes: 268435456      # Durable relay cap for run/replay; 1 MiB..1 GiB, default 256 MiB.
+maximumCachedTables: 6000          # Schema cache and saved-schema limit; 1..100000 tables. Applies to discovery, DDL, reload, and capture. Restart to change it.
 # applierProfiling: false           # Detailed apply timings; coarse timings stay on.
 
 # Needed only for fetch/replay, and optional archive evidence in support-bundle.

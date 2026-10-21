@@ -41,6 +41,7 @@ final class TargetSession {
         self.metadataOnly = metadataOnly
         self.timings = timings
         config = configuration
+        schemaCache = SchemaMetadataCache(maximumTables: configuration.schemaCacheTableLimit)
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         var opened: [MySQLConnection] = []
         do {
@@ -161,10 +162,12 @@ final class TargetSession {
                 ]
             ) {
                 try timings.measure("target.sql") {
-                    try profile(textProtocol ? "sql.text" : "sql.prepared") {
-                        try queries.execute(
-                            sql, binds: binds, textProtocol: textProtocol, rawSQL: rawSQL, mutation: mutation,
-                            metadata: metadata)
+                    try timings.measure(mutation ? "target.sql.write" : "target.sql.read_or_control") {
+                        try profile(textProtocol ? "sql.text" : "sql.prepared") {
+                            try queries.execute(
+                                sql, binds: binds, textProtocol: textProtocol, rawSQL: rawSQL, mutation: mutation,
+                                metadata: metadata)
+                        }
                     }
                 }
             }
@@ -178,12 +181,42 @@ final class TargetSession {
     }
     /// Server metadata only. Session variables, scratch tables, row reads and
     /// lock ownership must use query() on the application connection.
-    func metadataQuery(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false) throws
+    func metadataQuery(_ sql: String, _ binds: [MySQLData] = [], textProtocol: Bool = false, table: TableName? = nil)
+        throws
         -> ([MySQLRow], UInt64?)
     {
         // A second session can wait on our own explicit table lock. Preserve
         // the locked session for these reads; ordinary discovery unlocks first.
-        try query(sql, binds, textProtocol: textProtocol, metadata: lockEpoch.table == nil)
+        try discoveryReads.read(sql, binds: binds, textProtocol: textProtocol, timings: timings) {
+            let purpose = TargetQueryPurpose.classify(sql, mutation: false)
+            let queryTable = table ?? discoveryReads.table
+            let start = DispatchTime.now().uptimeNanoseconds
+            var completed = false
+            defer {
+                let seconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
+                if !completed || seconds >= 1 {
+                    ApplicationLog.logger.warning(
+                        "Target metadata query was slow or failed",
+                        metadata: [
+                            "purpose": .string(purpose), "database": .string(queryTable?.database ?? ""),
+                            "table": .string(queryTable?.table ?? ""),
+                            "durationMilliseconds": .string(String(seconds * 1000)), "timeoutSeconds": "10",
+                            "outcome": .string(completed ? "completed" : "failed"),
+                        ])
+                }
+            }
+            do {
+                let result = try timings.measure("target.metadata." + purpose) {
+                    try query(sql, binds, textProtocol: textProtocol, metadata: lockEpoch.table == nil)
+                }
+                completed = true
+                return result
+            } catch let error as TargetConnectionFailure {
+                let table = queryTable.map { " for " + $0.database + "." + $0.table } ?? ""
+                throw TargetConnectionFailure(
+                    description: error.description + "; metadata " + purpose + table + "; query timeout setting 10s")
+            }
+        }
     }
     func metadataScalar(_ sql: String, _ binds: [MySQLData] = []) throws -> String? {
         try metadataQuery(sql, binds).0.first?.column("v")?.string
@@ -285,7 +318,8 @@ final class TargetSession {
         _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
     }
     private(set) var insertByteLimit = 1024 * 1024
-    let schemaCache = SchemaMetadataCache()
+    let schemaCache: SchemaMetadataCache
+    let discoveryReads = DiscoveryReads()
     var discovered: [SQLNameKey: ApplyTable] {
         get { schemaCache.tables }
         set { schemaCache.tables = newValue }
@@ -324,55 +358,82 @@ final class TargetSession {
     }
 
     func readSchema(database: String, name: String, validateRelationships: Bool = true) throws -> ApplyTable {
-        try ApplicationLog.measure(
-            "Read target schema", metadata: ["phase": "schema", "database": .string(database), "table": .string(name)]
-        ) {
-            try profile("target.read_schema") {
-                let binds = [MySQLData(string: database), MySQLData(string: name)]
-                let columns = try metadataQuery(
-                    "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
-                    binds
-                ).0
-                let keys = try metadataQuery(
-                    "SELECT COLUMN_NAME,SUB_PART,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",
-                    binds
-                ).0
-                try require(!columns.isEmpty, "discovered target table is absent")
-                try require(keys.count <= 16, "discovered target primary key exceeds 16 columns")
-                var table = ApplyTable(
-                    database: database, table: name,
-                    columns: try columns.map { row in
-                        try readColumn(row, table: TableName(database: database, table: name))
-                    }, primaryKeyColumns: keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
-                let parts = keys.map {
-                    ApplyIndexPart(
-                        column: $0.column("COLUMN_NAME")?.string, prefix: $0.column("SUB_PART")?.int,
-                        direction: NativeReplicationRules(profile: config.replicationProfile).indexDirection(
-                            $0.column("COLLATION")?.string, type: "BTREE"))
-                }
-                table.primaryKeyParts = parts.contains { $0.prefix != nil || $0.direction != "A" } ? parts : nil
-                let encoding = try tableEncoding(TableName(database: database, table: name))
-                table.defaultCharacterSet = encoding.characterSet
-                table.defaultCollation = encoding.collation
-                table.secondaryIndexes = try readIndexes(
-                    database: database, name: name, primaryKey: table.effectivePrimaryKeyParts)
-                table.partitions = try readPartitions(database: database, name: name, columns: table.columns)
-                if contract.transactional && validateRelationships {
-                    table.foreignKeys = try readForeignKeys(TableName(database: database, table: name))
-                }
-                try table.validate()
-                table.savedRowIdentity = table.rowIdentity
-                try contract.validateSchemaFeatures(table)
-                if validateRelationships {
-                    try verifySchema(table)
-                } else {
-                    // Related-table validation must not replace a complete prepared
-                    // plan with this deliberately graph-free metadata snapshot.
-                    try verifyTargetSchema(table, validateRelationships: false)
-                }
-                return table
+        let outer = discoveryReads.table == nil
+        let before = outer ? metadataTotals() : (queries: UInt64(0), seconds: 0.0, hits: UInt64(0))
+        defer {
+            if outer {
+                let after = metadataTotals()
+                ApplicationLog.logger.info(
+                    "Target schema query totals",
+                    metadata: [
+                        "database": .string(database), "table": .string(name),
+                        "queries": .string(String(after.queries - before.queries)),
+                        "cacheHits": .string(String(after.hits - before.hits)),
+                        "metadataSeconds": .string(String(after.seconds - before.seconds)),
+                    ])
             }
         }
+        return try discoveryReads.scope(TableName(database: database, table: name)) {
+            try ApplicationLog.measure(
+                "Read target schema",
+                metadata: ["phase": "schema", "database": .string(database), "table": .string(name)]
+            ) {
+                try profile("target.read_schema") {
+                    let binds = [MySQLData(string: database), MySQLData(string: name)]
+                    let columns = try metadataQuery(
+                        "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
+                        binds
+                    ).0
+                    let keys = try metadataQuery(
+                        "SELECT COLUMN_NAME,SUB_PART,COLLATION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX",
+                        binds
+                    ).0
+                    try require(!columns.isEmpty, "discovered target table is absent")
+                    try require(keys.count <= 16, "discovered target primary key exceeds 16 columns")
+                    var table = ApplyTable(
+                        database: database, table: name,
+                        columns: try columns.map { row in
+                            try readColumn(row, table: TableName(database: database, table: name))
+                        }, primaryKeyColumns: keys.map { $0.column("COLUMN_NAME")?.string ?? "" })
+                    let parts = keys.map {
+                        ApplyIndexPart(
+                            column: $0.column("COLUMN_NAME")?.string, prefix: $0.column("SUB_PART")?.int,
+                            direction: NativeReplicationRules(profile: config.replicationProfile).indexDirection(
+                                $0.column("COLLATION")?.string, type: "BTREE"))
+                    }
+                    table.primaryKeyParts = parts.contains { $0.prefix != nil || $0.direction != "A" } ? parts : nil
+                    let encoding = try tableEncoding(TableName(database: database, table: name))
+                    table.defaultCharacterSet = encoding.characterSet
+                    table.defaultCollation = encoding.collation
+                    table.secondaryIndexes = try readIndexes(
+                        database: database, name: name, primaryKey: table.effectivePrimaryKeyParts)
+                    table.partitions = try readPartitions(database: database, name: name, columns: table.columns)
+                    if contract.transactional && validateRelationships {
+                        table.foreignKeys = try readForeignKeys(TableName(database: database, table: name))
+                    }
+                    try table.validate()
+                    table.savedRowIdentity = table.rowIdentity
+                    try contract.validateSchemaFeatures(table)
+                    if validateRelationships {
+                        try verifySchema(table)
+                    } else {
+                        // Related-table validation must not replace a complete prepared
+                        // plan with this deliberately graph-free metadata snapshot.
+                        try verifyTargetSchema(table, validateRelationships: false)
+                    }
+                    return table
+                }
+            }
+        }
+    }
+    private func metadataTotals() -> (queries: UInt64, seconds: Double, hits: UInt64) {
+        let snapshot = timings.snapshot
+        let queries = snapshot.filter { $0.key.hasPrefix("target.metadata.") && $0.key != "target.metadata.cache_hit" }
+            .values
+        return (
+            queries.reduce(0) { $0 + $1.count }, queries.reduce(0) { $0 + $1.seconds },
+            snapshot["target.metadata.cache_hit"]?.count ?? 0
+        )
     }
     private func readColumn(_ row: MySQLRow, table: TableName) throws -> ApplyColumn {
         guard let name = row.column("COLUMN_NAME")?.string, let type = row.column("COLUMN_TYPE")?.string else {
@@ -510,8 +571,10 @@ final class TargetSession {
     }
     func verifySchema(_ t: ApplyTable) throws {
         validatedPlans.removeValue(forKey: t.identity)
-        try timings.measure("target.schema") { try verifyTargetSchema(t, validateRelationships: true) }
-        try require(validatedPlans.count < maximumCachedTables, "validated schema limit reached")
+        try discoveryReads.scope(TableName(database: t.database, table: t.table)) {
+            try timings.measure("target.schema") { try verifyTargetSchema(t, validateRelationships: true) }
+        }
+        try require(validatedPlans.count < config.schemaCacheTableLimit, "validated schema limit reached")
         validatedPlans[t.identity] = try DMLSQLPlan(t)
     }
     private func verifyTargetSchema(_ t: ApplyTable, validateRelationships: Bool) throws {
@@ -529,7 +592,7 @@ final class TargetSession {
             metadata?.column("TABLE_COLLATION")?.string == t.defaultCollation,
             "target table defaults differ from historical schema")
         let columns = try metadataQuery(
-            "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,EXTRA,COLUMN_DEFAULT,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
+            "SELECT COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,CHARACTER_SET_NAME,COLLATION_NAME,COLUMN_DEFAULT,EXTRA,GENERATION_EXPRESSION\(contract.versionPrefix == "8.4." ? ",SRS_ID" : "") FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION",
             binds
         ).0
         try require(columns.count == t.columns.count, "target schema column count differs")

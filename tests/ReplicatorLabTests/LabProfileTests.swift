@@ -3,6 +3,27 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testDiscoveryBenchmarkValidatesProfileAndBounds() throws {
+        let base = ["--profile", "mysql57-to-mysql84-innodb", "--mode", "discovery", "--binary", "/tmp/applier"]
+        try LabBenchmark.validate(
+            arguments: base + [
+                "--tables", "8", "--foreign-key-group-size", "4", "--target-rtt-ms", "20", "--dml-transport", "binlog",
+            ])
+        for extra in [
+            ["--tables", "0"], ["--target-rtt-ms", "-1"], ["--foreign-key-group-size", "9"], ["--events", "1"],
+            ["--skip-build"], ["--binary", "/tmp/second"],
+        ] {
+            XCTAssertThrowsError(try LabBenchmark.validate(arguments: base + extra))
+        }
+        XCTAssertThrowsError(
+            try LabBenchmark.validate(arguments: [
+                "--profile", "mysql57-to-mysql57-myisam", "--mode", "discovery", "--binary", "/tmp/applier",
+                "--foreign-key-group-size", "4",
+            ]))
+        XCTAssertThrowsError(
+            try LabBenchmark.validate(arguments: ["--profile", "mysql57-to-mysql84-innodb", "--mode", "discovery"]))
+    }
+
     func testGTIDVariantsSelectOnlyTheirIntendedWorkloads() throws {
         let rows = try LabScenario.select(tier: "full", family: "gtids", ids: [])
         XCTAssertEqual(Set(rows.map(\.id)), ["ddl-compat-tagged-gtids", "ddl-compat-source-gtid-preservation"])

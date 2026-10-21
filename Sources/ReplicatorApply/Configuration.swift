@@ -2,9 +2,6 @@ import Foundation
 import ReplicatorCapture
 import ReplicatorCodec
 
-// Keep discovery, DDL and durable schema reload bounded by the same limit.
-let maximumCachedTables = 1024
-
 public struct ApplyError: Error, CustomStringConvertible {
     public let message: String
     public let code: ApplyErrorCode?
@@ -486,6 +483,8 @@ public struct TargetConfiguration: Decodable {
     }
 }
 public struct ApplyConfiguration: Decodable {
+    public var maximumCachedTables: Int? = nil
+    var schemaCacheTableLimit: Int { maximumCachedTables ?? SchemaCacheLimits.maximumTables }
     public let profile: ReplicationProfile?
     var replicationProfile: ReplicationProfile { profile ?? .mysql84To57MyISAM }
     /// Detailed worker-local applier timings, disabled unless explicitly enabled.
@@ -516,6 +515,7 @@ public struct ApplyConfiguration: Decodable {
     var batchPolicy: BatchPolicy { batch ?? .init() }
     var policy: StoragePolicy { storage ?? StoragePolicy() }
     public func validate(offline: Bool = false) throws {
+        try require((1...100_000).contains(schemaCacheTableLimit), "maximumCachedTables must be 1...100000")
         try statistics?.validate()
         try supportBundle?.validate(stateDirectory: stateDirectory)
         try require(

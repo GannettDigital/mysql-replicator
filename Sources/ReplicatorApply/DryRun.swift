@@ -82,7 +82,8 @@ public enum DryRun {
                 try input.run(
                     configuration: c.source, cancellation: cancellation, retainRawBytes: true,
                     emitEvent: event, emitTransaction: transaction, resolveSchema: resolver,
-                    timings: .init(), ignoreTable: { preview.filter.ignores(database: $0, table: $1) })
+                    timings: .init(), ignoreTable: { preview.filter.ignores(database: $0, table: $1) },
+                    maximumCachedTables: c.schemaCacheTableLimit)
             } else {
                 let sourcePassword = try PasswordConfiguration.resolve(
                     password: c.source.password,
@@ -92,7 +93,7 @@ public enum DryRun {
                     cancellation: cancellation, emitEvent: event, emitTransaction: transaction,
                     resolveSchema: resolver, allowDDL: true,
                     ignoreTable: { preview.filter.ignores(database: $0, table: $1) },
-                    sourceContract: c.replicationProfile.sourceContract)
+                    sourceContract: c.replicationProfile.sourceContract, maximumCachedTables: c.schemaCacheTableLimit)
             }
             return preview.summary
         } catch {
@@ -111,7 +112,7 @@ public enum DryRun {
 /// The only write capability is a discard connection. No apply state is opened.
 final class DryRunEngine {
     let configuration: ApplyConfiguration
-    let schema = SchemaMetadataCache()
+    let schema: SchemaMetadataCache
     let metadata: (TableName) throws -> ApplyTable?
     let filter: TableFilter
     let targetVersion: Int
@@ -138,6 +139,7 @@ final class DryRunEngine {
     ) throws {
         inspected = try GTIDSet("")
         configuration = c
+        schema = SchemaMetadataCache(maximumTables: c.schemaCacheTableLimit)
         self.metadata = metadata
         filter = try TableFilter(
             c.replicateWildIgnoreTable ?? [], including: c.replicateWildDoTable ?? [],

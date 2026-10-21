@@ -692,8 +692,9 @@ completed batches and idle time includes gaps preceding batches already started.
 The decoder caches those interpretations by database, table and wire column
 metadata. `capture.schema_cache.hit` / `.miss` report reuse; a repeated numeric
 table ID alone is insufficient. DDL, new format contexts and skipped ranges
-invalidate the cache; reconnect creates a new cache. Retention is bounded to
-1,024 table entries, with eviction causing a fresh ordered lookup. Checksums,
+invalidate the cache; reconnect creates a new cache. Retention uses
+`maximumCachedTables` (default 6,000 entries). Eviction causes a fresh ordered
+lookup. Checksums,
 table-map decoding and consumer-side schema validation still run for each map.
 The live/offline stream reuses the codec's validated format context for TABLE_MAP
 probes. With no table filter, each included map uses one metadata probe and one
@@ -913,3 +914,15 @@ DML, restart and replay on all four profiles. Add
 by a 5.7 source. The latter includes the 8.4 target. The tests compare the saved
 source and target SQL and check native gate outcomes. See
 [the implementation contract](../PLAN/EXECUTABLE_COMMENTS.md).
+
+### Measure schema discovery with target network delay
+
+`benchmark --mode discovery` runs a local applier against disposable MySQL
+containers. It compares zero added delay with a configurable target RTT. It
+checks repeated writes, FK groups, DDL invalidation, and reopening saved state.
+Use the same profile names and `--dml-transport sql|binlog` options as backlog
+benchmarks. Supply `--binary` with the local applier path.
+
+See [the discovery benchmark guide](../tools/metadata-benchmark/README.md) for
+commands, output fields, and timing limits. This focused measurement does not
+replace the correctness suite or native-replication performance comparisons.

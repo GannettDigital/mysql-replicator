@@ -164,7 +164,7 @@ extension TargetSession {
             let binds: [MySQLData] = [.init(string: next.database), .init(string: next.table)]
             let rows = try metadataQuery(
                 "SELECT k.CONSTRAINT_NAME,k.TABLE_SCHEMA,k.TABLE_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_SCHEMA,k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,k.ORDINAL_POSITION,r.UPDATE_RULE,r.DELETE_RULE FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r ON BINARY r.CONSTRAINT_SCHEMA=BINARY k.CONSTRAINT_SCHEMA AND BINARY r.CONSTRAINT_NAME=BINARY k.CONSTRAINT_NAME AND BINARY r.TABLE_NAME=BINARY k.TABLE_NAME WHERE k.REFERENCED_TABLE_NAME IS NOT NULL AND ((BINARY k.TABLE_SCHEMA=? AND BINARY k.TABLE_NAME=?) OR (BINARY k.REFERENCED_TABLE_SCHEMA=? AND BINARY k.REFERENCED_TABLE_NAME=?)) ORDER BY BINARY k.TABLE_SCHEMA,BINARY k.TABLE_NAME,BINARY k.CONSTRAINT_NAME,k.ORDINAL_POSITION",
-                binds + binds
+                binds + binds, table: next
             ).0
             var local: [ApplyForeignKey] = []
             for row in rows {

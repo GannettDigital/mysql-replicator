@@ -35,6 +35,29 @@ final class ConfigurationFileTests: XCTestCase {
         }
     }
 
+    func testSchemaCacheTableLimitDefaultsAndOverride() throws {
+        let text = try example()
+        let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(text.utf8))
+        XCTAssertEqual(config.schemaCacheTableLimit, 6_000)
+        for value in [1, 12_000, 100_000] {
+            let updated = text.replacingOccurrences(
+                of: "maximumCachedTables: 6000", with: "maximumCachedTables: \(value)")
+            let c = try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(updated.utf8))
+            XCTAssertEqual(c.schemaCacheTableLimit, value)
+            try c.validate()
+        }
+        for value in [0, -1, 100_001] {
+            let updated = text.replacingOccurrences(
+                of: "maximumCachedTables: 6000", with: "maximumCachedTables: \(value)")
+            XCTAssertThrowsError(
+                try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(updated.utf8)).validate())
+        }
+        let absent = text.split(separator: "\n").filter { !$0.hasPrefix("maximumCachedTables:") }.joined(
+            separator: "\n")
+        XCTAssertEqual(
+            try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(absent.utf8)).schemaCacheTableLimit, 6_000)
+    }
+
     func testBinlogTransportIsOptInAndRejectsConflictingSettings() throws {
         let text = try example()
         let original = try ConfigurationFile.decode(ApplyConfiguration.self, from: Data(text.utf8))

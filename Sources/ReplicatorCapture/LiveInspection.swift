@@ -171,13 +171,13 @@ public enum LiveInspection {
         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
         timings: StageTimings = .init(), onIdle: @escaping () throws -> Void = {},
         allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil,
-        sourceContract: SourceContract = .mysql84
+        sourceContract: SourceContract = .mysql84, maximumCachedTables: Int = SchemaCacheLimits.maximumTables
     ) throws -> LiveSummary {
         let start = try config.validate()
         let processor = try StreamProcessor(
             config: config, includeRaw: includeRaw, retainRawBytes: retainRawBytes, emitEvent: emitEvent,
             emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: allowDDL,
-            ignoreTable: ignoreTable)
+            ignoreTable: ignoreTable, maximumCachedTables: maximumCachedTables)
         var download: DownloadSnapshot?
         func summary() -> LiveSummary {
             var result = LiveSummary(

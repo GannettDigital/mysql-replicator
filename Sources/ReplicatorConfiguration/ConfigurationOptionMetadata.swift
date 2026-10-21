@@ -118,6 +118,7 @@ extension ConfigurationOptions {
             "storage.snapshotEveryTransactions storage.capacityCheckEveryTransactions", .integer, default: "1000",
             units: "transactions")
         add("storage.capacityCheckIntervalSeconds", .integer, default: "5", units: "seconds")
+        add("maximumCachedTables", .integer, default: "6000", units: "tables")
         add("batch.maximumInsertRows", .integer, default: "32", units: "rows")
         add("batch.maximumInsertBytes", .integer, default: "1048576", units: "bytes")
         add("batch.maximumTransactions", .integer, default: "8", units: "transactions")

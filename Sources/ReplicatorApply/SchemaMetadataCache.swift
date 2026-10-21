@@ -1,4 +1,5 @@
 import Foundation
+import ReplicatorCodec
 import ReplicatorLogging
 
 /// Serial-owner schema cache. The caller supplies a metadata reader, which can
@@ -7,6 +8,8 @@ import ReplicatorLogging
 /// No TTL or automatic eviction: the applier is the only target writer. Keep
 /// entries until explicit DDL invalidation/replacement or session reconstruction.
 final class SchemaMetadataCache {
+    let maximumTables: Int
+    init(maximumTables: Int = SchemaCacheLimits.maximumTables) { self.maximumTables = maximumTables }
     var tables: [SQLNameKey: ApplyTable] = [:]
 
     func table(_ name: TableName, read: (TableName) throws -> ApplyTable?) throws -> ApplyTable? {
@@ -16,7 +19,8 @@ final class SchemaMetadataCache {
                 metadata: ["cache": "hit", "database": .string(name.database), "table": .string(name.table)])
             return cached
         }
-        try require(tables.count < maximumCachedTables, "discovered schema limit reached")
+        try require(
+            tables.count < maximumTables, "discovered schema limit reached (maximumCachedTables=\(maximumTables))")
         guard let table = try read(name) else { return nil }
         tables[name.identity] = table
         return table

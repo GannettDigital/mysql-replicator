@@ -61,7 +61,7 @@ private struct ProfileOption: ParsableArguments {
     var arguments: [String] { option("profile", profile) }
 }
 private enum Toggle: String, ExpressibleByArgument { case on, off }
-private enum BenchmarkMode: String, ExpressibleByArgument { case backlog, streaming, capture }
+private enum BenchmarkMode: String, ExpressibleByArgument { case backlog, streaming, capture, discovery }
 private enum ReportFormat: String, ExpressibleByArgument { case markdown, json }
 private enum Resolution: String, ExpressibleByArgument {
     case retry, skip
@@ -256,9 +256,10 @@ private struct Benchmark: LabRequestCommand {
     static let configuration = CommandConfiguration(
         commandName: "benchmark", abstract: "Compare native and external replication time.")
     @OptionGroup var profile: ProfileOption
-    @Option(help: "Backlog DML transport: sql (default) or binlog.") var dmlTransport: String?
-    @Option(help: "backlog on all profiles; streaming and capture on the forward profile.") var mode: BenchmarkMode =
-        .backlog
+    @Option(help: "Backlog/discovery DML transport: sql (default) or binlog.") var dmlTransport: String?
+    @Option(help: "backlog/discovery on all profiles; streaming/capture on the forward profile.") var mode:
+        BenchmarkMode =
+            .backlog
     @Option(help: "insert or multi-table-transaction for backlog; insert or mixed for streaming/capture.") var workload:
         String?
     @Option(name: .customLong("target-transport"), help: "Streaming: tcp-tls, unix-tls, or unix.") var targetTransport:
@@ -272,7 +273,12 @@ private struct Benchmark: LabRequestCommand {
     @Option(name: .customLong("batch-transactions"), help: "Backlog/streaming: 1...256 transactions per batch.")
     var batchTransactions: Int?
     @Option(name: .customLong("prepared-batches"), help: "Backlog: 1...16 prepared batches.") var preparedBatches: Int?
-    @Option(name: .customLong("tables"), help: "Streaming: 1...32 tables.") var tables: Int?
+    @Option(name: .customLong("tables"), help: "Streaming: 1...32 tables; discovery: 1...6000.") var tables: Int?
+    @Option(help: "Discovery: path to the local mysql-replicator binary (required).") var binary: String?
+    @Option(help: "Discovery: added RTT in ms, 0...1000; also runs a zero-delay baseline (default 20).")
+    var targetRttMs: Int?
+    @Option(help: "Discovery: 0 for no FKs, or 2...min(table count, 64) for InnoDB FK groups.") var foreignKeyGroupSize:
+        Int?
     @Option(name: .customLong("table-run"), help: "Streaming: 1...10000 events before a table switch.") var tableRun:
         Int?
     @Option(name: .customLong("threads"), help: "Streaming/capture: 1...32 load threads.") var threads: Int?
@@ -310,6 +316,9 @@ private struct Benchmark: LabRequestCommand {
         arguments += option("batch-transactions", batchTransactions)
         arguments += option("prepared-batches", preparedBatches)
         arguments += option("tables", tables)
+        arguments += option("binary", binary)
+        arguments += option("target-rtt-ms", targetRttMs)
+        arguments += option("foreign-key-group-size", foreignKeyGroupSize)
         arguments += option("table-run", tableRun)
         arguments += option("threads", threads)
         arguments += option("rate", rate)

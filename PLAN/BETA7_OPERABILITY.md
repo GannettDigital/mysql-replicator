@@ -19,16 +19,17 @@ The findings below describe the initial review. Use this table for current statu
 | OP-01 | Implemented (`fc5792a`) | Argument errors use `argument_error`. File-read and YAML errors use `configuration_error`, with available file/key/line/column fields. `reply` suggests `replay`. Exit status remains 1. Focused CLI and configuration tests pass. Environment and server checks remain under OP-04. |
 | OP-02 | Implemented (`fc5792a`) | Normal help shows command syntax. `config-help` selects a command, section, or setting. Metadata supplies types, defaults, null handling, units, choices, and examples. Tests compare model fields/types and policy defaults, decode examples, and check command-specific output. |
 | OP-03 | Committed (`ec8c379`) | SwiftLog application handler; JSON logs on stderr; INFO phases and DEBUG query families/timings. Logs exclude SQL and bindings. Synchronous output has bounded records and no growing queue. Focused tests cover output, disabled formatting, slow sinks, flags, and offline replay startup with an absent local target socket. No full profile or performance run was made for this change. |
-| OP-08 | Implemented; not committed | Status separates applied and pending offsets. Recovery inspection includes saved source failures before target setup. Advice identifies supported operator actions. Empty startup state with a current source failure permits explicit retry. Focused middle-file tests and isolated MySQL 5.7 CLI checks pass. Uncertain writes still require DBA reconciliation. |
+| OP-08 | Committed (`35e9967`) | Status separates applied and pending offsets. Recovery inspection includes saved source failures before target setup. Advice identifies supported operator actions. Empty startup state with a current source failure permits explicit retry. Focused middle-file tests and isolated MySQL 5.7 CLI checks pass. Uncertain writes still require DBA reconciliation. |
 | OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
 | OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
 | OP-04 | Committed (`6cf57c3`) | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
 | OP-05 | Committed (`1d27330`) | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
 | OP-06 | Slice 1 committed (`8e17740`) | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases remain under OP-12. |
 | OP-07 | Committed (`8e17740`) | Save completed file validation and start metadata in SQLite. Resume at the saved applied byte offset after reading format metadata. GTID-only starts select a file by `Previous_gtids`. No per-transaction archive index or file hash. Focused tests and isolated SQL/BINLOG stop-and-resume checks pass. |
-| OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
+| OP-11 | Implemented | Metadata-family timings, per-discovery query reuse, and configurable `maximumCachedTables` (default 6000). SQL/BINLOG runs on 5.7 → 8.4 InnoDB and 8.4 → 5.7 MyISAM pass at zero/20 ms added RTT, with DDL and restart checks. See [measurements](OP11_SCHEMA_DISCOVERY_RESULTS.md). Larger table-count measurements remain future work. |
+| OP-12–13 | Not started under this plan | Existing behavior remains as described below. |
 
-Next: proceed to OP-11 schema-discovery measurements, then OP-12 and OP-13. Include the remaining OP-09/OP-10 focused checks described below.
+Next: OP-12 live phase and wait reporting, then OP-13 table/operation statistics. OP-09/OP-10 still have the focused checks described below.
 
 ## Issue list
 
@@ -394,6 +395,8 @@ produce distinct diagnostics. Existing reconnect and recovery decisions remain
 correct. OP-09 should name its exact failing operation after this change.
 
 ## OP-11 — Schema discovery on a remote target
+
+Implemented with focused validation. See [the results and remaining scale checks](OP11_SCHEMA_DISCOVERY_RESULTS.md).
 
 The incident is dominated by schema resolution and target SQL waits. Schema
 caching already exists. Investigate queries within each first discovery, repeated

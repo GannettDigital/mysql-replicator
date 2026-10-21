@@ -486,7 +486,7 @@ extension TargetSession {
         if let after { try contract.validateSchemaFeatures(after) }
         try require(
             discovered.count - (discovered[name.identity] == nil ? 0 : 1) + (after == nil ? 0 : 1)
-                <= maximumCachedTables, "discovered schema limit reached")
+                <= config.schemaCacheTableLimit, "discovered schema limit reached")
         // The outer preparation layer applies only authorized encoding edits.
         let sql = String(decoding: source.sql, as: UTF8.self)
         let plan = try prepareForeignKeyTransitions(

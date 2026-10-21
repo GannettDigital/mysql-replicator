@@ -104,6 +104,27 @@ extension ApplyTests {
         XCTAssertEqual(preview.summary.inspectedGTIDs, sid + ":1-2")
         XCTAssertTrue(preview.schema.tables.isEmpty)
     }
+    func testSchemaMetadataCacheRetainsSixThousandTables() throws {
+        let cache = SchemaMetadataCache()
+        let original = tables()[0]
+        var reads = 0
+        func read(_ name: TableName) -> ApplyTable? {
+            reads += 1
+            return original.renamed(to: name)
+        }
+        for i in 0..<6_000 {
+            _ = try cache.table(TableName(database: "poc", table: "t\(i)"), read: read)
+        }
+        for i in 0..<6_000 {
+            _ = try cache.table(TableName(database: "poc", table: "t\(i)"), read: read)
+        }
+        XCTAssertEqual(reads, 6_000)
+        XCTAssertThrowsError(try cache.table(TableName(database: "poc", table: "overflow"), read: read))
+        cache.invalidate(TableName(database: "poc", table: "t0"))
+        _ = try cache.table(TableName(database: "poc", table: "new"), read: read)
+        XCTAssertEqual(reads, 6_001)
+    }
+
     func testSchemaMetadataCacheInvalidatesTablesAndDatabases() throws {
         let cache = SchemaMetadataCache()
         let original = tables()[0]

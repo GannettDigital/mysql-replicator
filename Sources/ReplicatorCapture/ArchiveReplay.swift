@@ -457,7 +457,8 @@ public final class ArchiveReplay {
         emitEvent: @escaping (LiveRecord) throws -> Void,
         emitTransaction: @escaping (CompleteTransaction) throws -> Void,
         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])?,
-        timings: StageTimings, ignoreTable: ((String, String) -> Bool)?
+        timings: StageTimings, ignoreTable: ((String, String) -> Bool)?,
+        maximumCachedTables: Int = SchemaCacheLimits.maximumTables
     ) throws {
         let excluded = try GTIDSet(configuration.start.executedGTIDs)
         try validate(
@@ -466,7 +467,7 @@ public final class ArchiveReplay {
         let processor = try StreamProcessor(
             config: configuration, includeRaw: !retainRawBytes, retainRawBytes: retainRawBytes, emitEvent: emitEvent,
             emitTransaction: emitTransaction, resolveSchema: resolveSchema, timings: timings, allowDDL: true,
-            ignoreTable: ignoreTable)
+            ignoreTable: ignoreTable, maximumCachedTables: maximumCachedTables)
         struct Limit: Error {}
         if processor.stopReason != nil { return }
         let start: Int

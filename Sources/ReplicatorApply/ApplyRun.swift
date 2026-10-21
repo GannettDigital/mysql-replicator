@@ -609,7 +609,8 @@ public enum ApplyRun {
                                             emitTransaction: { try send(.transaction($0)) },
                                             resolveSchema: resolver, timings: producerTimings,
                                             ignoreTable: filter.isEmpty
-                                                ? nil : { filter.ignores(database: $0, table: $1) })
+                                                ? nil : { filter.ignores(database: $0, table: $1) },
+                                            maximumCachedTables: configuration.schemaCacheTableLimit)
                                     } else {
                                         _ = try LiveInspection.run(
                                             configuration: capture, password: sourcePassword, retainRawBytes: true,
@@ -620,7 +621,8 @@ public enum ApplyRun {
                                             timings: producerTimings, onIdle: { try send(.idle) }, allowDDL: true,
                                             ignoreTable: filter.isEmpty
                                                 ? nil : { filter.ignores(database: $0, table: $1) },
-                                            sourceContract: profile.sourceContract)
+                                            sourceContract: profile.sourceContract,
+                                            maximumCachedTables: configuration.schemaCacheTableLimit)
                                     }
                                 },
                                 consume: { message in

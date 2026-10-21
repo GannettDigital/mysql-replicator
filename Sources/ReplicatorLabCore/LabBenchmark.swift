@@ -20,6 +20,11 @@ public enum LabBenchmark {
                 args.removeSubrange(index...index + 1)
             }
             try require(!args.contains("--mode"), "duplicate benchmark mode")
+            if mode == "discovery" {
+                forwardedArguments = args
+                _ = try MetadataBenchmark.Options(profile: profile, arguments: args)
+                return
+            }
             if mode == "streaming" || mode == "capture" {
                 try require(
                     profile == .forward, "\(mode) measurement is not implemented for this profile; use --mode backlog")
@@ -79,6 +84,10 @@ public enum LabBenchmark {
     public static func run(root: URL, arguments: [String]) throws {
         let options = try Options(arguments)
         let profile = options.profile
+        if options.mode == "discovery" {
+            try MetadataBenchmark.run(root: root, profile: profile, arguments: options.forwardedArguments)
+            return
+        }
         if options.mode == "streaming" {
             try PerformanceBenchmark.run(root: root, arguments: options.forwardedArguments)
             return

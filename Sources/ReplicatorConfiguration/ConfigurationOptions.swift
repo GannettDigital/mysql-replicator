@@ -33,6 +33,8 @@ public enum ConfigurationOptions {
         "ddlPolicy.events": "Reject source events to prevent scheduled target writes.",
         "ddlPolicy.triggers": "skip audits CREATE/DROP without issuing them. Source trigger row effects still apply.",
         "ddlTimeoutSeconds": "Top-level setting; 1..86400 seconds. Timeout can leave uncertain DDL.",
+        "maximumCachedTables":
+            "Schema cache and saved-schema limit; 1..100000 tables, default 6000. Applies to discovery, DDL, reload, and capture. Restart to change it.",
         "maximumRelayBytes": "Durable relay cap for run/replay; 1 MiB..1 GiB, default 256 MiB.",
         "profile": "Select the source version and target version/engine.",
         "replicateWildDoTable": "Include matching tables. Empty means all tables, subject to ignore rules.",

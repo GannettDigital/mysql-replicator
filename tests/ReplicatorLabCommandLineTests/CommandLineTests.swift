@@ -4,6 +4,22 @@ import XCTest
 
 final class LabCommandLineTests: XCTestCase {
     let profile = "mysql84-to-mysql57-myisam"
+    func testDiscoveryBenchmarkOptionsUseSharedProfile() throws {
+        guard
+            case .run(let command, let arguments) = try ReplicatorLabCommandLine.parse([
+                "benchmark", "--profile", "mysql57-to-mysql84-innodb", "--mode", "discovery",
+                "--binary", "/tmp/applier", "--tables", "5000", "--events", "10000", "--target-rtt-ms", "20",
+                "--foreign-key-group-size", "4", "--dml-transport", "binlog",
+            ])
+        else { return XCTFail("No benchmark request") }
+        XCTAssertEqual(command, "benchmark")
+        for value in [
+            "discovery", "--binary", "/tmp/applier", "--target-rtt-ms", "--foreign-key-group-size", "binlog", "5000",
+        ] {
+            XCTAssertTrue(arguments.contains(value))
+        }
+    }
+
     func testBinlogTransportIsAnExplicitSharedTestOption() throws {
         XCTAssertEqual(
             try ReplicatorLabCommandLine.parse(["test", "--dml-transport", "binlog", "--case", "positive"]),

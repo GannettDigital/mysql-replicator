@@ -55,6 +55,7 @@ final class StateStore {
     }
     private var pendingBatchSizes: [Int] = []
     private let maximumPreparedBatches: Int
+    private let maximumCachedTables: Int
     private var sequence: Int64 = 0
     private var snapshotSequence: Int64 = 0
     private var skipBoundary: BinlogCoordinate?
@@ -94,6 +95,7 @@ final class StateStore {
         freeDisk: @escaping (URL) throws -> Int64 = StateStore.availableSpace
     ) throws {
         self.timings = timings
+        maximumCachedTables = c.schemaCacheTableLimit
         applierProfiling = c.applierProfiling ?? false
         directory = URL(fileURLWithPath: c.stateDirectory).standardizedFileURL
         maximumBytes = c.maximumRelayBytes ?? 256 * 1024 * 1024
@@ -489,8 +491,12 @@ final class StateStore {
             try table.validate()
             let identity = String(decoding: try JSONEncoder().encode([table.database, table.table]), as: UTF8.self)
             try require(
-                SQLTextBytes.equal(row[1], identity) && schemas[table.identity] == nil
-                    && schemas.count < maximumCachedTables, "invalid saved schema identity/cache")
+                SQLTextBytes.equal(row[1], identity) && schemas[table.identity] == nil,
+                "invalid saved schema identity/cache")
+            try require(
+                schemas.count < maximumCachedTables,
+                "saved schema count exceeds maximumCachedTables=\(maximumCachedTables); increase the setting and restart"
+            )
             schemas[table.identity] = (id, table)
         }
         // Resume from the applied boundary, never from received-but-unapplied bytes.
@@ -869,7 +875,9 @@ final class StateStore {
                 try require(old.1 == table, "schema changed without ordered DDL")
                 return
             }
-            try require(schemas.count < maximumCachedTables, "schema cache limit reached")
+            try require(
+                schemas.count < maximumCachedTables,
+                "schema cache limit reached (maximumCachedTables=\(maximumCachedTables))")
             schemas[table.identity] = (try insertSchema(table, event: event, coordinate: coordinate), table)
         }
     }

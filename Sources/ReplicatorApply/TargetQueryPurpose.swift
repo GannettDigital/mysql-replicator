@@ -5,7 +5,7 @@ enum TargetQueryPurpose {
         let prefix = String(sql.prefix(4096)).uppercased()
         for table in [
             "COLUMNS", "STATISTICS", "TABLES", "SCHEMATA", "PARTITIONS", "KEY_COLUMN_USAGE", "REFERENTIAL_CONSTRAINTS",
-            "TRIGGERS",
+            "TRIGGERS", "COLLATIONS", "CHARACTER_SETS", "USER_PRIVILEGES", "SCHEMA_PRIVILEGES", "TABLE_PRIVILEGES",
         ] {
             if prefix.contains("INFORMATION_SCHEMA." + table) { return "schema." + table.lowercased() }
         }

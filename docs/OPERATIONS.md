@@ -218,3 +218,35 @@ entries. Normal apply
 updates the cache with verified schema changes after DDL. Dry run clears its
 cache after discarded DDL and reads the unchanged target again. No schema is
 predicted in dry run. Metadata read-ahead is not implemented yet.
+
+### Schema cache limits and discovery timings
+
+The top-level `maximumCachedTables` setting defaults to 6,000 tables. Set an
+integer from 1 to 100,000 to change it. Restart the applier after the change.
+The same limit applies to target discovery, validated plans, DDL, saved-schema
+reload, and capture schema interpretation. A larger limit uses more memory.
+SQLite storage limits still apply. This setting does not change the limits for
+active table maps within one statement or tables in one FK component. A restart
+with a limit below the saved table
+count fails; it does not discard saved schemas.
+
+Target table entries do not expire with time. Ordered DDL invalidates affected
+metadata. New target sessions rebuild their caches. Capture can discard its
+interpretation cache at the limit and repeat an ordered schema lookup.
+
+During one discovery operation, identical metadata queries reuse their results.
+This temporary query cache has a 16 MiB estimated-result budget and a 2,048-query
+limit. When it fills, queries continue without caching. Its results do not survive
+completion or failure of the discovery operation. It never caches writes,
+session-local queries, or query failures.
+
+Stage timings include counts, failures, total time, and maximum time for each
+`target.metadata.*` query family. `target.metadata.cache_hit` counts reused
+reads. `--verbose` reports per-table discovery totals. A metadata query that
+fails or takes at least one second produces a warning with its family, table,
+elapsed time, and timeout. Logs do not include SQL text or bindings.
+
+`target.sql.write` measures mutation statements. `target.sql.read_or_control`
+measures reads, session setup, and transaction control. These stages are nested
+under `target.sql`; do not add them to that total. A prepared SQL command can
+require more than one network round trip on its first use.

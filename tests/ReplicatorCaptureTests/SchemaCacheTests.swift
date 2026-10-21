@@ -29,6 +29,25 @@ extension CaptureTests {
         (0..<4).reduce(0) { $0 | UInt32(event[13 + $1]) << (8 * $1) }
     }
 
+    func testHistoricalSchemaCacheUsesConfiguredLimit() throws {
+        var calls = 0
+        let p = try StreamProcessor(
+            config: config(version: 2), includeRaw: false, emitEvent: { _ in }, emitTransaction: { _ in },
+            resolveSchema: { _, _ in
+                calls += 1
+                return self.cachedColumns
+            }, maximumCachedTables: 2)
+        try begin(p)
+        try feedCachedGroup(p, sequence: 11, tableName: "first")
+        try feedCachedGroup(p, sequence: 12, tableName: "other")
+        try feedCachedGroup(p, sequence: 13, tableName: "first")
+        XCTAssertEqual(calls, 2)
+        try feedCachedGroup(p, sequence: 14, tableName: "third")
+        try feedCachedGroup(p, sequence: 15, tableName: "first")
+        XCTAssertEqual(calls, 4)
+        try p.finish()
+    }
+
     func testHistoricalSchemaCacheDoesNotMergeUnicodeNames() throws {
         var names: [Data] = []
         let timings = StageTimings()

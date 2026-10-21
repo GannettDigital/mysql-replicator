@@ -75,7 +75,7 @@ extension TargetSession {
                     try require(known == schema, "target schema drift before DROP DATABASE")
                 }
                 retired[schema.identity] = schema
-                try require(retired.count <= maximumCachedTables, "DROP DATABASE schema limit exceeded")
+                try require(retired.count <= config.schemaCacheTableLimit, "DROP DATABASE schema limit exceeded")
             }
         }
         // Record each affected FK participant, including tables not yet used by

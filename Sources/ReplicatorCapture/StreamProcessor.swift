@@ -18,6 +18,7 @@ public struct LiveRecord: Encodable {
 /// source offsets are retained separately and restored on decoded observations.
 final class StreamProcessor {
     let timings: StageTimings
+    let maximumCachedTables: Int
     let config: CaptureConfiguration
     let excluded: GTIDSet
     var completeGTIDs: GTIDSet
@@ -56,9 +57,11 @@ final class StreamProcessor {
         emitEvent: @escaping (LiveRecord) throws -> Void,
         emitTransaction: @escaping (CompleteTransaction) throws -> Void,
         resolveSchema: ((DecodedEvent, BinlogCoordinate) throws -> [ColumnInterpretation])? = nil,
-        timings: StageTimings = .init(), allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil
+        timings: StageTimings = .init(), allowDDL: Bool = false, ignoreTable: ((String, String) -> Bool)? = nil,
+        maximumCachedTables: Int = SchemaCacheLimits.maximumTables
     ) throws {
         self.timings = timings
+        self.maximumCachedTables = maximumCachedTables
         self.ignoreTable = ignoreTable
         self.allowDDL = allowDDL
         self.resolveSchema = resolveSchema
@@ -342,7 +345,7 @@ final class StreamProcessor {
             try check(columns.count == wire.count, "historical schema column count differs from table map")
             // Bound retention in long-lived streams with many transient tables.
             // Eviction only repeats the ordered lookup; it never changes schema.
-            if resolvedSchemas.count >= 1024 { resolvedSchemas.removeAll(keepingCapacity: true) }
+            if resolvedSchemas.count >= maximumCachedTables { resolvedSchemas.removeAll(keepingCapacity: true) }
             resolvedSchemas[key] = ResolvedSchema(wire: wire, columns: columns)
             return columns
         }
