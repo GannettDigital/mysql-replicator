@@ -94,7 +94,7 @@ public enum Recovery {
         let compatibility: CompatibilityPolicy
         let lifecycle: String
         let sourceUUID: String
-        let targetUUID: String
+        let targetUUID: String?
         let appliedGTIDSet: String
         let appliedFile: String?
         let appliedPosition: String?
@@ -102,6 +102,8 @@ public enum Recovery {
         let unjournaledTailBytes: UInt64
         let diagnostic: String?
         let targetFailure: TargetFailureDiagnostic?
+        let sourceFailurePosition: BinlogCoordinate?
+        let recovery: RecoveryAdvice?
         var pending: [Group]
         let audit: [Audit]
         let interpretation =

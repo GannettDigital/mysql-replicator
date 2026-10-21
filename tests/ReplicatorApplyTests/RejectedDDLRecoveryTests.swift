@@ -44,6 +44,9 @@ extension ResumeTests {
                     observedPosition: String(event.nextPosition), event: event, rawBase64: nil))
         }
         try store.begin(group)
+        XCTAssertEqual(store.pendingTransactionCount, 1)
+        XCTAssertEqual(store.pendingTransactions.first?.start, group.start)
+        XCTAssertEqual(store.pendingTransactions.first?.end, group.end)
         guard case .query(let query) = group.events[1].control else { throw ApplyError("missing fixture query") }
         try store.recordTargetFailure(
             .init(
@@ -63,6 +66,10 @@ extension ResumeTests {
                 let before = try Recovery.inspect(configuration: config)
                 XCTAssertEqual(before.pending.count, 1)
                 XCTAssertNotNil(before.pending[0].rejectedDDL)
+                XCTAssertEqual(before.recovery?.category, "rejectedDDL")
+                XCTAssertEqual(before.recovery?.requiresTargetReconciliation, false)
+                XCTAssertEqual(before.pending[0].startPosition, String(group.start.position))
+                XCTAssertEqual(before.pending[0].endPosition, String(group.end.position))
                 XCTAssertEqual(before.pending[0].rows.count, 0)
                 for action in [Recovery.Action.skip, .markApplied] {
                     XCTAssertThrowsError(
@@ -140,5 +147,25 @@ extension ResumeTests {
             try Recovery.resolve(
                 configuration: config, action: .retry,
                 gtids: group.gtid!.canonical, reason: "missing relay"))
+    }
+}
+
+extension ResumeTests {
+    func testMiddleFileRejectedDDLResolutionRetriesOnlyTheUnappliedGroup() throws {
+        let (_, c, group) = try rejectedDDLFixture()
+        let (_, archiveConfig) = try recoveryArchive(c)
+        _ = try Recovery.resolve(
+            configuration: c, action: .retry, gtids: group.gtid!.canonical,
+            reason: "Operator corrected the DDL preparation setting")
+        let state = try StateStore(configuration: c, initialize: false)
+        var source = try state.captureConfiguration(c.source)
+        source.stopAfterTransactions = 1
+        var ids: [String] = []
+        try ArchiveReplay(configuration: archiveConfig, source: source, contract: .mysql84).run(
+            configuration: source, cancellation: .init(), resumeFrom: state.applied,
+            emitEvent: { _ in }, emitTransaction: { ids.append($0.gtid!.canonical) },
+            resolveSchema: nil, timings: .init(), ignoreTable: nil)
+        XCTAssertEqual(ids, [group.gtid!.canonical])
+        XCTAssertEqual(state.gtids, c.source.start.executedGTIDs)
     }
 }

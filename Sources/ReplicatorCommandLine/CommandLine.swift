@@ -294,7 +294,7 @@ private struct RecoveryInspect: RequestCommand {
     @OptionGroup var logging: LoggingOptions
     static let configuration = CommandConfiguration(
         commandName: "inspect",
-        abstract: "Show pending transactions and the saved recovery information.")
+        abstract: "Show applied and pending offsets, source failures, and recovery steps.")
     @OptionGroup var config: Config
     var request: CLIRequest { .recoveryInspect(config: config.path) }
 }
@@ -315,6 +315,8 @@ private struct RecoveryResolve: RequestCommand {
 
             DDL rejected before a target write intent was saved permits retry only. This applies to all supported profiles. Correct the cause first. DDL with a saved intent cannot use this command.
 
+            If archive startup failed before target setup, correct the cause first. An empty state with a saved source failure permits retry with --gtids none.
+
             For uncertain InnoDB row writes, check and repair the target before you select an action. MyISAM row recovery is not supported.
 
             Retry keeps the applied checkpoint unchanged. Resume run or replay without --initialize.
@@ -322,7 +324,10 @@ private struct RecoveryResolve: RequestCommand {
     )
     @Argument(help: "Resolution: mark-applied, retry, or skip.") var action: RecoveryAction
     @OptionGroup var config: Config
-    @Option(help: ArgumentHelp("GTID set to resolve.", valueName: "GTID_SET")) var gtids: String
+    @Option(
+        help: ArgumentHelp(
+            "GTID set to resolve; use none only when no transactions are pending.", valueName: "GTID_SET")) var gtids:
+        String
     @Option(help: ArgumentHelp("DBA reason for this decision.", valueName: "TEXT")) var reason: String
     var request: CLIRequest {
         .recoveryResolve(config: config.path, action: action.rawValue, gtids: gtids, reason: reason)

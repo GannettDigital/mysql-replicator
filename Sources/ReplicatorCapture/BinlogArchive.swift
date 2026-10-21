@@ -133,6 +133,14 @@ public struct ArchiveReadError: Error, CustomStringConvertible {
     public var description: String { reason }
 }
 
+func atArchiveEvent<T>(file: String, offset: UInt64, _ operation: () throws -> T) throws -> T {
+    do { return try operation() } catch let error as DecoderError {
+        throw ArchiveReadError(
+            coordinate: .init(file: file, position: offset),
+            reason: "archive decode failed at \(file):\(offset): \(error)")
+    }
+}
+
 struct ArchiveFileReader {
     let file: URL
     let maximumEventBytes: UInt32

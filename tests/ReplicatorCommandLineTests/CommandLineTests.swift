@@ -181,6 +181,8 @@ final class CommandLineTests: XCTestCase {
             (["recovery", "--help"], "do not connect to MySQL"),
             (["recovery", "resolve", "--help"], "permits retry only"),
             (["recovery", "resolve", "--help"], "without --initialize"),
+            (["recovery", "resolve", "--help"], "--gtids none"),
+            (["recovery", "inspect", "--help"], "source failures"),
             (["help", "ctl", "stop"], "graceful drain"),
         ] {
             guard case .help(let text) = try ReplicatorCommandLine.parse(args) else { return XCTFail("No help") }

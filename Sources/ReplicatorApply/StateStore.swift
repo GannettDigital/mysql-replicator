@@ -46,6 +46,13 @@ final class StateStore {
     private(set) var pendingGTID: String?
     private var pendingSequence: Int64 = 0
     private var pendingBatch: [PreparedDMLGroup] = []
+    private var standalonePendingPosition: PendingTransactionPosition?
+    var pendingTransactionCount: Int { pendingGTID == nil ? 0 : max(1, pendingBatch.count) }
+    var pendingTransactions: [PendingTransactionPosition] {
+        guard pendingGTID != nil else { return [] }
+        if !pendingBatch.isEmpty { return pendingBatch.prefix(16).map { PendingTransactionPosition($0.group) } }
+        return standalonePendingPosition.map { [$0] } ?? []
+    }
     private var pendingBatchSizes: [Int] = []
     private let maximumPreparedBatches: Int
     private var sequence: Int64 = 0
@@ -1113,6 +1120,7 @@ final class StateStore {
                 [id, String(relayLength), timestamp()])
         }
         pendingGTID = id
+        standalonePendingPosition = PendingTransactionPosition(group)
         pendingSequence = sequence + 1
     }
     /// No target intent may exist. Audit (when enabled), coverage, counters and
@@ -1463,5 +1471,22 @@ extension StateStore {
                 try self.execute(
                     "INSERT OR REPLACE INTO archive_validation(path,payload) VALUES(?,?)", [path, json])
             })
+    }
+}
+
+extension StateStore {
+    /// Failure-only reads. Normal status uses the coordinator's in-memory groups.
+    func recoveryAdvice(failure: TargetFailureDiagnostic?, sourceFailure: Bool) throws -> RecoveryAdvice {
+        let ddl =
+            try number(
+                "SELECT COUNT(*) FROM ddl_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')") > 0
+        let rows = try number(
+            "SELECT COUNT(*) FROM row_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
+        let rejected =
+            pendingTransactionCount == 1 && rows == 0 && !ddl
+            && failure?.ddlGTID == pendingGTID && failure?.ddlSQL != nil && failure?.statement.phase == .notIssued
+        return .make(
+            transactional: replicationProfile.transactional, pending: pendingTransactionCount,
+            rejectedDDL: rejected, hasDDLIntents: ddl, sourceFailure: sourceFailure, targetUnbound: targetUUID == nil)
     }
 }

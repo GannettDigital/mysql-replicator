@@ -147,9 +147,11 @@ rows or infer which resolution to choose.
 Every action requires a nonempty `--reason`. Resolve accepted/skipped transactions
 in source order; remaining pending transactions leave the state BLOCKED. Retry
 names the **whole remaining batch**, since a crash can lose SQLite acknowledgements
-for several committed transactions. `retry --gtids none` is only for a crashed
-state with no pending intents; it publishes a clean stop at the already committed
-checkpoint. Source binlogs must still cover any transactions to be retried.
+for several committed transactions. `retry --gtids none` is for blocked or crashed
+state with no pending intents; it publishes a clean stop at the saved checkpoint.
+It also supports an empty startup state with a saved archive failure before target
+binding. See [startup recovery](OPERATIONS.md#retry-an-archive-failure-before-target-setup).
+Source binlogs must still cover any transactions to be retried.
 
 `recovery_audit` in the same SQLite database stores the action, exact GTID set,
 reason, time and the full pre-resolution report (`evidence_json`). Audit insertion,

@@ -37,9 +37,30 @@ mysql-replicator ctl stop --config apply.yaml | jq '.'
 The `progress` object includes the lifecycle, applied GTID set, applied file and
 position, pending GTID, and durable totals. Status reads a published snapshot.
 It does not query the target or wait for the current SQL statement.
-When available, `sourceFailurePosition` gives the file and byte offset of an
-archive or transaction assembly error. Support bundles use this position to
-select the relevant binlog bytes.
+Position means byte offset within a binlog file. The following fields have
+separate meanings:
+
+| Field | Meaning |
+| --- | --- |
+| `appliedPosition` | End of the last transaction recorded as completed in SQLite. |
+| `pendingTransactions[]` | GTID, `start`, and `end` coordinates of unresolved transactions, in source order. The list contains at most 16 entries. |
+| `pendingTransactionCount` | Total number of unresolved transactions, including entries omitted from the compact list. |
+| `sourceFailurePosition` | Physical file and event offset of an archive read, decode, or transaction assembly error, when known. |
+| `recovery` | Failure category, whether target reconciliation is required, and operator next steps. Present when available after a blocked run. |
+
+Pending transactions can include work that was prepared but never issued. They
+can also include writes that the target committed before SQLite recorded the
+result. Match their GTIDs to `targetFailure` for the reported target outcome.
+Do not treat the last pending offset as applied progress. For a decode failure,
+no transaction end offset is reported unless a complete transaction was saved.
+
+Status uses the coordinator's in-memory pending list. It does not add SQLite or
+target queries to each status request. After the process exits, use `recovery
+inspect` and the final error output. Inspection includes the saved source failure
+coordinate and all supported pending records. Support bundles retain the final
+error and SQLite records and use the failure coordinate to select binlog bytes.
+Guidance does not resolve state or authorize an automatic retry. Recovery commands
+validate the journal again and require an explicit operator action and reason.
 
 `transactionsApplied` counts completed source groups. It includes filtered and
 skipped groups. It is not a count of successful target commits. `rowsApplied`
@@ -106,6 +127,34 @@ Use the recovery commands to inspect a BLOCKED state before restart.
 A direct restart rejects a BLOCKED state. For DDL rejected before an intent was
 saved, use the procedure below.
 Do not infer that a write is safe to retry from the MySQL error number alone.
+
+## Retry an archive failure before target setup
+
+An archive error can occur before the applier saves the target UUID. Inspection
+now accepts this state only if it contains no applied or pending target work.
+The target UUID is absent from the report. The report still shows the baseline
+GTIDs and the saved `sourceFailurePosition`.
+
+Keep the original support bundle. Correct the archive or decoder problem, then
+use an explicit retry:
+
+```sh
+mysql-replicator recovery inspect --config replay.yaml
+mysql-replicator recovery resolve retry --config replay.yaml \
+  --gtids none --reason 'Replaced the invalid archive file from the source'
+mysql-replicator replay --config replay.yaml
+```
+
+Use this path only when inspection confirms an empty startup state and a matching
+saved source failure. It works with all four profiles. The command records the
+operator decision and makes the empty state resumable. It does not apply or skip
+any GTID. Normal replay repeats readiness and archive checks. Do not use
+`--initialize` to bypass blocked state.
+
+For an InnoDB target with pending rows, reconcile every pending transaction first.
+Use the [InnoDB recovery procedure](REVERSE_REPLICATION.md) to choose an
+action. DDL with saved intents and uncertain MyISAM writes retain their existing
+recovery limits.
 
 ## Retry DDL rejected before a target write
 

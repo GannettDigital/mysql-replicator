@@ -329,7 +329,9 @@ public final class ArchiveReplay {
                 guard !ended else { throw CaptureError("archive event after rotation or STOP") }
                 var control: BinlogControl?
                 if [2, 3, 4, 15, 16, 33, 34, 35, 42].contains(frame[4]) {
-                    let event = try decoder.decode(frame, at: decoderOffset)
+                    let event = try atArchiveEvent(file: entry.name, offset: offset) {
+                        try decoder.decode(frame, at: decoderOffset)
+                    }
                     decoderOffset += UInt64(frame.count)
                     control = event.control
                     if frame[4] == 15 {
@@ -518,7 +520,9 @@ public final class ArchiveReplay {
                             to: BinlogCoordinate(file: file, position: offset + UInt64(frame.count)))
                     }
                 } else {
-                    try timings.measure("archive.decode") { try processor.consume(frame) }
+                    try atArchiveEvent(file: file, offset: offset) {
+                        try timings.measure("archive.decode") { try processor.consume(frame) }
+                    }
                     if file == manifest.files[start].name, frame[4] == 35, let resumeOffset {
                         try processor.skipArchivedGroup(to: .init(file: file, position: resumeOffset))
                     }

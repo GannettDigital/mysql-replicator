@@ -294,6 +294,11 @@ holds a GTID set with its matching file/offset. These offsets advance with the
 applied checkpoint. Pending or uncertain target writes still require recovery;
 a saved validation record does not make them safe to retry.
 
+The final error separates `appliedPosition`, unresolved transaction start/end
+coordinates in `pendingTransactions`, and `sourceFailurePosition`. Recovery
+inspection reads the saved failure coordinate even when validation failed before
+target binding. See [recovery output and startup retry](OPERATIONS.md#retry-an-archive-failure-before-target-setup).
+
 `source.stopAfterTransactions` optionally bounds one replay invocation. Remove or
 adjust it for the next invocation. `source.stopAfterGTIDs` stops inclusively once
 the saved source checkpoint covers the entire requested GTID set:

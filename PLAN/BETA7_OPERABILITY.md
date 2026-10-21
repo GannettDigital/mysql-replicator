@@ -19,16 +19,16 @@ The findings below describe the initial review. Use this table for current statu
 | OP-01 | Implemented (`fc5792a`) | Argument errors use `argument_error`. File-read and YAML errors use `configuration_error`, with available file/key/line/column fields. `reply` suggests `replay`. Exit status remains 1. Focused CLI and configuration tests pass. Environment and server checks remain under OP-04. |
 | OP-02 | Implemented (`fc5792a`) | Normal help shows command syntax. `config-help` selects a command, section, or setting. Metadata supplies types, defaults, null handling, units, choices, and examples. Tests compare model fields/types and policy defaults, decode examples, and check command-specific output. |
 | OP-03 | Committed (`ec8c379`) | SwiftLog application handler; JSON logs on stderr; INFO phases and DEBUG query families/timings. Logs exclude SQL and bindings. Synchronous output has bounded records and no growing queue. Focused tests cover output, disabled formatting, slow sinks, flags, and offline replay startup with an absent local target socket. No full profile or performance run was made for this change. |
-| OP-08 | Partial | Audited retry for DDL rejected before an intent was saved (`3f3d3d0`). Unit tests cover all four profiles. Live and replay tests pass on 5.7 → 5.7 InnoDB. Coordinate output and the full failure matrix remain. |
+| OP-08 | Implemented; not committed | Status separates applied and pending offsets. Recovery inspection includes saved source failures before target setup. Advice identifies supported operator actions. Empty startup state with a current source failure permits explicit retry. Focused middle-file tests and isolated MySQL 5.7 CLI checks pass. Uncertain writes still require DBA reconciliation. |
 | OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
 | OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
 | OP-04 | Committed (`6cf57c3`) | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
 | OP-05 | Committed (`1d27330`) | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
-| OP-06 | Slice 1 implemented | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases remain under OP-12. |
-| OP-07 | Implemented | Save completed file validation and start metadata in SQLite. Resume at the saved applied byte offset after reading format metadata. GTID-only starts select a file by `Previous_gtids`. No per-transaction archive index or file hash. Focused tests and isolated SQL/BINLOG stop-and-resume checks pass. |
+| OP-06 | Slice 1 committed (`8e17740`) | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases remain under OP-12. |
+| OP-07 | Committed (`8e17740`) | Save completed file validation and start metadata in SQLite. Resume at the saved applied byte offset after reading format metadata. GTID-only starts select a file by `Previous_gtids`. No per-transaction archive index or file hash. Focused tests and isolated SQL/BINLOG stop-and-resume checks pass. |
 | OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
 
-Next: finish OP-08 recovery coordinate output and failure cases. Then proceed to OP-11, OP-12, and OP-13 in the delivery order below.
+Next: proceed to OP-11 schema-discovery measurements, then OP-12 and OP-13. Include the remaining OP-09/OP-10 focused checks described below.
 
 ## Issue list
 
@@ -310,20 +310,36 @@ Acceptance: inject pre-write DDL rejection, uncertain DML, and decode failure in
 middle archive files. Status, bundles, and recovery inspection identify the
 correct boundaries. Tests distinguish logical resume from OP-07's seek speed.
 
-Next implementation slice:
+Implemented:
 
-1. Keep the existing applied checkpoint fields. Add explicit failed transaction
-   start/end coordinates to status and final errors where they are known.
-   `Recovery.Report.pending` already contains these coordinates; reuse that data.
-2. Include the saved `source_failure` coordinate in recovery inspection, including
-   failures before a pending transaction exists. Do not invent an end offset for
-   an incomplete or undecodable transaction.
-3. Report the reason for `BLOCKED` and the next supported operator action. Keep
-   pre-write DDL retry separate from uncertain target outcomes. Do not recommend
-   automatic retry or `--initialize` for an uncertain write.
-4. Add focused middle-file cases for rejected DDL, uncertain DML, and decode
-   failure. Compare status, inspection, and support-bundle coordinates. After an
-   allowed resolution, verify resume without repeating completed transactions.
+- Status and final errors keep `appliedPosition` separate from
+  `pendingTransactions` (GTID, start, and end). The list contains at most 16
+  unresolved groups; `pendingTransactionCount` gives the full count. Status
+  reads these fields from memory without extra SQLite queries.
+- Recovery inspection includes `sourceFailurePosition`, including failures before
+  target setup. Decoder errors report the physical archive offset. An incomplete
+  transaction does not get an invented end offset.
+- `recovery` gives the reason and supported next steps. DDL rejected before a
+  write intent permits retry. Uncertain writes still need target reconciliation.
+- A state with no target binding can be inspected and explicitly retried only
+  when it is empty and has a source failure that matches the current diagnostic.
+  `recovery resolve retry --gtids none` records the decision. It does not advance
+  the applied checkpoint. Resume uses the same state directory without
+  `--initialize`.
+
+Validation:
+
+- 19 focused recovery tests pass. Cases cover middle-file DDL rejection,
+  uncertain COMMIT, validation and row-decoder errors, invalid startup state,
+  support-bundle offsets, and resume after an explicit resolution.
+- Isolated MySQL 5.7 CLI checks confirm that final status, recovery inspection,
+  and automatic support bundles agree for a middle-file decode failure and a
+  DDL rejection. After file repair and explicit retry, replay completes with
+  the same state directory.
+- The uncertain COMMIT test uses an injected durable journal. It checks
+  reconciliation and resume boundaries; it is not a network-disconnect test.
+- The full suite remains for GitHub Actions. Operations, replay, reverse-flow
+  documentation, and recovery command help describe the new output and limits.
 
 Current scan and prepared positions must remain distinct from the applied
 checkpoint. Their continuous live reporting belongs to OP-12. OP-09 still needs

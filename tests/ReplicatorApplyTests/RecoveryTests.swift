@@ -63,6 +63,10 @@ extension ResumeTests {
                     acknowledgedRows: groups.enumerated().map { $0.offset < completed ? $0.element.mutations.count : 0 }
                 )
             }
+            XCTAssertEqual(store.pendingTransactionCount, groups.count - completed)
+            XCTAssertEqual(store.pendingTransactions.map(\.gtid), groups.dropFirst(completed).map(\.id))
+            XCTAssertEqual(store.pendingTransactions.map(\.start), groups.dropFirst(completed).map { $0.group.start })
+            XCTAssertEqual(store.pendingTransactions.map(\.end), groups.dropFirst(completed).map { $0.group.end })
             if block { try store.block("simulated uncertain COMMIT") }
         }
         return (path, c, groups)
@@ -273,5 +277,56 @@ extension ResumeTests {
         XCTAssertNil(folded[1].final)
         XCTAssertFalse(folded.contains { $0.ambiguous })
         XCTAssertTrue(try Recovery.fold([row(a, b), row(a, c)])[0].ambiguous)
+    }
+}
+
+extension ResumeTests {
+    func testMiddleFileUncertainWriteNeedsReconciliationAndResumesAfterResolvedPrefix() throws {
+        let (path, c, groups) = try recoveryFixture(completed: 1)
+        let (archiveDirectory, archiveConfig) = try recoveryArchive(c)
+        let report = try Recovery.inspect(configuration: c)
+        XCTAssertEqual(report.appliedPosition, String(groups[0].group.end.position))
+        XCTAssertEqual(report.recovery?.category, "targetReconciliationRequired")
+        XCTAssertEqual(report.recovery?.requiresTargetReconciliation, true)
+        let bundleConfig = try JSONDecoder().decode(
+            SupportBundleConfiguration.self,
+            from: JSONSerialization.data(withJSONObject: [
+                "stateDirectory": path.path, "archive": ["directory": archiveDirectory.path],
+                "supportBundle": [
+                    "format": "directory",
+                    "output": path.deletingLastPathComponent().appendingPathComponent("bundle").path,
+                ],
+            ]))
+        let bundle = try SupportBundle.run(
+            configuration: bundleConfig, redactedConfiguration: Data("{}".utf8), version: "test")
+        let bundled = URL(fileURLWithPath: bundle.output)
+        XCTAssertEqual(
+            try helper.sqlite(
+                bundled.appendingPathComponent("state.sqlite"),
+                "SELECT source_file,start_position,end_position FROM groups WHERE status='PENDING' ORDER BY sequence"),
+            groups.dropFirst().map {
+                [$0.group.start.file, String($0.group.start.position), String($0.group.end.position)]
+            })
+        let excerpt = try JSONDecoder().decode(
+            BinlogExcerpt.Index.self, from: Data(contentsOf: bundled.appendingPathComponent("archive/binlog-0.json")))
+        XCTAssertEqual(excerpt.focusStart, groups[1].group.start.position)
+        XCTAssertEqual(report.pending.map(\.startPosition), groups.dropFirst().map { String($0.group.start.position) })
+        XCTAssertEqual(report.pending.map(\.endPosition), groups.dropFirst().map { String($0.group.end.position) })
+        XCTAssertThrowsError(try StateStore(configuration: c, initialize: false))
+        _ = try Recovery.resolve(
+            configuration: c, action: .markApplied, gtids: groups[1].id,
+            reason: "DBA verified the second transaction on the target")
+        _ = try Recovery.resolve(
+            configuration: c, action: .retry, gtids: helper.sid + ":13-14",
+            reason: "DBA restored the remaining rows to their initial values")
+        let state = try StateStore(configuration: c, initialize: false)
+        XCTAssertEqual(state.applied, groups[1].group.end)
+        XCTAssertEqual(state.gtids, helper.sid + ":1-12")
+        var ids: [String] = []
+        try ArchiveReplay(configuration: archiveConfig, source: c.source, contract: .mysql84).run(
+            configuration: state.captureConfiguration(c.source), cancellation: .init(), resumeFrom: state.applied,
+            emitEvent: { _ in }, emitTransaction: { ids.append($0.gtid!.sequence) },
+            resolveSchema: nil, timings: .init(), ignoreTable: nil)
+        XCTAssertEqual(ids, ["13", "14"])
     }
 }

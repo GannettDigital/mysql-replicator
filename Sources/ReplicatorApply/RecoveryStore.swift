@@ -114,7 +114,26 @@ final class RecoveryStore {
         )
         guard let r = rows.first, rows.count == 1 else { throw ApplyError("missing saved state") }
         try require(r[1]?.lowercased() == configuration.source.sourceUUID.lowercased(), "saved source UUID differs")
-        try require(UUID(uuidString: r[2] ?? "") != nil, "missing saved target UUID")
+        if let target = r[2] {
+            try require(UUID(uuidString: target) != nil, "invalid saved target UUID")
+        } else {
+            // Inspect startup failures without pretending that a target was bound.
+            // A missing identity is valid only before any journaled target work.
+            try require(
+                r[3] == nil && r[4] == nil && r[5] == "0" && r[6] == "0"
+                    && r[7] == "0" && r[8] == "0" && r[9] == "0" && r[10] == nil,
+                "missing saved target UUID in nonempty state")
+            for table in ["groups", "schemas", "row_intents", "ddl_intents", "ddl_details", "ddl_skips"] {
+                try require(
+                    try q("SELECT COUNT(*) FROM " + table) == [["0"]],
+                    "missing saved target UUID in nonempty state")
+            }
+            if try exists("pending_gtid_markers") {
+                try require(
+                    try q("SELECT COUNT(*) FROM pending_gtid_markers") == [["0"]],
+                    "missing saved target UUID with pending GTID markers")
+            }
+        }
         guard let seq = Int64(r[5] ?? ""), seq >= 0, seq < Int64.max - 100000,
             let count = Int64(r[7] ?? ""), count >= 0, count < Int64.max - 10_000_000,
             let ddl = Int64(r[8] ?? ""), ddl >= 0, ddl <= seq, r[5] == r[6]
@@ -151,6 +170,20 @@ final class RecoveryStore {
         try require(!set.contains(identity), "duplicate covered GTID")
         try set.include(identity)
     }
+    private func sourceFailure(_ state: [String?]) throws -> BinlogCoordinate? {
+        guard state[0] == "BLOCKED", try exists("source_failure"),
+            let row = try q("SELECT source_file,source_position,reason FROM source_failure WHERE id=1").first,
+            row[2] == state[11]
+        else { return nil }
+        guard let file = row[0], !file.isEmpty, file.utf8.count <= 255,
+            !file.contains("/"), !file.contains("\\"), !file.contains("\0"),
+            let position = UInt64(row[1] ?? ""), position >= 4
+        else {
+            throw ApplyError("invalid saved source failure coordinate")
+        }
+        return .init(file: file, position: position)
+    }
+
     func inspect() throws -> Recovery.Report {
         let s = try state()
         let covered = try coverage(s)
@@ -242,11 +275,19 @@ final class RecoveryStore {
                 .init(id: $0[0]!, action: $0[1]!, gtids: $0[2]!, reason: $0[3]!, createdAt: $0[4]!)
             }
         }
+        let sourcePosition = try sourceFailure(s)
+        let advice: RecoveryAdvice? =
+            ["BLOCKED", "RUNNING", "STARTING"].contains(s[0] ?? "")
+            ? .make(
+                transactional: configuration.replicationProfile.transactional, pending: pending.count,
+                rejectedDDL: pending.first?.rejectedDDL != nil, hasDDLIntents: false,
+                sourceFailure: sourcePosition != nil, targetUnbound: s[2] == nil) : nil
         return .init(
             profile: configuration.replicationProfile.rawValue, compatibility: configuration.compatibilityPolicy,
-            lifecycle: s[0]!, sourceUUID: s[1]!, targetUUID: s[2]!, appliedGTIDSet: covered.canonical,
+            lifecycle: s[0]!, sourceUUID: s[1]!, targetUUID: s[2], appliedGTIDSet: covered.canonical,
             appliedFile: s[3], appliedPosition: s[4], durableRelayLength: durable,
-            unjournaledTailBytes: actual - durable, diagnostic: s[11], targetFailure: failure, pending: pending,
+            unjournaledTailBytes: actual - durable, diagnostic: s[11], targetFailure: failure,
+            sourceFailurePosition: sourcePosition, recovery: advice, pending: pending,
             audit: audit)
     }
     private func reportableDDLFailure(_ failure: TargetFailureDiagnostic?, state: [String?], group: Recovery.Group)
@@ -271,8 +312,12 @@ final class RecoveryStore {
             !rejectedDDL || action == .retry,
             "rejected DDL supports retry only; use the no-intent skip command to omit it")
         try require(
-            configuration.replicationProfile.transactional || rejectedDDL,
-            "MyISAM recovery supports only DDL rejected before an intent was saved")
+            configuration.replicationProfile.transactional || rejectedDDL
+                || (report.targetUUID == nil && report.pending.isEmpty && report.sourceFailurePosition != nil),
+            "MyISAM recovery supports only rejected DDL or an archive failure before target setup")
+        try require(
+            report.targetUUID != nil || (action == .retry && report.sourceFailurePosition != nil),
+            "unbound target recovery requires a saved source failure and retry")
         let requested = try GTIDSet(gtids == "none" ? "" : gtids)
         var selected = try GTIDSet("")
         if action == .retry {
@@ -320,6 +365,11 @@ final class RecoveryStore {
                 "INSERT INTO recovery_audit VALUES(?,?,?,?,?,?)",
                 [id, action.rawValue, selected.canonical, reason, time, evidence])
             if action == .retry {
+                if report.targetUUID == nil {
+                    // The same empty-state marker used by startup cancellation.
+                    // Reopening still checks that no target work exists.
+                    _ = try q("CREATE TABLE IF NOT EXISTS startup_cancelled(id INTEGER PRIMARY KEY CHECK(id=1))")
+                }
                 _ = try q("DELETE FROM row_intents WHERE gtid IN (SELECT gtid FROM groups WHERE status='PENDING')")
                 _ = try q("DELETE FROM groups WHERE status='PENDING'")
             } else {
