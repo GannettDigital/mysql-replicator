@@ -157,7 +157,8 @@ final class TargetSession {
 
     private(set) var serverVersionID: Int?
     private(set) var targetUUID: String?
-    func preflight() throws {
+    /// Reads server settings. Does not take ownership or create target objects.
+    func preflightSettings() throws {
         try require(
             try query("SELECT @@lower_case_table_names AS n").0.first?.column("n")?.string
                 == String(config.source.tableNameCaseSetting),
@@ -191,11 +192,21 @@ final class TargetSession {
         }
         packetByteLimit = min(packet, MySQLPacket.maximumMessageBytes)
         insertByteLimit = min(config.batchPolicy.maximumInsertBytes, packet / 2)
+    }
+    func preflight() throws {
+        try preflightSettings()
         try nativeExclusion()
         let ownership = try scalar("SELECT GET_LOCK('mysql-replicator-writer',0) AS v")
         if ownership == "0" { throw TargetConnectionFailure(description: "waiting for target writer ownership") }
         try require(ownership == "1", "target writer ownership is indeterminate")
         try nativeExclusion()
+        try preflightSession()
+        if config.target.transport == .sql && config.target.preserveSourceGTIDs && !contract.transactional {
+            try preflightMyISAMGTIDSupport()
+        }
+    }
+    /// Session-only probes are safe on a new, disposable validation connection.
+    func preflightSession() throws {
         try contract.configure(self)
         if config.target.transport == .binlog { try preflightBinlog() }
         if config.target.preserveSourceGTIDs {
@@ -207,9 +218,6 @@ final class TargetSession {
         _ = try query("SET SESSION time_zone='+00:00'")
         _ = try query("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
         _ = try query("SET SESSION sql_mode='\(EnumZeroWrite.strictMode)'")
-        if config.target.transport == .sql && config.target.preserveSourceGTIDs && !contract.transactional {
-            try preflightMyISAMGTIDSupport()
-        }
     }
     func resetDMLSession() throws {
         foreignKeyChecks = nil  // Native row events can change this session setting.

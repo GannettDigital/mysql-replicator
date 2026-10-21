@@ -63,6 +63,16 @@ an incomplete directory for diagnosis; fetch does not overwrite or resume it.
 Use a new destination to retry. Structural validation preserves unsupported row
 formats for diagnosis; semantic compatibility is checked during replay.
 
+Before replay, check the configuration and target without scanning the full archive:
+
+```sh
+mysql-replicator validate --config replay.yaml --mode replay
+```
+
+This command does not connect to the source or open replication state. It reads
+file preambles and tests target session settings. See the [validation command](COMMAND_LINE.md#configuration-and-environment-validation)
+for checks that still require replay or actual writes.
+
 ## External archives
 
 A directory containing files downloaded with **`mysqlbinlog --raw`** is a valid

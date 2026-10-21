@@ -3,6 +3,20 @@ import XCTest
 @testable import ReplicatorCommandLine
 
 final class CommandLineTests: XCTestCase {
+    func testValidationModeIsExplicitAndTyped() throws {
+        for mode in ["run", "replay"] {
+            XCTAssertEqual(
+                try ReplicatorCommandLine.parse(["validate", "--config", "apply.yaml", "--mode", mode]),
+                .validate(config: "apply.yaml", mode: mode))
+        }
+        for args in [
+            ["validate", "--config", "apply.yaml"],
+            ["validate", "--config", "apply.yaml", "--mode", "reply"],
+            ["validate", "--config", "apply.yaml", "--mode", "run", "--mode", "replay"],
+        ] {
+            XCTAssertThrowsError(try ReplicatorCommandLine.parse(args))
+        }
+    }
     func testLoggingFlagsDoNotChangeRequestsAndDebugWins() throws {
         let base = ["run", "--config", "/unused.yaml"]
         let expected = try ReplicatorCommandLine.parse(base)

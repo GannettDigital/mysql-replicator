@@ -104,6 +104,28 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         }
         try FileHandle.standardOutput.write(contentsOf: data + Data([10]))
         return
+    case .validate(let path, let mode):
+        let report: ValidationReport
+        do {
+            let file = URL(fileURLWithPath: path)
+            let data = try overrides.read(from: file)
+            let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: data, sourceURL: file)
+            struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration? }
+            let archive =
+                try mode == "replay"
+                ? ConfigurationFile.decode(ArchiveOptions.self, from: data, sourceURL: file).archive : nil
+            report = ApplyValidation.run(configuration: config, offline: mode == "replay", archive: archive)
+        } catch {
+            report = ValidationReport(mode: mode)
+            report.failed(
+                "configuration", detail: String(describing: error),
+                nextStep: "Correct the configuration file. Use config-help --command validate for settings.")
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try FileHandle.standardOutput.write(contentsOf: encoder.encode(report) + Data([10]))
+        if !report.ok { throw report }
+        return
     case .apply(let path, let initialize, let offline):
         ApplicationLog.logger.info(
             "Load apply configuration",
@@ -285,6 +307,7 @@ do {
         }
     }
 } catch {
+    if error is ValidationReport { exit(1) }  // The complete checklist is already on stdout.
     var diagnostic: [String: Any]
     if let failure = error as? CLIParseError {
         diagnostic = ["error": "argument_error", "reason": failure.description]

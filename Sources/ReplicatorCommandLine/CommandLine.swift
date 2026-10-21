@@ -6,6 +6,7 @@ public enum CLIRequest: Equatable {
     case configurationHelp(command: String?, section: String?)
     case version
     case apply(config: String, initialize: Bool, offline: Bool)
+    case validate(config: String, mode: String)
     case fetch(config: String)
     case supportBundle(config: String)
     case control(config: String, action: String, timeout: Int)
@@ -46,7 +47,7 @@ public enum ReplicatorCommandLine {
                 let options: Set<String> = [
                     "--config", "--initialize", "--source-config", "--schema",
                     "--include-raw", "--transactions", "--binlog-file", "--gtids", "--reason", "--timeout", "--version",
-                    "--command", "--section", "--verbose", "--debug",
+                    "--command", "--section", "--mode", "--verbose", "--debug",
                 ]
                 var seen = Set<String>()
                 for argument in arguments {
@@ -99,7 +100,7 @@ private struct Root: RequestCommand {
             Use config-help --command COMMAND for configuration types, defaults, and examples.
             """,
         subcommands: [
-            Run.self, Fetch.self, Replay.self, Control.self, SupportBundle.self,
+            Run.self, Fetch.self, Replay.self, Validate.self, Control.self, SupportBundle.self,
             Inspect.self, InspectRelay.self, Blackhole.self, Skip.self, Recovery.self, ConfigurationHelp.self,
         ])
     @Flag(help: "Show the release version and codec capabilities.") var version = false
@@ -130,7 +131,9 @@ private struct ConfigurationHelp: RequestCommand {
             """
     )
     @Option(
-        help: "Configuration command: run, replay, fetch, support-bundle, ctl, recovery, skip, blackhole, or inspect.")
+        help:
+            "Configuration command: run, replay, validate, fetch, support-bundle, ctl, recovery, skip, blackhole, or inspect."
+    )
     var command: String?
     @Option(help: "Section or dotted setting name, for example target or target.transport.")
     var section: String?
@@ -169,6 +172,22 @@ private struct Replay: RequestCommand {
             """)
     @OptionGroup var options: ApplyOptions
     var request: CLIRequest { .apply(config: options.config.path, initialize: options.initialize, offline: true) }
+}
+
+private struct Validate: RequestCommand {
+    @OptionGroup var logging: LoggingOptions
+    static let configuration = CommandConfiguration(
+        commandName: "validate", abstract: "Check configuration and environment without applying changes.",
+        discussion: """
+            Required mode: run or replay. Replay never connects to the source.
+            Checks use temporary local files and a disposable MySQL session. No replication
+            state, target tables, or GTIDs are written. Archive checks read file preambles,
+            not all events. The JSON checklist identifies checks that need real writes.
+            """)
+    @OptionGroup var config: Config
+    private enum Mode: String, ExpressibleByArgument { case run, replay }
+    @Option(help: "Check live capture (run) or a local archive (replay).") private var mode: Mode
+    var request: CLIRequest { .validate(config: config.path, mode: mode.rawValue) }
 }
 
 private struct Fetch: RequestCommand {

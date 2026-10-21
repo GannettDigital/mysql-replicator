@@ -27,6 +27,7 @@ final class CLIProcessTests: XCTestCase {
             [], ["--help"], ["--version"], ["replay", "--help"], ["ctl", "--help"], ["ctl", "stop", "--help"],
             ["recovery", "--help"], ["recovery", "inspect", "--help"], ["recovery", "resolve", "--help"],
             ["help", "recovery", "resolve"],
+            ["validate", "--help"], ["config-help", "--command", "validate"],
             ["config-help", "--help"], ["config-help"], ["config-help", "--command", "ctl"],
             ["run", "--debug", "--help"], ["config-help", "--verbose", "--command", "ctl"],
         ] {
@@ -38,6 +39,21 @@ final class CLIProcessTests: XCTestCase {
                 XCTAssertTrue(String(decoding: out, as: UTF8.self).contains("(codec ABI "))
             }
         }
+    }
+
+    func testValidationConfigurationFailureUsesChecklistAndExitOne() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".yaml")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("source: [secret-invalid-yaml\n".utf8).write(to: file)
+        let (status, out, error) = try run(["validate", "--config", file.path, "--mode", "replay"])
+        XCTAssertEqual(status, 1)
+        XCTAssertTrue(error.isEmpty)
+        let report = try XCTUnwrap(JSONSerialization.jsonObject(with: out) as? [String: Any])
+        XCTAssertEqual(report["ok"] as? Bool, false)
+        let checks = try XCTUnwrap(report["checks"] as? [[String: Any]])
+        XCTAssertEqual(checks.first?["name"] as? String, "configuration")
+        XCTAssertEqual(checks.first?["status"] as? String, "failed")
+        XCTAssertFalse(String(decoding: out, as: UTF8.self).contains("secret-invalid-yaml"))
     }
 
     func testArgumentFailuresKeepJSONOnStderrAndExitOne() throws {
@@ -189,6 +205,18 @@ final class CLIProcessTests: XCTestCase {
             archive: {directory: '\(archive.path)'}
             """
         try Data(yaml.utf8).write(to: config)
+        let (validationStatus, validationOut, validationError) = try run([
+            "validate", "--config", config.path, "--mode", "replay",
+        ])
+        XCTAssertEqual(validationStatus, 1)
+        XCTAssertTrue(validationError.isEmpty)
+        let validation = try XCTUnwrap(JSONSerialization.jsonObject(with: validationOut) as? [String: Any])
+        XCTAssertEqual(validation["kind"] as? String, "validation")
+        XCTAssertEqual(validation["ok"] as? Bool, false)
+        let checks = try XCTUnwrap(validation["checks"] as? [[String: Any]])
+        XCTAssertEqual(checks.first { $0["name"] as? String == "target.connection" }?["status"] as? String, "failed")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("state").path))
+        XCTAssertFalse(String(decoding: validationOut, as: UTF8.self).contains(secret))
         let (status, out, error) = try run(["replay", "--config", config.path, "--initialize", "--verbose"])
         XCTAssertEqual(status, 1)  // Deliberately absent target socket.
         XCTAssertTrue(out.isEmpty)

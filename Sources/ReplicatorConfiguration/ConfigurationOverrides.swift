@@ -14,7 +14,9 @@ public struct ConfigurationOverrides {
             command == "blackhole"
             || (command == "inspect"
                 && arguments.contains { $0 == "--source-config" || $0.hasPrefix("--source-config=") })
-        let commands = ["run", "replay", "fetch", "support-bundle", "ctl", "recovery", "skip", "blackhole", "inspect"]
+        let commands = [
+            "run", "replay", "validate", "fetch", "support-bundle", "ctl", "recovery", "skip", "blackhole", "inspect",
+        ]
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]

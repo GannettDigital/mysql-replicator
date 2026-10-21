@@ -221,36 +221,7 @@ public enum LiveInspection {
                     try sourceNetworkOperation { try connection.simpleQuery(sql).wait() }
                 }
             }
-            let settings = try query(
-                "SELECT @@server_uuid AS source_uuid,@@server_id AS server_id,@@GLOBAL.gtid_mode AS gtid_mode,@@GLOBAL.enforce_gtid_consistency AS gtid_consistency,@@GLOBAL.binlog_format AS binlog_format,@@GLOBAL.binlog_row_image AS row_image,@@GLOBAL.binlog_checksum AS checksum,VERSION() AS version"
-            )
-            guard let row = settings.first,
-                row.column("source_uuid")?.string?.lowercased() == config.sourceUUID.lowercased(),
-                row.column("server_id")?.string != String(config.serverID), row.column("gtid_mode")?.string == "ON",
-                row.column("gtid_consistency")?.string == "ON", row.column("binlog_format")?.string == "ROW",
-                row.column("row_image")?.string == "FULL", row.column("checksum")?.string == "CRC32",
-                row.column("version")?.string?.hasPrefix(sourceContract.rawValue) == true
-            else {
-                throw CaptureError(
-                    "source identity/settings differ from the qualified MySQL \(sourceContract.rawValue) GTID-ON contract"
-                )
-            }
-            let casing = try query("SELECT @@lower_case_table_names AS n")
-            guard casing.first?.column("n")?.string == String(config.tableNameCaseSetting) else {
-                throw CaptureError(
-                    "source lower_case_table_names differs from source.lowerCaseTableNames=\(config.tableNameCaseSetting)"
-                )
-            }
-            let ssl = try query("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
-            let encrypted = !(ssl.first?.column("Value")?.string ?? "").isEmpty
-            guard encrypted == config.requireTLS else {
-                throw CaptureError("source session TLS differs from configured transport")
-            }
-            let set = try GTIDSet(config.start.executedGTIDs)
-            let covered = try query("SELECT GTID_SUBSET('\(set.canonical)',@@GLOBAL.gtid_executed) AS covered")
-            guard covered.first?.column("covered")?.string == "1" else {
-                throw CaptureError("bootstrap GTID set is not covered by this source")
-            }
+            try SourceReadiness.check(configuration: config, contract: sourceContract, query: query)
             _ = try query(sourceContract.dumpSessionSQL)
             if cancellation.isCancelled { throw CaptureCancelled() }
 

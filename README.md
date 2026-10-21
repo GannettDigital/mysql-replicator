@@ -72,6 +72,8 @@ replication continues.
 
 ## Features
 
+- **Configuration checks:** use [`validate`](docs/COMMAND_LINE.md#configuration-and-environment-validation)
+  to check settings, local paths, and MySQL access before run or replay.
 - **Live replication:** start from a GTID set or binlog file position. Stop cleanly
   and resume from the saved replication position. GTID restrictions apply even
   when you use a binlog file position.

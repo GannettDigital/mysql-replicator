@@ -13,6 +13,64 @@ mysql-replicator recovery resolve --help
 `-h` also shows help. `mysql-replicator help replay` is an equivalent form.
 `mysql-replicator --version` shows the release version, codec ABI, and capabilities.
 
+## Configuration and environment validation
+
+Use the same configuration file and user account as the intended process:
+
+```sh
+mysql-replicator validate --config apply.yaml --mode run
+mysql-replicator validate --config replay.yaml --mode replay
+```
+
+`--mode` is required. `run` checks the source and target. `replay` does not
+resolve source credentials, load source TLS files, or connect to the source.
+Use `config-help --command validate` for configuration settings and overrides.
+Archive settings apply only to replay validation.
+
+The command writes one sorted JSON object to stdout. Each check has `name`,
+`status`, and `detail`. A failed check also has `nextStep`. Status values are
+`passed`, `failed`, and `notChecked`. Exit status is 0 if no check failed, or 1
+if a check failed. `notChecked` is not proof of readiness. CLI argument errors
+still go to stderr. INFO and DEBUG logs also go to stderr.
+
+```sh
+set -o pipefail
+mysql-replicator validate --config replay.yaml --mode replay | jq
+```
+
+Checks include configuration types and limits, password resolution, TLS trust
+roots, state path length, free disk space, and directory access. If a directory
+does not exist, validation probes its nearest existing parent. It creates a
+private temporary directory, writes and syncs a file, renames and reads the file,
+then removes the probe. It does not create the configured state directory. It
+also probes the support bundle directory when `supportBundle.onBlocked` is true.
+These probes do not prove filesystem crash durability.
+
+Target checks use a new connection. They check authentication, version, UUID,
+GTID and binlog settings, TLS, packet size, engine availability, native channels,
+and required session settings. Session probes include `GTID_NEXT=AUTOMATIC` when
+required by the profile and `explicit_defaults_for_timestamp`. They do not assign
+a source GTID, start a transaction, acquire the writer lock, create scratch objects,
+or write target data. The connection closes after validation. Permission errors
+for these operations fail the corresponding check.
+
+Live validation checks source identity, version, binlog settings, TLS, the
+configured baseline, and access to `SHOW BINARY LOGS`. It does not request a
+binlog stream. The report identifies unproved dump permission and retention checks.
+
+Replay checks the archive inventory, file sizes, and the first two events in
+each selected file. The report gives the file count, total bytes, and bytes read.
+It checks the configured baseline against the first `Previous_gtids` event. It
+does not scan all row events or prove that the archive contains the stop GTIDs.
+A target failure stops validation before archive reads.
+
+Validation does not open SQLite, compare a saved checkpoint with the configuration,
+or verify existing table schemas. It cannot prove object-specific DDL/DML grants,
+tagged-GTID privileges, BINLOG event privileges, or MyISAM scratch-object access.
+Run and replay still perform their startup and per-operation checks. See
+[installation requirements](INSTALL.md), [GTID permissions](GTID_PRESERVATION.md),
+and [BINLOG requirements](BINLOG_TRANSPORT.md).
+
 ## Application logs
 
 Use `--verbose` for INFO logs or `--debug` for DEBUG logs. If both flags are set,
@@ -63,6 +121,7 @@ if you need complete logs. A log record does not replace the SQLite checkpoint.
 | Command | Purpose | Configuration |
 |---|---|---|
 | `config-help` | Show typed configuration help. Select a command or section. | None |
+| `validate --mode MODE` | Check configuration and environment without applying changes. | `--config APPLY.yaml` |
 | `run` | Capture from a source and apply changes to a target. | `--config APPLY.yaml` |
 | `fetch` | Download a finite source binlog range to a local archive. | `--config APPLY.yaml` |
 | `replay` | Apply local raw binlogs without a source connection. | `--config APPLY.yaml` |
@@ -79,8 +138,8 @@ if you need complete logs. A log record does not replace the SQLite checkpoint.
 | `blackhole --source-config SOURCE.yaml` | Measure capture and decoding without target application. | Source-only YAML |
 
 Put connection, profile, archive, and policy settings in YAML. There is no
-command-line option for each YAML setting. Existing `--source-config` inspection
-and benchmark commands remain available. Schema history JSON is metadata, not an
+need to put each setting on the command line. Use `config-help` for supported
+overrides. Existing `--source-config` inspection and benchmark commands remain available. Schema history JSON is metadata, not an
 alternative configuration format.
 
 `run` and `replay` accept `--initialize` to create new state from the configured
@@ -97,7 +156,8 @@ command does not upload it.
 ## Output and errors
 
 Help and version output are plain text on stdout, with exit status 0. Application
-commands retain their JSON records and diagnostics. Errors are JSON on stderr,
+commands retain their JSON records and diagnostics. The `validate` checklist stays
+on stdout, including failed checks. Other errors are JSON on stderr,
 with exit status 1. Argument-error text includes a usage hint inside the JSON
 `reason` field. The parser does not print a separate text error.
 

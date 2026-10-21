@@ -20,7 +20,7 @@ public struct ConfigurationOptionMetadata {
 
 extension ConfigurationOptions {
     public static let commands: Set<String> = [
-        "run", "replay", "fetch", "support-bundle", "ctl", "recovery", "skip", "blackhole", "inspect",
+        "run", "replay", "validate", "fetch", "support-bundle", "ctl", "recovery", "skip", "blackhole", "inspect",
     ]
 
     public static let metadata: [String: ConfigurationOptionMetadata] = {
@@ -141,7 +141,7 @@ extension ConfigurationOptions {
 
     private static func applicableCommands(_ name: String) -> Set<String> {
         let scope = name.split(separator: ".").first.map(String.init) ?? name
-        var result: Set<String> = []
+        var result: Set<String> = ["validate"]
         // Offline recovery validates the saved apply configuration, but never connects.
         if scope != "archive" { result.formUnion(["run", "replay", "recovery", "skip"]) }
         if scope == "sourceReconnect" || name == "statistics.sourcePollIntervalSeconds" {

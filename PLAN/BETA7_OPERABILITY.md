@@ -18,13 +18,14 @@ The findings below describe the initial review. Use this table for current statu
 | --- | --- | --- |
 | OP-01 | Implemented (`fc5792a`) | Argument errors use `argument_error`. File-read and YAML errors use `configuration_error`, with available file/key/line/column fields. `reply` suggests `replay`. Exit status remains 1. Focused CLI and configuration tests pass. Environment and server checks remain under OP-04. |
 | OP-02 | Implemented (`fc5792a`) | Normal help shows command syntax. `config-help` selects a command, section, or setting. Metadata supplies types, defaults, null handling, units, choices, and examples. Tests compare model fields/types and policy defaults, decode examples, and check command-specific output. |
-| OP-03 | Implemented; not yet committed | SwiftLog application handler; JSON logs on stderr; INFO phases and DEBUG query families/timings. Logs exclude SQL and bindings. Synchronous output has bounded records and no growing queue. Focused tests cover output, disabled formatting, slow sinks, flags, and offline replay startup with an absent local target socket. No full profile or performance run was made for this change. |
+| OP-03 | Committed (`ec8c379`) | SwiftLog application handler; JSON logs on stderr; INFO phases and DEBUG query families/timings. Logs exclude SQL and bindings. Synchronous output has bounded records and no growing queue. Focused tests cover output, disabled formatting, slow sinks, flags, and offline replay startup with an absent local target socket. No full profile or performance run was made for this change. |
 | OP-08 | Partial | Audited retry for DDL rejected before an intent was saved (`3f3d3d0`). Unit tests cover all four profiles. Live and replay tests pass on 5.7 → 5.7 InnoDB. Coordinate output and the full failure matrix remain. |
 | OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
 | OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
-| OP-04–07, OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
+| OP-04 | Implemented, uncommitted | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
+| OP-05–07, OP-11–13 | Not started under this plan | Existing behavior remains as described below. |
 
-Next: add OP-04 validation. Continue the delivery order below.
+Next: OP-05 dry-run semantics. Continue the delivery order below.
 
 ## Issue list
 
@@ -133,8 +134,8 @@ Test parseable output and log backpressure; do not assume output is free.
 
 ## OP-04 — Validate configuration and environment
 
-Proposed interface: `mysql-replicator validate --config FILE --mode run|replay`.
-These are proposed options, not implemented commands.
+Implemented interface: `mysql-replicator validate --config FILE --mode run|replay`.
+See [validation behavior and limits](../docs/COMMAND_LINE.md#configuration-and-environment-validation).
 
 - Check syntax, credentials resolution, TLS files, profiles, limits, and paths.
 - Check target connection, version, engine contract, required privileges, and
