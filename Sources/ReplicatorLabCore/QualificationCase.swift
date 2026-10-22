@@ -28,11 +28,23 @@ final class QualificationReporter {
     private let output: URL
     private let log: (String) -> Void
     private var active: [(test: QualificationCase, index: Int, started: UInt64)] = []
+    private var assertionID: String?
     private(set) var results: [[String: Any]] = []
 
-    init(output: URL, log: @escaping (String) -> Void) {
+    var sqlContext: [String: Any] {
+        guard let current = active.last else { return [:] }
+        var result: [String: Any] = [
+            "scope": "case", "case_id": current.test.id, "case_path": active.map { $0.test.id },
+            "source_file": current.test.file, "source_line": current.test.line,
+        ]
+        if let assertionID { result["assertion_id"] = assertionID }
+        return result
+    }
+
+    init(output: URL, sqlTrace: LabSQLTrace? = nil, log: @escaping (String) -> Void) {
         self.output = output
         self.log = log
+        sqlTrace?.context = { [weak self] in self?.sqlContext ?? [:] }
     }
 
     func begin(_ test: QualificationCase) throws {
@@ -66,6 +78,9 @@ final class QualificationReporter {
         try DDLCoverage.safePath(evidence)
         var assertions = results[current.index]["assertions"] as? [[String: Any]] ?? []
         try require(!assertions.contains { $0["id"] as? String == id }, "duplicate assertion: \(id)")
+        let previousAssertion = assertionID
+        assertionID = id
+        defer { assertionID = previousAssertion }
         do {
             let observation = try body()
             try writeJSON(observation, to: output.appendingPathComponent(evidence))

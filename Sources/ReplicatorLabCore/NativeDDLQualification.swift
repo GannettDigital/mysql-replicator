@@ -16,7 +16,7 @@ public enum NativeDDLQualification {
         var started = false
         var failure: Error?
         func stage(_ message: String) { FileHandle.standardError.write(Data("Native DDL: \(message)\n".utf8)) }
-        let cases = QualificationReporter(output: h.output, log: stage)
+        let cases = QualificationReporter(output: h.output, sqlTrace: h.sqlTrace, log: stage)
         func attempt(_ service: String, _ sql: String) throws -> CommandResult {
             try h.compose(
                 [

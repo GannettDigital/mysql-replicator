@@ -120,6 +120,7 @@ enum LabDemoQualification {
         }
         func session(_ name: String, _ body: (LabDemo.Session) throws -> Void) throws {
             let session = LabDemo.Session(root: root, profile: profile, category: category + "/" + name)
+            session.sqlContext = { [weak reporter] in reporter?.sqlContext ?? [:] }
             var failure: Error?
             do {
                 try session.up(build: false, coverage: coverage, image: image)

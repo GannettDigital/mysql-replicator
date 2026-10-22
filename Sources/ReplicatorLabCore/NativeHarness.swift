@@ -30,6 +30,7 @@ public final class NativeHarness {
     let decoder: String
     public let output: URL
     let project: String
+    lazy var sqlTrace = LabSQLTrace(output: output)
     var report: [String: Any]
     let services = ["source", "native", "target57"]
 
@@ -67,17 +68,27 @@ public final class NativeHarness {
     }
     func compose(
         _ args: [String], timeout: TimeInterval = 120, checked: Bool = true, input: Data? = nil,
-        onOutput: ((Data) -> Void)? = nil
+        onOutput: ((Data) -> Void)? = nil, sqlRequest: LabSQLTrace.Request? = nil
     ) throws -> CommandResult {
-        try runner.run(
-            ["docker", "compose", "-f", root.appendingPathComponent("compose.yaml").path, "-p", project]
-                + composeOverlays.flatMap { ["-f", $0] } + args,
-            environment: [
-                "FIXTURE_SOURCE_GTID_MODE": "ON", "FIXTURE_SOURCE_GTID_CONSISTENCY": "ON",
-                "FIXTURE_NATIVE_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_NATIVE_GTID_CONSISTENCY": "WARN",
-                "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN",
-            ].merging(composeEnvironment) { _, new in new },
-            input: input, timeout: timeout, checked: checked, onOutput: onOutput)
+        func execute() throws -> CommandResult {
+            try runner.run(
+                ["docker", "compose", "-f", root.appendingPathComponent("compose.yaml").path, "-p", project]
+                    + composeOverlays.flatMap { ["-f", $0] } + args,
+                environment: [
+                    "FIXTURE_SOURCE_GTID_MODE": "ON", "FIXTURE_SOURCE_GTID_CONSISTENCY": "ON",
+                    "FIXTURE_NATIVE_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_NATIVE_GTID_CONSISTENCY": "WARN",
+                    "FIXTURE_TARGET57_GTID_MODE": "OFF_PERMISSIVE", "FIXTURE_TARGET57_GTID_CONSISTENCY": "WARN",
+                ].merging(composeEnvironment) { _, new in new },
+                input: input, timeout: timeout, checked: false, onOutput: onOutput)
+        }
+        let request = sqlRequest ?? LabSQLTrace.Request.compose(args, input: input)
+        let result = try request.map { try sqlTrace.measure($0, execute) } ?? execute()
+        if checked && result.status != 0 {
+            throw LabError(
+                "command docker exited \(result.status): "
+                    + String(decoding: result.stderr.suffix(16_384), as: UTF8.self))
+        }
+        return result
     }
     func sql(_ service: String, _ statement: String, headers: Bool = false, preserveWhitespace: Bool = false) throws
         -> String
@@ -101,10 +112,12 @@ public final class NativeHarness {
         let batch = LabSQLBatch(queries: queries)
         sqlBatchCalls += 1
         sqlBatchQueries += queries.count
-        let result = try sqlCommand(service, batch.statement, headers: false)
+        let result = try sqlCommand(service, batch.statement, headers: false, queries: queries)
         return try batch.decode(String(decoding: result.stdout, as: UTF8.self))
     }
-    private func sqlCommand(_ service: String, _ statement: String, headers: Bool, script: Bool = false) throws
+    private func sqlCommand(
+        _ service: String, _ statement: String, headers: Bool, script: Bool = false, queries: [LabSQLBatch.Query] = []
+    ) throws
         -> CommandResult
     {
         let started = ProcessInfo.processInfo.systemUptime
@@ -122,7 +135,10 @@ public final class NativeHarness {
                 "--default-character-set=utf8mb4",
                 headers ? "--column-names" : "--skip-column-names",
             ] + input.arguments,
-            input: input.bytes)
+            input: input.bytes,
+            sqlRequest: .init(
+                service: service, sql: statement, kind: script ? "script" : (queries.isEmpty ? "request" : "batch"),
+                queries: queries, resetsGTID: service != "source"))
         succeeded = true
         return result
     }

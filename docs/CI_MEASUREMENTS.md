@@ -13,6 +13,68 @@ every SQL statement or direct client calls outside that helper. Client time
 includes process startup and MySQL execution. It is not applier SQL time.
 Missing measurements are not zero.
 
+## SQL records for each test case
+
+The harness writes `sql-trace.jsonl` in each fixture directory. CI includes this
+file in the integration evidence artifact. No server general log is required.
+The trace does not change SQL or add SQL comments.
+
+Each client call has a `start` record and a `finish` record with the same
+`call_id`. The start record contains:
+
+- The SQL text and request kind: `request`, `script`, `batch`, or `direct-client`.
+- The logical server role (`source`, `native`, or `target`) and Docker service.
+- The profile, variant, DML transport and coverage setting for shared fixtures.
+- The active `case_id`, enclosing `case_path`, and test definition location.
+- The `assertion_id`, when the call runs inside a named assertion.
+- The names and SQL of queries in a batch. These exclude the generated framing queries.
+
+Calls outside an active case have `scope: outside-case`. These calls can include
+setup, cleanup and checks between cases. Do not assign them to the next case.
+The finish record contains elapsed client time, exit status and output sizes.
+Failed calls also retain the last 16 KiB of stderr. Query results remain in the
+existing assertion files. A failed SQL call can be part of a passing negative
+test. Use `cases.json` and the assertion files to determine the test result.
+
+The trace covers calls through `NativeHarness.sql`, its script and batch helpers,
+and direct `mysql` commands through `NativeHarness.compose`. It does not record
+SQL sent by the applier, replication threads, benchmark clients, or processes
+started outside these helpers. Background commands have outcome `submitted`;
+this confirms command submission, not SQL completion. A start without a finish
+means the call was interrupted or the result was not recorded. Trace write
+errors fail the harness operation instead of silently omitting records.
+
+A client call can contain several SQL statements. Scripts can contain
+`DELIMITER` commands. Thus, call counts are not statement counts. The
+`resets_gtid` field identifies the extra session reset used by the SQL helper.
+Client time includes Docker and mysql client startup. Trace file writes are
+outside that measured interval.
+
+To summarize one run or several downloaded artifact directories:
+
+```sh
+python3 tools/lab_sql_report.py artifacts/lab/RUN_ID > /tmp/lab-sql-report.json
+jq '.groups[] | {case_id, role, calls, seconds, outcomes}' /tmp/lab-sql-report.json
+```
+
+The report groups calls by fixture, innermost case and server role. It does not
+add a child case's calls to its parent. It reports unfinished calls separately.
+It excludes SQL text and query results. The input traces can contain credentials
+and row data; keep them with the other restricted test artifacts.
+
+To inspect the SQL for one case:
+
+```sh
+jq 'select(.event == "start" and .case_id == "database-explicit") |
+    {role, kind, assertion_id, sql, queries}' PATH/TO/sql-trace.jsonl
+```
+
+Use the SQL, assertions, profile and catalog obligations together when checking
+for duplicate tests. Equal SQL text alone does not prove that tests are duplicates.
+This instrumentation does not change test selection or CI job groups.
+
+## SQL client batches
+
 Metadata queries share a client call at each existing comparison boundary.
 Row comparisons and independent binlog checks retain their existing boundaries.
 Batch framing preserves empty results and exact whitespace. A missing or

@@ -31,6 +31,12 @@ final class LabFixture {
         nativeCase.nativeEngine = profile.targetEngine
         nativeCase.transaction = profile.transactionalTarget
         h = NativeHarness(root: root, config: nativeCase, artifactCategory: category, identifier: identifier)
+        h.sqlTrace.roles = Dictionary(
+            uniqueKeysWithValues: LabProfile.Role.allCases.map { (profile.service($0), $0.rawValue) })
+        h.sqlTrace.metadata = [
+            "profile": profile.rawValue, "variant": variant.rawValue, "dml_transport": dmlTransport,
+            "code_coverage": codeCoverage, "fixture": h.project,
+        ]
         self.image = image
         h.composeOverlays = [root.appendingPathComponent(profile.composeOverlay).path]
         h.serverVersions = Dictionary(

@@ -86,7 +86,7 @@ enum LabLifecycle {
             f = LabFixture(
                 root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage,
                 variant: variant, dmlTransport: dmlTransport)
-            reporter = QualificationReporter(output: f.output, log: f.stage)
+            reporter = QualificationReporter(output: f.output, sqlTrace: f.h.sqlTrace, log: f.stage)
         }
         func execute() throws {
             var report: [String: Any] = [

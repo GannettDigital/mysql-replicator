@@ -104,7 +104,10 @@ public enum LabDemo {
     }
     final class Session {
         let root: URL, profile: LabProfile, category: String, manifestURL: URL
-        var fixture: LabFixture?
+        var sqlContext: () -> [String: Any] = { [:] }
+        var fixture: LabFixture? {
+            didSet { fixture?.h.sqlTrace.context = sqlContext }
+        }
         var applier: LabApplier { LabApplier(fixture!) }
         init(root: URL, profile: LabProfile, category: String? = nil) {
             self.root = root

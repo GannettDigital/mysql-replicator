@@ -450,7 +450,11 @@ those identifiers do not retain old runner entry points.
 
 `artifacts/lab/RUN_ID/result.json` records the selected matrix and overall outcome.
 Shared runs store per-profile `cases.json`, per-step SQL/observations, `runtime.json`,
-logs, SQLite/relay state and final `result.json` beneath that directory. Failure
+logs, SQLite/relay state and final `result.json` beneath that directory.
+The harness also writes `sql-trace.jsonl`. It links SQL client calls to active
+case IDs, assertion IDs and server roles. See [SQL records for each test case](CI_MEASUREMENTS.md#sql-records-for-each-test-case)
+for the scope and report command. The trace can contain credentials and row data.
+Failure
 artifacts include source boundaries/binlogs when available. Adapter suites retain
 their established artifact categories; the runners provide their own evidence paths to the aggregate, keeping concurrent
 runs separate.

@@ -48,7 +48,7 @@ public enum SharedCorrectness {
                 root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage,
                 variant: variant, dmlTransport: dmlTransport)
             applier = LabApplier(f)
-            reporter = QualificationReporter(output: f.output, log: f.stage)
+            reporter = QualificationReporter(output: f.output, sqlTrace: f.h.sqlTrace, log: f.stage)
         }
         func execute(build: Bool, slice: String) throws {
             if slice == "all"
