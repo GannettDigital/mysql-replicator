@@ -146,6 +146,9 @@ Pass `--version VERSION` to `install.sh` to select a specific release.
 Use `mysql-replicator COMMAND --help` for command options. See the
 [command-line reference](docs/COMMAND_LINE.md).
 Use `--initialize` only for the first start. Omit it to resume saved state.
+Commands can use `/etc/mysql-replicator/apply.yaml` and `~/.mysql-replicator.yaml`
+without `--config`. See [configuration precedence](docs/COMMAND_LINE.md#configuration-files)
+for `MYSQL_REPLICATOR_CONFIG` and user overrides.
 
 For Debian or Ubuntu, download the `.deb` and `SHA256SUMS` files for the selected
 release. Put them in a directory with no other package versions.

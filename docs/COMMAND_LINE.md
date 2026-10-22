@@ -242,6 +242,61 @@ See [the test lab guide](TEST_LAB.md) for commands and expected results.
 
 See [status and statistics](OPERATIONS.md) for counter definitions.
 
+## Configuration files
+
+Commands that accept `--config` can find a configuration file without that option.
+Selection uses this order:
+
+1. With `--config FILE.yaml`, read only that file.
+2. Otherwise, with `MYSQL_REPLICATOR_CONFIG` set, read only that file.
+3. Otherwise, read `/etc/mysql-replicator/apply.yaml`, then
+   `~/.mysql-replicator.yaml`. Read each file that exists.
+
+In the third case, user settings override system settings. This follows the
+system-before-user order in [MySQL option files](https://dev.mysql.com/doc/refman/8.4/en/option-files.html).
+`--config` selects one file, similar to MySQL `--defaults-file`.
+`MYSQL_REPLICATOR_CONFIG` is this tool's environment variable; it is not a MySQL
+variable. Command-line setting overrides apply after all selected files.
+
+YAML sections merge by key. Arrays and scalar values replace earlier values.
+`[]` clears an array. `null` clears an optional value. To replace a password
+environment setting with a password, also set `passwordEnvironment: null`.
+An invalid or unreadable file is an error. A missing explicit or environment
+file is an error; the tool does not fall back to another file. At least one file
+must exist. The current directory is not searched for `apply.yaml`.
+Relative paths keep their existing meaning: they are relative to the working
+directory. Use absolute state and TLS paths for service commands.
+
+For example, this user file can select an existing service state directory:
+
+```yaml
+# ~/.mysql-replicator.yaml
+stateDirectory: /var/lib/mysql-replicator/state
+```
+
+Then use:
+
+```sh
+mysql-replicator ctl status | jq
+MYSQL_REPLICATOR_CONFIG=/srv/replica/replay.yaml mysql-replicator replay
+```
+
+The same selection applies to run, replay, validate, fetch, support-bundle, ctl,
+recovery, skip, and run/replay with `--dry-run`. Source-only inspection and the
+blackhole benchmark still require `--source-config`. Help and version commands
+do not read configuration files.
+
+A running process fixes its selected file paths at startup. Reload reads those
+same files and reapplies the original CLI overrides. A new default file takes
+effect only after restart. Removal of a selected file causes reload to fail.
+Reload still permits only `source.stopAfterTransactions` and
+`source.stopAfterGTIDs`; it does not reseed state. If two files are merged, YAML
+syntax errors identify the file. Type errors identify the setting but do not
+assign a file or line from the merged document.
+
+The systemd service uses an explicit system path. Its configuration therefore
+does not inherit a user's file or `MYSQL_REPLICATOR_CONFIG`.
+
 ## Configuration overrides
 
 Configuration commands accept dotted option names from `apply.example.yaml`:
@@ -251,12 +306,12 @@ mysql-replicator run --config apply.yaml --source.port 3307 --target.preserveSou
 mysql-replicator replay --config replay.yaml --source.stopAfterGTIDs 'UUID:1-1000'
 ```
 
-Precedence is defaults, then YAML, then CLI. Supply a value for booleans.
+Precedence is built-in defaults, then the selected YAML files, then CLI. Supply a value for booleans.
 Use YAML flow syntax for arrays or maps: `--replicateWildDoTable '["app.%"]'`.
 An array replaces the YAML array; `[]` clears it. `null` clears an optional value.
 Use `--config.version` for the configuration version; `--version` shows the
 program version. Duplicate options and parent/child overrides are errors.
-The configuration file is still required for execution. `--help` shows command
+At least one configuration file is required for execution. `--help` shows command
 syntax and options. Use `config-help` for configuration types, defaults, units,
 allowed values, and YAML examples:
 

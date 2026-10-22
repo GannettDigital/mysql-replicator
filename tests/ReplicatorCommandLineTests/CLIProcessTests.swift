@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 
 final class CLIProcessTests: XCTestCase {
-    private func run(_ arguments: [String]) throws -> (Int32, Data, Data) {
+    private func run(_ arguments: [String], environment: [String: String] = [:]) throws -> (Int32, Data, Data) {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let binaryDirectory =
@@ -13,6 +13,7 @@ final class CLIProcessTests: XCTestCase {
         let error = Pipe()
         process.executableURL = URL(fileURLWithPath: binaryDirectory).appendingPathComponent("mysql-replicator")
         process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, value in value }
         process.standardOutput = out
         process.standardError = error
         try process.run()
@@ -61,8 +62,8 @@ final class CLIProcessTests: XCTestCase {
         for args in [
             ["run", "--dry-run", "--initialize", "--config", "/missing.yaml"],
             ["replay", "--dry-run", "--initialize", "--config", "/missing.yaml"],
-            ["run"], ["replay"], ["ctl"], ["recovery"], ["ctl", "wrong"],
-            ["recovery", "resolve", "invalid"], ["skip"], ["fetch"], ["support-bundle"], ["inspect"],
+            ["ctl"], ["recovery"], ["ctl", "wrong"],
+            ["recovery", "resolve", "invalid"], ["skip"], ["inspect"],
             ["inspect", "--source-config"], ["not-a-command"], ["reply", "--config", "/missing.yaml"],
             ["--config", "/missing.yaml", "run"], ["run", "--config"],
             ["run", "--config", "/missing.yaml", "--config", "/missing.yaml"],
@@ -80,6 +81,27 @@ final class CLIProcessTests: XCTestCase {
             if args.first == "reply" {
                 XCTAssertTrue((object["reason"] as? String ?? "").contains("Did you mean 'replay'?"))
             }
+        }
+    }
+
+    func testDefaultSelectionErrorsAndHelpDoesNotReadConfiguration() throws {
+        let missing = "/tmp/missing-" + UUID().uuidString + ".yaml"
+        let environment = ["MYSQL_REPLICATOR_CONFIG": missing]
+        for args in [
+            ["run"], ["replay"], ["fetch"], ["support-bundle"], ["ctl", "status"], ["recovery", "inspect"],
+            ["skip", "uuid:1"],
+        ] {
+            let (status, out, error) = try run(args, environment: environment)
+            XCTAssertEqual(status, 1)
+            XCTAssertTrue(out.isEmpty)
+            let diagnostic = try XCTUnwrap(JSONSerialization.jsonObject(with: error) as? [String: Any])
+            XCTAssertEqual(diagnostic["error"] as? String, "configuration_error")
+            XCTAssertEqual(diagnostic["configPath"] as? String, missing)
+        }
+        for args in [["--help"], ["--version"], ["ctl", "status", "--help"], ["config-help", "--command", "ctl"]] {
+            let (status, _, error) = try run(args, environment: environment)
+            XCTAssertEqual(status, 0)
+            XCTAssertTrue(error.isEmpty)
         }
     }
 

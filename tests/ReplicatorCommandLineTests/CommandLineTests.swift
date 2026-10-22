@@ -155,9 +155,37 @@ final class CommandLineTests: XCTestCase {
         }
     }
 
+    func testConfigurationSelectionIsDeferredUntilExecution() throws {
+        let cases: [([String], CLIRequest)] = [
+            (["run"], .apply(config: nil, initialize: false, offline: false)),
+            (["replay"], .apply(config: nil, initialize: false, offline: true)),
+            (["replay", "--dry-run"], .dryRun(config: nil, mode: "replay")),
+            (["validate", "--mode", "replay"], .validate(config: nil, mode: "replay")),
+            (["fetch"], .fetch(config: nil)),
+            (["support-bundle"], .supportBundle(config: nil)),
+            (["ctl", "status"], .control(config: nil, action: "status", timeout: 60)),
+            (["ctl", "stop"], .control(config: nil, action: "stop", timeout: 60)),
+            (["ctl", "reload"], .control(config: nil, action: "reload", timeout: 60)),
+            (["recovery", "inspect"], .recoveryInspect(config: nil)),
+            (
+                ["recovery", "resolve", "retry", "--gtids", "none", "--reason", "checked"],
+                .recoveryResolve(config: nil, action: "retry", gtids: "none", reason: "checked")
+            ),
+            (["skip", "uuid:1"], .skip(config: nil, gtids: "uuid:1")),
+        ]
+        for (arguments, expected) in cases {
+            XCTAssertEqual(try ReplicatorCommandLine.parse(arguments), expected)
+        }
+        guard case .help(let help) = try ReplicatorCommandLine.parse(["ctl", "status", "--help"]) else {
+            return XCTFail("missing help")
+        }
+        XCTAssertTrue(help.contains("MYSQL_REPLICATOR_CONFIG"))
+        XCTAssertTrue(help.contains("~/.mysql-replicator.yaml"))
+    }
+
     func testInvalidRequestsFailBeforeExecution() {
         let invalid = [
-            ["unknown"], ["ctl"], ["recovery"], ["--version", "run", "--config", "a.yaml"], ["run"],
+            ["unknown"], ["ctl"], ["recovery"], ["--version", "run", "--config", "a.yaml"],
             ["run", "--config"], ["run", "--config", "a.yaml", "extra"],
             ["run", "--config", "a.yaml", "--typo"], ["run", "--config", ""],
             ["replay", "--config", "a.yaml", "--stop-after-gtids", "uuid:1"],

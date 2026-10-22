@@ -1,7 +1,8 @@
 # Beta.7 operator issues
 
-Status: implementation in progress on `beta/7/04-compatible-sql-routing`.
-Initial review: 2026-10-20, commit `636bedb`. Progress updated on 2026-10-21.
+Status: local acceptance checks complete on `beta/7/04-compatible-sql-routing`.
+The full CI suite and the broader OP-09/OP-10 checks are deferred.
+Initial review: 2026-10-20, commit `636bedb`. Progress updated on 2026-10-22.
 The supplied incident bundle is from `0.1.0-beta.6`.
 
 Inputs: the local `PLAN/beta7-opearability.md` notes and the supplied
@@ -20,8 +21,8 @@ The findings below describe the initial review. Use this table for current statu
 | OP-02 | Implemented (`fc5792a`) | Normal help shows command syntax. `config-help` selects a command, section, or setting. Metadata supplies types, defaults, null handling, units, choices, and examples. Tests compare model fields/types and policy defaults, decode examples, and check command-specific output. |
 | OP-03 | Committed (`ec8c379`) | SwiftLog application handler; JSON logs on stderr; INFO phases and DEBUG query families/timings. Logs exclude SQL and bindings. Synchronous output has bounded records and no growing queue. Focused tests cover output, disabled formatting, slow sinks, flags, and offline replay startup with an absent local target socket. No full profile or performance run was made for this change. |
 | OP-08 | Committed (`35e9967`) | Status separates applied and pending offsets. Recovery inspection includes saved source failures before target setup. Advice identifies supported operator actions. Empty startup state with a current source failure permits explicit retry. Focused middle-file tests and isolated MySQL 5.7 CLI checks pass. Uncertain writes still require DBA reconciliation. |
-| OP-09 | Main fix implemented | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). Restricted-account tests pass on 5.7 → 5.7 InnoDB. The full two-version reconnect matrix remains. |
-| OP-10 | Main fix implemented | Preserve failed SQL, server message, error number, and SQLSTATE without changing the mutation outcome (`9af61b7`). Query-purpose labels and the full failure matrix remain. |
+| OP-09 | Focused check passed | Check and cache the timestamp session value. Avoid an unnecessary privileged SET (`9af61b7`). The restricted-account case passes on current code with 5.7 → 5.7 InnoDB, live writes, restart, and replay. The two-version reconnect matrix is deferred. |
+| OP-10 | Focused check passed | Failed SQL, server message, error number, SQLSTATE, and `notIssued` are checked for a restricted SET during live DDL preparation and replay readiness. Complete query-purpose output and the broader failure matrix are deferred. |
 | OP-04 | Committed (`6cf57c3`) | Added `validate --config FILE --mode run|replay`. JSON checks cover settings, credentials, TLS, private filesystem probes, target readiness, and source or archive preambles. No state is opened and no target data is written. Unproved write and resume checks are explicit. 30 focused tests and isolated MySQL 5.7 run/replay checks pass. SQL traces confirm reads and session changes only; GTIDs, schemas, table counts, and local state stay unchanged. |
 | OP-05 | Committed (`1d27330`) | Added `run --dry-run` and `replay --dry-run`. Real metadata reads and discarded writes use separate interfaces. Schema caching is shared with apply. DDL clears preview metadata; later reads use the unchanged target. No production state is opened. Focused tests and isolated SQL/BINLOG dry-run and normal replay checks pass, including explicit MyISAM locks. |
 | OP-06 | Slice 1 committed (`8e17740`) | Target readiness checks now precede the full event scan. Reuse OP-04 checks for settings, engine, native channels, and session permissions. Writer ownership, scratch setup, GTID repair, and data writes stay after full validation. Startup cancellation remains resumable. Detailed `ctl status` phases were added in OP-12. |
@@ -30,18 +31,29 @@ The findings below describe the initial review. Use this table for current statu
 | OP-12 | Committed (`cfcf917`) | Live worker phases, monotonic ages, separate read/prepared/applied positions, and provisional ETA samples. Status reads memory only. |
 | OP-13 | Implemented | Optional table statistics, 6000-entry default with a one-time limit warning and overflow totals, atomic applied counts, process snapshots, and paged status. Focused tests and four 10K replay runs pass. See [measurements](OP13_TABLE_STATISTICS_RESULTS.md). |
 
-Remaining work before this plan can be closed:
+On 2026-10-22, the local acceptance scope was reduced to one restricted-account
+case. The existing `ddl-session-permissions` case passed after a replay startup
+fix. Do not describe this as completion of the broader two-version error matrix.
 
-- OP-09: check CREATE TABLE LIKE with a restricted account on MySQL 5.7 and
-  8.4. Cover matching and mismatched timestamp session settings, both on a
-  fresh connection and after reconnect.
-- OP-10: complete query-purpose details in final errors and support bundles.
-  Check restricted SET, missing table, denied SELECT, timeout, and lost COMMIT.
-  Confirm that preparation failures retain `notIssued` for the source mutation.
-- Run the full profile suite in GitHub Actions. Local checks remain focused.
+The case checks CREATE TABLE LIKE, INSERT, ALTER, restart, and offline replay
+with an account that has no SUPER privilege. It also checks error 1227, SQLSTATE,
+the server message, the failed SET, and `notIssued`. A readiness rejection before
+any archive transaction now leaves a new state STOPPED and resumable. Live DDL
+rejection with a pending group still uses explicit recovery retry.
 
-Larger table-count and release-build performance measurements remain future
-work. They are separate from these remaining error-handling checks.
+Evidence: `artifacts/lab/20261022T170221Z-e4b8691c/result.json`.
+The first run exposed an old replay assertion and the empty-state BLOCKED issue;
+its evidence remains at `artifacts/lab/20261022T164200Z-18f3ce30/`.
+
+Deferred work:
+
+- OP-09: the two-version restricted-account reconnect matrix.
+- OP-10: complete query-purpose output and the missing-table, denied-SELECT,
+  timeout, and lost-COMMIT diagnostic matrix.
+- Full profile testing in GitHub Actions.
+- Larger table-count and release-build performance measurements.
+
+Next: configuration file selection in [the additions plan](beta7-additon.md).
 
 ## Issue list
 
@@ -358,7 +370,7 @@ Current scan and prepared positions must remain distinct from the applied
 checkpoint. OP-12 now supplies their continuous live reporting. OP-09 still needs
 its target-version reconnect checks. OP-10 still needs complete failure-purpose
 output and error cases; DEBUG query-purpose labels already exist in TargetSession.
-Complete these focused checks before closing this plan.
+The wider matrix is deferred under the local acceptance scope above.
 
 ## OP-09 — DDL session privilege failure
 

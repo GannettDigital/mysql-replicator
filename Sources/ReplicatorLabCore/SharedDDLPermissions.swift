@@ -111,8 +111,9 @@ extension SharedCorrectness.Run {
             let updated = "SELECT id,ts,n FROM ddl_permissions.copied ORDER BY id"
             try require(
                 f.sql(.target, updated) == f.sql(.native, updated), "restarted restricted DDL differs from native")
-            // Repeat the rejected DDL and retry through replay. The source
-            // address is unreachable during replay and recovery runs offline.
+            // Replay checks session permissions before it reads a transaction.
+            // Rejection must leave an empty, resumable state and exact diagnostics.
+            // The source address is unreachable during replay.
             var replayConfig = isolated.configuration("ddl-permissions-replay", at: start, count: 3)
             replayConfig["target"] = target
             replayConfig["archive"] = ["directory": "/evidence/ddl-permissions-archive", "firstFile": start.file]
@@ -145,8 +146,31 @@ extension SharedCorrectness.Run {
             let replayFailure = try isolated.finish(
                 replayDenied, label: "ddl-permissions-replay-denied", config: replayConfig,
                 reason: "DDL requires explicit_defaults_for_timestamp=ON")
+            let replayProgress = replayFailure["progress"] as? [String: Any]
+            let replayDiagnostic = replayProgress?["targetFailure"] as? [String: Any]
+            let replaySQL = replayDiagnostic?["targetSQL"] as? [String: Any]
+            try require(replayProgress?["lifecycle"] as? String == "STOPPED", "readiness failure is not resumable")
+            try require(replayProgress?["pendingGTID"] == nil, "readiness failure invented a pending transaction")
+            try require(replayProgress?["appliedGTIDSet"] as? String == start.gtids, "readiness advanced GTIDs")
+            try require(replaySQL?["mysqlErrorNumber"] as? Int == 1227, "missing replay error number")
+            try require(replaySQL?["sqlState"] as? String == "42000", "missing replay SQLSTATE")
+            try require(
+                replaySQL?["sql"] as? String == "SET SESSION explicit_defaults_for_timestamp=1",
+                "missing replay preparation SQL")
+            try require((replaySQL?["serverMessage"] as? String ?? "").contains("SUPER"), "missing replay privilege")
+            try require(
+                (replayDiagnostic?["statement"] as? [String: Any])?["phase"] as? String == "notIssued",
+                "readiness failure reported an issued mutation")
+            try require(
+                isolated.state("ddl-permissions-replay-denied", "SELECT COUNT(*) FROM groups") == "0",
+                "readiness failure captured a transaction")
+            try require(
+                f.sql(
+                    .target,
+                    "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddl_permissions' AND TABLE_NAME='copied'"
+                ) == "0",
+                "readiness failure created the target table")
             _ = try f.sql(.target, "SET GLOBAL explicit_defaults_for_timestamp=1")
-            try resolveRetry("ddl-permissions-replay-denied", failure: replayFailure)
             let replay = try startCommand("ddl-permissions-replay-resumed", "replay", initialize: false)
             let replayed = try isolated.finish(replay, label: "ddl-permissions-replay-resumed", config: replayConfig)
             try require(replayed["transactionsApplied"] as? Int == 3, "replayed DDL checkpoint differs")

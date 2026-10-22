@@ -19,7 +19,7 @@ final class RunControlTests: XCTestCase {
         let directory = URL(fileURLWithPath: "/tmp/repl-cli-" + UUID().uuidString.prefix(8))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let config = directory.appendingPathComponent("apply.yaml")
+        let config = directory.appendingPathComponent(".mysql-replicator.yaml")
         try Data("stateDirectory: \(directory.path)\n".utf8).write(to: config)
         // Use an unsorted socket response to test the CLI output boundary.
         let socket = try ControlSocket(directory: directory) { request in
@@ -36,7 +36,17 @@ final class RunControlTests: XCTestCase {
             let out = Pipe()
             let error = Pipe()
             process.executableURL = URL(fileURLWithPath: binaryDirectory).appendingPathComponent("mysql-replicator")
-            process.arguments = ["ctl", command, "--config", config.path, "--timeout", String(timeout)]
+            process.arguments = ["ctl", command, "--timeout", String(timeout)]
+            var environment = ProcessInfo.processInfo.environment
+            environment["HOME"] = directory.path
+            environment.removeValue(forKey: "MYSQL_REPLICATOR_CONFIG")
+            if command == "stop" {
+                environment["MYSQL_REPLICATOR_CONFIG"] = config.path
+            } else if command == "reload" {
+                environment["MYSQL_REPLICATOR_CONFIG"] = directory.appendingPathComponent("missing.yaml").path
+                process.arguments! += ["--config", config.path]
+            }
+            process.environment = environment
             process.standardOutput = out
             process.standardError = error
             try process.run()

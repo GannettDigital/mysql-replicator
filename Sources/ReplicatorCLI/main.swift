@@ -58,7 +58,7 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
     case .recoveryResolve(let path, let action, let gtids, let reason):
         try recover(path: path, overrides: overrides, action: action, gtids: gtids, reason: reason)
     case .skip(let path, let gtids):
-        let config = try overrides.load(ApplyConfiguration.self, from: URL(fileURLWithPath: path))
+        let config = try ConfigurationSources(path: path).load(ApplyConfiguration.self, overrides: overrides)
         let summary = try ApplySkip.run(configuration: config, gtidSet: gtids)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -66,7 +66,7 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         return
     case .control(let path, let action, let timeout, let details, let offset, let limit):
         struct Config: Decodable { let stateDirectory: String }
-        let config = try overrides.load(Config.self, from: URL(fileURLWithPath: path))
+        let config = try ConfigurationSources(path: path).load(Config.self, overrides: overrides)
         let response = try ControlClient.request(
             .init(command: action, timeoutSeconds: timeout, details: details, offset: offset, limit: limit),
             stateDirectory: config.stateDirectory)
@@ -79,7 +79,8 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         }
         return
     case .fetch(let path), .supportBundle(let path):
-        let file = URL(fileURLWithPath: path)
+        let sources = try ConfigurationSources(path: path)
+        let configData = try sources.read(overrides: overrides)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let data: Data
@@ -89,25 +90,27 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
                 let profile: ReplicationProfile?
                 let archive: ArchiveConfiguration
             }
-            let c = try overrides.load(Config.self, from: file)
+            let c = try ConfigurationFile.decode(Config.self, from: configData, sourceURL: sources.sourceURL)
             let password = try PasswordConfiguration.resolve(
                 password: c.source.password, environmentVariable: c.source.passwordEnvironment, endpoint: "source")
             let contract: SourceContract = (c.profile ?? .mysql84To57MyISAM).sourceContract
             data = try encoder.encode(
                 ArchiveFetch.run(source: c.source, password: password, archive: c.archive, contract: contract))
         } else {
-            let c = try overrides.load(SupportBundleConfiguration.self, from: file)
+            let c = try ConfigurationFile.decode(
+                SupportBundleConfiguration.self, from: configData, sourceURL: sources.sourceURL)
             data = try encoder.encode(
                 SupportBundle.run(
                     configuration: c,
-                    redactedConfiguration: ConfigurationFile.diagnosticJSON(from: overrides.read(from: file)),
+                    redactedConfiguration: ConfigurationFile.diagnosticJSON(from: configData),
                     version: ReleaseVersion.current))
         }
         try FileHandle.standardOutput.write(contentsOf: data + Data([10]))
         return
     case .dryRun(let path, let mode):
-        let file = URL(fileURLWithPath: path)
-        let data = try overrides.read(from: file)
+        let sources = try ConfigurationSources(path: path)
+        let file = sources.sourceURL
+        let data = try sources.read(overrides: overrides)
         let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: data, sourceURL: file)
         struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration? }
         let archive =
@@ -141,8 +144,9 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
     case .validate(let path, let mode):
         let report: ValidationReport
         do {
-            let file = URL(fileURLWithPath: path)
-            let data = try overrides.read(from: file)
+            let sources = try ConfigurationSources(path: path)
+            let file = sources.sourceURL
+            let data = try sources.read(overrides: overrides)
             let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: data, sourceURL: file)
             struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration? }
             let archive =
@@ -164,8 +168,9 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
         ApplicationLog.logger.info(
             "Load apply configuration",
             metadata: ["phase": "configuration", "mode": .string(offline ? "replay" : "run")])
-        let configFile = URL(fileURLWithPath: path).standardizedFileURL
-        let configData = try overrides.read(from: configFile)
+        let sources = try ConfigurationSources(path: path)
+        let configFile = sources.sourceURL
+        let configData = try sources.read(overrides: overrides)
         let config = try ConfigurationFile.decode(ApplyConfiguration.self, from: configData, sourceURL: configFile)
         let reloadIdentity = try ConfigurationFile.reloadIdentity(from: configData)
         struct ArchiveOptions: Decodable { let archive: ArchiveConfiguration }
@@ -201,7 +206,7 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
             limits: try StopConditions(
                 transactions: config.source.stopAfterTransactions, gtids: config.source.stopAfterGTIDs), drain: drain
         ) {
-            let data = try overrides.read(from: configFile)
+            let data = try sources.read(overrides: overrides)
             guard try ConfigurationFile.reloadIdentity(from: data) == reloadIdentity else {
                 throw ApplyError(
                     "reload may change only source.stopAfterTransactions and source.stopAfterGTIDs; other settings require restart, and saved identity/checkpoint restrictions still apply"
@@ -304,9 +309,9 @@ func execute(_ request: CLIRequest, overrides: ConfigurationOverrides) throws {
 }
 
 func recover(
-    path: String, overrides: ConfigurationOverrides, action: String? = nil, gtids: String? = nil, reason: String? = nil
+    path: String?, overrides: ConfigurationOverrides, action: String? = nil, gtids: String? = nil, reason: String? = nil
 ) throws {
-    let config = try overrides.load(ApplyConfiguration.self, from: URL(fileURLWithPath: path))
+    let config = try ConfigurationSources(path: path).load(ApplyConfiguration.self, overrides: overrides)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let output: Data

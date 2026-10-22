@@ -217,10 +217,12 @@ public enum ApplyRun {
         }
         let initialTransactions = state.transactions
         var started = false
+        var replayReadinessRejected = false
         do {
             control?.publish(summary("STARTING"))
             try control?.start(directory: state.directory)
             while true {
+                replayReadinessRejected = false
                 do {
                     if archive != nil && !started && (cancellation.isCancelled || drain.isCancelled) {
                         try state.archiveValidationStopped()
@@ -236,12 +238,24 @@ public enum ApplyRun {
                     }
                     defer { try? target.unlock() }
                     if let archive {
-                        try ApplicationLog.measure("Validate target readiness", metadata: ["phase": "target_validate"])
-                        {
-                            try TargetReadiness.checkForReplay(target)
-                            if let savedUUID = state.targetUUID {
-                                try require(target.targetUUID == savedUUID, "target UUID differs from saved checkpoint")
+                        do {
+                            try ApplicationLog.measure(
+                                "Validate target readiness", metadata: ["phase": "target_validate"]
+                            ) {
+                                try TargetReadiness.checkForReplay(target)
+                                if let savedUUID = state.targetUUID {
+                                    try require(
+                                        target.targetUUID == savedUUID, "target UUID differs from saved checkpoint")
+                                }
                             }
+                        } catch {
+                            // These probes issue only reads and session settings.
+                            // They run before archive reads or target mutations.
+                            replayReadinessRejected = !started
+                            targetFailure = TargetFailureDiagnostic(
+                                reason: String(describing: error), statement: .init(), rows: [],
+                                ddlGTID: nil, ddlSQL: nil, targetSQL: (error as? ApplyError)?.targetSQL)
+                            throw error
                         }
                         do {
                             // Retain complete validation before writer ownership,
@@ -908,6 +922,14 @@ public enum ApplyRun {
                 reason = String(describing: error)
             }
             sourceFailurePosition = (error as? ArchiveReadError)?.coordinate ?? (error as? TransactionError)?.coordinate
+            if replayReadinessRejected && initialize && !started {
+                // A new state has no work to reconcile. Reuse the same empty,
+                // resumable state marker as cancellation before archive validation.
+                try state.archiveValidationStopped()
+                let result = summary("STOPPED")
+                finalResult = result
+                throw ApplyRunError(reason: reason, progress: result, code: code)
+            }
             // A rejected resume/preflight must not rewrite the saved checkpoint.
             if !initialize && !started { throw ApplyRunError(reason: reason, progress: summary("STOPPED"), code: code) }
             if let sourceFailurePosition { try? state.recordSourceFailure(reason, at: sourceFailurePosition) }

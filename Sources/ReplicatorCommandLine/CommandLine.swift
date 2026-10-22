@@ -5,15 +5,16 @@ public enum CLIRequest: Equatable {
     case help(String)
     case configurationHelp(command: String?, section: String?)
     case version
-    case apply(config: String, initialize: Bool, offline: Bool)
-    case dryRun(config: String, mode: String)
-    case validate(config: String, mode: String)
-    case fetch(config: String)
-    case supportBundle(config: String)
-    case control(config: String, action: String, timeout: Int, details: Bool = false, offset: Int = 0, limit: Int = 100)
-    case recoveryInspect(config: String)
-    case recoveryResolve(config: String, action: String, gtids: String, reason: String)
-    case skip(config: String, gtids: String)
+    case apply(config: String?, initialize: Bool, offline: Bool)
+    case dryRun(config: String?, mode: String)
+    case validate(config: String?, mode: String)
+    case fetch(config: String?)
+    case supportBundle(config: String?)
+    case control(
+        config: String?, action: String, timeout: Int, details: Bool = false, offset: Int = 0, limit: Int = 100)
+    case recoveryInspect(config: String?)
+    case recoveryResolve(config: String?, action: String, gtids: String, reason: String)
+    case skip(config: String?, gtids: String)
     case blackhole(config: String)
     case inspectRelay(file: String, includeRaw: Bool)
     case inspectFile(file: String, schema: String?, includeRaw: Bool, binlogFile: String?)
@@ -96,6 +97,8 @@ private struct Root: RequestCommand {
         abstract: "Replicate MySQL binlog changes across supported server versions.",
         discussion: """
             Put connection, profile, and policy settings in a YAML configuration file.
+            Without --config, use MYSQL_REPLICATOR_CONFIG or read /etc/mysql-replicator/apply.yaml
+            followed by ~/.mysql-replicator.yaml. Later settings override earlier settings.
             Commands emit JSON records. Diagnostics go to stderr. Failures exit with status 1.
             Help and version output are plain text and do not connect to MySQL.
             Use config-help --command COMMAND for configuration types, defaults, and examples.
@@ -112,11 +115,11 @@ private struct Config: ParsableArguments {
     @Option(
         name: .customLong("config"),
         help: ArgumentHelp(
-            "Read settings from this YAML file. See config-help --command COMMAND for overrides.",
+            "Read only this YAML file. Otherwise use MYSQL_REPLICATOR_CONFIG, or /etc/mysql-replicator/apply.yaml then ~/.mysql-replicator.yaml. CLI setting overrides apply last.",
             valueName: "FILE.yaml"))
-    var path: String
+    var path: String?
     mutating func validate() throws {
-        guard !path.isEmpty else { throw ValidationError("--config requires a nonempty path.") }
+        if let path, path.isEmpty { throw ValidationError("--config requires a nonempty path.") }
     }
 }
 

@@ -2,6 +2,12 @@
 
 ## Command and configuration errors
 
+Replay checks target readiness before it scans the archive. If these read and
+session checks reject a newly initialized target, the empty state remains
+STOPPED. Correct the target settings and rerun replay without `--initialize`.
+The command still exits with an error and reports the failed operation.
+This rule does not permit retry of uncertain DDL or DML writes.
+
 Successful commands, help, and version requests exit with status `0`. Failures
 exit with status `1`. Error diagnostics are JSON records on stderr.
 
@@ -26,6 +32,8 @@ categories. Exit status remains unchanged.
 ## Read running status
 
 Run `mysql-replicator ctl status --config apply.yaml` to read a running process.
+Omit `--config` to use the [default configuration files or environment override](COMMAND_LINE.md#configuration-files).
+Use the same effective `stateDirectory` as the running process.
 Control replies (`status`, `stop`, and `reload`) use indented JSON with sorted
 keys on stdout. Diagnostics use stderr. You can pipe the reply to `jq`:
 

@@ -109,7 +109,8 @@ are no longer supported. To change it, edit `VERSION` and run
 - `/var/lib/mysql-replicator/` (service-owned state parent, mode `0750`; initialization creates its `state` child)
 - `/usr/share/doc/mysql-replicator/` (project license, notices and dependency license inventory)
 
-The service reads `/etc/mysql-replicator/apply.yaml`. Copy and edit the commented
+The service selects `/etc/mysql-replicator/apply.yaml` with `--config`. It does
+not merge a user configuration file. Copy and edit the commented
 template before starting it. Existing JSON configurations must be converted to
 YAML; the service no longer reads `apply.json`. The service runs as
 `mysql-replicator`, resumes only previously initialized state and does not restart
