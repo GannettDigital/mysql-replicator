@@ -119,11 +119,13 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 246 | 130 | 23 |
-| Full with expanded coverage | 479 | 247 | 256 |
+| Full | 245 | 129 | 23 |
+| Full with expanded coverage | 478 | 246 | 256 |
 
-All 2,095 full-catalog obligations remain. The group selections and fixture
-boundaries are unchanged. These counts come from local plan generation; CI
+All 2,095 full-catalog obligations remain. The duplicate release sample was
+removed after [review](../PLAN/BETA7_SAMPLE_REVIEW.md). Its cases remain in their
+full release groups. The instrumented sample stays; coverage selections and
+collection counts are unchanged. These counts come from local plan generation; CI
 runtime measurements are still needed. The planner checks the 256-job limit
 after grouping. More cases can require a later grouping-policy change.
 
@@ -295,3 +297,39 @@ profile, variant, suite, transport and image type. The report marks prerequisite
 executions and groups without explicit case lists. Use this list to choose review
 candidates. A repeated identity does not prove that fixture state or restart
 assertions are the same.
+
+## Review a costly group with a small line gain
+
+Do not keep a large group only to reach a few lines. First identify those lines
+and the behavior that reaches them. `test-value.json` includes `line_details`
+for every area. Each map uses source file paths as keys and line numbers as
+values:
+
+- `extra_over_smoke`: lines beyond the measured PR selections.
+- `extra_over_unit_smoke`: lines beyond unit tests and the PR selections.
+- `exclusive_integration`: lines absent from all other measured integration areas.
+- `exclusive_after_unit`: those exclusive lines that unit tests also did not reach.
+
+A null map means that a required measurement is missing. An empty map means
+that the measured difference is zero. The CSV retains counts. The Markdown
+report lists exact locations for areas with 1–25 exclusive lines, with unit
+coverage removed when available. It orders these areas by total runner time.
+Full line lists remain in JSON; the display limit does not select tests.
+
+```sh
+jq '.areas[] | select(.area == "sample") |
+    {profile, variant, complete, release_seconds, coverage_seconds, line_details}'     test-value.json
+```
+
+Read the code from `provenance.commit`, not the current working tree if it has
+changed. Inspect each function and branch condition. Line coverage does not
+prove that all branches ran. Check whether a unit test already reaches the line,
+or whether a small operation in an existing integration case can reach it with
+a useful assertion. For pure parsing or planning logic, prefer a focused unit
+test. Keep database behavior checks in integration tests.
+
+Run the replacement with matching source and image inputs. Check the exact
+line sets and the behavior assertions before removing the expensive run.
+Do not replace a profile-specific check just because another profile reaches
+the same Swift lines. Partial reports and unmeasured groups cannot establish
+that a line is exclusive across the full suite.

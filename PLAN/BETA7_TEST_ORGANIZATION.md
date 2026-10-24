@@ -144,6 +144,16 @@ method; that database group is already combined in CI. Fresh line coverage was
 not measured because its cold build stalled. See
 [the study](BETA7_LOCAL_TEST_GROUP_STUDY.md) for evidence and limits.
 
+The [sample review](BETA7_SAMPLE_REVIEW.md) removes only the duplicate release
+sample. Its cases remain in their full groups and the coverage sample stays.
+The current plans have 245 normal groups in 129 jobs, or 478 expanded groups in
+246 jobs. All 2,095 catalog obligations and all coverage selections remain.
+
+Use exact file/line differences to review a costly group with a small gain.
+Inspect the branch condition. Prefer a focused unit test or a small addition to
+an existing integration case when it can retain that behavior. Measure the
+replacement before removing its original coverage run.
+
 Remove a test only after another test retains its behavior and assertions.
 Overlapping line coverage or equal SQL text is insufficient evidence. Select the
 short PR case set after this review. Keep explicit case lists in job reports.

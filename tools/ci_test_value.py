@@ -27,9 +27,21 @@ def repeated_cases(manifest):
                 unlisted_groups=sorted(unlisted))
 
 
+def line_locations(lines):
+    if lines is None:
+        return None
+    locations = defaultdict(list)
+    for path, line in sorted(lines, key=lambda item: (item[0], int(item[1]))):
+        locations[path].append(int(line))
+    return dict(locations)
+
+
 def analyze(manifest, records, unit=None):
     planned = {s['id']: s for s in manifest['include']}
     records = {r['id']: r for r in records}
+    coverage_sources = {r['coverage']['sources_digest'] for r in records.values() if r.get('coverage')}
+    if len(coverage_sources) > 1:
+        raise ValueError('integration coverage sources differ')
     job_ids = {g: job['id'] for job in manifest.get('jobs', []) for g in job['group_ids']}
     expected = {key(r): r for r in manifest['inventory'] if r['status'] == 'not_run'}
     unit_hits = None
@@ -76,12 +88,21 @@ def analyze(manifest, records, unit=None):
             covered_lines=len(measured) if instrumented else None, mapped_lines=len(mapped) if instrumented else None,
             extra_over_smoke=len(measured - baseline) if instrumented and baseline is not None else None,
             extra_over_unit_smoke=len(measured - baseline - unit_hits) if instrumented and baseline is not None and unit_hits is not None else None,
+            line_details=dict(
+                extra_over_smoke=line_locations(measured - baseline) if instrumented and baseline is not None else None,
+                extra_over_unit_smoke=line_locations(measured - baseline - unit_hits)
+                    if instrumented and baseline is not None and unit_hits is not None else None),
             passed_catalog_keys=len(passed),
             obligations=[{k: expected[identity][k] for k in ('profile', 'variant', 'suite', 'id', 'family', 'intent', 'expected', 'dependencies')
                           if k in expected[identity]} for identity in sorted(passed)]))
     for group, row in zip(sorted(groups), results):
         others = set().union(*(value for other, value in hits.items() if other != group))
-        row['exclusive_integration_lines'] = len(hits[group] - others) if row['instrumented_jobs'] else None
+        exclusive = hits[group] - others if row['instrumented_jobs'] else None
+        after_unit = exclusive - unit_hits if exclusive is not None and unit_hits is not None else None
+        row['exclusive_integration_lines'] = len(exclusive) if exclusive is not None else None
+        row['exclusive_after_unit_lines'] = len(after_unit) if after_unit is not None else None
+        row['line_details'].update(exclusive_integration=line_locations(exclusive),
+                                   exclusive_after_unit=line_locations(after_unit))
     provenance = {k: next(iter(records.values())).get(k) for k in ('commit', 'run_id', 'attempt')} if records else {}
     return dict(provenance=provenance, baseline_smoke_jobs=baseline_ids, baseline_complete=baseline_ready,
                 baseline_smoke_lines=len(baseline) if baseline is not None else None,
@@ -96,19 +117,43 @@ def markdown(report):
         f"Smoke baseline complete: {report['baseline_complete']}. Unit baseline available: {report['unit_baseline_available']}.", '',
         'Each row groups one profile, capture variant, suite and area. Numbered chunks share a row. '
         'Times are summed execution-group minutes, not elapsed workflow time. Partial rows can miss results.', '',
-        '| Profile / variant / suite / area | Complete | Passed catalog keys | Groups with coverage / total | Minutes release / coverage | Lines hit | Extra over smoke | Extra over unit + smoke | Exclusive integration lines |',
-        '|---|---|---:|---:|---:|---:|---:|---:|---:|']
+        '| Profile / variant / suite / area | Complete | Passed catalog keys | Groups with coverage / total | Minutes release / coverage | Lines hit | Extra over smoke | Extra over unit + smoke | Exclusive integration lines | Exclusive after unit |',
+        '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|']
     for r in sorted(rows, key=lambda r: -(r['release_seconds'] + r['coverage_seconds'])):
         label = ' / '.join(r[k] for k in ('profile', 'variant', 'suite', 'area'))
         text.append(f"| {label} | {r['complete']} | {r['passed_catalog_keys']} | {r['instrumented_groups']} / {r['execution_groups']} | "
                     f"{r['release_seconds']/60:.1f} / {r['coverage_seconds']/60:.1f} | {show(r['covered_lines'])} | "
-                    f"{show(r['extra_over_smoke'])} | {show(r['extra_over_unit_smoke'])} | {show(r['exclusive_integration_lines'])} |")
+                    f"{show(r['extra_over_smoke'])} | {show(r['extra_over_unit_smoke'])} | {show(r['exclusive_integration_lines'])} | {show(r.get('exclusive_after_unit_lines'))} |")
     text += ['', 'Line gains are set differences and are not additive. Exclusive lines are relative to other measured areas. '
              'Zero extra lines does not prove redundant assertions. Unmeasured is not zero. '
              'Passed catalog keys can overlap between rows; do not sum them as catalog coverage. '
              'Fixture setup and cleanup contribute coverage and time. Crash paths may not flush counters. '
              'Rust, dependencies and harness code are excluded. The JSON includes case IDs and declared test intent; '
              'review the assertions before removing a case.']
+    text += ['', '## Lines to review', '',
+             'Use the source revision in `provenance.commit`: `'
+             + str(report.get('provenance', {}).get('commit') or 'unavailable') + '`. '
+             'The JSON `line_details` maps files to exact line numbers for each difference. '
+             'Missing measurements are null, not empty maps. '
+             'The lists below show areas with 1–25 lines not reached by other measured areas'
+             + (' or unit tests.' if report['unit_baseline_available'] else '. Unit coverage is unavailable.'), '',
+             'Inspect the code and the branch condition. Add a focused unit test where practical, '
+             'or add the required operation and assertion to an existing integration case. '
+             'Measure that replacement against the same source revision. '
+             'Do not remove profile, failure or restart checks because their lines overlap.']
+    count_key = 'exclusive_after_unit_lines' if report['unit_baseline_available'] else 'exclusive_integration_lines'
+    detail_key = 'exclusive_after_unit' if report['unit_baseline_available'] else 'exclusive_integration'
+    for row in sorted(rows, key=lambda r: -(r['release_seconds'] + r['coverage_seconds'])):
+        count = row.get(count_key)
+        if count is None or not 1 <= count <= 25:
+            continue
+        details = row.get('line_details', {}).get(detail_key)
+        if details is None:
+            continue
+        label = ' / '.join(row[k] for k in ('profile', 'variant', 'suite', 'area'))
+        locations = ', '.join(f'`{path}:{line}`' for path, lines in details.items() for line in lines)
+        text += ['', f'- {label}: {count} lines; '
+                 f"{(row['release_seconds'] + row['coverage_seconds'])/60:.1f} runner-minutes. {locations}"]
     repetitions = report.get('case_repetitions')
     if repetitions is not None:
         text += ['', '## Repeated declared cases', '',
@@ -130,7 +175,7 @@ def write(output, report):
     (output / 'test-value.md').write_text(markdown(report))
     if report['areas']:
         with (output / 'test-value.csv').open('w', newline='') as stream:
-            fields = [k for k in report['areas'][0] if k != 'obligations']
+            fields = [k for k in report['areas'][0] if k not in ('obligations', 'line_details')]
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()
             writer.writerows({k: r[k] for k in fields} for r in report['areas'])

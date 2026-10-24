@@ -156,6 +156,9 @@ The original trace files retain the SQL for local review.
 
 ## Decision and next comparison
 
+This section records the decision at the end of the initial study. The
+[subsequent sample review](BETA7_SAMPLE_REVIEW.md) records the next comparison.
+
 Keep the current tests and CI selections. The exact repeated entries are
 candidates for review, not confirmed redundant tests.
 

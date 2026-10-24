@@ -143,9 +143,11 @@ def generate(catalogs, policy, expanded_coverage=False):
     for identifier in sample['cases']:
         if (sample['profile'], 'default', 'correctness', identifier) not in applicable:
             raise ValueError(f'sample case missing from applicable catalog: {identifier}')
-    for image in ('release', 'coverage'):
-        add(sample['profile'], 'default', 'correctness', 'sample', sample['cases'],
-            image=image, reports=int(image == 'coverage'), count=False)
+    # These cases already have release owners above. Keep the instrumented
+    # sample until source-matched coverage proves that other measured groups
+    # retain its paths. See PLAN/BETA7_SAMPLE_REVIEW.md.
+    add(sample['profile'], 'default', 'correctness', 'sample', sample['cases'],
+        image='coverage', reports=1, count=False)
     # Selected BINLOG runs use the same named cases. They supplement SQL
     # catalog obligations; a passing SQL case does not test the BINLOG executor.
     for selection in policy.get('binlog_selections', []):

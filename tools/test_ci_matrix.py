@@ -53,6 +53,20 @@ class MatrixTests(unittest.TestCase):
                 original = next(b for b in baseline['include'] if b['id'] == s['id'].replace('coverage-', 'release-', 1))
                 self.assertEqual(original['cases'], s['cases'])
 
+    def test_sample_retains_coverage_without_a_duplicate_release_run(self):
+        for expanded in (False, True):
+            result = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=expanded)
+            sample = [s for s in result['include'] if s['area'] == 'sample']
+            self.assertEqual(len(sample), 1)
+            self.assertEqual((sample[0]['image'], sample[0]['reports']), ('coverage', 1))
+            self.assertEqual(sample[0]['cases'], self.policy['sample']['cases'])
+            for case in sample[0]['cases']:
+                owners = [s for s in result['include'] if s['image'] == 'release'
+                          and s['profile'] == sample[0]['profile'] and s['variant'] == 'default'
+                          and s['suite'] == 'correctness' and case in s.get('requested_cases', [])]
+                self.assertEqual(len(owners), 1)
+            self.assertEqual(result['obligations'], len(self.rows))
+
     def test_new_case_and_variant_automatically_enter_ci(self):
         self.rows += [row('new-case'), row('new-mode', variant='new-variant')]
         result = self.generate()

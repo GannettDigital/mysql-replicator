@@ -3,7 +3,7 @@ import json
 import unittest
 
 from ci_matrix import SMOKE_PROFILES
-from ci_test_value import analyze, markdown, repeated_cases
+from ci_test_value import analyze, markdown, repeated_cases, write
 
 
 class TestValueTests(unittest.TestCase):
@@ -44,6 +44,55 @@ class TestValueTests(unittest.TestCase):
         self.assertIsNone(reconnect['covered_lines'])
         self.assertIsNone(reconnect['extra_over_smoke'])
         self.assertIn('unmeasured', markdown(result))
+
+    def test_exact_lines_distinguish_unit_coverage_from_missing_measurements(self):
+        manifest, records, unit = self.fixture()
+        result = analyze(manifest, records, unit)
+        ddl = next(r for r in result['areas'] if r['area'] == 'ddl')
+        self.assertEqual(ddl['line_details'], dict(
+            extra_over_smoke={'Sources/Runtime.swift':[3,4]},
+            extra_over_unit_smoke={'Sources/Runtime.swift':[4]},
+            exclusive_integration={'Sources/Runtime.swift':[3,4]},
+            exclusive_after_unit={'Sources/Runtime.swift':[4]}))
+        self.assertEqual(ddl['exclusive_after_unit_lines'], 1)
+        self.assertIn('Sources/Runtime.swift:4', markdown(result))
+        reconnect = next(r for r in result['areas'] if r['area'] == 'reconnect')
+        self.assertTrue(all(v is None for v in reconnect['line_details'].values()))
+        without_unit = analyze(manifest, records)
+        self.assertTrue(all(r['line_details']['exclusive_after_unit'] is None for r in without_unit['areas']))
+        without_baseline = analyze(manifest, records[1:], unit)
+        self.assertTrue(all(r['line_details']['extra_over_smoke'] is None for r in without_baseline['areas']))
+
+    def test_exact_line_details_match_counts_and_csv_stays_scalar(self):
+        import csv
+        import tempfile
+        from pathlib import Path
+        manifest, records, unit = self.fixture()
+        records[2]['coverage']['hit'].append(['Sources/Runtime.swift','10'])
+        records[2]['coverage']['mapped'].append(['Sources/Runtime.swift','10'])
+        report = analyze(manifest, records, unit)
+        ddl = next(r for r in report['areas'] if r['area'] == 'ddl')
+        self.assertEqual(ddl['line_details']['exclusive_integration']['Sources/Runtime.swift'], [3,4,10])
+        for row in report['areas']:
+            for metric, details in [('extra_over_smoke','extra_over_smoke'),
+                                    ('extra_over_unit_smoke','extra_over_unit_smoke'),
+                                    ('exclusive_integration_lines','exclusive_integration'),
+                                    ('exclusive_after_unit_lines','exclusive_after_unit')]:
+                locations=row['line_details'][details]
+                self.assertEqual(row[metric], None if locations is None else sum(map(len,locations.values())))
+        with tempfile.TemporaryDirectory() as directory:
+            write(Path(directory),report)
+            with (Path(directory)/'test-value.csv').open() as stream:
+                rows=list(csv.DictReader(stream))
+            self.assertNotIn('line_details', rows[0])
+            saved=json.loads((Path(directory)/'test-value.json').read_text())
+            self.assertEqual(saved,report)
+
+    def test_mixed_integration_sources_fail_without_unit_baseline(self):
+        manifest, records, _ = self.fixture()
+        records[0]['coverage']['sources_digest']='different'
+        with self.assertRaisesRegex(ValueError, 'integration coverage sources differ'):
+            analyze(manifest,records)
 
     def test_grouped_jobs_do_not_change_area_times_or_line_coverage(self):
         from ci_jobs import assign_jobs
