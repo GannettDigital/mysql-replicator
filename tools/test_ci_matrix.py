@@ -161,12 +161,12 @@ class MatrixTests(unittest.TestCase):
             with self.subTest(cases=invalid), self.assertRaises(ValueError):
                 self.generate()
 
-    def test_empty_or_oversized_matrix_fails(self):
+    def test_empty_catalog_fails_but_execution_groups_can_exceed_job_limit(self):
         with self.assertRaisesRegex(ValueError, 'empty lab catalog'):
             generate([dict(scenarios=[])], self.policy)
         self.rows += [row('create', variant=f'variant-{i}') for i in range(260)]
-        with self.assertRaisesRegex(ValueError, '256 jobs'):
-            self.generate()
+        self.assertGreater(len(self.generate()['include']), 256)
+        # ci_jobs validates the job count after assigning complete groups.
 
     def test_smoke_owns_only_two_default_profile_selections(self):
         rows = [row('create', profile=p) for p in SMOKE_PROFILES]

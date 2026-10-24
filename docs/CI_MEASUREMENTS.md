@@ -87,6 +87,44 @@ merge. See [release testing](RELEASE_TESTING.md) for the evidence and release ga
 The targets for later work are five minutes for PR feedback and twenty minutes
 for the complete merge checks. This change does not claim those times.
 
+## Execution groups and CI jobs
+
+An execution group is one lab invocation with its own fixtures and results.
+The JSON files retain the name `shard` for these groups. The bundled plan stores
+them in `include`. Its separate `jobs` list assigns every group to exactly one
+CI job. Result IDs, SQL traces and coverage remain attached to the group.
+
+`tools/ci_jobs.json` controls job assignment. The current policy puts at most
+three groups with the same profile, variant and build type in one job. Long
+areas and the two PR selections keep separate jobs. Jobs run in parallel, up to
+16 at a time. Groups within a job run in sequence and use separate fixtures.
+The job downloads its tools and image once.
+
+A failed group records failure. The job then runs its remaining groups and
+returns failure. Cancellation stops the job. Each lab invocation has a 45-minute
+limit. The job timeout adds 10 minutes for setup to the sum of its group limits.
+These are failure limits, not expected durations. A timed-out lab process can
+leave containers on its disposable runner; later groups use different project
+names. The runner removes those resources when the job ends.
+
+Coverage checks count only the files produced by the current group. Each
+measurement includes its CI `job_id`. The aggregate rejects a missing group or
+a result assigned to the wrong job. A failed-job rerun runs all groups in that
+job and replaces its measurement and coverage artifacts.
+
+The beta.7 catalog currently produces these plans:
+
+| Scope | Execution groups | CI jobs | Coverage collections |
+|---|---:|---:|---:|
+| PR | 2 | 2 | 2 |
+| Full | 246 | 130 | 23 |
+| Full with expanded coverage | 479 | 247 | 256 |
+
+All 2,095 full-catalog obligations remain. The group selections and fixture
+boundaries are unchanged. These counts come from local plan generation; CI
+runtime measurements are still needed. The planner checks the 256-job limit
+after grouping. More cases can require a later grouping-policy change.
+
 ## Normal CI
 
 Each integration shard writes a measurement, including failed runs. The final
@@ -170,9 +208,9 @@ catalog obligations. These are historical counts. The beta.6 catalog now has
 2,085 obligations. After the DML split below, normal full CI has 226 jobs.
 The generated matrix is the authority when the catalog changes.
 
-Expanded coverage currently exceeds GitHub's 256-job matrix limit. This was also
-true before the DML split. It needs separate matrix groups before it can run with
-the current catalog. Normal full CI remains within the limit.
+The beta.7 job plan now fits expanded coverage within the matrix limit.
+See [execution groups and CI jobs](#execution-groups-and-ci-jobs) for current
+counts. Coverage collection remains attached to each execution group.
 
 DDL and bootstrap now use two groups per profile and variant. The group
 boundaries use the [PR #41 timings](../PLAN/PR41_TEST_SUITE_RESULTS.md).
@@ -205,7 +243,7 @@ The measurement artifact also contains `test-value.md`, `test-value.csv` and
 `test-value.json`. These files group numbered chunks by profile, capture variant,
 suite and area. Each row shows:
 
-- Release and coverage shard minutes, plus jobs measured and total jobs.
+- Release and coverage group minutes, plus groups with coverage and total groups.
 - Passed catalog keys and declared case intent in the JSON.
 - Covered lines and lines added beyond the two PR smoke jobs from the same run.
 - Lines added beyond that smoke baseline plus the unit report from the same run.

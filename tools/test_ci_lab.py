@@ -1,4 +1,7 @@
 import json
+import tempfile
+import subprocess
+from pathlib import Path
 from contextlib import nullcontext
 import unittest
 from unittest.mock import Mock, patch
@@ -94,6 +97,65 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
                 ci_lab.run_shard('sample')
                 record.assert_called_once_with(ci_lab.ROOT, 'sample', build_inputs=expected)
                 run.assert_called_once_with('sample')
+
+
+    def test_job_records_failure_then_runs_the_next_isolated_group(self):
+        from ci_jobs import assign_jobs
+        groups = [dict(id=name, profile='forward', variant='default', image='release', area='database')
+                  for name in ('first', 'second')]
+        plan = assign_jobs(dict(include=groups), dict(max_groups=3, group_timeout_minutes=45,
+                                                    setup_timeout_minutes=10, standalone_areas=[]))
+        identifier = plan['jobs'][0]['id']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = []
+            def execute(group):
+                calls.append(group)
+                result = root / 'artifacts/lab' / group / 'result.json'
+                result.parent.mkdir(parents=True)
+                result.write_text(json.dumps(dict(scenarios=[dict(id=group, profile='forward', suite='correctness',
+                    status='failed' if group == 'first' else 'passed')])))
+                if group == 'first':
+                    raise subprocess.TimeoutExpired(['lab'], 2700)
+            with patch.object(ci_lab, 'ROOT', root), patch.object(ci_lab, 'matrix', return_value=plan), \
+                    patch.object(ci_lab, '_run_shard', side_effect=execute), \
+                    patch.dict(ci_lab.os.environ, GITHUB_ACTIONS='false'):
+                with self.assertRaisesRegex(RuntimeError, 'first'):
+                    ci_lab.run_job(identifier)
+            self.assertEqual(calls, ['first', 'second'])
+            records = [json.loads((root / f'artifacts/ci/measurements/{name}.json').read_text()) for name in calls]
+            self.assertEqual([r['status'] for r in records], ['failed', 'passed'])
+            self.assertTrue(all(r['job_id'] == identifier for r in records))
+            self.assertEqual([[s['id'] for s in r['scenarios']] for r in records], [['first'], ['second']])
+
+    def test_job_cancellation_stops_later_groups(self):
+        from ci_jobs import assign_jobs
+        groups = [dict(id=name, profile='p', variant='default', image='release', area='database')
+                  for name in ('one', 'two')]
+        plan = assign_jobs(dict(include=groups), dict(max_groups=3, group_timeout_minutes=45,
+                                                    setup_timeout_minutes=10, standalone_areas=[]))
+        with patch.object(ci_lab, 'matrix', return_value=plan), \
+                patch.object(ci_lab, 'run_shard', side_effect=KeyboardInterrupt) as run:
+            with self.assertRaises(KeyboardInterrupt):
+                ci_lab.run_job(plan['jobs'][0]['id'])
+            self.assertEqual(run.call_count, 1)
+
+    def test_group_coverage_count_excludes_previous_groups(self):
+        old = Path('old/combined/coverage.json')
+        current = Path('new/combined/coverage.json')
+        shard = dict(id='second', profile='p', variant='default', image='coverage', area='database',
+                     suite='correctness', tier='full', cases=['case'], reports=1)
+        plan = dict(inputs='current', include=[shard], group_timeout_seconds=2700)
+        for after, should_pass in [([old, current], True), ([old], False)]:
+            with patch.object(ci_lab, 'validate_bundle'), patch.object(ci_lab.Path, 'read_text', return_value='current'), \
+                    patch.object(ci_lab, 'matrix', return_value=plan), patch.object(ci_lab.subprocess, 'run') as run, \
+                    patch('coverage_report.downloaded_inputs', side_effect=[[old], after]):
+                if should_pass:
+                    ci_lab._run_shard('second')
+                else:
+                    with self.assertRaisesRegex(ValueError, 'got 0'):
+                        ci_lab._run_shard('second')
+                self.assertEqual(run.call_args.kwargs['timeout'], 2700)
 
 
 if __name__ == '__main__':

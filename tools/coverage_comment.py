@@ -60,12 +60,16 @@ def validate(metrics):
     for key, allowed in [('ci_suite', ('full', 'pr-smoke')), ('coverage_mode', ('selected', 'expanded'))]:
         if key in metrics and metrics[key] not in allowed:
             raise ValueError('invalid coverage scope')
-    for key in ('integration_jobs', 'instrumented_jobs', 'integration_reports', 'expected_integration_reports'):
+    for key in ('integration_jobs', 'instrumented_jobs', 'integration_reports', 'expected_integration_reports',
+                'execution_groups', 'instrumented_groups'):
         if key in metrics and (type(metrics[key]) is not int or not 0 <= metrics[key] <= 10000):
             raise ValueError('invalid instrumentation count')
     if 'integration_jobs' in metrics:
         if 'instrumented_jobs' not in metrics or metrics['instrumented_jobs'] > metrics['integration_jobs']:
             raise ValueError('invalid instrumented job count')
+    if 'execution_groups' in metrics:
+        if 'instrumented_groups' not in metrics or metrics['instrumented_groups'] > metrics['execution_groups']:
+            raise ValueError('invalid instrumented group count')
     return metrics
 
 

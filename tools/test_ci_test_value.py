@@ -45,6 +45,19 @@ class TestValueTests(unittest.TestCase):
         self.assertIsNone(reconnect['extra_over_smoke'])
         self.assertIn('unmeasured', markdown(result))
 
+    def test_grouped_jobs_do_not_change_area_times_or_line_coverage(self):
+        from ci_jobs import assign_jobs
+        manifest, records, unit = self.fixture()
+        original = analyze(manifest, records, unit)
+        plan = assign_jobs(manifest, dict(max_groups=3, group_timeout_minutes=45,
+                                         setup_timeout_minutes=10, standalone_areas=[]))
+        grouped = analyze(plan, records, unit)
+        for old, new in zip(original['areas'], grouped['areas']):
+            for key in ('release_seconds', 'coverage_seconds', 'covered_lines', 'extra_over_smoke',
+                        'passed_catalog_keys', 'execution_groups', 'instrumented_groups'):
+                self.assertEqual(old[key], new[key])
+        self.assertIn('Groups with coverage / total', markdown(grouped))
+
     def test_missing_baselines_do_not_claim_zero_gains(self):
         manifest, records, _ = self.fixture()
         result = analyze(manifest, records[1:])

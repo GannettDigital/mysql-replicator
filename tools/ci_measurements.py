@@ -40,13 +40,15 @@ def line_sets(reports):
 
 
 @contextmanager
-def record_shard(root, identifier, build_inputs=False):
+def record_shard(root, identifier, build_inputs=False, job_id=None):
     started = time.monotonic()
     directory = root / 'artifacts/lab'
     before = set(directory.glob('*/result.json'))
     previous_coverage = set(downloaded_inputs(directory))
     previous_sql = set(directory.rglob('sql-client.json'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
+    if job_id is not None:
+        record['job_id'] = job_id
     try:
         if build_inputs:
             record['build'] = json.loads((root / 'artifacts/ci/image/build.json').read_text())
@@ -105,12 +107,18 @@ def job_timings(pages):
 
 
 def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_digest=None, dependencies=None):
+    if 'jobs' in manifest:
+        from ci_jobs import validate_jobs
+        validate_jobs(manifest)
     planned = {s['id']: s for s in manifest['include']}
+    job_ids = {group: job['id'] for job in manifest.get('jobs', []) for group in job['group_ids']}
     by_id = {}
     for record in records:
         identifier = record['id']
         if identifier in by_id or identifier not in planned:
             raise ValueError('duplicate or unknown shard: ' + identifier)
+        if job_ids and record.get('job_id') != job_ids[identifier]:
+            raise ValueError('execution group has wrong or missing CI job ID: ' + identifier)
         by_id[identifier] = record
     origins = {(r.get('commit'), r.get('run_id'), r.get('attempt')) for r in records}
     stale = []
@@ -180,9 +188,10 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
         shard_attempts={r['id']: r.get('attempt') for r in records},
         missing_shards=missing, failed_shards=failed, missing_coverage=missing_coverage,
         profiles=profiles, jobs=timings, failed_jobs=job_failures,
+        execution_groups=len(planned), planned_jobs=len(manifest.get('jobs', manifest['include'])),
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings) if jobs else None,
-        shards=[dict(planned[k], seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
+        shards=[dict(planned[k], job_id=r.get('job_id', k), seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
                      sql_client=r.get('sql_client'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
                      mapped_lines=len(r.get('coverage', {}).get('mapped', []))) for k, r in sorted(by_id.items())])
@@ -195,6 +204,7 @@ def markdown(report):
         'See test-value.md, test-value.csv and test-value.json for costs, marginal line coverage and case intent by area.', '',
         '| Profile | Catalog passed / expected | Runtime lines hit / mapped | Unique lines | Shard minutes: release / coverage |',
         '|---|---:|---:|---:|---:|']
+    lines[4:4] = [f"CI jobs: {report['planned_jobs']}. Execution groups: {report['execution_groups']}.", '']
     for name, p in report['profiles'].items():
         duration = p['shard_seconds']
         lines.append(f"| {name} | {p['catalog_passed']} / {p['catalog_expected']} | {p['covered_lines']} / {p['mapped_lines']} | {p['unique_covered_lines']} | {duration.get('release', 0)/60:.1f} / {duration.get('coverage', 0)/60:.1f} |")

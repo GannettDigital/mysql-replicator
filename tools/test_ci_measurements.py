@@ -47,6 +47,28 @@ class MeasurementsTests(unittest.TestCase):
         del without_coverage['coverage']
         self.assertFalse(summarize(manifest, [without_coverage])['complete'])
 
+    def test_group_results_are_bound_to_jobs_and_missing_groups_still_fail(self):
+        from ci_jobs import assign_jobs
+        manifest, record = self.fixture()
+        manifest['include'][0]['area'] = 'ddl'
+        manifest['include'].append(dict(manifest['include'][0], id='supplement', owns_obligations=False))
+        plan = assign_jobs(manifest, dict(max_groups=3, group_timeout_minutes=45,
+                                         setup_timeout_minutes=10, standalone_areas=[]))
+        job = plan['jobs'][0]['id']
+        for bad in (record, dict(record, job_id='wrong')):
+            with self.assertRaisesRegex(ValueError, 'CI job ID'):
+                summarize(plan, [bad])
+        first = dict(record, job_id=job)
+        report = summarize(plan, [first])
+        self.assertFalse(report['complete'])
+        self.assertEqual(report['missing_shards'], ['supplement'])
+        report = summarize(plan, [first, dict(first, id='supplement')])
+        self.assertTrue(report['complete'])
+        self.assertEqual((report['planned_jobs'], report['execution_groups']), (1, 2))
+        self.assertEqual(report['instrumentation']['integration_jobs'], 1)
+        self.assertEqual(report['instrumentation']['execution_groups'], 2)
+        self.assertIn('CI jobs: 1. Execution groups: 2.', markdown(report))
+
     def test_lines_are_unioned_and_harness_is_excluded(self):
         mapped, hit = line_sets([dict(files={'Sources/App/A.swift': {'1': 2, '2': 0},
                                             'Sources/ReplicatorLab/main.swift': {'1': 10}}),

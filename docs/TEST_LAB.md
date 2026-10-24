@@ -446,6 +446,36 @@ DDL catalog report command; do not combine passing subsets of different runs.
 The logical catalog suite IDs and all 730 required obligations remain intact;
 those identifiers do not retain old runner entry points.
 
+## Plan a selection before running it
+
+`make lab-plan` reads the case catalog and prints JSON. It does not start
+containers. It uses a built lab binary when you provide `--lab`; otherwise it
+uses `swift run replicator-lab` to read the catalog.
+
+```sh
+make lab-plan ARGS="--profile mysql57-to-mysql57-innodb --family indexes --case database-existing-different"
+make lab-plan ARGS="--selection pr"
+```
+
+Repeat `--family` or `--case` to select their union. Repeat `--profile`, `--suite`
+or `--variant` to select several values. The defaults are all profiles, the
+correctness suite and the default variant. Use `--variant all` for all variants.
+
+The plan lists `requested_cases`, `dependency_cases` and the final ordered
+`cases`. `required_by` identifies the cases that need each dependency. Excluded
+cases retain their profile-specific reasons. Unknown selections fail instead of
+silently selecting a larger or smaller test set.
+
+Each `groups` entry is one lab invocation, not one CI job. It includes a command
+that runs its cases. Add `--commands` to print shell commands instead of JSON.
+Add `--skip-build` only when you want those commands to reuse a matching lab image.
+The named `pr` selection uses the current reviewed PR case list and coverage
+mode. Native and recovery adapters require complete case groups.
+
+The local planner and CI share the dependency resolver in
+`tools/lab_selection.py`. CI assigns complete execution groups to jobs with a separate policy. See the [test organization plan](../PLAN/BETA7_TEST_ORGANIZATION.md)
+for the next changes.
+
 ## Evidence and code coverage
 
 `artifacts/lab/RUN_ID/result.json` records the selected matrix and overall outcome.
@@ -454,8 +484,7 @@ logs, SQLite/relay state and final `result.json` beneath that directory.
 The harness also writes `sql-trace.jsonl`. It links SQL client calls to active
 case IDs, assertion IDs and server roles. See [SQL records for each test case](CI_MEASUREMENTS.md#sql-records-for-each-test-case)
 for the scope and report command. The trace can contain credentials and row data.
-Failure
-artifacts include source boundaries/binlogs when available. Adapter suites retain
+Failure artifacts include source boundaries/binlogs when available. Adapter suites retain
 their established artifact categories; the runners provide their own evidence paths to the aggregate, keeping concurrent
 runs separate.
 The native adapter lists registered cases; reverse recovery and other specialized
@@ -506,8 +535,12 @@ correctness families to areas and sets group sizes or explicit case boundaries.
 New cases automatically join
 their area, while an unassigned family or suite fails planning. The generated
 `ci-lab` artifact contains `matrix.json`, including all obligations, explicit
-not-applicable entries and exact shard selections. Each applicable obligation
-has one owning shard; prerequisites can also run in dependent shards.
+not-applicable entries and exact execution-group selections in `include`.
+Each applicable obligation has one owning group; prerequisites can also run in
+dependent groups. `tools/ci_jobs.json` assigns groups to the separate `jobs` list.
+A job can run several groups, each with its own fixtures and artifacts. See
+[execution groups and CI jobs](CI_MEASUREMENTS.md#execution-groups-and-ci-jobs)
+for failure handling, coverage counts and time limits.
 
 For groups balanced by measured time, `split_after` lists the final case in each
 group except the last. DDL splits after `ddl-compat-generated`. Bootstrap splits

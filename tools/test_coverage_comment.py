@@ -64,14 +64,17 @@ class CommentTests(unittest.TestCase):
 
     def test_instrumentation_scope_is_explicit_and_bounded(self):
         report = dict(metrics(), ci_suite='full', coverage_mode='expanded', integration_jobs=227,
-                      instrumented_jobs=116, integration_reports=130, expected_integration_reports=130)
+                      instrumented_jobs=116, integration_reports=130, expected_integration_reports=130,
+                      execution_groups=300, instrumented_groups=130)
         text = publisher.comment(publisher.validate(report), dict(id=12, run_attempt=1), 'owner/repo')
         self.assertIn('jobs that collect coverage: 116', text)
         self.assertIn('130 / 130 expected', text)
+        self.assertIn('Execution groups: 300', text)
         self.assertIn('instrumented correctness and reconnect', text)
         self.assertNotIn('integration smoke only', text)
         for key, value in [('coverage_mode', '@everyone'), ('ci_suite', 'bad'),
-                           ('instrumented_jobs', 228), ('integration_reports', True)]:
+                           ('instrumented_jobs', 228), ('integration_reports', True),
+                           ('execution_groups', '@everyone'), ('instrumented_groups', 301)]:
             with self.assertRaises(ValueError):
                 publisher.validate(dict(report, **{key: value}))
 

@@ -327,7 +327,7 @@ jobs:
     needs: [lab-tools, build-images]
     if: needs.lab-tools.result == 'success' && needs.build-images.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -378,11 +378,11 @@ jobs:
           dpkg-deb --extract mysql-server-core.deb mysql-reference
           "$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" --no-defaults --version
           echo "MYSQLBINLOG=$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" >> "$GITHUB_ENV"
-      - name: Run shared scenario shard
+      - name: Run isolated test groups
         env:
-          SHARD: ${{ matrix.id }}
-        run: python3 tools/ci_lab.py --run "$SHARD"
-      - name: Upload shard measurements
+          CI_JOB: ${{ matrix.id }}
+        run: python3 tools/ci_lab.py --run-job "$CI_JOB"
+      - name: Upload execution group measurements
         uses: actions/upload-artifact@v4
         if: always()
         with:

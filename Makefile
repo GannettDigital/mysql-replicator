@@ -96,11 +96,13 @@ reverse-correctness:
 # Canonical profile-driven lab commands. Specialized targets above retain their scope.
 PROFILE ?= all
 TIER ?= full
-.PHONY: correctness lab-test lab-list lab-demo lab-benchmark
+.PHONY: correctness lab-test lab-list lab-plan lab-demo lab-benchmark
 correctness:
 	swift run replicator-lab test --profile $(PROFILE) --suite correctness --tier $(TIER) $(ARGS)
 lab-test:
 	swift run replicator-lab test --profile $(PROFILE) $(ARGS)
+lab-plan:
+	@python3 tools/lab_selection.py $(ARGS)
 lab-list:
 	@swift run replicator-lab test --profile $(PROFILE) --suite all --list $(ARGS)
 lab-demo:

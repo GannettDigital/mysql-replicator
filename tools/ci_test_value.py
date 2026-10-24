@@ -11,6 +11,7 @@ from ci_measurements import line_sets
 def analyze(manifest, records, unit=None):
     planned = {s['id']: s for s in manifest['include']}
     records = {r['id']: r for r in records}
+    job_ids = {g: job['id'] for job in manifest.get('jobs', []) for g in job['group_ids']}
     expected = {key(r): r for r in manifest['inventory'] if r['status'] == 'not_run'}
     unit_hits = None
     if unit is not None:
@@ -46,7 +47,10 @@ def analyze(manifest, records, unit=None):
                 mapped.update(map(tuple, coverage['mapped']))
         hits[group] = measured
         results.append(dict(profile=group[0], variant=group[1], suite=group[2], area=group[3],
-            jobs=len(shards), instrumented_jobs=instrumented, collections=collections,
+            jobs=len({job_ids.get(s['id'], s['id']) for s in shards}),
+            instrumented_jobs=len({job_ids.get(s['id'], s['id']) for s in shards
+                                   if 'coverage' in records.get(s['id'], {})}),
+            execution_groups=len(shards), instrumented_groups=instrumented, collections=collections,
             complete=all(s['id'] in records and records[s['id']]['status'] == 'passed' and
                          records[s['id']].get('coverage', {}).get('collections', 0) == s['reports'] for s in shards),
             release_seconds=costs['release'], coverage_seconds=costs['coverage'],
@@ -69,15 +73,15 @@ def markdown(report):
     rows = report['areas']
     show = lambda v: 'unmeasured' if v is None else str(v)
     text = ['# Test area value', '',
-        'Baseline: the two PR smoke jobs from this run. Unit + smoke also includes this run\'s unit report.',
+        'Baseline: the two PR case selections from this run. Unit + smoke also includes this run\'s unit report.',
         f"Smoke baseline complete: {report['baseline_complete']}. Unit baseline available: {report['unit_baseline_available']}.", '',
         'Each row groups one profile, capture variant, suite and area. Numbered chunks share a row. '
-        'Times are summed shard minutes, not elapsed workflow time. Partial rows can miss results.', '',
-        '| Profile / variant / suite / area | Complete | Passed catalog keys | Jobs measured / total | Minutes release / coverage | Lines hit | Extra over smoke | Extra over unit + smoke | Exclusive integration lines |',
+        'Times are summed execution-group minutes, not elapsed workflow time. Partial rows can miss results.', '',
+        '| Profile / variant / suite / area | Complete | Passed catalog keys | Groups with coverage / total | Minutes release / coverage | Lines hit | Extra over smoke | Extra over unit + smoke | Exclusive integration lines |',
         '|---|---|---:|---:|---:|---:|---:|---:|---:|']
     for r in sorted(rows, key=lambda r: -(r['release_seconds'] + r['coverage_seconds'])):
         label = ' / '.join(r[k] for k in ('profile', 'variant', 'suite', 'area'))
-        text.append(f"| {label} | {r['complete']} | {r['passed_catalog_keys']} | {r['instrumented_jobs']} / {r['jobs']} | "
+        text.append(f"| {label} | {r['complete']} | {r['passed_catalog_keys']} | {r['instrumented_groups']} / {r['execution_groups']} | "
                     f"{r['release_seconds']/60:.1f} / {r['coverage_seconds']/60:.1f} | {show(r['covered_lines'])} | "
                     f"{show(r['extra_over_smoke'])} | {show(r['extra_over_unit_smoke'])} | {show(r['exclusive_integration_lines'])} |")
     text += ['', 'Line gains are set differences and are not additive. Exclusive lines are relative to other measured areas. '

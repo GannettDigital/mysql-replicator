@@ -3,10 +3,15 @@
 
 def plan_scope(matrix):
     shards = matrix['include']
+    by_id = {s['id']: s for s in shards} if 'jobs' in matrix else {}
+    jobs = matrix.get('jobs', shards)
     return dict(ci_suite=matrix.get('scope', 'full'),
                 coverage_mode=matrix.get('coverage_mode', 'selected'),
-                integration_jobs=len(shards),
-                instrumented_jobs=sum(s['reports'] > 0 for s in shards),
+                integration_jobs=len(jobs),
+                instrumented_jobs=(sum(any(by_id[g]['reports'] > 0 for g in j['group_ids']) for j in jobs)
+                                   if 'jobs' in matrix else sum(s['reports'] > 0 for s in shards)),
+                execution_groups=len(shards),
+                instrumented_groups=sum(s['reports'] > 0 for s in shards),
                 expected_integration_reports=sum(s['reports'] for s in shards))
 
 
@@ -17,6 +22,9 @@ def description(metrics):
     if 'integration_jobs' in metrics:
         lines.append(f"Planned integration jobs: {metrics['integration_jobs']}; "
                      f"jobs that collect coverage: {metrics['instrumented_jobs']}.")
+    if 'execution_groups' in metrics:
+        lines.append(f"Execution groups: {metrics['execution_groups']}; "
+                     f"groups that collect coverage: {metrics['instrumented_groups']}.")
     if 'integration_reports' in metrics:
         expected = metrics.get('expected_integration_reports', 'unknown')
         lines.append(f"Integration coverage collections: {metrics['integration_reports']} / {expected} expected.")

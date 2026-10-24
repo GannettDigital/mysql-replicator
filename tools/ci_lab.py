@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tarfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / 'artifacts/ci/lab'
@@ -37,18 +38,20 @@ def select_plan(query):
     from ci_matrix import SMOKE_PROFILES, generate, generate_smoke
     scope = os.environ.get('CI_SUITE', 'full')
     policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())
+    from ci_jobs import assign_jobs
+    job_policy = json.loads((ROOT / 'tools/ci_jobs.json').read_text())
     if scope == 'pr-smoke':
-        return generate_smoke([json.loads(query('test', '--profile', profile, '--suite', 'correctness',
+        return assign_jobs(generate_smoke([json.loads(query('test', '--profile', profile, '--suite', 'correctness',
                                                '--variant', 'default', '--tier', 'full', '--list'))
-                               for profile in SMOKE_PROFILES], policy['pr_smoke'])
+                               for profile in SMOKE_PROFILES], policy['pr_smoke']), job_policy)
     if scope != 'full':
         raise ValueError(f'unknown CI_SUITE: {scope}')
     catalogs = [json.loads(query('test', '--profile', 'all', '--suite', suite,
                                 '--variant', 'all', '--list'))
                 for suite in ('correctness', 'lifecycle')]
     catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
-    return generate(catalogs, policy,
-                    expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true')
+    return assign_jobs(generate(catalogs, policy,
+                      expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true'), job_policy)
 
 
 def plan(query):
@@ -57,7 +60,7 @@ def plan(query):
     destination = ROOT / 'artifacts/ci/matrix.json'
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(result, indent=2) + '\n')
-    print(f"CI plan: {len(result['include'])} shards, {result['obligations']} catalog obligations, "
+    print(f"CI plan: {len(result['jobs'])} jobs, {len(result['include'])} execution groups, {result['obligations']} catalog obligations, "
           f"{result['coverage_reports']} instrumented collections; {destination}")
     return result
 
@@ -88,7 +91,7 @@ def bundle(binary):
     (archive.parent / 'lab.sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + '  lab.tar.gz\n')
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('inputs=' + digest + '\n')
-        output.write('matrix=' + json.dumps({'include': result['include']}, separators=(',', ':')) + '\n')
+        output.write('matrix=' + json.dumps({'include': result['jobs']}, separators=(',', ':')) + '\n')
         output.write('coverage_reports=' + str(result['coverage_reports']) + '\n')
         output.write('images=' + json.dumps(result['images']) + '\n')
         output.write('scope=' + result['scope'] + '\n')
@@ -113,10 +116,33 @@ def validate_bundle():
         raise ValueError('lab bundle inputs differ from this checkout')
 
 
-def run_shard(identifier):
+def run_shard(identifier, job_id=None):
     from ci_measurements import record_shard
-    with record_shard(ROOT, identifier, build_inputs=os.environ.get('GITHUB_ACTIONS') == 'true'):
+    options = {'job_id': job_id} if job_id is not None else {}
+    with record_shard(ROOT, identifier, build_inputs=os.environ.get('GITHUB_ACTIONS') == 'true', **options):
         _run_shard(identifier)
+
+
+def run_job(identifier):
+    from ci_jobs import validate_jobs
+    manifest = matrix()
+    validate_jobs(manifest)
+    matches = [job for job in manifest['jobs'] if job['id'] == identifier]
+    if len(matches) != 1:
+        raise ValueError('unknown CI job: ' + identifier)
+    job = matches[0]
+    print('Execution groups: ' + ', '.join(job['group_ids']), flush=True)
+    failures = []
+    for group in job['group_ids']:
+        try:
+            run_shard(group, job_id=identifier)
+        except Exception as error:
+            # Keep the later groups independent of an earlier assertion failure.
+            # KeyboardInterrupt and SystemExit still stop the job immediately.
+            print(f'Execution group {group} failed: {error}', file=sys.stderr, flush=True)
+            failures.append(group)
+    if failures:
+        raise RuntimeError('Failed execution groups: ' + ', '.join(failures))
 
 
 def _run_shard(identifier):
@@ -140,11 +166,13 @@ def _run_shard(identifier):
         subprocess.run(['docker', 'tag', 'mysql-replicator-packaging:lab', 'mysql-replicator-packaging:reverse'], check=True)
     if shard['image'] == 'release':
         subprocess.run(['python3', 'tools/verify_release_binary.py'], cwd=ROOT, check=True)
+    from coverage_report import downloaded_inputs
+    before = set(downloaded_inputs(ROOT / 'artifacts/lab')) if shard['reports'] else set()
     env = dict(os.environ, LD_LIBRARY_PATH=str(BUNDLE / 'lib'))
-    subprocess.run([str(BUNDLE / 'replicator-lab'), *command(shard)], cwd=ROOT, env=env, check=True)
+    subprocess.run([str(BUNDLE / 'replicator-lab'), *command(shard)], cwd=ROOT, env=env, check=True,
+                   timeout=manifest.get('group_timeout_seconds', 45 * 60))
     if shard['reports']:
-        from coverage_report import downloaded_inputs
-        reports = downloaded_inputs(ROOT / 'artifacts/lab')
+        reports = set(downloaded_inputs(ROOT / 'artifacts/lab')) - before
         # Discover only per-fixture combined reports, not per-invocation reports.
         reports = [p for p in reports if p.parent.name == 'combined']
         if len(reports) != shard['reports']:
@@ -155,7 +183,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--bundle', type=Path)
-    group.add_argument('--run', help='shard ID from the bundled CI matrix')
+    group.add_argument('--run', help='execution group ID from the bundled plan')
+    group.add_argument('--run-job', help='CI job ID from the bundled plan')
     group.add_argument('--plan', type=Path, help='generate the CI matrix using this local lab binary')
     args = parser.parse_args()
     if args.bundle:
@@ -163,6 +192,8 @@ def main():
     elif args.plan:
         binary = args.plan.resolve()
         plan(lambda *arguments: subprocess.check_output([str(binary), *arguments], cwd=ROOT, text=True))
+    elif args.run_job:
+        run_job(args.run_job)
     else:
         run_shard(args.run)
 

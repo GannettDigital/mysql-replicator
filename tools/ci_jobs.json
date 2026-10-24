@@ -1,0 +1,9 @@
+{
+  "max_groups": 3,
+  "group_timeout_minutes": 45,
+  "setup_timeout_minutes": 10,
+  "standalone_areas": [
+    "ddl-1", "dml-1", "bootstrap-1", "failure-recovery-offline",
+    "native-ddl", "demo", "reconnect", "recovery", "binlog-reconnect"
+  ]
+}
