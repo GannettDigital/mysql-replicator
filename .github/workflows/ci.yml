@@ -146,6 +146,11 @@ jobs:
       scope: ${{ steps.bundle.outputs.scope }}
     steps:
       - uses: actions/checkout@v4
+      - name: Download changed-file test selection
+        uses: actions/download-artifact@v4
+        with:
+          name: test-selection
+          path: artifacts/ci/
       # Keep toolchain headers and their consuming objects in the SAME archive.
       # setup-swift copies files on a cold install, giving headers new mtimes.
       - name: Identify runner image

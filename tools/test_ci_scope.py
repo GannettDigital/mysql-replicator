@@ -72,7 +72,7 @@ class ChangedScopeTests(unittest.TestCase):
 
     def test_gate_requires_selected_checks_and_exact_intentional_skips(self):
         from ci_scope import check_results
-        for scope in ('docs', 'tools', 'pr-smoke', 'full'):
+        for scope in ('docs', 'tools', 'pr-smoke', 'pr-selected', 'full'):
             results = {job: {'result': 'success'} for job in
                        ('select-suite', 'tool-tests', 'swift-lint', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration')}
             if scope in ('docs', 'tools'):

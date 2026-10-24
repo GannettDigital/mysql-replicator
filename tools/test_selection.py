@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SCOPES = ('docs', 'tools', 'pr-smoke', 'full')
+SCOPES = ('docs', 'tools', 'pr-smoke', 'pr-selected', 'full')
 # These tools consume saved results. They do not build or run the replicator.
 REPORT_TOOLS = {
     'ci_measurements', 'ci_test_value', 'compare_test_coverage',
@@ -18,13 +18,14 @@ REPORT_TOOLS = {
 SELECTOR_PATHS = {
     'tools/ci_scope.py', 'tools/test_ci_scope.py',
     'tools/test_selection.py', 'tools/test_test_selection.py',
+    'tools/test_components.py', 'tools/test_test_components.py', 'tools/test_components.json',
 }
 
 
 def checks_for(scope):
     if scope not in SCOPES:
         raise ValueError('unknown test scope: ' + scope)
-    runtime = scope in ('pr-smoke', 'full')
+    runtime = scope in ('pr-smoke', 'pr-selected', 'full')
     return dict(tooling=True, unit=runtime, periphery=runtime, integration=runtime)
 
 
@@ -36,13 +37,17 @@ def classify(path):
         return 'tools', 'test selection policy; verify with Python tests'
     if path in ('Makefile', '.github/workflows/ci.yml'):
         return 'pr-smoke', 'build/test entry point; verify the two-profile PR path'
+    from test_components import component_for
+    component = component_for(path)
+    if component:
+        return 'pr-selected', component[1]
     # Fixture and harness changes can affect cases outside the PR selection.
     if (path.startswith(('Sources/ReplicatorLab', 'tests/ReplicatorLabTests/',
                          '.github/', 'docker/', 'packaging/', 'Vendor/'))
             or '/Fixtures/' in path):
         return 'full', 'harness, fixture, build, or CI contract'
     if path.startswith(('Sources/', 'rust/', 'tests/', 'examples/')):
-        return 'pr-smoke', 'runtime, configuration, or unit tests'
+        return 'full', 'shared runtime, configuration, or unmapped tests; use all profiles and variants'
     if path.startswith('tools/') and len(parts) == 2 and path.endswith('.py'):
         name = PurePosixPath(path).stem.removeprefix('test_')
         if name in REPORT_TOOLS:
@@ -58,7 +63,11 @@ def select_changes(paths, fallback=None):
     changes = []
     for path in sorted(set(paths)):
         scope, reason = classify(path)
-        changes.append(dict(path=path, scope=scope, reason=reason))
+        change = dict(path=path, scope=scope, reason=reason)
+        if scope == 'pr-selected':
+            from test_components import component_for
+            change['component'] = component_for(path)[0]
+        changes.append(change)
     scope = max((c['scope'] for c in changes), key=SCOPES.index) if changes else 'full'
     if fallback:
         scope = 'full'
@@ -94,6 +103,8 @@ def from_git(base, head='HEAD', include_worktree=False, root=ROOT):
 
 
 def local_commands(scope):
+    if scope == 'pr-selected':
+        raise ValueError('component commands require a resolved catalog')
     commands = [['python3', '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py']]
     if checks_for(scope)['unit']:
         commands += [['make', 'test'], ['swift', 'run', 'replicator-lab', 'ddl-catalog', 'check'], ['make', 'periphery']]
@@ -117,6 +128,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', default='origin/main', help='compare with this merge base (default: origin/main)')
     parser.add_argument('--head', help='compare a committed revision; omit to include staged, unstaged, and untracked files')
+    parser.add_argument('--lab', type=Path, help='built lab binary for component plans; default: swift run replicator-lab')
     parser.add_argument('--full', action='store_true', help='force the full test scope')
     output = parser.add_mutually_exclusive_group()
     output.add_argument('--commands', action='store_true', help='print local commands instead of JSON')
@@ -125,7 +137,20 @@ def main():
     result = from_git(args.base, args.head or 'HEAD', include_worktree=args.head is None)
     if args.full:
         result.update(scope='full', checks=checks_for('full'), selected_by=[], reason='explicit full selection')
-    commands = local_commands(result['scope'])
+    if result['scope'] == 'pr-selected':
+        from ci_lab import component_plan, command
+        prefix = [str(args.lab.resolve())] if args.lab else ['swift', 'run', 'replicator-lab']
+        plan = component_plan(lambda *a: subprocess.check_output(prefix + list(a), cwd=ROOT, text=True), result)
+        result['integration_plan'] = plan
+        commands = local_commands('tools') + local_commands('pr-smoke')[1:4]
+        for group in plan['include']:
+            # Local execution uses the normal image. CI measures coverage and
+            # verifies the release binary separately. Keep transport and cases.
+            arguments = command(dict(group, image='release'))
+            arguments.remove('--skip-build')
+            commands.append(prefix + arguments)
+    else:
+        commands = local_commands(result['scope'])
     result['commands'] = [shlex.join(c) for c in commands]
     if args.commands:
         print('\n'.join(result['commands']))

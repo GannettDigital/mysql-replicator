@@ -97,7 +97,7 @@ runner tests cover a failed group followed by a passing group, cancellation,
 and rejection of coverage files left by an earlier group. These are local
 orchestration checks. We have not measured the new job durations in GitHub.
 
-### 3. Select groups from changed components
+### 3. Select groups from changed components — implemented
 
 Map implementation and test files to the catalog's behavior groups. Start with
 clear boundaries such as indexes, JSON transport, replay and reconnect handling.
@@ -108,6 +108,23 @@ Do not infer safety from a filename alone. For example, a shared schema-cache
 change can affect DDL, DML, replay and recovery. It needs a broader selection.
 Each plan must explain the changed path, selected cases, profile choices and
 added dependencies. Local selection and CI must use the same rules.
+
+`tools/test_components.json` defines exact path rules. The first rules select
+index-resume, JSON YEAR, archive and reconnect checks. The shared index fixture
+file retains full CI because native, failure and recovery tests use its helpers.
+All unmapped runtime and test files retain full CI. Baseline PR checks remain.
+
+Local selection and CI use the same planner. It resolves against the full catalog
+and keeps complete execution groups, all applicable profiles and variants, and
+existing matching BINLOG groups. Plans list reasons, exclusions and dependencies.
+The new `pr-selected` scope cannot produce release evidence. Full labels and main
+pushes still select the complete catalog.
+
+Focused Python checks cover component unions, shared-code overrides, dependencies,
+profile limits, transport groups, missing groups and local/CI command agreement.
+Local catalog checks retain the full inventory of 2,095 obligations and 246 groups.
+No database assertion or fixture was changed. See
+[PR test selection](../docs/PR_TEST_SELECTION.md) for the current component counts.
 
 ### 4. Measure, then review repetitions
 

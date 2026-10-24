@@ -78,6 +78,12 @@ class CommentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publisher.validate(dict(report, **{key: value}))
 
+    def test_component_scope_does_not_claim_all_selected_tests_collect_coverage(self):
+        report = dict(metrics(), ci_suite='pr-selected', coverage_mode='selected')
+        text = publisher.comment(publisher.validate(report), dict(id=12, run_attempt=1), 'owner/repo')
+        self.assertIn('PR baseline', text)
+        self.assertIn('release-binary groups do not contribute line coverage', text)
+
     def test_artifact_must_match_run_and_attempt(self):
         run = dict(id=12, run_attempt=1, head_sha="b" * 40)
         item = dict(name="coverage-summary", expired=False, size_in_bytes=100, id=3)

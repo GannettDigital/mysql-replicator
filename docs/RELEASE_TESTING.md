@@ -5,7 +5,7 @@ Do not add a separate release test runner.
 
 | Use | Trigger | Scope | Release evidence |
 | --- | --- | --- | --- |
-| Ordinary PR | Open, push or reopen | [Changed-file selection](PR_TEST_SELECTION.md): report checks, two-profile checks, or full checks | No |
+| Ordinary PR | Open, push or reopen | [Changed-file selection](PR_TEST_SELECTION.md): report checks, baseline checks, component groups, or full checks | No |
 | Final PR in a release stack | Add `ci-full`; later pushes keep this scope | Full catalog, packages, coverage and Periphery | Candidate evidence |
 | Test-suite investigation | Add `ci-expanded-coverage` | Full suite plus instrumented correctness and reconnect copies | Candidate evidence from release-binary checks |
 | Main | Push after merge | Same full suite | Required for the release |
@@ -58,7 +58,7 @@ move between PRs automatically.
 
 Wait for **Full Suite / Release Evidence** and all required checks to pass before
 merging the final candidate. Keep the run link with the release notes for review.
-A normal smoke run does not produce release evidence. Do not require the full
+Baseline and component runs do not produce release evidence. Do not require the full
 check on every PR through branch protection; ordinary PRs intentionally skip it.
 
 The PR run tests GitHub's merge commit for that PR and its current base branch.

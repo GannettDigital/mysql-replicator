@@ -34,6 +34,24 @@ def command(shard):
     return args
 
 
+def full_catalogs(query):
+    catalogs = [json.loads(query('test', '--profile', 'all', '--suite', suite,
+                                '--variant', 'all', '--list'))
+                for suite in ('correctness', 'lifecycle')]
+    catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
+    return catalogs
+
+
+def component_plan(query, change_plan):
+    from ci_matrix import generate
+    from ci_jobs import assign_jobs
+    from test_components import select_groups
+    policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())
+    full = generate(full_catalogs(query), policy)
+    selected = select_groups(full, change_plan, policy['pr_smoke'])
+    return assign_jobs(selected, json.loads((ROOT / 'tools/ci_jobs.json').read_text()))
+
+
 def select_plan(query):
     from ci_matrix import SMOKE_PROFILES, generate, generate_smoke
     scope = os.environ.get('CI_SUITE', 'full')
@@ -44,12 +62,12 @@ def select_plan(query):
         return assign_jobs(generate_smoke([json.loads(query('test', '--profile', profile, '--suite', 'correctness',
                                                '--variant', 'default', '--tier', 'full', '--list'))
                                for profile in SMOKE_PROFILES], policy['pr_smoke']), job_policy)
+    if scope == 'pr-selected':
+        path = Path(os.environ.get('CI_TEST_SELECTION', ROOT / 'artifacts/ci/test-selection.json'))
+        return component_plan(query, json.loads(path.read_text()))
     if scope != 'full':
         raise ValueError(f'unknown CI_SUITE: {scope}')
-    catalogs = [json.loads(query('test', '--profile', 'all', '--suite', suite,
-                                '--variant', 'all', '--list'))
-                for suite in ('correctness', 'lifecycle')]
-    catalogs.append(json.loads(query('test', '--profile', 'all', '--suite', 'all', '--list')))
+    catalogs = full_catalogs(query)
     return assign_jobs(generate(catalogs, policy,
                       expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true'), job_policy)
 

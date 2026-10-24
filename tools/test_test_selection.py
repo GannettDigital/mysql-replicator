@@ -20,12 +20,16 @@ class SelectionTests(unittest.TestCase):
                       ['README.md', 'tools/coverage_report.py'], ['tools/coverage_comment.py'],
                       ['tools/ci_scope.py', 'tools/test_ci_scope.py'],
                       ['tools/test_selection.py', 'tools/test_test_selection.py']],
-            'pr-smoke': [['Makefile'], ['.github/workflows/ci.yml'], ['Sources/ReplicatorCLI/main.swift'], ['Sources/ReplicatorCodec/StageTimings.swift'],
-                         ['Sources/ReplicatorApply/ApplyRun.swift'], ['Sources/MySQLSyntax/SQLLexer.swift'],
-                         ['tests/MySQLSyntaxTests/SQLLexerTests.swift'], ['rust/src/lib.rs'],
-                         ['examples/apply.example.yaml'], ['tests/ReplicatorCaptureTests/ArchiveTests.swift'],
-                         ['README.md', 'tools/coverage_report.py', 'Sources/ReplicatorCapture/ArchiveReplay.swift']],
-            'full': [['Package.swift'], ['Package.resolved'], ['.github/workflows/release.yml'],
+            'pr-smoke': [['Makefile'], ['.github/workflows/ci.yml']],
+            'pr-selected': [['Sources/ReplicatorApply/SourceReconnect.swift'],
+                            ['tests/ReplicatorCaptureTests/ArchiveTests.swift'],
+                            ['Sources/ReplicatorLabCore/SharedIndexResume.swift'],
+                            ['README.md', 'tools/coverage_report.py', 'Sources/ReplicatorCapture/ArchiveReplay.swift']],
+            'full': [['Sources/ReplicatorCLI/main.swift'], ['Sources/ReplicatorCodec/StageTimings.swift'],
+                     ['Sources/ReplicatorApply/ApplyRun.swift'], ['Sources/MySQLSyntax/SQLLexer.swift'],
+                     ['tests/MySQLSyntaxTests/SQLLexerTests.swift'], ['rust/src/lib.rs'],
+                     ['examples/apply.example.yaml'], ['Sources/ReplicatorApply/SchemaMetadataCache.swift'],
+                     ['Sources/ReplicatorLabCore/SharedCorrectness.swift'], ['Sources/ReplicatorLabCore/ModifyIndexCases.swift'], ['Package.swift'], ['Package.resolved'], ['.github/workflows/release.yml'],
                      ['tools/ci_matrix.json'],
                      ['tools/ci_lab.py'], ['tools/code_coverage.py'], ['tools/swift_cache.py'],
                      ['tools/coverage_runtime.py'], ['tools/release_evidence.py'], ['tools/release_cut.py'],
@@ -138,12 +142,12 @@ class GitChangeTests(unittest.TestCase):
         self.assertEqual(changed_files(self.base, root=self.root), [])
         paths = changed_files(self.base, include_worktree=True, root=self.root)
         self.assertEqual(paths, ['README.md', 'Sources/ReplicatorCLI/main.swift', 'docs/a\nname.md'])
-        self.assertEqual(select_changes(paths)['scope'], 'pr-smoke')
+        self.assertEqual(select_changes(paths)['scope'], 'full')
 
     def test_deletion_cannot_disappear_from_selection(self):
         self.git('rm', 'Sources/ReplicatorCLI/main.swift')
         self.commit()
-        self.assertEqual(from_git(self.base, root=self.root)['scope'], 'pr-smoke')
+        self.assertEqual(from_git(self.base, root=self.root)['scope'], 'full')
 
     def test_stacked_branch_uses_merge_base_not_unrelated_base_changes(self):
         self.git('checkout', '-qb', 'base')
@@ -164,14 +168,14 @@ class GitChangeTests(unittest.TestCase):
         self.commit()
         paths = changed_files(self.base, root=self.root)
         self.assertEqual(len(paths), 306)
-        self.assertEqual(select_changes(paths)['scope'], 'pr-smoke')
+        self.assertEqual(select_changes(paths)['scope'], 'full')
 
     def test_ci_entrypoint_emits_selection_outputs_and_full_label_override(self):
         self.write('README.md', 'PR documentation')
         self.git('add', 'README.md')
         self.commit()
         head = self.git('rev-parse', 'HEAD').strip()
-        for name in ('ci_scope.py', 'test_selection.py'):
+        for name in ('ci_scope.py', 'test_selection.py', 'test_components.py', 'test_components.json'):
             self.write('tools/' + name, (ROOT / 'tools' / name).read_text())
         event = dict(action='synchronize', pull_request=dict(
             base=dict(sha=self.base), head=dict(sha=head), labels=[]))

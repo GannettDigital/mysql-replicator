@@ -1,0 +1,47 @@
+{
+  "indexes": {
+    "reason": "Index resume fixture and its index DDL prerequisites",
+    "paths": [
+      "Sources/ReplicatorLabCore/SharedIndexResume.swift"
+    ],
+    "families": [
+      "indexes",
+      "discovery"
+    ]
+  },
+  "json-year": {
+    "reason": "JSON YEAR conversion, refusal, restart and offline replay",
+    "paths": [
+      "Sources/ReplicatorLabCore/SharedJSONYear.swift"
+    ],
+    "cases": [
+      "json-year-compatibility"
+    ]
+  },
+  "offline": {
+    "reason": "Archive fetch, validation, replay and saved-position resume",
+    "paths": [
+      "Sources/ReplicatorCapture/ArchiveFetch.swift",
+      "Sources/ReplicatorCapture/BinlogArchive.swift",
+      "Sources/ReplicatorCapture/ArchiveReplay.swift",
+      "Sources/ReplicatorCapture/ArchiveValidationPersistence.swift",
+      "tests/ReplicatorCaptureTests/ArchiveTests.swift",
+      "tests/ReplicatorCaptureTests/ArchiveResumeTests.swift",
+      "tests/ReplicatorApplyTests/ArchiveStartupTests.swift"
+    ],
+    "families": [
+      "offline"
+    ]
+  },
+  "reconnect": {
+    "reason": "Shared source and target retry policy, disconnect, drain and uncertain writes",
+    "paths": [
+      "Sources/ReplicatorApply/SourceReconnect.swift",
+      "tests/ReplicatorApplyTests/SourceReconnectTests.swift",
+      "tests/ReplicatorApplyTests/TargetReconnectTests.swift"
+    ],
+    "suites": [
+      "lifecycle"
+    ]
+  }
+}

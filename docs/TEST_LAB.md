@@ -503,7 +503,7 @@ Instrumented runs are not performance measurements. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
-Runtime PR CI runs unit tests, Periphery and two explicit correctness selections. The
+The PR baseline runs unit tests, Periphery and two explicit correctness selections. The
 profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Both use the default variant and run in parallel after one shared image build.
 Unit tests and Periphery do not wait for this build. Coverage and timing reports
@@ -513,8 +513,10 @@ See [PR test selection](PR_TEST_SELECTION.md) for case IDs, assertions, timing
 estimates, limits, and commands to reproduce the selection.
 Documentation, listed report tools, and test selectors use Python checks without
 an application build. `Makefile` and `ci.yml` use the two-profile PR checks.
-Dependency/package builds, fixtures, other workflows, and unknown paths select
-full CI. The same changed-file
+Exact component paths add matching groups from the full catalog. These use
+`pr-selected` scope and keep applicable profiles, variants and BINLOG tests.
+Shared runtime code, dependency/package builds, shared fixtures, other workflows,
+and unknown paths select full CI. The same changed-file
 rules are available locally through `make test-selection` and `make test-selected`.
 
 Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
@@ -527,7 +529,8 @@ separate weekly or release-tag qualification workflow.
 
 The lab catalog generates both matrices. PR planning resolves the explicit
 `pr_smoke` case IDs in `tools/ci_matrix.json` against the full catalog and adds
-prerequisites. New full-suite cases do not enter PR checks until selected.
+prerequisites. New cases do not enter the baseline automatically. They enter component checks
+when they belong to a selected family or complete execution group.
 Full CI uses the same selection for its two cross-version coverage supplements.
 Local `--tier smoke` keeps its existing convenience selection.
 `tools/ci_matrix.json` also assigns full CI

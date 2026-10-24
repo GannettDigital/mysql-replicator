@@ -1,8 +1,10 @@
 # PR test selection
 
-Runtime PR checks run unit tests, Periphery, and two integration jobs. Unit tests
-and Periphery run in parallel with the integration build path. The integration
-jobs share one instrumented image build, then run in parallel:
+PR checks use changed-file rules. Runtime changes run unit tests and Periphery
+in parallel with integration builds. Known components select matching test
+groups. Shared runtime code and unknown paths select the full suite.
+
+The following two jobs remain the PR baseline. They use one instrumented image:
 
 | Profile | Job area | Capture variant |
 |---|---|---|
@@ -10,8 +12,9 @@ jobs share one instrumented image build, then run in parallel:
 | `mysql57-to-mysql84-innodb` | `ddl-dml-policy-replay` | `default` |
 
 Both jobs run the same 11 named cases. This gives 22 profile/case obligations
-and two integration coverage collections. `pr-smoke` remains the CI scope name.
-The job area, logs, step summary, and matrix show the actual selection.
+and two integration coverage collections. `pr-smoke` names this baseline alone.
+`pr-selected` includes the baseline plus component groups. The matrix and job
+logs list the cases. Component scope can require both release and coverage images.
 
 ## Select checks from changed files
 
@@ -23,7 +26,9 @@ required scope wins.
 |---|---|---|
 | Recognized documentation | `docs` | Python tool tests; no application build |
 | Listed report tools, test selectors, and their tests | `tools` | Python tool tests; no application build |
-| Runtime Swift/Rust, unit tests, example configuration, `Makefile`, or `.github/workflows/ci.yml` | `pr-smoke` | Python tests, Swift/Rust unit tests, catalog check, Periphery, and the two profile selections below |
+| `Makefile` or `.github/workflows/ci.yml` | `pr-smoke` | Unit tests, catalog check, Periphery, and the two baseline selections |
+| Exact paths in `tools/test_components.json` | `pr-selected` | Unit tests, catalog check, Periphery, baseline, and matching integration groups |
+| Shared runtime code, unmapped unit tests, or example configuration | `full` | Full existing CI suite |
 | Harness, fixtures, dependency/package build inputs, other CI workflows, release tools, or unknown paths | `full` | Full existing CI suite |
 
 The report-tool list is explicit. It includes coverage reports, PR coverage
@@ -35,9 +40,9 @@ select the shorter two-profile PR checks. This verifies their build/test path
 without selecting every correctness variant. Use `ci-full` when a change needs
 all profiles, package checks, or all variants.
 
-Changes to `tools/ci_scope.py`, `tools/test_selection.py`, and their tests select
-Python checks. These tests verify path rules, Git diffs, CI outputs, overrides,
-and the result gate. They do not need a database to check the selection policy.
+Changes to `tools/ci_scope.py`, `tools/test_selection.py`, `tools/test_components.py`,
+the component policy, and their tests select Python checks. These tests verify
+path rules, Git diffs, CI outputs, overrides, and the result gate. They do not need a database to check the selection policy.
 The output's `selected_by` field lists the paths that set the final scope.
 
 The CLI still starts capture and application from `main.swift`. Changes to this
@@ -61,6 +66,51 @@ verifies all selected jobs. This follows GitHub guidance for
 Documentation and tool-only runs do not collect Swift coverage. Coverage and
 measurement jobs skip those runs. Their absence is not a coverage decrease.
 
+## Component rules
+
+[tools/test_components.json](../tools/test_components.json) lists exact paths and
+catalog families, cases or suites. A new file does not inherit a narrow rule from
+its directory or name. The first rules cover:
+
+| Component | Changed code | Selected behavior |
+|---|---|---|
+| Indexes | `SharedIndexResume.swift` | Index DDL and schema resume |
+| JSON YEAR | `SharedJSONYear.swift` | Conversion, refusal, restart and offline replay |
+| Offline | Listed archive implementations and tests | Fetch, validation, replay, error skipping and runtime control |
+| Reconnect | Source retry policy and listed retry tests | Both source and target lifecycle suites |
+
+The planner retains every applicable profile and variant. It also retains
+existing BINLOG groups that contain a selected case. Profile exclusions remain
+visible with their reasons. Unknown catalog selectors fail planning.
+
+The planner selects complete execution groups from the full plan. Each group
+keeps its cases, dependencies, transport and fixture boundary. A group can include
+other cases because it owns shared setup. This step does not claim that those
+cases are redundant. Coverage counts still refer to complete fixtures.
+
+`ModifyIndexCases.swift` contains helpers used by failure, recovery and native
+checks. It therefore selects full CI. Shared schema, cache, parser, decoder and
+apply code also select full CI unless a reviewed exact-path rule applies. A full
+path in the same diff overrides a component selection.
+
+The plan records paths and reasons in `components`. Each execution group has
+`selected_by`, `cases` and, where applicable, `dependency_cases`. CI downloads the
+selector artifact before it builds the matrix. A missing artifact or a component
+rule that cannot resolve fails planning. It does not fall back to fewer tests.
+
+Current local catalog checks produce these counts, including the baseline:
+
+| Component | Execution groups | CI jobs | Case/profile/variant obligations |
+|---|---:|---:|---:|
+| Indexes | 54 | 22 | 278 |
+| JSON YEAR | 5 | 4 | 32 |
+| Offline | 15 | 15 | 79 |
+| Reconnect | 16 | 16 | 132 |
+
+These are plan counts, not measured durations. They do not establish a five-minute
+PR target. The full plan remains 246 groups and 2,095 obligations. We will use
+later timing and coverage results to review group sizes and repeated work.
+
 ## Use the selector locally
 
 Inspect a branch, including local edits, against its PR base:
@@ -73,6 +123,9 @@ For a stacked branch, replace `origin/main` with the preceding branch. To select
 checks for local edits only, use `--base HEAD`. Local selection includes staged,
 unstaged, and untracked files. Add `--head HEAD` to inspect committed changes only.
 The command does not fetch refs. Fetch the base first if it is not present.
+Component plans read the lab catalog. Add `--lab .build/debug/replicator-lab` to
+use a built runner. Otherwise, the command uses `swift run replicator-lab`.
+Catalog queries can build the runner, but they do not start MySQL containers.
 
 Run the selected local commands:
 
@@ -84,8 +137,9 @@ Use `--commands` with `test-selection` to print copyable commands. Use `--full`
 to force the full scope. JSON stays on stdout. Test output goes to stderr.
 Execution stops at the first failure.
 
-Local checks use existing commands and the same PR case IDs from
-`tools/ci_matrix.json`. They run in sequence and use normal lab binaries.
+Local checks use the same component planner as CI. The baseline case IDs come
+from `tools/ci_matrix.json`. Component plans also show exact cases and variants
+in `integration_plan`. They run in sequence and use normal lab binaries.
 They do not publish CI coverage or release evidence. CI retains parallel jobs,
 instrumented collections, package checks, and the exact release-binary checks.
 The full local selection runs all catalog suites and variants. Use CI to certify
@@ -134,16 +188,17 @@ cases only to maximize Swift line coverage.
 
 ## Full-suite boundary
 
-PR checks do not certify all data types, foreign-key behavior, collation mapping,
+The two-job baseline does not test all data types, foreign-key behavior,
+collation mapping,
 source/target reconnect, MyISAM crash recovery, operator demos, or same-version
-profiles. Those remain in full CI. Unit coverage does not replace their database
-behavior checks.
+profiles. Component selections can add some of these checks. Full CI retains all
+of them. Unit coverage does not replace their database behavior checks.
 
-Full CI keeps all 718 catalog obligations and all release-binary selections.
+Full CI keeps all 2,095 current catalog obligations and all release-binary selections.
 Its two cross-version coverage supplements use this same explicit PR selection
 so reports can compare full-suite coverage with the current PR baseline. The two
-same-version smoke supplements keep their existing local smoke selection. Job
-and collection counts remain unchanged.
+same-version smoke supplements keep their existing local smoke selection.
+Component selection does not change full-suite jobs or coverage collections.
 
 ## Change or inspect the selection
 
@@ -152,7 +207,8 @@ case IDs and job area. The lab catalog defines each case and its prerequisites.
 The CI planner resolves the IDs against the full catalog, adds prerequisites,
 and preserves catalog order. Missing, inapplicable, duplicate, or cyclic selected
 cases fail planning. Adding an unrelated full-suite case does not change these
-selected IDs. A harness change still selects full CI through the path rules.
+selected IDs. Shared harness changes still select full CI. The reviewed
+component exceptions are listed above.
 
 Generate the exact commands locally:
 

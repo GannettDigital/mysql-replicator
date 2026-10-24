@@ -81,7 +81,9 @@ Batch framing preserves empty results and exact whitespace. A missing or
 unexpected frame fails the comparison.
 
 Use the beta.4 release stack to collect a baseline for all four profiles.
-PR checks use unit tests, Periphery and two parallel [explicit test selections](PR_TEST_SELECTION.md). Main retains
+PR checks use [changed-file selection](PR_TEST_SELECTION.md). Component checks
+include the two-profile baseline and matching groups. Shared runtime changes
+select the full catalog. Unit tests and Periphery remain parallel checks. Main retains
 the full catalog. Add `ci-full` to the top release PR to run that catalog before
 merge. See [release testing](RELEASE_TESTING.md) for the evidence and release gate.
 The targets for later work are five minutes for PR feedback and twenty minutes
@@ -137,7 +139,8 @@ Normal integration evidence can still contain sensitive data.
 The report separates these measurements:
 
 - Catalog coverage: passed obligations divided by applicable obligations for
-  each selected profile and scope. Runtime PR scope is `pr-smoke`. PRs with
+  each selected profile and scope. The baseline scope is `pr-smoke`. Component
+  scope is `pr-selected`; it can contain release and coverage groups. PRs with
   `ci-full` and main use `full`. Manual runs default to `full`. This is coverage of our selected catalog, not all MySQL features.
 - Code coverage: the union of mapped Swift runtime lines reached by instrumented
   runs. It excludes Rust, dependencies and the lab. The existing combined Swift

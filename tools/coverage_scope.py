@@ -36,6 +36,9 @@ def description(metrics):
                      'The other release-binary tests do not contribute line coverage.')
     elif mode == 'selected' and scope == 'pr-smoke':
         lines.append('Integration coverage includes the two PR smoke suites only.')
+    elif mode == 'selected' and scope == 'pr-selected':
+        lines.append('Coverage includes the PR baseline and any selected instrumented groups. '
+                     'Selected release-binary groups do not contribute line coverage. See the matrix for cases.')
     else:
         lines.append('This older or local report does not identify the full instrumentation plan.')
     return ' '.join(lines)
