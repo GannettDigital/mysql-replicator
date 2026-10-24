@@ -36,6 +36,7 @@ def generate_smoke(catalogs, selection):
                            reports=1, tier='full', cases=[r['id'] for r in rows if r['id'] in selected],
                            requested_cases=requested, dependency_cases=resolved['dependency_cases'], owns_obligations=True))
     return dict(scope='pr-smoke', images=['coverage'], coverage_mode='selected', include=shards,
+                coverage_baseline_groups=[s['id'] for s in shards],
                 coverage_reports=len(shards), obligations=sum(len(s['cases']) for s in shards),
                 inventory=inventory)
 
@@ -133,21 +134,34 @@ def generate(catalogs, policy, expanded_coverage=False):
     if 'pr_smoke' in policy:
         catalog = [r for r in inventory.values() if r['suite'] == 'correctness' and r['variant'] == 'default']
         pr_shards = {s['profile']: s for s in generate_smoke([dict(scenarios=catalog)], policy['pr_smoke'])['include']}
+    extensions = policy.get('full_coverage_extensions', {})
+    if not isinstance(extensions, dict) or set(extensions) - pr_shards.keys():
+        raise ValueError('full coverage extensions require a selected PR profile')
+    for profile, extension in extensions.items():
+        if not isinstance(extension, dict) or set(extension) != {'area', 'cases'}:
+            raise ValueError('full coverage extension requires area and cases')
+        area, extra = extension.get('area'), extension.get('cases')
+        if (not isinstance(area, str) or not area.strip() or area in (pr_shards[profile]['area'], 'smoke')
+                or not isinstance(extra, list) or not extra
+                or any(not isinstance(c, str) or not c for c in extra)
+                or len(set(extra)) != len(extra) or set(extra) & set(pr_shards[profile]['cases'])):
+            raise ValueError('full coverage extension requires a distinct area and unique additional cases')
+        requested = pr_shards[profile]['requested_cases'] + extra
+        resolved = resolve_cases(groups[(profile, 'default', 'correctness')], cases=requested)
+        if resolved['excluded']:
+            raise ValueError('inapplicable full coverage extension cases')
+        pr_shards[profile] = dict(pr_shards[profile], id=f'coverage-{profile}-default-{area}',
+                                 area=area, cases=resolved['cases'], requested_cases=requested,
+                                 dependency_cases=resolved['dependency_cases'])
     for profile, variant, suite in sorted(groups):
         if suite == 'correctness' and variant == 'default':
             if profile in pr_shards:
                 shards.append(dict(pr_shards[profile], owns_obligations=False))
             else:
                 add(profile, variant, suite, 'smoke', [], image='coverage', reports=1, tier='smoke', count=False)
-    sample = policy['sample']
-    for identifier in sample['cases']:
-        if (sample['profile'], 'default', 'correctness', identifier) not in applicable:
-            raise ValueError(f'sample case missing from applicable catalog: {identifier}')
-    # These cases already have release owners above. Keep the instrumented
-    # sample until source-matched coverage proves that other measured groups
-    # retain its paths. See PLAN/BETA7_SAMPLE_REVIEW.md.
-    add(sample['profile'], 'default', 'correctness', 'sample', sample['cases'],
-        image='coverage', reports=1, count=False)
+    # The former sample now runs inside the forward coverage selection.
+    # Release owners and PR selections remain unchanged. See
+    # PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md.
     # Selected BINLOG runs use the same named cases. They supplement SQL
     # catalog obligations; a passing SQL case does not test the BINLOG executor.
     for selection in policy.get('binlog_selections', []):
@@ -169,7 +183,7 @@ def generate(catalogs, policy, expanded_coverage=False):
     # shared scenarios with instrumentation; adapters have no coverage contract.
     if expanded_coverage:
         for shard in list(shards):
-            if shard['image'] == 'release' and shard['suite'] in ('correctness', 'lifecycle') and shard['area'] != 'sample':
+            if shard['image'] == 'release' and shard['suite'] in ('correctness', 'lifecycle'):
                 measured = dict(shard, id=shard['id'].replace('release-', 'coverage-', 1),
                                 image='coverage', reports=1)
                 shards.append(measured)
@@ -180,4 +194,5 @@ def generate(catalogs, policy, expanded_coverage=False):
     if len({s['id'] for s in shards}) != len(shards):
         raise ValueError('duplicate shard identifiers')
     return dict(scope='full', images=['release', 'coverage'], coverage_mode='expanded' if expanded_coverage else 'selected', include=shards, coverage_reports=sum(s['reports'] for s in shards),
+                coverage_baseline_groups=[s['id'] for s in pr_shards.values()],
                 obligations=len(applicable), inventory=list(inventory.values()))

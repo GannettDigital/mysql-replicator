@@ -155,6 +155,22 @@ class ComponentTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'invalid or repeated'):
                     test_components.rules()
 
+    def test_full_baseline_extension_is_selected_only_for_its_extra_cases(self):
+        extra = dict(id='full-conditional-ddl', profile=SMOKE_PROFILES[0], variant='default',
+                     suite='correctness', area='conditional-ddl', image='coverage', reports=1,
+                     tier='full', cases=['baseline', 'offline', 'setup', 'index-create'])
+        self.full['include'].append(extra)
+        self.full['coverage_baseline_groups'] = [extra['id']]
+        self.baseline['cases'].append('offline')
+        indexes = self.selected()
+        retained = next(g for g in indexes['include'] if g['id'] == extra['id'])
+        self.assertEqual(retained['cases'], extra['cases'])
+        self.assertNotIn(extra['id'], indexes['coverage_baseline_groups'])
+        self.change = test_selection.select_changes(['Sources/ReplicatorCapture/ArchiveReplay.swift'])
+        offline = self.selected()
+        self.assertFalse(any(g['id'] == extra['id'] for g in offline['include']))
+        self.assertEqual(len(offline['coverage_baseline_groups']), 2)
+
 
 if __name__ == '__main__':
     unittest.main()

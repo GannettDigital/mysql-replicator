@@ -14,7 +14,6 @@ class MatrixTests(unittest.TestCase):
     def setUp(self):
         self.policy = dict(areas=[dict(name='database', families=['database'], size=2),
                                  dict(name='failure-recovery-offline', families=['failures', 'recovery', 'offline'])],
-                           sample=dict(profile='forward', cases=['create']),
                            demo_reports=dict(forward=4, reverse=5))
         self.rows = [row('create'), row('alter'), row('drop'),
                      row('reconnect', suite='lifecycle'), row('demo-start', suite='demo'),
@@ -34,7 +33,7 @@ class MatrixTests(unittest.TestCase):
             covered.update((shard['profile'], shard['variant'], shard['suite'], c) for c in shard['cases'])
         self.assertEqual(covered, {key(r) for r in self.rows})
         self.assertEqual(result['obligations'], len(self.rows))
-        self.assertEqual(result['coverage_reports'], 12)
+        self.assertEqual(result['coverage_reports'], 11)
         second = next(s for s in result['include'] if s['area'] == 'database-2')
         self.assertEqual(second['cases'], ['create', 'drop'])
         self.assertEqual(len(result['include']), len({s['id'] for s in result['include']}))
@@ -52,20 +51,6 @@ class MatrixTests(unittest.TestCase):
                 self.assertIn(s['suite'], ['correctness', 'lifecycle'])
                 original = next(b for b in baseline['include'] if b['id'] == s['id'].replace('coverage-', 'release-', 1))
                 self.assertEqual(original['cases'], s['cases'])
-
-    def test_sample_retains_coverage_without_a_duplicate_release_run(self):
-        for expanded in (False, True):
-            result = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=expanded)
-            sample = [s for s in result['include'] if s['area'] == 'sample']
-            self.assertEqual(len(sample), 1)
-            self.assertEqual((sample[0]['image'], sample[0]['reports']), ('coverage', 1))
-            self.assertEqual(sample[0]['cases'], self.policy['sample']['cases'])
-            for case in sample[0]['cases']:
-                owners = [s for s in result['include'] if s['image'] == 'release'
-                          and s['profile'] == sample[0]['profile'] and s['variant'] == 'default'
-                          and s['suite'] == 'correctness' and case in s.get('requested_cases', [])]
-                self.assertEqual(len(owners), 1)
-            self.assertEqual(result['obligations'], len(self.rows))
 
     def test_new_case_and_variant_automatically_enter_ci(self):
         self.rows += [row('new-case'), row('new-mode', variant='new-variant')]
@@ -148,14 +133,11 @@ class MatrixTests(unittest.TestCase):
         result = generate([dict(scenarios=self.rows)] * 2, self.policy)
         self.assertEqual(result['obligations'], len(self.rows))
 
-    def test_ambiguous_policy_and_missing_sample_fail(self):
+    def test_ambiguous_policy_fails(self):
         policy = copy.deepcopy(self.policy)
         policy['areas'][1]['families'].append('database')
         with self.assertRaisesRegex(ValueError, 'multiple areas'):
             generate([dict(scenarios=self.rows)], policy)
-        self.policy['sample']['cases'] = ['removed-case']
-        with self.assertRaisesRegex(ValueError, 'sample case missing'):
-            self.generate()
 
     def test_binlog_selection_is_separate_and_checks_dependencies(self):
         self.policy['binlog_selections'] = [dict(area='rows', suite='correctness',
@@ -208,7 +190,7 @@ class MatrixTests(unittest.TestCase):
             if r['id'] == 'alter':
                 r['dependencies'] = ['create']
         policy = dict(areas=[dict(name='database', families=['database'])],
-                      sample=dict(profile=SMOKE_PROFILES[0], cases=['create']), demo_reports={},
+                      demo_reports={},
                       pr_smoke=dict(area='ddl-dml-policy-replay', cases=['alter']))
         pr = generate_smoke([dict(scenarios=rows)], policy['pr_smoke'])
         full = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
@@ -218,6 +200,48 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(shard['cases'], ['create', 'alter'])
             supplement = next(s for s in full['include'] if s['id'] == shard['id'])
             self.assertEqual(supplement, dict(shard, owns_obligations=False))
+
+    def test_full_coverage_extension_preserves_pr_and_release_owners(self):
+        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'alter', 'extra', 'setup']]
+        for r in rows:
+            if r['id'] == 'extra':
+                r['dependencies'] = ['setup']
+        policy = dict(areas=[dict(name='database', families=['database'])], demo_reports={},
+                      pr_smoke=dict(area='ddl-dml', cases=['create', 'alter']))
+        original = generate([dict(scenarios=rows)], policy)
+        pr = generate_smoke([dict(scenarios=rows)], policy['pr_smoke'])
+        policy['full_coverage_extensions'] = {SMOKE_PROFILES[0]: dict(area='conditional-ddl', cases=['extra'])}
+        for expanded in (False, True):
+            full = generate([dict(scenarios=rows)], policy, expanded_coverage=expanded)
+            self.assertEqual([g for g in full['include'] if g['image'] == 'release'],
+                             [g for g in original['include'] if g['image'] == 'release'])
+            self.assertEqual(full['obligations'], original['obligations'])
+            self.assertEqual(full['inventory'], original['inventory'])
+            selected = next(g for g in full['include'] if g['area'] == 'conditional-ddl')
+            self.assertEqual(selected['cases'], ['create', 'alter', 'extra', 'setup'])
+            self.assertEqual(selected['dependency_cases'], ['setup'])
+            self.assertEqual((selected['image'], selected['reports'], selected['owns_obligations']),
+                             ('coverage', 1, False))
+            self.assertIn(selected['id'], full['coverage_baseline_groups'])
+            self.assertNotIn(pr['include'][0]['id'], full['coverage_baseline_groups'])
+            self.assertFalse(any(g['area'] == 'sample' for g in full['include']))
+        self.assertEqual(generate_smoke([dict(scenarios=rows)], policy['pr_smoke']), pr)
+
+    def test_invalid_full_coverage_extensions_fail(self):
+        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'extra']]
+        rows += [dict(row('unavailable', profile=SMOKE_PROFILES[0]), status='not_applicable')]
+        policy = dict(areas=[dict(name='database', families=['database'])], demo_reports={},
+                      pr_smoke=dict(area='ddl-dml', cases=['create']))
+        invalid = [None, [], {}, dict(area='ddl-dml', cases=['extra']), dict(area='smoke', cases=['extra']),
+                   dict(area='extended', cases=[]), dict(area='extended', cases=['missing']),
+                   dict(area='extended', cases=['unavailable']), dict(area='extended', cases=['create']),
+                   dict(area='extended', cases=['extra', 'extra']), dict(area='extended', cases=[None])]
+        for extension in invalid:
+            with self.subTest(extension=extension), self.assertRaises(ValueError):
+                generate([dict(scenarios=rows)], dict(policy, full_coverage_extensions={SMOKE_PROFILES[0]: extension}))
+        for extensions in [[], {'unknown': dict(area='extended', cases=['extra'])}]:
+            with self.assertRaisesRegex(ValueError, 'selected PR profile'):
+                generate([dict(scenarios=rows)], dict(policy, full_coverage_extensions=extensions))
 
     def test_pr_selection_rejects_empty_duplicate_and_unknown_cases(self):
         rows = [row('create', profile=p) for p in SMOKE_PROFILES]

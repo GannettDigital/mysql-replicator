@@ -2,6 +2,10 @@
 
 ## Scope and decision
 
+This file records the first review. The later
+[current coverage comparison](BETA7_COVERAGE_SAMPLE_COMPARISON.md) completes the
+follow-up and replaces the separate coverage sample with one combined selection.
+
 Review the release and coverage sample groups against the cases already owned
 by full CI. The source baseline is commit `9ec476b`. All compared groups use
 `mysql84-to-mysql57-myisam`, the default variant and SQL transport.

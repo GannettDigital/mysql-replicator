@@ -25,8 +25,8 @@ Current catalog counts are:
 An obligation is a case for one profile, suite and capture variant. These counts
 measure our catalog. They do not measure all MySQL features.
 
-The beta.7 full plan has 245 execution groups in 129 CI jobs, 2,095 obligations
-and 23 integration coverage collections.
+The beta.7 full plan has 244 execution groups in 129 CI jobs, 2,095 obligations
+and 22 integration coverage collections.
 It includes database creation, DDL, DML, indexes, bootstrap, foreign keys where
 supported, refusals, ordered DDL, collation, filtering and discovery. It also
 includes failure/recovery/offline/control sequences, reconnect, native-reference
@@ -97,8 +97,8 @@ gh workflow run ci.yml --ref <branch-or-tag> -f suite=full
 
 For code coverage research, add `-f expanded_coverage=true`. This retains all
 release-binary assertions and adds instrumented correctness and lifecycle runs.
-The beta.7 expanded plan has 478 execution groups in 246 CI jobs. It retains
-all case selections and collects 256 coverage reports. Job grouping is defined
+The beta.7 expanded plan has 477 execution groups in 246 CI jobs. It retains
+all case selections and collects 255 coverage reports. Job grouping is defined
 in `tools/ci_jobs.json`. The planner rejects plans above the 256-job matrix limit.
 Expanded coverage measures test-suite behavior; it is not an extra release gate.
 

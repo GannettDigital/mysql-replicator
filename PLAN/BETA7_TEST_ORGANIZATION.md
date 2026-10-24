@@ -145,9 +145,13 @@ not measured because its cold build stalled. See
 [the study](BETA7_LOCAL_TEST_GROUP_STUDY.md) for evidence and limits.
 
 The [sample review](BETA7_SAMPLE_REVIEW.md) removes only the duplicate release
-sample. Its cases remain in their full groups and the coverage sample stays.
-The current plans have 245 normal groups in 129 jobs, or 478 expanded groups in
-246 jobs. All 2,095 catalog obligations and all coverage selections remain.
+sample. Its cases remain in their full groups. The subsequent
+[coverage comparison](BETA7_COVERAGE_SAMPLE_COMPARISON.md) also removes the
+separate instrumented sample. The combined forward selection retains all 10,649
+measured runtime lines, all previous cases and assertions, and adds an explicit
+conditional-database check. Local measured cost fell from 464.70 to 374.46 seconds.
+The current plans have 244 normal groups in 129 jobs, or 477 expanded groups in
+246 jobs. All 2,095 catalog obligations remain. PR checks stay unchanged.
 
 Use exact file/line differences to review a costly group with a small gain.
 Inspect the branch condition. Prefer a focused unit test or a small addition to

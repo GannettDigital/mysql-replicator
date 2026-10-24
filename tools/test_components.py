@@ -72,8 +72,15 @@ def select_groups(full, change_plan, baseline):
     base = generate_smoke([dict(scenarios=[r for r in inventory
                           if r['suite'] == 'correctness' and r['variant'] == 'default'])], baseline)
     groups = {g['id']: dict(g, selected_by=['PR baseline']) for g in base['include']}
+    baseline_cases = {g['profile']: set(g['cases']) for g in base['include']}
     for group in full['include']:
-        identities = {(group['profile'], group['variant'], group['suite'], c) for c in group['cases']}
+        matching_cases = set(group['cases'])
+        if group['id'] in full.get('coverage_baseline_groups', []) and group['id'] not in groups:
+            # A full-CI extension supplements the PR baseline already selected.
+            # Match only its extra cases; shared baseline cases must not pull
+            # this second fixture into unrelated component checks.
+            matching_cases -= baseline_cases.get(group['profile'], set())
+        identities = {(group['profile'], group['variant'], group['suite'], c) for c in matching_cases}
         causes = [name for name, selected in matches.items() if identities & selected]
         if causes:
             if group['id'] in groups:
@@ -87,5 +94,6 @@ def select_groups(full, change_plan, baseline):
     groups = list(groups.values())
     return dict(scope='pr-selected', images=sorted({g['image'] for g in groups}), coverage_mode='selected',
                 include=groups, inventory=rows, obligations=len(rows),
+                coverage_baseline_groups=base['coverage_baseline_groups'],
                 coverage_reports=sum(g['reports'] for g in groups), components=explanations,
                 selection=computed)

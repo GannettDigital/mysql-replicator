@@ -50,8 +50,17 @@ def analyze(manifest, records, unit=None):
         if any(r.get('coverage', {}).get('sources_digest', digest) != digest for r in records.values()):
             raise ValueError('unit and integration coverage sources differ')
         _, unit_hits = line_sets([unit])
-    baseline_ids = [f'coverage-{p}-default-smoke' for p in SMOKE_PROFILES]
-    baseline_ready = all(k in records and records[k]['status'] == 'passed' and
+    # Older saved plans used the two fixed PR IDs. New plans name their actual
+    # baseline groups, including the full-CI-only conditional DDL cases.
+    baseline_ids = manifest.get('coverage_baseline_groups',
+                                [f'coverage-{p}-default-smoke' for p in SMOKE_PROFILES])
+    if (not isinstance(baseline_ids, list) or any(not isinstance(k, str) for k in baseline_ids)
+            or len(set(baseline_ids)) != len(baseline_ids)
+            or ('coverage_baseline_groups' in manifest and any(
+                k not in planned or planned[k]['image'] != 'coverage' or planned[k]['reports'] != 1
+                for k in baseline_ids))):
+        raise ValueError('coverage baseline groups must be unique planned groups with one coverage collection')
+    baseline_ready = bool(baseline_ids) and all(k in records and records[k]['status'] == 'passed' and
                          records[k].get('coverage', {}).get('collections') == 1 for k in baseline_ids)
     baseline = set().union(*(set(map(tuple, records[k]['coverage']['hit'])) for k in baseline_ids)) if baseline_ready else None
     groups = defaultdict(list)
@@ -86,11 +95,11 @@ def analyze(manifest, records, unit=None):
                          records[s['id']].get('coverage', {}).get('collections', 0) == s['reports'] for s in shards),
             release_seconds=costs['release'], coverage_seconds=costs['coverage'],
             covered_lines=len(measured) if instrumented else None, mapped_lines=len(mapped) if instrumented else None,
-            extra_over_smoke=len(measured - baseline) if instrumented and baseline is not None else None,
-            extra_over_unit_smoke=len(measured - baseline - unit_hits) if instrumented and baseline is not None and unit_hits is not None else None,
+            extra_over_baseline=len(measured - baseline) if instrumented and baseline is not None else None,
+            extra_over_unit_baseline=len(measured - baseline - unit_hits) if instrumented and baseline is not None and unit_hits is not None else None,
             line_details=dict(
-                extra_over_smoke=line_locations(measured - baseline) if instrumented and baseline is not None else None,
-                extra_over_unit_smoke=line_locations(measured - baseline - unit_hits)
+                extra_over_baseline=line_locations(measured - baseline) if instrumented and baseline is not None else None,
+                extra_over_unit_baseline=line_locations(measured - baseline - unit_hits)
                     if instrumented and baseline is not None and unit_hits is not None else None),
             passed_catalog_keys=len(passed),
             obligations=[{k: expected[identity][k] for k in ('profile', 'variant', 'suite', 'id', 'family', 'intent', 'expected', 'dependencies')
@@ -104,8 +113,11 @@ def analyze(manifest, records, unit=None):
         row['line_details'].update(exclusive_integration=line_locations(exclusive),
                                    exclusive_after_unit=line_locations(after_unit))
     provenance = {k: next(iter(records.values())).get(k) for k in ('commit', 'run_id', 'attempt')} if records else {}
-    return dict(provenance=provenance, baseline_smoke_jobs=baseline_ids, baseline_complete=baseline_ready,
-                baseline_smoke_lines=len(baseline) if baseline is not None else None,
+    return dict(provenance=provenance, baseline_group_ids=baseline_ids,
+                baseline_scope=manifest.get('scope', 'legacy PR selection'),
+                baseline_selections=[{k: planned.get(identifier, {'id': identifier}).get(k) for k in
+                                      ('id', 'profile', 'area', 'cases')} for identifier in baseline_ids], baseline_complete=baseline_ready,
+                baseline_lines=len(baseline) if baseline is not None else None,
                 unit_baseline_available=unit_hits is not None, areas=results, case_repetitions=repeated_cases(manifest))
 
 
@@ -113,17 +125,25 @@ def markdown(report):
     rows = report['areas']
     show = lambda v: 'unmeasured' if v is None else str(v)
     text = ['# Test area value', '',
-        'Baseline: the two PR case selections from this run. Unit + smoke also includes this run\'s unit report.',
-        f"Smoke baseline complete: {report['baseline_complete']}. Unit baseline available: {report['unit_baseline_available']}.", '',
+        'Baseline: the measured groups named by this run\'s plan. Unit + baseline also includes this run\'s unit report.',
+        f"Coverage baseline complete: {report['baseline_complete']}. Unit baseline available: {report['unit_baseline_available']}.", '',
         'Each row groups one profile, capture variant, suite and area. Numbered chunks share a row. '
         'Times are summed execution-group minutes, not elapsed workflow time. Partial rows can miss results.', '',
-        '| Profile / variant / suite / area | Complete | Passed catalog keys | Groups with coverage / total | Minutes release / coverage | Lines hit | Extra over smoke | Extra over unit + smoke | Exclusive integration lines | Exclusive after unit |',
+        '| Profile / variant / suite / area | Complete | Passed catalog keys | Groups with coverage / total | Minutes release / coverage | Lines hit | Extra over baseline | Extra over unit + baseline | Exclusive integration lines | Exclusive after unit |',
         '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|']
     for r in sorted(rows, key=lambda r: -(r['release_seconds'] + r['coverage_seconds'])):
         label = ' / '.join(r[k] for k in ('profile', 'variant', 'suite', 'area'))
         text.append(f"| {label} | {r['complete']} | {r['passed_catalog_keys']} | {r['instrumented_groups']} / {r['execution_groups']} | "
                     f"{r['release_seconds']/60:.1f} / {r['coverage_seconds']/60:.1f} | {show(r['covered_lines'])} | "
-                    f"{show(r['extra_over_smoke'])} | {show(r['extra_over_unit_smoke'])} | {show(r['exclusive_integration_lines'])} | {show(r.get('exclusive_after_unit_lines'))} |")
+                    f"{show(r['extra_over_baseline'])} | {show(r['extra_over_unit_baseline'])} | {show(r['exclusive_integration_lines'])} | {show(r.get('exclusive_after_unit_lines'))} |")
+    text += ['', '## Baseline selections', '',
+             'Scope: `' + report.get('baseline_scope', 'unavailable') + '`. '
+             'Full CI can add cases to its baseline without changing PR checks. '
+             'Line gains refer to the groups listed here, not an assumed PR selection.']
+    for selection in report.get('baseline_selections', []):
+        cases = selection.get('cases')
+        description = ', '.join('`' + case + '`' for case in cases) if cases else 'case list unavailable'
+        text += ['', '- `' + selection['id'] + '`: ' + description + '.']
     text += ['', 'Line gains are set differences and are not additive. Exclusive lines are relative to other measured areas. '
              'Zero extra lines does not prove redundant assertions. Unmeasured is not zero. '
              'Passed catalog keys can overlap between rows; do not sum them as catalog coverage. '

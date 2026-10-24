@@ -119,14 +119,16 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 245 | 129 | 23 |
-| Full with expanded coverage | 478 | 246 | 256 |
+| Full | 244 | 129 | 22 |
+| Full with expanded coverage | 477 | 246 | 255 |
 
 All 2,095 full-catalog obligations remain. The duplicate release sample was
 removed after [review](../PLAN/BETA7_SAMPLE_REVIEW.md). Its cases remain in their
-full release groups. The instrumented sample stays; coverage selections and
-collection counts are unchanged. These counts come from local plan generation; CI
-runtime measurements are still needed. The planner checks the 256-job limit
+full release groups. A [current coverage comparison](../PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md)
+then combined the forward coverage selection and sample into one fixture. It
+retained every measured runtime line and added an explicit conditional-database
+check. These counts come from local plan generation; CI runtime measurements
+are still needed. The planner checks the 256-job limit
 after grouping. More cases can require a later grouping-policy change.
 
 ## Normal CI
@@ -204,10 +206,13 @@ of shared correctness and lifecycle shards for every applicable variant.
 Runtime PR CI has two smoke shards and two integration coverage collections.
 Documentation and report-only selections do not collect Swift coverage or produce
 this measurement report. See [changed-file selection](PR_TEST_SELECTION.md).
-Each shard now selects 11 named cases from the full catalog. The two cross-version
-full-CI coverage supplements use the same cases. The `ddl-dml-policy-replay` job
-area and step summary identify the selection. Its artifact IDs retain the
-`-smoke` suffix so the same-run coverage baseline remains identifiable.
+Each PR shard selects 11 named cases from the full catalog. Full CI adds
+`database-existing-different` and `ddl-modify-demo-varchar-120` to the forward
+coverage selection. Its area is `ddl-dml-conditional-schema-policy-replay`.
+The reverse selection stays at 11 cases. `full_coverage_extensions` in
+`tools/ci_matrix.json` defines the additions. The former separate sample is gone.
+The plan's `coverage_baseline_groups` names the measured baseline groups.
+PR and full-CI baselines therefore differ; the report lists their exact cases.
 The earlier suite had 108 normal full shards and 203 expanded shards for 718
 catalog obligations. These are historical counts. The beta.6 catalog now has
 2,085 obligations. After the DML split below, normal full CI has 226 jobs.
@@ -250,12 +255,12 @@ suite and area. Each row shows:
 
 - Release and coverage group minutes, plus groups with coverage and total groups.
 - Passed catalog keys and declared case intent in the JSON.
-- Covered lines and lines added beyond the two PR smoke jobs from the same run.
-- Lines added beyond that smoke baseline plus the unit report from the same run.
+- Covered lines and lines added beyond the baseline groups named by the plan.
+- Lines added beyond that baseline plus the unit report from the same run.
 - Lines exclusive to this area among measured integration areas.
 
 An unmeasured area has no line counts. It is not assigned zero coverage. Missing
-smoke or unit data makes the corresponding baseline unavailable. Partial rows
+baseline-group or unit data makes the corresponding baseline unavailable. Partial rows
 can miss results. Source hashes must match before unit and integration line maps
 can be compared. Line gains are not additive. Catalog keys can occur in several
 rows, so their sum is not catalog coverage.
@@ -302,11 +307,15 @@ assertions are the same.
 
 Do not keep a large group only to reach a few lines. First identify those lines
 and the behavior that reaches them. `test-value.json` includes `line_details`
-for every area. Each map uses source file paths as keys and line numbers as
+for every area. The report also lists `baseline_scope`, `baseline_group_ids` and
+`baseline_selections`. Use these fields when comparing PR and full runs. Older
+reports called the difference fields `extra_over_smoke` and
+`extra_over_unit_smoke`; current reports name the actual baseline.
+Each map uses source file paths as keys and line numbers as
 values:
 
-- `extra_over_smoke`: lines beyond the measured PR selections.
-- `extra_over_unit_smoke`: lines beyond unit tests and the PR selections.
+- `extra_over_baseline`: lines beyond the measured baseline selections.
+- `extra_over_unit_baseline`: lines beyond unit tests and the baseline selections.
 - `exclusive_integration`: lines absent from all other measured integration areas.
 - `exclusive_after_unit`: those exclusive lines that unit tests also did not reach.
 
@@ -317,7 +326,7 @@ coverage removed when available. It orders these areas by total runner time.
 Full line lists remain in JSON; the display limit does not select tests.
 
 ```sh
-jq '.areas[] | select(.area == "sample") |
+jq '.areas[] | select(.exclusive_after_unit_lines > 0 and .exclusive_after_unit_lines <= 25) |
     {profile, variant, complete, release_seconds, coverage_seconds, line_details}'     test-value.json
 ```
 

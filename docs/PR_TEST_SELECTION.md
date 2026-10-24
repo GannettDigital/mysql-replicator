@@ -102,13 +102,18 @@ Current local catalog checks produce these counts, including the baseline:
 
 | Component | Execution groups | CI jobs | Case/profile/variant obligations |
 |---|---:|---:|---:|
-| Indexes | 53 | 22 | 278 |
+| Indexes | 53 | 22 | 279 |
 | JSON YEAR | 5 | 4 | 32 |
 | Offline | 15 | 15 | 79 |
 | Reconnect | 16 | 16 | 132 |
 
+The index component retains the full forward coverage extension because it
+contains the column-change case. This also runs the conditional-database case.
+Other components do not select that extra fixture merely because it contains
+shared PR cases. The two PR baseline groups remain unchanged.
+
 These are plan counts, not measured durations. They do not establish a five-minute
-PR target. The full plan has 245 groups and 2,095 obligations. We will use
+PR target. The full plan has 244 groups and 2,095 obligations. We will use
 later timing and coverage results to review group sizes and repeated work.
 
 ## Use the selector locally
