@@ -3,7 +3,7 @@ import json
 import unittest
 
 from ci_matrix import SMOKE_PROFILES
-from ci_test_value import analyze, markdown
+from ci_test_value import analyze, markdown, repeated_cases
 
 
 class TestValueTests(unittest.TestCase):
@@ -65,6 +65,19 @@ class TestValueTests(unittest.TestCase):
         self.assertTrue(all(r['extra_over_smoke'] is None for r in result['areas']))
         self.assertTrue(all(r['extra_over_unit_smoke'] is None for r in result['areas']))
         self.assertTrue(any(not r['complete'] for r in result['areas']))
+
+    def test_case_repetitions_keep_profile_variant_transport_and_image_distinct(self):
+        group = dict(id='first', area='area', profile='p', variant='default', suite='correctness',
+                     image='release', cases=['case', 'setup'], requested_cases=['case'])
+        groups = [group, dict(group, id='second'), dict(group, id='binlog', dml_transport='binlog'),
+                  dict(group, id='coverage', image='coverage'), dict(group, id='profile', profile='q'),
+                  dict(group, id='variant', variant='position'), dict(group, id='unlisted', cases=[])]
+        review = repeated_cases(dict(include=groups))
+        self.assertEqual(len(review['repeated']), 2)
+        self.assertEqual(review['unlisted_groups'], ['unlisted'])
+        for row in review['repeated']:
+            self.assertEqual([e['group'] for e in row['executions']], ['first', 'second'])
+            self.assertTrue(all(e['dependency'] == (row['case'] == 'setup') for e in row['executions']))
 
     def test_failed_smoke_and_mixed_sources_are_not_a_baseline(self):
         manifest, records, unit = self.fixture()

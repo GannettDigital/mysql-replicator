@@ -126,11 +126,23 @@ Local catalog checks retain the full inventory of 2,095 obligations and 246 grou
 No database assertion or fixture was changed. See
 [PR test selection](../docs/PR_TEST_SELECTION.md) for the current component counts.
 
-### 4. Measure, then review repetitions
+### 4. Measure, then review repetitions — first local comparison
 
 Run the reorganized groups with SQL records and timing. Collect instrumented
 coverage separately from release-binary tests. Compare assertions, expected
 errors, SQL, engine/version behavior and restart boundaries.
+
+Use `tools/lab_compare.py` for local comparisons. The recorder keeps lab and applier image builds
+outside elapsed test time. MySQL fixture setup remains included. The comparison checks build and MySQL settings, case
+and named assertion sets, SQL calls and optional line coverage. See
+[LOCAL_TEST_COMPARISON.md](../docs/LOCAL_TEST_COMPARISON.md).
+
+The first local release comparison passed. Combining two database cases reduced
+elapsed time from 184.16 to 104.20 seconds and SQL client calls from 379 to 229.
+Both cases and all named assertions remained. This validates the comparison
+method; that database group is already combined in CI. Fresh line coverage was
+not measured because its cold build stalled. See
+[the study](BETA7_LOCAL_TEST_GROUP_STUDY.md) for evidence and limits.
 
 Remove a test only after another test retains its behavior and assertions.
 Overlapping line coverage or equal SQL text is insufficient evidence. Select the
@@ -146,5 +158,6 @@ short PR case set after this review. Keep explicit case lists in job reports.
   add `database-explicit` as a dependency.
 - Resolve the named PR selection and compare it with the CI PR plan.
 
-Database assertions and their runner code are unchanged in this step. The two
-local database cases used to validate SQL traces remain the latest database run.
+Database assertions and their runner code are unchanged in these selection and
+reporting steps. See [the local study](BETA7_LOCAL_TEST_GROUP_STUDY.md) for the
+separate-versus-combined fixture comparison and its coverage limit.

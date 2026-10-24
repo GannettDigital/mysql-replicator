@@ -476,6 +476,10 @@ The local planner and CI share the dependency resolver in
 `tools/lab_selection.py`. CI assigns complete execution groups to jobs with a separate policy. See the [test organization plan](../PLAN/BETA7_TEST_ORGANIZATION.md)
 for the next changes.
 
+For local timing, assertion and coverage comparisons, use the
+[local comparison guide](LOCAL_TEST_COMPARISON.md). It supports existing results
+and new measurements with prebuilt images.
+
 ## Evidence and code coverage
 
 `artifacts/lab/RUN_ID/result.json` records the selected matrix and overall outcome.

@@ -8,6 +8,25 @@ from ci_matrix import SMOKE_PROFILES, key
 from ci_measurements import line_sets
 
 
+def repeated_cases(manifest):
+    """List repeated declared cases. Different transports/images are separate checks."""
+    occurrences = defaultdict(list)
+    unlisted = []
+    fields = ('profile', 'variant', 'suite', 'transport', 'image', 'case')
+    for group in manifest['include']:
+        cases = group.get('cases', [])
+        if not cases:
+            unlisted.append(group['id'])
+        for case in cases:
+            identity = (group['profile'], group.get('variant', 'default'), group['suite'],
+                        group.get('dml_transport', 'sql'), group['image'], case)
+            occurrences[identity].append(dict(group=group['id'], area=group['area'],
+                dependency=case not in group.get('requested_cases', cases)))
+    return dict(repeated=[dict(zip(fields, identity), executions=groups)
+                         for identity, groups in sorted(occurrences.items()) if len(groups) > 1],
+                unlisted_groups=sorted(unlisted))
+
+
 def analyze(manifest, records, unit=None):
     planned = {s['id']: s for s in manifest['include']}
     records = {r['id']: r for r in records}
@@ -66,7 +85,7 @@ def analyze(manifest, records, unit=None):
     provenance = {k: next(iter(records.values())).get(k) for k in ('commit', 'run_id', 'attempt')} if records else {}
     return dict(provenance=provenance, baseline_smoke_jobs=baseline_ids, baseline_complete=baseline_ready,
                 baseline_smoke_lines=len(baseline) if baseline is not None else None,
-                unit_baseline_available=unit_hits is not None, areas=results)
+                unit_baseline_available=unit_hits is not None, areas=results, case_repetitions=repeated_cases(manifest))
 
 
 def markdown(report):
@@ -90,6 +109,19 @@ def markdown(report):
              'Fixture setup and cleanup contribute coverage and time. Crash paths may not flush counters. '
              'Rust, dependencies and harness code are excluded. The JSON includes case IDs and declared test intent; '
              'review the assertions before removing a case.']
+    repetitions = report.get('case_repetitions')
+    if repetitions is not None:
+        text += ['', '## Repeated declared cases', '',
+                 'Match profile, variant, suite, transport, image type and case ID. '
+                 'These are review candidates, not proof of redundant assertions. '
+                 'Fixture state and restart boundaries can differ.', '',
+                 '| Profile / variant / suite / transport / image / case | Execution groups |', '|---|---|']
+        for row in repetitions['repeated']:
+            text.append('| ' + ' / '.join(row[k] for k in ('profile', 'variant', 'suite', 'transport', 'image', 'case'))
+                        + ' | ' + ', '.join(e['group'] for e in row['executions']) + ' |')
+        if repetitions['unlisted_groups']:
+            text += ['', 'Groups without explicit case lists are excluded from this count: '
+                     + ', '.join(repetitions['unlisted_groups']) + '. Read their actual results before a removal decision.']
     return '\n'.join(text) + '\n'
 
 

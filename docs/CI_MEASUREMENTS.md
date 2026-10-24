@@ -281,3 +281,17 @@ Keep the existing release process. These measurements do not replace its require
 main CI run. The release workflow must publish the exact packages from that run.
 The full-suite evidence file binds the report to the tested package checksums.
 No release rebuild is added.
+
+## Compare selected groups locally
+
+Use [LOCAL_TEST_COMPARISON.md](LOCAL_TEST_COMPARISON.md) to compare complete
+fixture runs before changing CI groups. The report separates repeated case
+executions from unique cases and named assertions. It also compares SQL cost
+and optional runtime line coverage. Keep release and instrumented runs separate.
+Local measurements do not include GitHub queue, download or runner setup time.
+
+`test-value.json` also lists repeated declared case identities. The key includes
+profile, variant, suite, transport and image type. The report marks prerequisite
+executions and groups without explicit case lists. Use this list to choose review
+candidates. A repeated identity does not prove that fixture state or restart
+assertions are the same.
