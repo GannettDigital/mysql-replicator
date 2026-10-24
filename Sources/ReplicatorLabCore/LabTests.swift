@@ -164,6 +164,8 @@ public enum LabTests {
                             defer { rows[i]["evidence"] = evidence }
                             try runAdapter(
                                 root: root, profile: profile, suite: suite, build: options.build,
+                                coverage: options.coverage,
+                                category: "lab/" + directory.lastPathComponent + "/" + profile.rawValue + "/" + suite,
                                 onEvidence: { evidence.append($0.path) })
                             rows[i]["status"] = "passed"
                         }
@@ -229,12 +231,15 @@ public enum LabTests {
         return row
     }
     static func runAdapter(
-        root: URL, profile: LabProfile, suite: String, build: Bool, onEvidence: @escaping (URL) -> Void
+        root: URL, profile: LabProfile, suite: String, build: Bool, coverage: Bool, category: String,
+        onEvidence: @escaping (URL) -> Void
     ) throws {
         switch suite {
         case "recovery":
             try require(profile.transactionalTarget, "forward recovery must use the shared runner")
-            try ReverseQualification.run(root: root, build: build, profile: profile, events: 0, onEvidence: onEvidence)
+            try ReverseQualification.run(
+                root: root, build: build, profile: profile, events: 0, codeCoverage: coverage, category: category,
+                onEvidence: onEvidence)
         case "native": try NativeDDLQualification.run(root: root, onEvidence: onEvidence)
         default: throw LabError("unknown adapter suite")
         }

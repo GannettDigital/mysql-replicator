@@ -3,11 +3,18 @@ import Foundation
 /// Shared InnoDB rollback and audited recovery qualification.
 public enum ReverseQualification {
     public static func run(
-        root: URL, build: Bool, profile: LabProfile = .reverse, events: Int = 100, onEvidence: ((URL) -> Void)? = nil
+        root: URL, build: Bool, profile: LabProfile = .reverse, events: Int = 100, codeCoverage: Bool = false,
+        category: String = "reverse-suite",
+        onEvidence: ((URL) -> Void)? = nil
     ) throws {
         try require((0...100000).contains(events), "events must be 0...100000 (zero omits the benchmark)")
         try require(profile.transactionalTarget, "recovery qualification requires an InnoDB target")
-        let fixture = LabFixture(root: root, profile: profile)
+        try require(!codeCoverage || events == 0, "performance measurements require an uninstrumented binary")
+        let image =
+            try codeCoverage
+            ? LabBuild.prepare(root: root, build: build, coverage: true) : "mysql-replicator-packaging:reverse"
+        let fixture = LabFixture(
+            root: root, category: category, image: image, profile: profile, codeCoverage: codeCoverage)
         let sourceService = profile.service(.source)
         let targetService = profile.service(.target)
         let h = fixture.h
@@ -21,7 +28,7 @@ public enum ReverseQualification {
         var failure: Error?
         var report: [String: Any] = ["profile": profile.rawValue, "result": "failed"]
         do {
-            try fixture.prepare(build: build)
+            try fixture.prepare(build: build && !codeCoverage)
             report.merge(fixture.versions) { _, new in new }
             report["image"] = fixture.image
             report["baseline"] = fixture.bootstrap
@@ -213,6 +220,10 @@ public enum ReverseQualification {
         } catch {
             report["error"] = String(describing: error)
             failure = error
+        }
+        do { try fixture.collectCoverage() } catch {
+            report["coverage_error"] = String(describing: error)
+            if failure == nil { failure = error }
         }
         do {
             try fixture.cleanup()

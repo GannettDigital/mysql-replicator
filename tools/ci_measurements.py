@@ -145,8 +145,8 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
                 continue
             record = by_id[identifier]
             wall[shard['image']] += record['seconds']
-            # PR smoke owns its selected obligations. In the full plan, coverage
-            # supplements release assertions (except for instrumented demos).
+            # New plans name their owners explicitly. Keep the default only
+            # for historical reports with supplemental coverage runs.
             owns = shard.get('owns_obligations', shard['image'] == 'release' or shard['suite'] == 'demo')
             if record['status'] == 'passed' and owns:
                 observed.update(key(r) for r in record['scenarios'] if r['status'] == 'passed')
@@ -174,8 +174,11 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
     timings = job_timings(jobs) if jobs else []
     # This report cannot require its own success or that of its downstream
     # evidence job. A retry can still expose their previous failed executions.
-    reporting_jobs = {'Timing & Profile Coverage Report', 'Full Suite / Release Evidence'}
-    job_failures = ([name for name, job in dependencies.items() if job.get('result') != 'success']
+    reporting_jobs = {'Timing & Profile Coverage Report', 'Full Suite / Release Evidence',
+                      'Full Suite / Test Evidence', 'Production Packages / Release Evidence'}
+    expected_skips = {'unit-tests', 'combined-coverage', 'periphery', 'swift-lint'} if manifest.get('scope') == 'production' else set()
+    job_failures = ([name for name, job in dependencies.items()
+                     if job.get('result') != ('skipped' if name in expected_skips else 'success')]
                     if dependencies is not None else
                     [j['name'] for j in timings if j['name'] not in reporting_jobs and
                      j['conclusion'] in ('failure', 'cancelled', 'timed_out', 'action_required')])
@@ -215,7 +218,7 @@ def markdown(report):
         'Line coverage measures first-party Swift runtime code. It excludes Rust and lab code. '
         'Unique lines are relative to the other measured profiles. They do not prove that a test is redundant. '
         'Coverage is attributed to a shard, not an individual case. SIGKILL cannot flush LLVM counters. '
-        'Full CI also requires native and specialized recovery adapters, which have no instrumented collection.', '',
+        'Native-only observations do not run the replicator and have no runtime coverage.', '',
         'Shard time includes tool validation and the lab run. Case time includes its assertions and waits. '
         'Nested case times overlap. The remainder can include fixture setup, cleanup and coverage export. '
         'When available, use job and step times in report.json to identify build, download and setup costs.']

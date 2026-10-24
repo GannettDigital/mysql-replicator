@@ -15,11 +15,11 @@ from ci_measurements import record_shard, summarize
 class WorkflowDependencyTests(unittest.TestCase):
     def test_report_and_release_dependencies_match_the_workflow(self):
         import re
-        from release_evidence import REQUIRED_JOBS
+        from release_evidence import REQUIRED_JOBS, PRODUCTION_JOBS
 
         workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
         for job, expected in [('measurements', REQUIRED_DEPENDENCIES),
-                              ('release-evidence', REQUIRED_JOBS)]:
+                              ('full-test-evidence', REQUIRED_JOBS), ('release-evidence', PRODUCTION_JOBS)]:
             with self.subTest(job=job):
                 block = re.search(rf'^  {job}:\n(.*?)(?=^  [a-z][\w-]*:|\Z)',
                                   workflow, re.MULTILINE | re.DOTALL)
@@ -135,6 +135,14 @@ class ResultReuseTests(unittest.TestCase):
         self.assertEqual(report['provenance']['attempt'], '3')
         self.assertEqual(report['shard_attempts'], {'one': '1', 'two': '2'})
         self.assertEqual(report['profiles']['p']['catalog_passed'], 2)
+
+    def test_production_reporting_accepts_only_intentional_test_skips(self):
+        self.manifest['scope'] = 'production'
+        for job in ('unit-tests', 'combined-coverage', 'periphery', 'swift-lint'):
+            self.dependencies[job]['result'] = 'skipped'
+        self.assertTrue(self.summary()['complete'])
+        self.dependencies['packaging-and-smoke']['result'] = 'skipped'
+        self.assertFalse(self.summary()['complete'])
 
     def test_other_commits_runs_and_future_attempts_are_rejected(self):
         for change in (dict(commit='b'), dict(run_id='8'), dict(attempt='4'), dict(attempt=None)):

@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from ci_matrix import SMOKE_PROFILES, case_groups, generate, generate_smoke, key
+from ci_matrix import SMOKE_PROFILES, case_groups, generate, generate_smoke, generate_production, key
 
 
 def row(identifier, family='database', suite='correctness', profile='forward',
@@ -33,24 +33,20 @@ class MatrixTests(unittest.TestCase):
             covered.update((shard['profile'], shard['variant'], shard['suite'], c) for c in shard['cases'])
         self.assertEqual(covered, {key(r) for r in self.rows})
         self.assertEqual(result['obligations'], len(self.rows))
-        self.assertEqual(result['coverage_reports'], 11)
+        self.assertEqual(result['coverage_reports'], 18)
         second = next(s for s in result['include'] if s['area'] == 'database-2')
         self.assertEqual(second['cases'], ['create', 'drop'])
         self.assertEqual(len(result['include']), len({s['id'] for s in result['include']}))
 
-    def test_expanded_coverage_adds_runs_without_replacing_release_obligations(self):
-        baseline = self.generate()
-        measured = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=True)
-        self.assertEqual(baseline['inventory'], measured['inventory'])
-        self.assertEqual(baseline['obligations'], measured['obligations'])
-        self.assertTrue(all(s in measured['include'] for s in baseline['include']))
-        self.assertGreater(measured['coverage_reports'], baseline['coverage_reports'])
-        for s in measured['include']:
-            if s not in baseline['include']:
-                self.assertEqual(s['image'], 'coverage')
-                self.assertIn(s['suite'], ['correctness', 'lifecycle'])
-                original = next(b for b in baseline['include'] if b['id'] == s['id'].replace('coverage-', 'release-', 1))
-                self.assertEqual(original['cases'], s['cases'])
+    def test_all_apply_tests_are_instrumented_once_and_old_flag_is_an_alias(self):
+        result = self.generate()
+        self.assertEqual(result, generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=True))
+        self.assertEqual(result['images'], ['coverage'])
+        self.assertEqual(result['coverage_mode'], 'all')
+        self.assertEqual(result['coverage_baseline_groups'], [])
+        self.assertTrue(all(s['image'] == 'coverage' and s['owns_obligations'] for s in result['include']))
+        self.assertTrue(all(s['reports'] > 0 for s in result['include'] if s['suite'] != 'native'))
+        self.assertFalse(any(s['area'] == 'smoke' for s in result['include']))
 
     def test_new_case_and_variant_automatically_enter_ci(self):
         self.rows += [row('new-case'), row('new-mode', variant='new-variant')]
@@ -79,7 +75,7 @@ class MatrixTests(unittest.TestCase):
         policy['areas'][0].pop('size')
         policy['areas'][0]['split_after'] = ['alter']
         result = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
-        for image in ['release', 'coverage']:
+        for image in ['coverage']:
             groups = [s for s in result['include'] if s['image'] == image and s['area'].startswith('database-')]
             self.assertEqual([s['cases'] for s in groups], [['create', 'alter'], ['create', 'drop']])
         self.assertEqual(result['obligations'], 3)
@@ -146,12 +142,12 @@ class MatrixTests(unittest.TestCase):
         shard = next(s for s in result['include'] if s.get('dml_transport') == 'binlog')
         self.assertEqual(shard['cases'], ['create', 'drop'])
         self.assertEqual(shard['area'], 'binlog-rows')
-        self.assertEqual(shard['image'], 'release')
+        self.assertEqual(shard['image'], 'coverage')
         self.assertFalse(shard['owns_obligations'])
         self.assertEqual(result['obligations'], len(self.rows))
         expanded = generate([dict(scenarios=self.rows)], self.policy, expanded_coverage=True)
         copies = [s for s in expanded['include'] if s.get('dml_transport') == 'binlog']
-        self.assertEqual({s['image'] for s in copies}, {'release', 'coverage'})
+        self.assertEqual({s['image'] for s in copies}, {'coverage'})
         for invalid in [[], ['missing'], ['drop', 'drop']]:
             self.policy['binlog_selections'][0]['cases'] = invalid
             with self.subTest(cases=invalid), self.assertRaises(ValueError):
@@ -184,64 +180,28 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual((shard['suite'], shard['tier'], shard['variant']), ('correctness', 'full', 'default'))
             self.assertEqual(shard['area'], selection['area'])
 
-    def test_pr_selection_expands_dependencies_and_is_reused_in_full_ci(self):
+    def test_pr_cases_are_not_repeated_as_supplemental_full_runs(self):
         rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'alter', 'full-only']]
-        for r in rows:
-            if r['id'] == 'alter':
-                r['dependencies'] = ['create']
-        policy = dict(areas=[dict(name='database', families=['database'])],
-                      demo_reports={},
-                      pr_smoke=dict(area='ddl-dml-policy-replay', cases=['alter']))
-        pr = generate_smoke([dict(scenarios=rows)], policy['pr_smoke'])
-        full = generate([dict(scenarios=rows)], policy, expanded_coverage=True)
-        self.assertEqual(pr['obligations'], 4)
+        policy = dict(areas=[dict(name='database', families=['database'])], demo_reports={},
+                      pr_smoke=dict(area='selected', cases=['create']))
+        full = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(len(full['include']), 2)
         self.assertEqual(full['obligations'], 6)
-        for shard in pr['include']:
-            self.assertEqual(shard['cases'], ['create', 'alter'])
-            supplement = next(s for s in full['include'] if s['id'] == shard['id'])
-            self.assertEqual(supplement, dict(shard, owns_obligations=False))
+        self.assertTrue(all(g['cases'] == ['create', 'alter', 'full-only'] for g in full['include']))
 
-    def test_full_coverage_extension_preserves_pr_and_release_owners(self):
-        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'alter', 'extra', 'setup']]
-        for r in rows:
-            if r['id'] == 'extra':
-                r['dependencies'] = ['setup']
-        policy = dict(areas=[dict(name='database', families=['database'])], demo_reports={},
-                      pr_smoke=dict(area='ddl-dml', cases=['create', 'alter']))
-        original = generate([dict(scenarios=rows)], policy)
-        pr = generate_smoke([dict(scenarios=rows)], policy['pr_smoke'])
-        policy['full_coverage_extensions'] = {SMOKE_PROFILES[0]: dict(area='conditional-ddl', cases=['extra'])}
-        for expanded in (False, True):
-            full = generate([dict(scenarios=rows)], policy, expanded_coverage=expanded)
-            self.assertEqual([g for g in full['include'] if g['image'] == 'release'],
-                             [g for g in original['include'] if g['image'] == 'release'])
-            self.assertEqual(full['obligations'], original['obligations'])
-            self.assertEqual(full['inventory'], original['inventory'])
-            selected = next(g for g in full['include'] if g['area'] == 'conditional-ddl')
-            self.assertEqual(selected['cases'], ['create', 'alter', 'extra', 'setup'])
-            self.assertEqual(selected['dependency_cases'], ['setup'])
-            self.assertEqual((selected['image'], selected['reports'], selected['owns_obligations']),
-                             ('coverage', 1, False))
-            self.assertIn(selected['id'], full['coverage_baseline_groups'])
-            self.assertNotIn(pr['include'][0]['id'], full['coverage_baseline_groups'])
-            self.assertFalse(any(g['area'] == 'sample' for g in full['include']))
-        self.assertEqual(generate_smoke([dict(scenarios=rows)], policy['pr_smoke']), pr)
-
-    def test_invalid_full_coverage_extensions_fail(self):
-        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'extra']]
-        rows += [dict(row('unavailable', profile=SMOKE_PROFILES[0]), status='not_applicable')]
-        policy = dict(areas=[dict(name='database', families=['database'])], demo_reports={},
-                      pr_smoke=dict(area='ddl-dml', cases=['create']))
-        invalid = [None, [], {}, dict(area='ddl-dml', cases=['extra']), dict(area='smoke', cases=['extra']),
-                   dict(area='extended', cases=[]), dict(area='extended', cases=['missing']),
-                   dict(area='extended', cases=['unavailable']), dict(area='extended', cases=['create']),
-                   dict(area='extended', cases=['extra', 'extra']), dict(area='extended', cases=[None])]
-        for extension in invalid:
-            with self.subTest(extension=extension), self.assertRaises(ValueError):
-                generate([dict(scenarios=rows)], dict(policy, full_coverage_extensions={SMOKE_PROFILES[0]: extension}))
-        for extensions in [[], {'unknown': dict(area='extended', cases=['extra'])}]:
-            with self.assertRaisesRegex(ValueError, 'selected PR profile'):
-                generate([dict(scenarios=rows)], dict(policy, full_coverage_extensions=extensions))
+    def test_production_checks_only_apply_checkpoint_and_resume(self):
+        rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['positive', 'offline-replay', 'other']]
+        result = generate_production([dict(scenarios=rows)])
+        self.assertEqual((result['scope'], result['images'], result['coverage_reports']),
+                         ('production', ['release'], 0))
+        self.assertEqual(result['obligations'], 4)
+        self.assertEqual(len(result['include']), 2)
+        for group in result['include']:
+            self.assertEqual(group['cases'], ['positive', 'offline-replay'])
+            self.assertTrue(group['owns_obligations'])
+            self.assertEqual(group['image'], 'release')
+        with self.assertRaises(ValueError):
+            generate_production([dict(scenarios=[r for r in rows if r['id'] != 'offline-replay'])])
 
     def test_pr_selection_rejects_empty_duplicate_and_unknown_cases(self):
         rows = [row('create', profile=p) for p in SMOKE_PROFILES]

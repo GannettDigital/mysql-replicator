@@ -92,7 +92,7 @@ def select_groups(full, change_plan, baseline):
         raise ValueError('component cases are missing from the selected execution groups')
     rows = [r for r in inventory if key(r) in selected_keys and r['status'] == 'not_run']
     groups = list(groups.values())
-    return dict(scope='pr-selected', images=sorted({g['image'] for g in groups}), coverage_mode='selected',
+    return dict(scope='pr-selected', images=sorted({g['image'] for g in groups}), coverage_mode='all' if all(g['image'] == 'coverage' for g in groups) else 'selected',
                 include=groups, inventory=rows, obligations=len(rows),
                 coverage_baseline_groups=base['coverage_baseline_groups'],
                 coverage_reports=sum(g['reports'] for g in groups), components=explanations,

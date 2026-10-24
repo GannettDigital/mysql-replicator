@@ -145,8 +145,8 @@ Execution stops at the first failure.
 Local checks use the same component planner as CI. The baseline case IDs come
 from `tools/ci_matrix.json`. Component plans also show exact cases and variants
 in `integration_plan`. They run in sequence and use normal lab binaries.
-They do not publish CI coverage or release evidence. CI retains parallel jobs,
-instrumented collections, package checks, and the exact release-binary checks.
+They do not publish CI coverage or release evidence. CI runs selected groups in parallel with coverage. Main builds packages and
+runs the short production-binary checks.
 The full local selection runs all catalog suites and variants. Use CI to certify
 the release packages.
 
@@ -199,11 +199,10 @@ source/target reconnect, MyISAM crash recovery, operator demos, or same-version
 profiles. Component selections can add some of these checks. Full CI retains all
 of them. Unit coverage does not replace their database behavior checks.
 
-Full CI keeps all 2,095 current catalog obligations and all release-binary selections.
-Its two cross-version coverage supplements use this same explicit PR selection
-so reports can compare full-suite coverage with the current PR baseline. The two
-same-version smoke supplements keep their existing local smoke selection.
-Component selection does not change full-suite jobs or coverage collections.
+Full CI keeps all 2,095 current catalog obligations. Each selected apply group
+uses the coverage binary once. It does not repeat PR baseline fixtures solely
+for coverage. Main builds production packages and checks two short selections.
+See [release testing](RELEASE_TESTING.md).
 
 ## Change or inspect the selection
 

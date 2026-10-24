@@ -9,7 +9,7 @@ on:
         options: [full, pr-smoke]
         default: full
       expanded_coverage:
-        description: Add instrumented correctness and lifecycle shards for all profiles and variants
+        description: Legacy alias for full coverage (all test runs now collect coverage)
         type: boolean
         default: false
   push:
@@ -25,7 +25,7 @@ permissions:
 
 concurrency:
   # Unrelated labels must not cancel a running test suite.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !contains(fromJSON('["ci-full","ci-expanded-coverage"]'), github.event.label.name) && github.run_id || 'tests' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && !contains(fromJSON('["ci-full","ci-expanded-coverage"]'), github.event.label.name) && github.run_id || 'tests' }}
   cancel-in-progress: true
 
 jobs:
@@ -54,6 +54,7 @@ jobs:
 
   tool-tests:
     needs: select-suite
+    if: needs.select-suite.outputs.scope != 'production'
     name: Python Tool Tests
     runs-on: ubuntu-24.04
     steps:
@@ -396,7 +397,7 @@ jobs:
           path: artifacts/ci/measurements/*.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: always() && matrix.image == 'coverage'
+        if: always() && matrix.reports > 0
         with:
           overwrite: true
           name: coverage-integration-${{ matrix.id }}
@@ -416,7 +417,7 @@ jobs:
           if-no-files-found: ignore
 
   packaging-and-smoke:
-    # Preserve the required check name. Full scope also requires packages.
+    # Preserve the required check name. Production scope checks packages after merge.
     name: Debian Packaging & Integration Smoke
     needs: [select-suite, tool-tests, unit-tests, periphery, swift-lint, lab-tools, build-images, integration]
     if: always() && needs.select-suite.result != 'skipped'
@@ -432,7 +433,7 @@ jobs:
   combined-coverage:
     name: Combined Swift Coverage
     needs: [lab-tools, unit-tests, packaging-and-smoke]
-    if: always() && !cancelled() && needs.lab-tools.result != 'skipped'
+    if: always() && !cancelled() && needs.lab-tools.result != 'skipped' && needs.lab-tools.outputs.scope != 'production'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -471,6 +472,7 @@ jobs:
 
   swift-lint:
     needs: select-suite
+    if: needs.select-suite.outputs.scope != 'production'
     name: Swift Syntax and Format
     runs-on: ubuntu-24.04
     container: swift:6.2.1-jammy@sha256:6e33c70a59180c9b518f67728538312975cb3891177d20215cd2e31bdfe70791
@@ -540,6 +542,7 @@ jobs:
           pattern: ci-measurement-*-*
           path: artifacts/ci/downloaded-measurements
       - uses: actions/download-artifact@v4
+        if: needs.lab-tools.outputs.scope != 'production'
         with:
           name: coverage-unit
           path: artifacts/ci/unit
@@ -559,10 +562,13 @@ jobs:
       - name: Report timing, catalog results and profile line coverage
         env:
           CI_JOB_RESULTS: ${{ toJSON(needs) }}
+          CI_SUITE: ${{ needs.lab-tools.outputs.scope }}
         run: |
+          extra=()
+          if [ "$CI_SUITE" != production ]; then extra+=(--unit-coverage artifacts/ci/unit/coverage.json); fi
           python3 tools/ci_measurements.py --matrix artifacts/ci/matrix.json \
             --records artifacts/ci/downloaded-measurements --jobs artifacts/ci/jobs.json --builds artifacts/ci/builds \
-            --unit-coverage artifacts/ci/unit/coverage.json --optional-job-timings
+            "${extra[@]}" --optional-job-timings
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -571,10 +577,51 @@ jobs:
           path: artifacts/ci/report/
           if-no-files-found: error
 
-  release-evidence:
-    name: Full Suite / Release Evidence
+  full-test-evidence:
+    name: Full Suite / Test Evidence
     needs: [lab-tools, unit-tests, packaging-and-smoke, combined-coverage, periphery, swift-lint, measurements]
     if: always() && !cancelled() && needs.lab-tools.outputs.scope == 'full'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-measurement-report
+          path: artifacts/ci/report
+      - name: Record full test results and source tree
+        env:
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python3 tools/release_evidence.py create
+      - uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: full-test-evidence
+          path: artifacts/ci/full-test-evidence.json
+          retention-days: 90
+          if-no-files-found: error
+
+  tested-source:
+    name: Match merged source to full tests
+    needs: select-suite
+    if: needs.select-suite.outputs.scope == 'production'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find successful full tests for this Git tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/release_evidence.py find-tests
+      - uses: actions/upload-artifact@v4
+        with:
+          overwrite: true
+          name: tested-source
+          path: artifacts/ci/tested-source.json
+          if-no-files-found: error
+
+  release-evidence:
+    name: Production Packages / Release Evidence
+    needs: [lab-tools, packaging-and-smoke, measurements, tested-source]
+    if: always() && !cancelled() && needs.lab-tools.outputs.scope == 'production'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -586,7 +633,11 @@ jobs:
         with:
           name: release-package-checksums
           path: artifacts/release
-      - name: Record full test results and package identity
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-source
+          path: artifacts/ci
+      - name: Link full tests and the exact production packages
         env:
           CI_JOB_RESULTS: ${{ toJSON(needs) }}
         run: python3 tools/release_evidence.py create
@@ -595,4 +646,5 @@ jobs:
           overwrite: true
           name: release-test-evidence
           path: artifacts/release/release-test-evidence.json
+          retention-days: 90
           if-no-files-found: error

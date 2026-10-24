@@ -45,6 +45,15 @@ class ReleaseCutTests(unittest.TestCase):
         (self.root / 'SHA256SUMS').write_text(line)
         return line
 
+    def test_package_verification_uses_the_tagged_commit_tree(self):
+        self.manifest()
+        (self.root / 'release-test-evidence.json').write_text('{}')
+        with patch.object(cut, 'verify') as verify, patch.object(cut, 'run', return_value='d' * 40) as run, \
+                patch.object(cut, 'verify_files', return_value=cut.required_assets(self.version)):
+            cut.verify_packages(self.root, self.repo, self.commit, self.ci, self.version)
+        self.assertEqual(verify.call_args.args[-1], 'd' * 40)
+        run.assert_called_once_with('git', 'rev-parse', self.commit + '^{tree}')
+
     def test_corrupt_or_missing_assets_stop_release(self):
         self.manifest()
         self.assertEqual(cut.verify_files(self.root), {'asset.tar.gz'})

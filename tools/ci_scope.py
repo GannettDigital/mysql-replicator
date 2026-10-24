@@ -22,8 +22,8 @@ def select(event_name, event):
                 'expanded': EXPANDED_LABEL in labels}
     if event_name == 'push':
         if event['ref'] != 'refs/heads/main':
-            raise ValueError('automatic full CI requires main')
-        return {'scope': 'full', 'expanded': False}
+            raise ValueError('automatic production build requires main')
+        return {'scope': 'production', 'expanded': False}
     if event_name != 'workflow_dispatch':
         raise ValueError('unsupported CI event: ' + event_name)
     inputs = event.get('inputs', {})
@@ -48,7 +48,7 @@ def resolve(event_name, event, change_plan=None):
 
 def check_results(scope, results):
     checks = checks_for(scope)
-    expected = {'select-suite': True, 'tool-tests': True, 'swift-lint': True, 'unit-tests': checks['unit'],
+    expected = {'select-suite': True, 'tool-tests': checks['tooling'], 'swift-lint': checks['tooling'], 'unit-tests': checks['unit'],
                 'periphery': checks['periphery'], 'lab-tools': checks['integration'],
                 'build-images': checks['integration'], 'integration': checks['integration']}
     for job, required in expected.items():
@@ -85,8 +85,9 @@ def main():
         for name, enabled in selected['checks'].items():
             output.write(name + '=' + str(enabled).lower() + '\n')
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-        summary.write('CI scope: **' + selected['scope'] + '**. Expanded coverage: '
-                      + str(selected['expanded']).lower() + '.\n\n' + selected['reason'] + '.\n\n')
+        mode = ('Production checks use the shipped binary.' if selected['scope'] == 'production'
+                else 'Selected apply tests collect coverage.')
+        summary.write('CI scope: **' + selected['scope'] + '**. ' + mode + '\n\n' + selected['reason'] + '.\n\n')
         summary.write('Selected checks: ' + ', '.join(k for k, v in selected['checks'].items() if v) + '.\n\n')
         for change in selected['changes']:
             summary.write('- ' + json.dumps(change['path']) + ': ' + change['reason'] + '.\n')

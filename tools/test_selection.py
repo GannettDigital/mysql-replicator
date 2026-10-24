@@ -23,6 +23,8 @@ SELECTOR_PATHS = {
 
 
 def checks_for(scope):
+    if scope == 'production':
+        return dict(tooling=False, unit=False, periphery=False, integration=True)
     if scope not in SCOPES:
         raise ValueError('unknown test scope: ' + scope)
     runtime = scope in ('pr-smoke', 'pr-selected', 'full')

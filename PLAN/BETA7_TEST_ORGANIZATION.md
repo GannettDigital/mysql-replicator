@@ -1,3 +1,4 @@
+<!-- Current CI model: BETA7_SINGLE_TEST_BUILD.md. Earlier measurements below record prior plans. -->
 # Beta.7 test selection and job organization
 
 ## Purpose
@@ -47,7 +48,8 @@ both normal and expanded plans after the stack has been rebased.
 
 Combining execution groups in one CI job does not mean sharing database state.
 We can later combine compatible cases in one fixture after we check their setup
-and cleanup requirements. Keep separate release and instrumented executions.
+and cleanup requirements. Use one instrumented execution for each test group. Build production packages
+after merge and run the small checks described in [the release model](BETA7_SINGLE_TEST_BUILD.md).
 
 ## Work order
 
@@ -144,19 +146,22 @@ method; that database group is already combined in CI. Fresh line coverage was
 not measured because its cold build stalled. See
 [the study](BETA7_LOCAL_TEST_GROUP_STUDY.md) for evidence and limits.
 
-The [sample review](BETA7_SAMPLE_REVIEW.md) removes only the duplicate release
-sample. Its cases remain in their full groups. The subsequent
-[coverage comparison](BETA7_COVERAGE_SAMPLE_COMPARISON.md) also removes the
-separate instrumented sample. The combined forward selection retains all 10,649
-measured runtime lines, all previous cases and assertions, and adds an explicit
-conditional-database check. Local measured cost fell from 464.70 to 374.46 seconds.
-The current plans have 244 normal groups in 129 jobs, or 477 expanded groups in
-246 jobs. All 2,095 catalog obligations remain. PR checks stay unchanged.
+The [sample review](BETA7_SAMPLE_REVIEW.md) removed the duplicate release sample.
+The [sample comparison](BETA7_COVERAGE_SAMPLE_COMPARISON.md) then combined its
+instrumented cases with the forward baseline. It retained all 10,649 measured
+runtime lines. The new [single test build](BETA7_SINGLE_TEST_BUILD.md) supersedes
+that supplemental coverage plan. It retains the cases in their full groups and
+instruments each group once. It produces 240 groups in 125 jobs and retains all
+2,095 catalog obligations. PR selection remains unchanged.
 
 Use exact file/line differences to review a costly group with a small gain.
 Inspect the branch condition. Prefer a focused unit test or a small addition to
 an existing integration case when it can retain that behavior. Measure the
 replacement before removing its original coverage run.
+
+The next full run will use the [single test build](BETA7_SINGLE_TEST_BUILD.md).
+The earlier expanded study was not started. Use the new run's line maps to rank
+the next area; the older main timing report did not instrument the full suite.
 
 Remove a test only after another test retains its behavior and assertions.
 Overlapping line coverage or equal SQL text is insufficient evidence. Select the

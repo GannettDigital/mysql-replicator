@@ -48,12 +48,13 @@ def assign_jobs(plan, policy):
             counters[key] += 1
             profile, variant, image = key
             job = dict(id=f'job-{image}-{profile}-{variant}-{counters[key]}',
-                       profile=profile, variant=variant, image=image, area='', group_ids=[],
+                       profile=profile, variant=variant, image=image, area='', group_ids=[], reports=0,
                        timeout_minutes=setup)
             jobs.append(job)
             if not isolated:
                 pending[key] = job
         job['group_ids'].append(group['id'])
+        job['reports'] += group.get('reports', 0)
         job['area'] += (' + ' if job['area'] else '') + group['area']
         job['timeout_minutes'] += minutes
         if len(job['group_ids']) == maximum:

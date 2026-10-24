@@ -63,7 +63,8 @@ def verify_packages(directory, repo, commit, ci, version):
     checksums = (directory / 'SHA256SUMS').read_bytes()
     evidence = json.loads((directory / 'release-test-evidence.json').read_text())
     verify(evidence, checksums, dict(GITHUB_REPOSITORY=repo, GITHUB_SHA=commit,
-           CI_RUN_ID=str(ci['id']), CI_RUN_ATTEMPT=str(ci['run_attempt'])), version)
+           CI_RUN_ID=str(ci['id']), CI_RUN_ATTEMPT=str(ci['run_attempt'])), version,
+           run('git', 'rev-parse', commit + '^{tree}'))
     require(required_assets(version) <= verify_files(directory), 'release assets are incomplete')
 
 

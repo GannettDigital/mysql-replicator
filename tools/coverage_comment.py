@@ -57,7 +57,7 @@ def validate(metrics):
             raise ValueError("invalid coverage counts")
         if metrics["complete"] and count["total"] == 0:
             raise ValueError("complete report has missing coverage")
-    for key, allowed in [('ci_suite', ('full', 'pr-smoke', 'pr-selected')), ('coverage_mode', ('selected', 'expanded'))]:
+    for key, allowed in [('ci_suite', ('full', 'pr-smoke', 'pr-selected')), ('coverage_mode', ('selected', 'expanded', 'all'))]:
         if key in metrics and metrics[key] not in allowed:
             raise ValueError('invalid coverage scope')
     for key in ('integration_jobs', 'instrumented_jobs', 'integration_reports', 'expected_integration_reports',

@@ -240,7 +240,7 @@ final class LabProfileTests: XCTestCase {
     func testInvalidSelectionsFailBeforeProvisioning() {
         for args in [
             ["--suite", "demo", "--tier", "smoke"], ["--profile", "wrong"], ["--suite", "wrong"], ["--tier", "wrong"],
-            ["--suite", "demo", "--case", "matrix-values"], ["--coverage", "--suite", "recovery"],
+            ["--suite", "demo", "--case", "matrix-values"], ["--coverage", "--suite", "native"],
         ] {
             XCTAssertThrowsError(try LabTestOptions(args))
         }
@@ -250,6 +250,13 @@ final class LabProfileTests: XCTestCase {
         XCTAssertTrue(options.coverage)
         XCTAssertEqual(options.profiles, LabProfile.allCases)
     }
+    func testAllRecoveryProfilesAcceptCoverage() throws {
+        for profile in LabProfile.allCases {
+            let options = try LabTestOptions(["--profile", profile.rawValue, "--suite", "recovery", "--coverage"])
+            XCTAssertTrue(options.coverage)
+        }
+    }
+
     func testLifecycleSelectionKeepsDependenciesAndRejectsMissingCases() throws {
         XCTAssertEqual(
             try LabLifecycle.select(family: nil, ids: ["source-reconnect", "target-reconnect"]),

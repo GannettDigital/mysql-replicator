@@ -109,7 +109,7 @@ class ComponentTests(unittest.TestCase):
         for label in ['ci-full', 'ci-expanded-coverage']:
             event['pull_request']['labels'] = [dict(name=label)]
             self.assertEqual(resolve('pull_request', event, self.change)['scope'], 'full')
-        self.assertEqual(resolve('push', dict(ref='refs/heads/main'), self.change)['scope'], 'full')
+        self.assertEqual(resolve('push', dict(ref='refs/heads/main'), self.change)['scope'], 'production')
 
     def test_ci_reads_saved_selection_and_refuses_missing_artifact(self):
         query = Mock()

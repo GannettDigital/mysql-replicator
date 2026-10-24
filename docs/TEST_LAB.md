@@ -12,10 +12,9 @@ selection stay the same. The report records `dml_transport`. Read the
 Full CI adds selected BINLOG jobs for each profile. Their names include
 `binlog-rows-json-replay`, `binlog-gtids-disabled`, or `binlog-reconnect`.
 The exact case lists are in `tools/ci_matrix.json` under `binlog_selections`.
-These jobs use the release binary and supplement the SQL jobs. PR smoke
-selection stays unchanged. The current expanded-coverage matrix exceeds GitHub's
-256-job limit; it needs separate matrices before instrumented copies can run.
-See [the BINLOG plan](../PLAN/BINLOG_TRANSPORT.md#ci-matrix-size).
+These jobs use the coverage binary and supplement the SQL transport checks.
+PR selection stays unchanged. The full plan fits the GitHub matrix limit.
+See [release testing](RELEASE_TESTING.md) for production package checks.
 Use `--variant without-source-gtids --case positive` to check basic DML without
 target GTID preservation. Add `--case ddl-compat-generated` to check SQL selection
 for generated columns. SQLite still tracks source GTIDs in that variant.
@@ -575,7 +574,8 @@ CI_SUITE=pr-smoke python3 tools/ci_lab.py --plan .build/debug/replicator-lab
 jq '.include[] | {profile, variant, area, suite, cases}' artifacts/ci/matrix.json
 ```
 
-Use `CI_SUITE=full` for the main plan. It is also the local default.
+Use `CI_SUITE=full` for the pre-merge full plan. It is also the local default.
+Use `CI_SUITE=production` to inspect the two post-merge package checks.
 The manifest and timing report identify the scope. A complete smoke report means
 that all selected smoke obligations passed. It does not certify all profiles.
 
@@ -798,9 +798,9 @@ See [5.7 MyISAM setup](MYSQL57_MYISAM.md) for deployment boundaries.
 ## CI cost and coverage reports
 
 See [CI measurements](CI_MEASUREMENTS.md) for case and shard timing, profile
-catalog results, expanded line coverage, and test-area cost comparisons.
-The same catalog drives PR smoke, full and expanded CI. Full and expanded plans
-retain release-binary checks. These measurements do not change the supported
+catalog results, line coverage, and test-area cost comparisons.
+The same catalog drives selected PR checks, full tests and production checks.
+All selected apply tests collect coverage. Main runs small package checks. These measurements do not change the supported
 profiles or assertions.
 
 ## Support requirements

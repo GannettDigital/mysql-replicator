@@ -25,6 +25,23 @@ class CIShardsTests(unittest.TestCase):
                                         '--variant', 'default', '--tier', 'full', '--list'))
         self.assertTrue(all('full-only' not in s['cases'] for s in result['include']))
 
+    def test_production_plan_has_two_short_uninstrumented_checks(self):
+        from ci_matrix import SMOKE_PROFILES
+        query = Mock(side_effect=[json.dumps(dict(scenarios=[dict(id=c, profile=p, suite='correctness',
+                     variant='default', status='not_run') for c in ['positive', 'offline-replay', 'other']]))
+                                  for p in SMOKE_PROFILES])
+        with patch.dict(ci_lab.os.environ, CI_SUITE='production'):
+            result = ci_lab.select_plan(query)
+        self.assertEqual((result['scope'], result['images'], len(result['jobs'])), ('production', ['release'], 2))
+        for group in result['include']:
+            self.assertNotIn('--coverage', ci_lab.command(group))
+            self.assertEqual(group['cases'], ['positive', 'offline-replay'])
+
+    def test_recovery_collects_coverage_but_native_observations_do_not(self):
+        for suite in ('recovery', 'native'):
+            command = ci_lab.command(dict(profile='mysql57-to-mysql84-innodb', suite=suite, image='coverage'))
+            self.assertEqual('--coverage' in command, suite == 'recovery')
+
     def test_unknown_selection_fails_before_catalog_queries(self):
         query = Mock()
         with patch.dict(ci_lab.os.environ, CI_SUITE='typo'), self.assertRaisesRegex(ValueError, 'CI_SUITE'):

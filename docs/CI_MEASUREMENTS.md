@@ -80,14 +80,13 @@ Row comparisons and independent binlog checks retain their existing boundaries.
 Batch framing preserves empty results and exact whitespace. A missing or
 unexpected frame fails the comparison.
 
-Use the beta.4 release stack to collect a baseline for all four profiles.
+Use the beta.7 release candidate to collect measurements for all four profiles.
 PR checks use [changed-file selection](PR_TEST_SELECTION.md). Component checks
 include the two-profile baseline and matching groups. Shared runtime changes
-select the full catalog. Unit tests and Periphery remain parallel checks. Main retains
-the full catalog. Add `ci-full` to the top release PR to run that catalog before
+select the full catalog. Unit tests and Periphery remain parallel checks. Main builds production packages and runs two small binary checks. Add `ci-full` to the top release PR to run that catalog before
 merge. See [release testing](RELEASE_TESTING.md) for the evidence and release gate.
 The targets for later work are five minutes for PR feedback and twenty minutes
-for the complete merge checks. This change does not claim those times.
+for the full pre-merge checks. This change does not claim those times.
 
 ## Execution groups and CI jobs
 
@@ -119,17 +118,15 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 244 | 129 | 22 |
-| Full with expanded coverage | 477 | 246 | 255 |
+| Full | 240 | 125 | 253 |
+| Main production packages | 2 | 2 | 0 |
 
-All 2,095 full-catalog obligations remain. The duplicate release sample was
-removed after [review](../PLAN/BETA7_SAMPLE_REVIEW.md). Its cases remain in their
-full release groups. A [current coverage comparison](../PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md)
-then combined the forward coverage selection and sample into one fixture. It
-retained every measured runtime line and added an explicit conditional-database
-check. These counts come from local plan generation; CI runtime measurements
-are still needed. The planner checks the 256-job limit
-after grouping. More cases can require a later grouping-policy change.
+All 2,095 full-catalog obligations remain. Full CI runs each apply group with
+coverage once. It does not add copies for coverage or repeat the PR baseline.
+The [sample comparison](../PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md) records the
+previous consolidation. Its cases now run in their full-catalog groups.
+The planner checks the 256-job limit after grouping. These are local plan counts;
+GitHub runtime measurements are still needed.
 
 ## Normal CI
 
@@ -144,8 +141,8 @@ The report separates these measurements:
 
 - Catalog coverage: passed obligations divided by applicable obligations for
   each selected profile and scope. The baseline scope is `pr-smoke`. Component
-  scope is `pr-selected`; it can contain release and coverage groups. PRs with
-  `ci-full` and main use `full`. Manual runs default to `full`. This is coverage of our selected catalog, not all MySQL features.
+  scope is `pr-selected`. All selected apply groups collect coverage. PRs with
+  `ci-full` use `full`. Main uses `production`. Manual runs default to `full`. This is coverage of our selected catalog, not all MySQL features.
 - Code coverage: the union of mapped Swift runtime lines reached by instrumented
   runs. It excludes Rust, dependencies and the lab. The existing combined Swift
   report also includes unit coverage.
@@ -184,67 +181,28 @@ required test check. Shard and report uploads replace their earlier artifacts.
 
 ## Expanded coverage for the release candidate
 
-Start expanded coverage manually on the release candidate branch or tag.
-The `ci-full` label runs the full PR suite without expanded instrumentation.
-Add `ci-expanded-coverage` to a PR to collect expanded coverage. This label also
-selects the full suite. Each later push keeps this selection. Remove the expanded
-label to return to normal full CI if `ci-full` remains, or smoke CI if it does not.
-Both label changes start a new CI run. Unrelated labels do not start or cancel CI.
+Full CI collects coverage for all apply groups by default. Use `ci-full` on the
+release candidate PR, or dispatch:
 
 ```sh
-gh pr edit <top-pr-number> --add-label ci-full --add-label ci-expanded-coverage
+gh workflow run ci.yml --ref <branch-or-tag> -f suite=full
 ```
 
-After the workflow is available on main, a manual run can use:
+`ci-expanded-coverage` and `expanded_coverage=true` remain accepted aliases.
+They do not repeat tests. Correctness, reconnect, recovery and demo runs export
+coverage. Native-only observations do not run the replicator and have no line map.
 
-```sh
-gh workflow run ci.yml --ref <branch-or-tag> -f suite=full -f expanded_coverage=true
-```
-
-Expanded mode retains every release-binary shard. It adds instrumented copies
-of shared correctness and lifecycle shards for every applicable variant.
-Runtime PR CI has two smoke shards and two integration coverage collections.
-Documentation and report-only selections do not collect Swift coverage or produce
-this measurement report. See [changed-file selection](PR_TEST_SELECTION.md).
-Each PR shard selects 11 named cases from the full catalog. Full CI adds
-`database-existing-different` and `ddl-modify-demo-varchar-120` to the forward
-coverage selection. Its area is `ddl-dml-conditional-schema-policy-replay`.
-The reverse selection stays at 11 cases. `full_coverage_extensions` in
-`tools/ci_matrix.json` defines the additions. The former separate sample is gone.
-The plan's `coverage_baseline_groups` names the measured baseline groups.
-PR and full-CI baselines therefore differ; the report lists their exact cases.
-The earlier suite had 108 normal full shards and 203 expanded shards for 718
-catalog obligations. These are historical counts. The beta.6 catalog now has
-2,085 obligations. After the DML split below, normal full CI has 226 jobs.
-The generated matrix is the authority when the catalog changes.
-
-The beta.7 job plan now fits expanded coverage within the matrix limit.
-See [execution groups and CI jobs](#execution-groups-and-ci-jobs) for current
-counts. Coverage collection remains attached to each execution group.
-
-DDL and bootstrap now use two groups per profile and variant. The group
-boundaries use the [PR #41 timings](../PLAN/PR41_TEST_SUITE_RESULTS.md).
-This removes repeated fixture setup without removing cases. Expect fewer
-coverage collections because fewer fixtures run. Check line sets and catalog
-results separately; the collection count is not a coverage percentage.
-
-DML uses groups of at most eight cases. In the beta.6 stack, a single DML job
-contained 44–48 cases and reached the 45-minute timeout while cases were still
-passing. The split retains the same case inventory and dependencies. Check the
-next CI timings before changing the timeout or selecting fewer cases. See the
-[beta.6 failure report](../PLAN/BETA6_CI_FAILURES.md).
-
-Native-reference and specialized recovery adapters do not export line coverage.
-Their existing tests remain required. Demo collections remain instrumented.
-This experiment is more expensive than normal CI. It is evidence for later
-selection changes. It is separate from the PR smoke selection.
+The full plan does not repeat the PR baseline groups. Thus its report does not
+claim an exact PR-baseline delta. Use the union of integration lines, exclusive
+lines by area, and exclusive lines after unit coverage to identify expensive
+areas for review. Retain profile, variant and behavior checks when lines overlap.
 
 ## Read coverage scope and test value
 
 The coverage summary states the test scope and instrumentation mode. It shows
 planned integration jobs, jobs that collect coverage, and collected versus
 expected fixture reports. A fixture report is not a job or an assertion.
-A complete selected report does not mean that all release tests were instrumented.
+Read the scope before comparing reports. Production checks have no line coverage.
 The PR comment uses the same scope fields. Its publisher runs trusted code from
 main. New comment wording takes effect after that publisher change reaches main;
 PR job summaries and artifacts use the code in the tested PR immediately.
@@ -266,11 +224,10 @@ can be compared. Line gains are not additive. Catalog keys can occur in several
 rows, so their sum is not catalog coverage.
 
 Review assertions, profile behavior and failure checks before removing a case.
-Equal line coverage does not prove equal test value. Native-reference and
-specialized recovery adapters remain required without line maps. Rust code is
+Equal line coverage does not prove equal test value. Native-reference observations remain required without replicator line maps. Rust code is
 not measured. SIGKILL can prevent the process from saving coverage counters.
-Use expanded coverage for a test-suite investigation. Keep normal full CI as the
-release default. Coverage binaries are diagnostic builds, not release packages.
+Full CI supplies the test-suite measurements. Coverage binaries are test builds;
+main builds separate production packages.
 
 ## Review the evidence
 
@@ -279,14 +236,15 @@ missing build record and test shards. The report remains partial, and the job
 fails after it saves the report. Results without a matching build record cannot
 qualify a release. Check `summary.md` and `report.json` for these failures.
 
-Collect one complete expanded report on the release candidate. Compare
+Collect one complete full report on the release candidate. Compare
 runner-minutes as well as elapsed time. Check build time, cache transfer, image download/load, fixture time and the longest
 shards. Do not treat the delay before a dependent job starts as proven runner
 queue time. GitHub step times have second-level precision.
 
 Keep the existing release process. These measurements do not replace its required
 main CI run. The release workflow must publish the exact packages from that run.
-The full-suite evidence file binds the report to the tested package checksums.
+The release evidence links pre-merge full tests to the same Git tree and the
+production package checks. See [release testing](RELEASE_TESTING.md).
 No release rebuild is added.
 
 ## Compare selected groups locally

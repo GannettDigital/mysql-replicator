@@ -78,6 +78,13 @@ class CommentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publisher.validate(dict(report, **{key: value}))
 
+    def test_all_mode_describes_one_instrumented_run(self):
+        report = dict(metrics(), ci_suite='full', coverage_mode='all')
+        publisher.validate(report)
+        text = publisher.description(report)
+        self.assertIn('coverage binary once', text)
+        self.assertNotIn('copies', text)
+
     def test_component_scope_does_not_claim_all_selected_tests_collect_coverage(self):
         report = dict(metrics(), ci_suite='pr-selected', coverage_mode='selected')
         text = publisher.comment(publisher.validate(report), dict(id=12, run_attempt=1), 'owner/repo')

@@ -34,8 +34,17 @@ class ScopeTests(unittest.TestCase):
         self.assertIsNone(select('pull_request', self.pr('labeled', ['ci-expanded-coverage'], 'documentation')))
 
     def test_main_and_default_manual_runs_are_full(self):
-        self.assertEqual(select('push', {'ref': 'refs/heads/main'}), dict(scope='full', expanded=False))
+        self.assertEqual(select('push', {'ref': 'refs/heads/main'}), dict(scope='production', expanded=False))
         self.assertEqual(select('workflow_dispatch', {}), dict(scope='full', expanded=False))
+
+    def test_main_gate_requires_production_checks_and_skips_full_tests(self):
+        from ci_scope import check_results
+        results = {job: dict(result='success') for job in ('select-suite', 'lab-tools', 'build-images', 'integration')}
+        results.update({job: dict(result='skipped') for job in ('tool-tests', 'swift-lint', 'unit-tests', 'periphery')})
+        check_results('production', results)
+        for job in results:
+            with self.subTest(job=job), self.assertRaises(ValueError):
+                check_results('production', dict(results, **{job: dict(result='failure')}))
 
     def test_manual_inputs_and_invalid_combinations(self):
         for enabled in (True, 'true'):
@@ -63,7 +72,7 @@ class ChangedScopeTests(unittest.TestCase):
             self.assertEqual(result['scope'], 'full')
             self.assertEqual(result['selected_by'], [])
             self.assertTrue(result['checks']['integration'])
-        for event, data, scope in [('push', {'ref': 'refs/heads/main'}, 'full'),
+        for event, data, scope in [('push', {'ref': 'refs/heads/main'}, 'production'),
                                    ('workflow_dispatch', {}, 'full'),
                                    ('workflow_dispatch', {'inputs': {'suite': 'pr-smoke'}}, 'pr-smoke')]:
             self.assertEqual(resolve(event, data, docs)['scope'], scope)

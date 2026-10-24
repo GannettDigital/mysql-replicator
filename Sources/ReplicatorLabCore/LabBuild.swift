@@ -105,8 +105,8 @@ struct LabTestOptions {
             "--dml-transport binlog selects the shared correctness or lifecycle suite")
         let sharedRecovery = suite == "recovery" && profiles.allSatisfy { !$0.transactionalTarget }
         try require(
-            !coverage || sharedRecovery || ["correctness", "lifecycle", "demo"].contains(suite),
-            "--coverage collects shared correctness, lifecycle, demo and forward recovery runs")
+            !coverage || sharedRecovery || ["correctness", "lifecycle", "demo", "recovery"].contains(suite),
+            "--coverage collects shared correctness, lifecycle, demo and recovery runs")
         try require(
             variants == [.standard] || sharedRecovery || ["correctness", "lifecycle"].contains(suite),
             "--variant selects shared correctness or lifecycle; adapters retain their own variants")

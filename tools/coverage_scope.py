@@ -28,7 +28,12 @@ def description(metrics):
     if 'integration_reports' in metrics:
         expected = metrics.get('expected_integration_reports', 'unknown')
         lines.append(f"Integration coverage collections: {metrics['integration_reports']} / {expected} expected.")
-    if mode == 'expanded':
+    if mode == 'all':
+        lines.append('All selected replicator tests use the coverage binary once. '
+                     'Native-only observations do not run the replicator. Crash paths may not flush counters.')
+    elif mode == 'none' and scope == 'production':
+        lines.append('Production package checks do not collect coverage. Full tests ran before merge.')
+    elif mode == 'expanded':
         lines.append('Coverage includes instrumented correctness and reconnect runs, smoke suites, demos and sample. '
                      'Release-binary checks also run. Native-reference and specialized recovery adapters do not export coverage.')
     elif mode == 'selected' and scope == 'full':

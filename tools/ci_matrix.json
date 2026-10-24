@@ -29,12 +29,6 @@
     {"name": "filters-discovery", "families": ["filters", "discovery"]},
     {"name": "failure-recovery-offline", "families": ["failures", "recovery", "offline"]}
   ],
-  "full_coverage_extensions": {
-    "mysql84-to-mysql57-myisam": {
-      "area": "ddl-dml-conditional-schema-policy-replay",
-      "cases": ["database-existing-different", "ddl-modify-demo-varchar-120"]
-    }
-  },
   "demo_reports": {
     "mysql84-to-mysql57-myisam": 4,
     "mysql57-to-mysql84-innodb": 5,

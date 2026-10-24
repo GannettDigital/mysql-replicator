@@ -20,7 +20,7 @@ def matrix():
 
 def command(shard):
     args = ['test', '--profile', shard['profile'], '--suite', shard['suite'], '--skip-build']
-    if shard['image'] == 'coverage':
+    if shard['image'] == 'coverage' and shard['suite'] != 'native':
         args += ['--coverage']
     if shard['suite'] in ('correctness', 'lifecycle'):
         args += ['--variant', shard['variant']]
@@ -53,11 +53,14 @@ def component_plan(query, change_plan):
 
 
 def select_plan(query):
-    from ci_matrix import SMOKE_PROFILES, generate, generate_smoke
+    from ci_matrix import SMOKE_PROFILES, generate, generate_smoke, generate_production
     scope = os.environ.get('CI_SUITE', 'full')
     policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())
     from ci_jobs import assign_jobs
     job_policy = json.loads((ROOT / 'tools/ci_jobs.json').read_text())
+    if scope == 'production':
+        return assign_jobs(generate_production([json.loads(query('test', '--profile', profile, '--suite',
+                           'correctness', '--list')) for profile in SMOKE_PROFILES]), job_policy)
     if scope == 'pr-smoke':
         return assign_jobs(generate_smoke([json.loads(query('test', '--profile', profile, '--suite', 'correctness',
                                                '--variant', 'default', '--tier', 'full', '--list'))
@@ -180,8 +183,6 @@ def _run_shard(identifier):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
             summary.write('### Test selection\n\n' + selection + '\n\n')
             summary.writelines(f'- `{case}`\n' for case in shard['cases'])
-    if shard['suite'] == 'recovery':
-        subprocess.run(['docker', 'tag', 'mysql-replicator-packaging:lab', 'mysql-replicator-packaging:reverse'], check=True)
     if shard['image'] == 'release':
         subprocess.run(['python3', 'tools/verify_release_binary.py'], cwd=ROOT, check=True)
     from coverage_report import downloaded_inputs

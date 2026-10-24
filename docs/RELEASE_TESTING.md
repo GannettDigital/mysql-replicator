@@ -1,19 +1,25 @@
 # Release testing
 
-Use one test catalog and one CI workflow. Select the test scope for the change.
-Do not add a separate release test runner.
+Use one test catalog and one CI workflow. Test the release candidate before merge.
+Build production packages after merge. Do not repeat the full suite on main.
 
-| Use | Trigger | Scope | Release evidence |
-| --- | --- | --- | --- |
-| Ordinary PR | Open, push or reopen | [Changed-file selection](PR_TEST_SELECTION.md): report checks, baseline checks, component groups, or full checks | No |
-| Final PR in a release stack | Add `ci-full`; later pushes keep this scope | Full catalog, packages, coverage and Periphery | Candidate evidence |
-| Test-suite investigation | Add `ci-expanded-coverage` | Full suite plus instrumented correctness and reconnect copies | Candidate evidence from release-binary checks |
-| Main | Push after merge | Same full suite | Required for the release |
-| Manual investigation | Dispatch with `suite=full` | Same full suite; expanded coverage is optional | Candidate evidence |
-| Draft release | Push the release tag after main passes | Verify and copy the tested packages | Verify main evidence; no rebuild |
+| Use | Trigger | Work |
+| --- | --- | --- |
+| Ordinary PR | Open, push or reopen | [Changed-file selection](PR_TEST_SELECTION.md), unit tests and Periphery where required |
+| Final PR in a release stack | Add `ci-full` | Full four-profile suite with coverage |
+| Manual full run | Dispatch with `suite=full` | Same full suite with coverage |
+| Main | Push after merge | Build packages, check the production binary, match source to full test results |
+| Draft release | Push a matching release tag after main passes | Verify and copy the saved packages; no rebuild |
 
-The full suite runs for all four profiles. It uses the existing shared lab.
-Current catalog counts are:
+All selected replicator tests use the coverage binary. Native-only observations
+run MySQL and do not produce replicator coverage. Performance benchmarks use an
+uninstrumented binary. The old `ci-expanded-coverage` label and dispatch input
+remain aliases for full coverage. They do not add duplicate runs.
+
+The full plan has 2,095 catalog obligations, 240 execution groups, 125 jobs and
+253 integration coverage collections. An obligation is one case for a profile,
+suite and capture variant. These counts measure our catalog, not all MySQL
+features. The generated `ci-lab/matrix.json` is the authority when counts change.
 
 | Profile | Applicable catalog obligations |
 | --- | ---: |
@@ -22,152 +28,85 @@ Current catalog counts are:
 | `mysql57-to-mysql57-myisam` | 412 |
 | `mysql57-to-mysql57-innodb` | 436 |
 
-An obligation is a case for one profile, suite and capture variant. These counts
-measure our catalog. They do not measure all MySQL features.
+The workflow builds the lab once and the coverage image once. Up to 16 integration
+jobs run in parallel. Job names show profile, area, variant and image. Stateful
+sequences stay in one fixture. Unit tests and Periphery run in parallel with the
+image build. All previous profile, variant, transport and assertion checks remain.
 
-The beta.7 full plan has 244 execution groups in 129 CI jobs, 2,095 obligations
-and 22 integration coverage collections.
-It includes database creation, DDL, DML, indexes, bootstrap, foreign keys where
-supported, refusals, ordered DDL, collation, filtering and discovery. It also
-includes failure/recovery/offline/control sequences, reconnect, native-reference
-DDL and demos. Capture variants run where the catalog marks them applicable.
-The generated `ci-lab/matrix.json` is the authority when these counts change.
-No test family was removed for this release model.
+## Before merge
 
-The workflow builds the lab once and each applier image once. It runs up to 16
-integration jobs at the same time. Each job name shows profile, area, variant
-and image. Stateful case sequences stay in one fixture. Unit tests and Periphery
-run in parallel with the build path after scope selection.
-
-## Test a stack before merge
-
-Add the label to the top PR that contains the complete release candidate.
-Create the repository label once if it does not exist:
+Add `ci-full` to the top PR that contains the complete release candidate:
 
 ```sh
-gh label create ci-full --color 5319e7 --description 'Run the full shared release test suite'
 gh pr edit <top-pr-number> --add-label ci-full
 ```
 
-Use a maintainer account. Adding the label starts full CI. Each later push to that
-PR starts full CI again. Remove both CI labels to restore changed-file selection. Changes to `ci-full` or
-`ci-expanded-coverage` start CI. Other label changes do not start test jobs or
-cancel the active test run.
-If a new PR becomes the top of the stack, put the label on that PR. Labels do not
-move between PRs automatically.
+Wait for **Full Suite / Test Evidence** and all required checks to pass.
+If a lower stack branch changes, update the top branch and repeat full CI.
+Do not require this full check on each stack PR through branch protection.
+Ordinary PRs can use a smaller selection.
 
-Wait for **Full Suite / Release Evidence** and all required checks to pass before
-merging the final candidate. Keep the run link with the release notes for review.
-Baseline and component runs do not produce release evidence. Do not require the full
-check on every PR through branch protection; ordinary PRs intentionally skip it.
+The full run saves `full-test-evidence/full-test-evidence.json`. It records the
+Git tree, commit, version, run, attempts, build identity and profile results.
+The Git tree identifies all tracked files. It includes source, tests, dependency
+locks, build files and workflows. A squash merge can change the commit ID without
+changing this tree.
 
-The PR run tests GitHub's merge commit for that PR and its current base branch.
-It does not certify a future merge into main. If a lower stack layer changes,
-update the top branch and run full CI again. A result for an old commit is stale.
-After merge, wait for full CI on the exact final main commit. Do not substitute
-candidate evidence because the source trees appear equivalent.
+## After merge
 
-## Measure the full suite on a PR
+Main builds the static Linux binary, `.deb`, archive and production image.
+Package checks install the `.deb` and check the archive. Two parallel lab checks
+use the exact archive binary: `mysql84-to-mysql57-myisam` and
+`mysql57-to-mysql84-innodb`. Each selects `positive` and `offline-replay`.
+These cases check connections, decoded row application, saved checkpoints,
+offline replay and resume. They compare results with native MySQL replication.
+They do not repeat the full suite.
 
-The commands below describe the diagnostic workflow. Do not use them for beta.6
-until the expanded matrix limit is fixed. Create the diagnostic label once:
+This small production check is required because the builds differ. The coverage
+image uses glibc, system SQLite and a debug Rust library. The production image
+uses musl, bundled SQLite and a release Rust library. Coverage results alone do
+not test packaging or these library differences.
 
-```sh
-gh label create ci-expanded-coverage --color 1d76db --description 'Measure full-suite Swift coverage; retain release checks'
-gh pr edit <top-pr-number> --add-label ci-full --add-label ci-expanded-coverage
-```
+The **Match merged source to full tests** job finds a successful full CI run for
+the same Git tree. It checks the run and commit through the GitHub API. The run
+must belong to this repository and use its CI workflow. A PR run can use GitHub's
+synthetic merge commit. A manual run must test its exact head commit. Fork results
+cannot authorize a release; run full CI on a branch in this repository instead.
 
-The expanded label implies the full suite, even without `ci-full`. It adds
-instrumented copies of shared correctness and lifecycle jobs. It keeps all
-release-binary jobs. Coverage builds are not release artifacts. Remove only
-`ci-expanded-coverage` to return to normal full CI while `ci-full` remains.
-
-Read the scope counts in the coverage summary. Use the measurement artifact's
-`test-value.md`, `test-value.csv` and `test-value.json` to compare cost and added
-line coverage by profile, variant and area. These files include declared case
-intent for an assertion review. See [measurement scope](CI_MEASUREMENTS.md).
-
-## Run the full suite manually
-
-After the workflow is available on main:
+A missing result or a different tree stops release preparation. It does not
+silently start the full suite. If the merge changed any tracked file, run:
 
 ```sh
-gh workflow run ci.yml --ref <branch-or-tag> -f suite=full
+gh workflow run ci.yml --ref main -f suite=full
 ```
 
-For code coverage research, add `-f expanded_coverage=true`. This retains all
-release-binary assertions and adds instrumented correctness and lifecycle runs.
-The beta.7 expanded plan has 477 execution groups in 246 CI jobs. It retains
-all case selections and collects 255 coverage reports. Job grouping is defined
-in `tools/ci_jobs.json`. The planner rejects plans above the 256-job matrix limit.
-Expanded coverage measures test-suite behavior; it is not an extra release gate.
+Check that the manual run tested the required main commit. After it passes,
+rerun the failed main jobs. To test an older commit, use a branch or tag at that
+commit. The finder searches
+the latest 1,000 successful CI runs. Its CLI also accepts `--test-run <run-id>`
+for an older retained result. Expired test artifacts require another full run.
+Keep the full result until release preparation completes; its retention is 90 days.
 
-Use `-f suite=pr-smoke` for a manual smoke check. Expanded coverage requires
-`suite=full`. A manual run does not replace the required main push run.
+## Release and retries
 
-## Review and retain evidence
+Main saves `release-test-evidence.json` beside the packages. Format version 3
+links the successful full test run, matching Git tree, production checks and
+package checksum manifest. This is a test record, not a cryptographic signature.
+The release workflow requires a successful main push run on the tagged commit.
+It verifies this record and package checksums, then copies those exact packages
+to the draft release. It does not rebuild them.
 
-Read `ci-measurement-report/summary.md` first. Check all four profile totals.
-Use `report.json` for missing cases, shard time and code coverage. Inspect the
-failed case's support bundle before a rerun. See [test lab](TEST_LAB.md).
+Use **Re-run failed jobs** when a test or report fails. Earlier results from the
+same run can be reused only if the matrix and build identities still match.
+Failed or cancelled required jobs, missing coverage, or failed artifact uploads
+prevent a complete result. Use **Re-run all jobs** if a build changed or artifacts
+expired. Do not copy test results from another run.
 
-A complete full run produces the `release-test-evidence` artifact. Its
-`release-test-evidence.json` file records:
+GitHub job timing is optional. Test results, coverage counts, source identity and
+package checksums are required. An API failure during source verification must
+be retried; it cannot be treated as proof of passing tests.
 
-- Repository, tested commit, run ID, evidence attempt and run link.
-- Report attempt, each shard execution attempt, and the identities of the tested builds.
-- Event, ref, release version and full test scope.
-- Passed catalog totals and coverage collections for each profile.
-- Results for unit tests, builds/integration, coverage, Periphery and measurements.
-- SHA-256 of the tested packages' `SHA256SUMS` file.
-
-This file links evidence to packages. It is not a cryptographic signature.
-The release workflow checks the successful main CI run through the GitHub API.
-It then checks the evidence identity, full scope, package manifest digest and
-package checksums. It adds the evidence file to the draft release downloads.
-The evidence must belong to the latest successful CI attempt. Missing evidence,
-a different commit or run, or different packages stop draft creation.
-
-Use **Re-run failed jobs** for a test or reporting failure. Successful results
-from earlier attempts of that run can be reused only when the test matrix and
-build identities still match. CI requires successful workflow dependencies and
-checks the saved artifacts. Each successful test job must replace its artifact;
-a failed rerun or upload prevents release approval. CI preserves the original
-execution attempt of each shard. The release record uses format version
-2 and binds the package checksum manifest to the build used by the test shards.
-If only the evidence job is retried, it can reuse an earlier complete report
-from the same run and commit.
-
-GitHub job and step timing is optional. If the history API fails, the report marks
-timing as unavailable. Test results, expected coverage collections, and package
-identity remain required. No bypass label is needed for a job-history outage.
-
-Use **Re-run all jobs** if the tested build changed or artifacts expired. Results
-created before build identity recording was added cannot be reused by the new
-reporter. A code change starts a new run. Do not copy results from the old run
-or substitute a local rebuild.
-
-## Why this model
-
-A full run on every stack layer repeats expensive checks before the complete
-change is ready. A full run on the top PR finds integration defects before merge.
-Main then certifies the exact commit and packages that the release will publish.
-New main pushes cancel obsolete main runs through the existing CI concurrency
-policy. Do not suppress the final main run to save cache or test time.
-
-Draft releases do not trigger `created`, `edited` or `deleted` Actions events.
-The `published` event runs after publication, which is too late for qualification.
-Keep draft creation as artifact promotion after testing. Keep image publication
-as the existing `release: published` action.
-
-The new PR can import GHCR layers from its base PR. Compare the same image's build
-steps and transfer times with that base run. A new release image can still need a
-cold build if the base ran smoke only. A full suite has more jobs than smoke;
-total workflow time is not a cache comparison. Use the normal CI build job
-times and Docker logs to assess cache reuse.
-
-GitHub references:
-
-- [Release events and draft limits](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).
-- [PR merge commit behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
-- [Manual workflow runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+Read `ci-measurement-report/summary.md` first. Use `report.json` for missing cases
+and `test-value.json` for the exact lines reached by each area. See
+[measurement scope](CI_MEASUREMENTS.md). For a failed integration case, inspect
+its support bundle before a rerun. See [the test lab](TEST_LAB.md).

@@ -263,9 +263,11 @@ final class LabFixture {
         let result = try docker(
             [
                 "run", "--rm", "--platform", "linux/amd64", "--network", "none", "--mount",
-                "type=volume,src=\(volume),dst=/evidence", "--entrypoint", "/usr/local/bin/mysql-replicator", image,
-                "recovery",
-            ] + arguments + ["--config", "/evidence/apply.yaml"])
+                "type=volume,src=\(volume),dst=/evidence", "--entrypoint", "/usr/local/bin/mysql-replicator",
+            ] + CodeCoverage.environment(enabled: codeCoverage, label: label) + [image, "recovery"] + arguments + [
+                "--config", "/evidence/apply.yaml",
+            ])
+        if codeCoverage { coverageInvocations.append(["label": label, "exit_code": 0]) }
         try result.stdout.write(to: output.appendingPathComponent(label + ".json"))
         guard let value = try JSONSerialization.jsonObject(with: result.stdout) as? [String: Any] else {
             throw LabError("missing recovery report")
