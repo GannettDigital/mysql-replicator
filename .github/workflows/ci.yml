@@ -61,56 +61,170 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tools -p 'test_*.py'
 
-  unit-tests:
+  test-build:
+    name: Build common Linux test artifacts
     needs: select-suite
+    if: needs.select-suite.outputs.integration == 'true' && needs.select-suite.outputs.scope != 'production'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+        with:
+          # Each compiler uses two jobs. Bound concurrent build stages too.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 2
+      - name: Select shared build cache
+        id: registry
+        run: python3 tools/ci_registry.py plan --image test-build
+      - name: Select runtime image reference
+        id: runtime
+        run: python3 tools/ci_registry.py plan --image coverage
+      - name: Log in to GHCR
+        if: steps.registry.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build application, lab, test binaries and compiler index once
+        id: shared
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/coverage/Dockerfile
+          target: ci-build
+          platforms: linux/amd64
+          tags: ${{ steps.registry.outputs.publish == 'true' && steps.registry.outputs.runtime || 'mysql-replicator:test-build' }}
+          push: ${{ steps.registry.outputs.publish == 'true' }}
+          load: ${{ steps.registry.outputs.publish != 'true' }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ steps.registry.outputs.source }}
+          cache-from: ${{ steps.registry.outputs.cache_from }}
+          cache-to: ${{ steps.registry.outputs.cache_to }}
+      - name: Export the lab from the common build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/coverage/Dockerfile
+          target: ci-export
+          platforms: linux/amd64
+          outputs: type=local,dest=artifacts/ci
+          cache-from: ${{ steps.registry.outputs.cache_from }}
+      - name: Read source input identity
+        id: lab
+        run: cat artifacts/ci/ci-inputs >> "$GITHUB_OUTPUT"
+      - name: Export the runtime from the same compiled build
+        id: coverage-runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/coverage/Dockerfile
+          target: runtime
+          platforms: linux/amd64
+          tags: ${{ steps.runtime.outputs.publish == 'true' && steps.runtime.outputs.runtime || 'mysql-replicator:coverage' }}
+          push: ${{ steps.runtime.outputs.publish == 'true' }}
+          load: ${{ steps.runtime.outputs.publish != 'true' }}
+          labels: |
+            org.mysql-replicator.coverage-inputs=${{ steps.lab.outputs.inputs }}
+            org.opencontainers.image.source=${{ steps.runtime.outputs.source }}
+          # The same BuildKit instance has already compiled the build stage.
+          cache-from: ${{ steps.registry.outputs.cache_from }}
+      - name: Record immutable shared build
+        if: steps.registry.outputs.publish == 'true'
+        env:
+          IMAGE_REFERENCE: ${{ steps.registry.outputs.runtime }}
+          IMAGE_DIGEST: ${{ steps.shared.outputs.digest }}
+        run: python3 tools/ci_registry.py record --image test-build --directory artifacts/ci/test-build
+      - name: Record immutable runtime
+        if: steps.runtime.outputs.publish == 'true'
+        env:
+          IMAGE_REFERENCE: ${{ steps.runtime.outputs.runtime }}
+          IMAGE_DIGEST: ${{ steps.coverage-runtime.outputs.digest }}
+        run: python3 tools/ci_registry.py record --image coverage
+      - name: Save images for forks without registry write access
+        if: steps.registry.outputs.publish != 'true'
+        run: |
+          mkdir -p artifacts/ci/test-build artifacts/ci/image
+          docker save mysql-replicator:test-build | gzip -1 > artifacts/ci/test-build/image.tar.gz
+          (cd artifacts/ci/test-build && sha256sum image.tar.gz > SHA256SUMS)
+          docker save mysql-replicator:coverage | gzip -1 > artifacts/ci/image/image.tar.gz
+          (cd artifacts/ci/image && sha256sum image.tar.gz > SHA256SUMS)
+      - name: Record runtime build identity
+        run: python3 tools/ci_reruns.py identity --image coverage --output artifacts/ci/image/build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-prebuilt-lab
+          overwrite: true
+          path: |
+            artifacts/ci/prebuilt-lab.tar.gz
+            artifacts/ci/prebuilt-lab.tar.sha256
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-test-build
+          overwrite: true
+          path: artifacts/ci/test-build/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-build-coverage
+          overwrite: true
+          path: artifacts/ci/image/build.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-image-coverage
+          overwrite: true
+          path: artifacts/ci/image/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  unit-tests:
+    needs: [select-suite, test-build]
     if: needs.select-suite.outputs.unit == 'true'
     name: Unit Tests & Catalog Check
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      actions: read
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.93.1
-
-      # Keep toolchain headers and their consuming objects in the SAME archive.
-      # setup-swift copies files on a cold install, giving headers new mtimes.
-      - name: Identify runner image
-        id: runner-image
-        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
-      - name: Restore Swift toolchain and build cache
-        uses: actions/cache@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: |
-            .build/code-coverage
-            rust/target
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.tool_cache }}/swift-Ubuntu/6.2.1
-          key: unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            unit-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
+          name: ci-image-test-build
+          path: artifacts/ci/test-build
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v3
         with:
-          swift-version: '6.2.1'
-      - name: Check release version consistency
-        run: python3 tools/release_version.py
-
-      - name: Restore Swift input/output timestamps
-        run: python3 tools/swift_cache.py restore --scratch-path .build/code-coverage
-      - name: Run unit test suites
-        run: make coverage-unit
-      - name: Test SQL syntax without app dependencies
-        run: make syntax-coverage
-      - name: Save successful Swift build timestamps
-        run: python3 tools/swift_cache.py save --scratch-path .build/code-coverage
-
-      - name: Test Swift cache reuse
-        env:
-          SWIFT_CACHE_INTEGRATION: '1'
-        run: python3 -m unittest discover -s tools -p 'test_swift_cache.py'
-
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Load the common build by digest
+        run: python3 tools/ci_test_build.py load
+      - name: Run prebuilt Rust and Swift unit tests
+        run: |
+          mkdir -p artifacts/coverage
+          docker run --rm --platform linux/amd64 -v "$PWD/artifacts/coverage:/workspace/artifacts/coverage" \
+            mysql-replicator:test-build bash -e -c '
+              python3 tools/release_version.py
+              python3 tools/ci_test_build.py rust-test
+              python3 tools/code_coverage.py unit --prebuilt
+              python3 tools/syntax_tests.py --coverage --skip-build
+              .build/release/replicator-lab ddl-catalog check
+              SWIFT_CACHE_INTEGRATION=1 python3 -m unittest discover -s tools -p test_swift_cache.py
+            '
       - name: Upload unit coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -119,25 +233,19 @@ jobs:
           overwrite: true
           path: artifacts/coverage/unit/coverage.json
           if-no-files-found: error
-
-      - name: Verify DDL coverage catalog
-        run: .build/code-coverage/debug/replicator-lab ddl-catalog check
-
       - name: Upload isolated SQL syntax coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          # Keep this diagnostic report outside the coverage-* merge inputs.
-          # The normal unit collection already includes this target.
           name: mysql-syntax-unit-coverage
           overwrite: true
           path: artifacts/coverage/syntax-unit/
           if-no-files-found: error
 
   lab-tools:
-    needs: select-suite
-    if: needs.select-suite.outputs.integration == 'true'
-    name: Build shared lab runner
+    needs: [select-suite, test-build]
+    if: always() && !cancelled() && needs.select-suite.outputs.integration == 'true' && (needs.test-build.result == 'success' || needs.select-suite.outputs.scope == 'production')
+    name: Prepare lab runner and test plan
     runs-on: ubuntu-24.04
     outputs:
       inputs: ${{ steps.bundle.outputs.inputs }}
@@ -155,9 +263,11 @@ jobs:
       # Keep toolchain headers and their consuming objects in the SAME archive.
       # setup-swift copies files on a cold install, giving headers new mtimes.
       - name: Identify runner image
+        if: needs.select-suite.outputs.scope == 'production'
         id: runner-image
         run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
       - name: Restore Swift toolchain and build cache
+        if: needs.select-suite.outputs.scope == 'production'
         uses: actions/cache@v4
         with:
           path: |
@@ -167,18 +277,38 @@ jobs:
           restore-keys: |
             lab-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved') }}-
       - uses: swift-actions/setup-swift@v2
+        if: needs.select-suite.outputs.scope == 'production'
         with:
           swift-version: '6.2.1'
-      - name: Build and bundle lab with its runtime libraries
-        id: bundle
-        env:
-          CI_SUITE: ${{ needs.select-suite.outputs.scope }}
-          CI_EXPANDED_COVERAGE: ${{ needs.select-suite.outputs.expanded }}
+      - name: Build lab for production package checks
+        if: needs.select-suite.outputs.scope == 'production'
         run: |
           python3 tools/swift_cache.py restore --scratch-path .build/ci-lab
           swift build --scratch-path .build/ci-lab --product replicator-lab --force-resolved-versions
           python3 tools/swift_cache.py save --scratch-path .build/ci-lab
-          python3 tools/ci_lab.py --bundle .build/ci-lab/debug/replicator-lab
+      - uses: actions/download-artifact@v4
+        if: needs.select-suite.outputs.scope != 'production'
+        with:
+          name: ci-prebuilt-lab
+          path: artifacts/ci/
+      - name: Unpack the prebuilt test lab
+        if: needs.select-suite.outputs.scope != 'production'
+        run: |
+          cd artifacts/ci
+          sha256sum --check prebuilt-lab.tar.sha256
+          tar -xzf prebuilt-lab.tar.gz
+      - name: Bundle the lab and select tests
+        id: bundle
+        env:
+          CI_SUITE: ${{ needs.select-suite.outputs.scope }}
+          CI_EXPANDED_COVERAGE: ${{ needs.select-suite.outputs.expanded }}
+          LD_LIBRARY_PATH: ${{ github.workspace }}/artifacts/ci/prebuilt-lab/swift/linux
+        run: |
+          if [ "$CI_SUITE" = production ]; then
+            python3 tools/ci_lab.py --bundle .build/ci-lab/debug/replicator-lab
+          else
+            python3 tools/ci_lab.py --bundle artifacts/ci/prebuilt-lab/replicator-lab
+          fi
       - uses: actions/upload-artifact@v4
         with:
           overwrite: true
@@ -192,13 +322,13 @@ jobs:
           if-no-files-found: error
 
   build-images:
-    name: Build ${{ matrix.image }} once
+    name: Prepare ${{ matrix.image }} runtime
     permissions:
       contents: read
       packages: write
       actions: read
     needs: lab-tools
-    if: needs.lab-tools.result == 'success'
+    if: ${{ !cancelled() && needs.lab-tools.result == 'success' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -207,13 +337,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+        if: matrix.image == 'release'
       - name: Select registry caches and runtime reference
+        if: matrix.image == 'release'
         id: registry
         env:
           BUILD_IMAGE: ${{ matrix.image }}
         run: python3 tools/ci_registry.py plan --image "$BUILD_IMAGE"
       - name: Log in to GHCR
-        if: steps.registry.outputs.publish == 'true'
+        if: matrix.image == 'release' && steps.registry.outputs.publish == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -258,31 +390,24 @@ jobs:
         run: |
           make release-image
           python3 tools/verify_release_binary.py
-      - name: Build instrumented runtime and matching LLVM exporter
-        id: coverage-runtime
+      - name: Reuse runtime from the common test build
         if: matrix.image == 'coverage'
-        uses: docker/build-push-action@v6
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          file: docker/coverage/Dockerfile
-          platforms: linux/amd64
-          tags: ${{ steps.registry.outputs.publish == 'true' && steps.registry.outputs.runtime || 'mysql-replicator:coverage' }}
-          push: ${{ steps.registry.outputs.publish == 'true' }}
-          labels: |
-            org.mysql-replicator.coverage-inputs=${{ needs.lab-tools.outputs.inputs }}
-            org.opencontainers.image.source=${{ steps.registry.outputs.source }}
-          load: ${{ steps.registry.outputs.publish != 'true' }}
-          cache-from: ${{ steps.registry.outputs.cache_from }}
-          cache-to: ${{ steps.registry.outputs.cache_to }}
+          name: ci-build-coverage
+          path: artifacts/ci/image
+      - name: Check reused runtime identity
+        if: matrix.image == 'coverage'
+        run: python3 tools/ci_test_build.py check-runtime
       - name: Record immutable runtime image
-        if: steps.registry.outputs.publish == 'true'
+        if: matrix.image == 'release' && steps.registry.outputs.publish == 'true'
         env:
           BUILD_IMAGE: ${{ matrix.image }}
           IMAGE_REFERENCE: ${{ steps.registry.outputs.runtime }}
-          IMAGE_DIGEST: ${{ steps.coverage-runtime.outputs.digest || steps.release-runtime.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.release-runtime.outputs.digest }}
         run: python3 tools/ci_registry.py record --image "$BUILD_IMAGE"
       - name: Save image for test jobs without registry write access
-        if: steps.registry.outputs.publish != 'true'
+        if: matrix.image == 'release' && steps.registry.outputs.publish != 'true'
         env:
           IMAGE: ${{ matrix.image == 'release' && 'mysql-replicator-packaging:lab' || 'mysql-replicator:coverage' }}
         run: |
@@ -291,16 +416,19 @@ jobs:
           cd artifacts/ci/image
           sha256sum image.tar.gz > SHA256SUMS
       - name: Record the build identity for reused test results
+        if: matrix.image == 'release'
         env:
           BUILD_IMAGE: ${{ matrix.image }}
         run: python3 tools/ci_reruns.py identity --image "$BUILD_IMAGE" --output artifacts/ci/image/build.json
       - uses: actions/upload-artifact@v4
+        if: matrix.image == 'release'
         with:
           overwrite: true
           name: ci-build-${{ matrix.image }}
           path: artifacts/ci/image/build.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
+        if: matrix.image == 'release'
         with:
           overwrite: true
           name: ci-image-${{ matrix.image }}
@@ -331,7 +459,7 @@ jobs:
       packages: read
       actions: read
     needs: [lab-tools, build-images]
-    if: needs.lab-tools.result == 'success' && needs.build-images.result == 'success'
+    if: ${{ !cancelled() && needs.lab-tools.result == 'success' && needs.build-images.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -419,7 +547,7 @@ jobs:
   packaging-and-smoke:
     # Preserve the required check name. Production scope checks packages after merge.
     name: Debian Packaging & Integration Smoke
-    needs: [select-suite, tool-tests, unit-tests, periphery, swift-lint, lab-tools, build-images, integration]
+    needs: [select-suite, test-build, tool-tests, unit-tests, periphery, swift-lint, lab-tools, build-images, integration]
     if: always() && needs.select-suite.result != 'skipped'
     runs-on: ubuntu-24.04
     steps:
@@ -482,49 +610,33 @@ jobs:
       - run: swift format lint --strict --parallel --recursive Sources tests
 
   periphery:
-    needs: select-suite
+    needs: [select-suite, test-build]
     if: needs.select-suite.outputs.periphery == 'true'
     name: Unused Swift Code
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.93.1
-      # Keep toolchain headers and their consuming objects in the SAME archive.
-      # setup-swift copies files on a cold install, giving headers new mtimes.
-      - name: Identify runner image
-        id: runner-image
-        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
-      - name: Restore Swift toolchain and build cache
-        uses: actions/cache@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: |
-            .build/periphery
-            rust/target
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.tool_cache }}/swift-macOS/6.2.1
-          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            periphery-${{ runner.os }}-${{ runner.arch }}-swift6.2.1-rust1.93.1-v2-${{ steps.runner-image.outputs.id }}-${{ hashFiles('Package.resolved', 'rust/Cargo.lock') }}-
-      - uses: swift-actions/setup-swift@v2
+          name: ci-image-test-build
+          path: artifacts/ci/test-build
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v3
         with:
-          swift-version: '6.2.1'
-      - name: Install pinned Periphery
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Load the common build by digest
+        run: python3 tools/ci_test_build.py load
+      - name: Reject unused declarations with the shared compiler index
         run: |
-          cd "$RUNNER_TEMP"
-          curl --fail --show-error --location --retry 3 \
-            https://github.com/peripheryapp/periphery/releases/download/3.5.1/periphery-3.5.1.artifactbundle.zip \
-            --output periphery.zip
-          echo '55beee48bde34390cd6cb8dd4eca762c2646d7d0b58631fd2f00b15898e194d6  periphery.zip' | shasum -a 256 --check
-          unzip -q periphery.zip
-          echo "$RUNNER_TEMP/periphery-3.5.1.artifactbundle/periphery-3.5.1-macos/bin" >> "$GITHUB_PATH"
-      - name: Reject unused declarations
-        run: |
-          cargo build --manifest-path rust/Cargo.toml --locked
-          python3 tools/swift_cache.py restore --scratch-path .build/periphery
-          swift build --scratch-path .build/periphery --build-tests --enable-index-store --force-resolved-versions
-          python3 tools/swift_cache.py save --scratch-path .build/periphery
-          periphery scan --strict --skip-build --index-store-path .build/periphery/debug/index/store
+          docker run --rm --platform linux/amd64 mysql-replicator:test-build \
+            periphery scan --strict --skip-build --index-store-path .build/release/index/store
 
   measurements:
     name: Timing & Profile Coverage Report

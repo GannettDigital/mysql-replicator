@@ -23,6 +23,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--coverage', action='store_true')
     parser.add_argument('--minimum-line-coverage', type=float, default=95.0)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--build-only', action='store_true')
+    mode.add_argument('--skip-build', action='store_true')
     args = parser.parse_args()
     if not 0 <= args.minimum_line_coverage <= 100:
         parser.error('--minimum-line-coverage must be between 0 and 100')
@@ -53,6 +56,11 @@ def main():
             raw.unlink()
         if report.exists():
             shutil.rmtree(report)
+    if args.build_only:
+        subprocess.run(['swift', 'build', '--build-tests', *command[2:]], check=True)
+        return
+    if args.skip_build:
+        command.append('--skip-build')
     subprocess.run(command, check=True)
     if input_hashes() != before:
         raise ValueError('syntax sources or tests changed during the run; rerun against stable inputs')

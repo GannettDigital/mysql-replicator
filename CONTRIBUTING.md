@@ -178,8 +178,10 @@ unexercised path. Failed suites retain the evidence available before cleanup.
 
 Runtime PR CI combines one unit report and two integration smoke collections:
 `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
-Unit tests, Periphery and the build for the smoke suites start independently.
-The two smoke suites run in parallel after their shared build finishes.
+One Linux build prepares the application, lab, test binaries and compiler index.
+Unit tests, Periphery and integration jobs then use those outputs in parallel.
+They do not compile the application again. Periphery now checks Linux code;
+it does not check declarations that are compiled only on macOS.
 PRs with `ci-full` and default manual runs use the full four-profile matrix.
 Each apply group uses the coverage binary once. Main builds production packages
 and runs short application and replay checks. See [release testing](docs/RELEASE_TESTING.md).
@@ -196,7 +198,12 @@ Full tests collect coverage from correctness, reconnect, recovery and demos.
 Native-only observations run MySQL without the replicator. There is no separate
 release qualification workflow.
 
-CI builds the lab executable once and one coverage image for each PR test run.
+CI uses a release build with coverage and test access enabled for each PR test run.
+The common build also prepares the isolated SQL parser test binary. That small
+separate build checks that the parser has no application or Rust dependencies.
+The integration image contains the application and LLVM exporters, without the
+compiler or test index. Unit tests and Periphery use the larger test image.
+Both images come from the same application build.
 Main builds the production image and packages.
 It generates the test
 matrix from the lab catalog, grouping correctness families by area and splitting

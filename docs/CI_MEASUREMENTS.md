@@ -300,3 +300,22 @@ line sets and the behavior assertions before removing the expensive run.
 Do not replace a profile-specific check just because another profile reaches
 the same Swift lines. Partial reports and unmeasured groups cannot establish
 that a line is exclusive across the full suite.
+
+## Common build timing
+
+`Build common Linux test artifacts` compiles the application, lab and tests once.
+It exports the compiler index for Periphery and the coverage runtime for the
+integration jobs. Unit tests and Periphery run on Linux and use the saved build.
+The isolated parser check has its own small test binary in this build.
+
+Compare the common build time, image push time, consumer pull time and test time.
+The first run uses new layers because coverage, indexing and test access now use
+one set of compiler options. A later run with the same inputs must reuse those
+layers. Swift source changes must not rebuild Periphery, Rust dependencies, or external
+Swift libraries. Rust source or fixture changes rebuild the codec stage.
+`Prepare coverage runtime` checks the saved build identity; it does not compile
+code. The main-branch production package build remains separate.
+
+Unit tests now use release coverage maps. Older unit reports used debug maps.
+A change in the line total across this switch does not, by itself, show a change
+in test coverage. Use reports from the common build to compare test groups.

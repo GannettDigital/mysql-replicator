@@ -175,34 +175,42 @@ def merge(root, output, inputs):
     render(merged, root, output)
 
 
-def unit(root, output):
+def unit(root, output, prebuilt=False, test_filter=None):
     if not output.is_relative_to(root / "artifacts/coverage") or output == root / "artifacts/coverage":
         raise ValueError("unit output must be a subdirectory of artifacts/coverage")
     sources = source_hashes(root)
-    scratch = root / ".build/code-coverage"
-    run(["cargo", "build", "--manifest-path", "rust/Cargo.toml", "--locked"], cwd=root)
-    run(["cargo", "test", "--manifest-path", "rust/Cargo.toml", "--locked"], cwd=root)
-    # Keep compiler caches, but never old counters. Force relinking because
-    # SwiftPM cannot detect changes to the externally linked Rust archive.
+    scratch = root / (".build" if prebuilt else ".build/code-coverage")
+    configuration = "release" if prebuilt else "debug"
+    if not prebuilt:
+        run(["cargo", "build", "--manifest-path", "rust/Cargo.toml", "--locked"], cwd=root)
+        run(["cargo", "test", "--manifest-path", "rust/Cargo.toml", "--locked"], cwd=root)
+    # Never retain old counters. Local builds relink the external Rust archive.
+    # CI consumes the exact binaries from the common build and must not relink.
     for raw in scratch.rglob("*.profraw"):
         raw.unlink()
-    products = [scratch / "debug/mysql-replicator", scratch / "debug/replicator-lab"]
+    products = [scratch / configuration / "mysql-replicator", scratch / configuration / "replicator-lab"]
     products.extend(p / "Contents/MacOS" / p.stem if p.is_dir() else p
-                    for p in (scratch / "debug").glob("*.xctest"))
+                    for p in (scratch / configuration).glob("*.xctest"))
     for product in products:
-        if product.exists():
+        if product.exists() and not prebuilt:
             product.unlink()
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
-    environment = dict(os.environ, REPLICATOR_TEST_BINARY_DIR=str(scratch / "debug"),
+    environment = dict(os.environ, REPLICATOR_TEST_BINARY_DIR=str(scratch / configuration),
                        LLVM_PROFILE_FILE=str(output / "raw/%p-%m.profraw"))
     command = ["swift", "test", "--scratch-path", scratch, "--enable-code-coverage", "--enable-index-store",
                "--force-resolved-versions"]
+    if prebuilt:
+        if not all(p.is_file() for p in products) or not list((scratch / configuration).glob("*.xctest")):
+            raise ValueError("shared test build is incomplete")
+        command += ["--skip-build", "--configuration", configuration, "-Xswiftc", "-enable-testing"]
+    if test_filter:
+        command += ["--filter", test_filter]
     status = subprocess.run([str(a) for a in command], cwd=root, env=environment).returncode
     # swift test chooses its own profile directory; include CLI subprocess profiles too.
-    binaries = [scratch / "debug/mysql-replicator", scratch / "debug/replicator-lab"]
-    tests = list((scratch / "debug").glob("*.xctest"))
+    binaries = [scratch / configuration / "mysql-replicator", scratch / configuration / "replicator-lab"]
+    tests = list((scratch / configuration).glob("*.xctest"))
     binaries.extend(p / "Contents/MacOS" / p.stem if p.is_dir() else p for p in tests)
     if not tests:
         raise ValueError("Swift test executable missing; inspect the build failure")
@@ -254,6 +262,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     unit_parser = commands.add_parser("unit")
     unit_parser.add_argument("--output", type=Path, default=Path("artifacts/coverage/unit"))
+    unit_parser.add_argument("--prebuilt", action="store_true", help="Use the shared CI release build without compilation")
+    unit_parser.add_argument("--filter", help="Select Swift tests for a local check")
     merge_parser = commands.add_parser("merge")
     merge_parser.add_argument("--output", type=Path, default=Path("artifacts/coverage/combined"))
     merge_parser.add_argument("inputs", nargs="+", type=Path)
@@ -264,7 +274,7 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     if args.command == "unit":
-        unit(root, args.output.resolve())
+        unit(root, args.output.resolve(), args.prebuilt, args.filter)
     elif args.command == "harness":
         harness(root, args.profiles, args.label, args.allow_empty)
     else:

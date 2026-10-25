@@ -15,19 +15,27 @@ COPY Vendor Vendor
 COPY tools/build_dependencies.py tools/swift_cache.py tools/
 # Ordinary layers retain objects, build databases and dependency checkouts.
 # Application edits do not invalidate this expensive dependency compilation.
-RUN python3 tools/build_dependencies.py --configuration release --enable-code-coverage --jobs 2 --force-resolved-versions
+RUN python3 tools/build_dependencies.py --configuration release --enable-code-coverage --enable-index-store -Xswiftc -enable-testing --jobs 2 --force-resolved-versions
+# Swift edits must not rebuild the codec, zstd or the Rust test harness.
+FROM toolchain AS codec
+COPY rust rust
+COPY tests/ReplicatorLabTests/Fixtures/source-positive.binlog tests/ReplicatorLabTests/Fixtures/source-positive.binlog
+RUN cargo build --manifest-path rust/Cargo.toml --locked --jobs 2 \
+    && mkdir -p /out \
+    && cargo test --manifest-path rust/Cargo.toml --locked --jobs 2 --no-run --message-format=json > /out/rust-test-artifacts.jsonl
+
 FROM dependencies AS sql-syntax
 COPY Sources/MySQLSyntax Sources/MySQLSyntax
 COPY tools/build_syntax.py tools/
-RUN python3 tools/build_syntax.py --configuration release --enable-code-coverage --jobs 2 --force-resolved-versions
+RUN python3 tools/build_syntax.py --configuration release --enable-code-coverage --enable-index-store -Xswiftc -enable-testing --jobs 2 --force-resolved-versions
 FROM sql-syntax AS build
+COPY --from=codec /workspace/rust rust
+COPY --from=codec /out/rust-test-artifacts.jsonl .build/rust-test-artifacts.jsonl
 COPY Sources Sources
 COPY tests tests
-COPY rust rust
-RUN cargo build --manifest-path rust/Cargo.toml --locked \
-    && rm -f .build/x86_64-unknown-linux-gnu/release/mysql-replicator \
+RUN rm -f .build/x86_64-unknown-linux-gnu/release/mysql-replicator .build/x86_64-unknown-linux-gnu/release/replicator-lab \
     && python3 tools/swift_cache.py restore --scratch-path .build \
-    && swift build --product mysql-replicator --configuration release --enable-code-coverage --jobs 2 --force-resolved-versions \
+    && swift build --build-tests --configuration release --enable-code-coverage --enable-index-store -Xswiftc -enable-testing --jobs 2 --force-resolved-versions \
     && python3 tools/swift_cache.py save --scratch-path .build \
     && cp .build/release/mysql-replicator /usr/local/bin/mysql-replicator \
     && mkdir -p /opt/packaging-evidence \
@@ -35,6 +43,39 @@ RUN cargo build --manifest-path rust/Cargo.toml --locked \
     && rustc --version >> /opt/packaging-evidence/toolchains.txt
 COPY tools/coverage_runtime.py tools/
 RUN python3 tools/coverage_runtime.py
+
+# Build Periphery 3.5.1 independently of application sources. Its release archive is macOS-only.
+FROM toolchain AS periphery-tool
+RUN git clone https://github.com/peripheryapp/periphery.git /opt/periphery \
+    && cd /opt/periphery \
+    && git checkout --detach fb0130e09cbd1595b5e63b32a228701aea675569 \
+    && swift build --configuration release --product periphery --jobs 2 --force-resolved-versions \
+    && cp .build/release/periphery /usr/local/bin/periphery
+
+# This small second parser build checks that the target has no app dependencies.
+FROM toolchain AS syntax-tests
+COPY Sources/MySQLSyntax Sources/MySQLSyntax
+COPY tests/MySQLSyntaxTests tests/MySQLSyntaxTests
+COPY tools/syntax_tests.py tools/code_coverage.py tools/
+RUN python3 tools/syntax_tests.py --coverage --build-only
+
+# Keep original /workspace paths for XCTest resources and the compiler index.
+# Unit tests, Periphery and the lab all consume this build.
+FROM build AS ci-build
+COPY --from=periphery-tool /usr/local/bin/periphery /usr/local/bin/periphery
+COPY --from=syntax-tests /workspace/artifacts/syntax-unit /workspace/artifacts/syntax-unit
+COPY tools tools
+COPY examples examples
+COPY packaging packaging
+COPY docker docker
+COPY compose.yaml Makefile .dockerignore .periphery.yml VERSION ./
+RUN python3 tools/ci_test_build.py record-rust-tests \
+    && test -d .build/release/index/store \
+    && periphery version \
+    && GITHUB_OUTPUT=/out/ci-inputs python3 tools/ci_test_build.py export-lab
+
+FROM scratch AS ci-export
+COPY --from=ci-build /workspace/artifacts/ci/prebuilt-lab.tar.gz /workspace/artifacts/ci/prebuilt-lab.tar.sha256 /out/ci-inputs /
 
 FROM --platform=linux/amd64 ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends python3 sqlite3 ca-certificates libstdc++6 zlib1g \

@@ -82,3 +82,58 @@ then refreshed the image's source files and harness-input label. The ignored
 GitHub will build its coverage image through the normal Dockerfile.
 
 No full database suite or GitHub run was started for this change.
+
+## Common compilation for test jobs
+
+The previous workflow still compiled the project for Linux unit tests, the lab,
+the coverage runtime and macOS Periphery. The next workflow uses one Linux
+release build with coverage, test access and the compiler index enabled.
+
+1. `test-build` builds the application, lab, Swift tests and Rust tests. It also
+   prepares the isolated SQL parser tests and a pinned Linux Periphery binary.
+2. Unit tests use `swift test --skip-build` and the saved Rust test executables.
+   Periphery uses `--skip-build` and the same release index. These jobs can run
+   in parallel with integration jobs.
+3. The lab job downloads its executable and Swift runtime libraries. It selects
+   tests from the catalog without a Swift compiler.
+4. Integration jobs download the small coverage runtime. It contains the same
+   application binary as the unit test image, without the compiler or index.
+5. Main retains its separate production package build and short runtime checks.
+
+The dependency, syntax and application layers use the same compiler options.
+A separate Rust stage caches the codec and its tests. Swift source edits do not
+rebuild Rust dependencies such as zstd. BuildKit runs at most two build stages
+at once; each compiler uses two jobs. This limit does not reduce parallel test jobs.
+The first run needs new layers because the options changed. Later runs can reuse
+those layers from GHCR. The Periphery source commit is pinned to version 3.5.1;
+its tool layer does not depend on application source files.
+
+The large test image is transferred by registry digest. Forks use a checked
+archive. The build job exports the lab from BuildKit without loading the large
+image into Docker when it can publish to GHCR. This reduces disk use on the
+hosted runner. Image transfers and the common build time must be measured in the
+next GitHub run before we claim a reduction in elapsed time.
+
+The isolated parser package is a deliberate second compilation of MySQLSyntax.
+It checks that the parser can build without app dependencies. It is prepared in
+the build job and runs without compilation in the unit job. The cache-tool test
+builds only its own small fixture. Periphery no longer checks macOS-only code.
+
+
+### Shared-build checks
+
+The local Linux build compiled the application, lab, Swift tests, compiler index,
+and Periphery. A separate check built the final Rust stage and ran all 12 saved
+Rust tests without Cargo. The final consumer image reused the compiled Swift
+outputs; the exact final Dockerfile still needs a GitHub run.
+
+All 102 focused CI tool tests, nine coverage tool tests, and 11 release-evidence
+tests passed. Workflow lint, YAML parsing, and whitespace checks passed. The
+isolated parser suite passed all 49 tests on macOS with 99.32% line coverage.
+Its `--skip-build` run passed with the same coverage and no compilation.
+
+The x86_64 Linux image runs through QEMU on this ARM Mac. The app version and
+DDL catalog checks passed. Swift unit execution and Periphery did not complete
+within the local time limits. This does not establish their cause or a passing
+Linux test result. Verify both consumers on the native x86_64 GitHub runner.
+No full database suite was rerun for this build change.

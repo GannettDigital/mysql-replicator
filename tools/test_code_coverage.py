@@ -104,5 +104,49 @@ class CoverageTests(unittest.TestCase):
         self.assertFalse((profiles / "combined/coverage.json").exists())
 
 
+
+class PrebuiltCoverageTests(unittest.TestCase):
+    def test_release_consumer_keeps_binaries_and_never_calls_a_builder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'Sources').mkdir()
+            (root / 'Sources/Example.swift').write_text('let example = 1\n')
+            build = root / '.build/release'
+            build.mkdir(parents=True)
+            products = [build / name for name in ('mysql-replicator', 'replicator-lab', 'Suite.xctest')]
+            for product in products:
+                product.write_bytes(b'prebuilt')
+            (build / 'stale.profraw').write_bytes(b'old counters')
+            output = root / 'artifacts/coverage/unit'
+
+            def execute(command, **kwargs):
+                self.assertEqual(command[:2], ['swift', 'test'])
+                self.assertIn('--skip-build', command)
+                self.assertIn('release', command)
+                self.assertIn('--filter', command)
+                self.assertFalse((build / 'stale.profraw').exists())
+                self.assertTrue(all(p.read_bytes() == b'prebuilt' for p in products))
+                self.assertEqual(kwargs['env']['REPLICATOR_TEST_BINARY_DIR'], str(build))
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(coverage, 'run') as builder, \
+                 patch.object(coverage.subprocess, 'run', side_effect=execute), \
+                 patch.object(coverage, 'export') as export:
+                coverage.unit(root, output, prebuilt=True, test_filter='ExampleTests')
+            builder.assert_not_called()
+            export.assert_called_once()
+            self.assertEqual(export.call_args.args[3], products)
+
+    def test_missing_prebuilt_products_do_not_trigger_a_rebuild(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'Sources').mkdir()
+            with patch.object(coverage, 'run') as builder, patch.object(coverage.subprocess, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'incomplete'):
+                    coverage.unit(root, root / 'artifacts/coverage/unit', prebuilt=True)
+            builder.assert_not_called()
+            run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

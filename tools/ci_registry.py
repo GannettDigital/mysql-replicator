@@ -8,7 +8,8 @@ from pathlib import Path
 import re
 import subprocess
 
-TAGS = {'release': 'mysql-replicator-packaging:lab', 'coverage': 'mysql-replicator:coverage'}
+TAGS = {'release': 'mysql-replicator-packaging:lab', 'coverage': 'mysql-replicator:coverage',
+        'test-build': 'mysql-replicator:test-build'}
 
 
 def namespace(repository):
@@ -72,6 +73,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['plan', 'record', 'load'])
     parser.add_argument('--image', choices=TAGS, required=True)
+    parser.add_argument('--directory', type=Path, default=Path('artifacts/ci/image'))
     args = parser.parse_args()
     env = os.environ
     if args.action == 'plan':
@@ -80,7 +82,7 @@ def main():
             for key, text in value.items():
                 output.write(f'{key}<<REGISTRY_OUTPUT\n{text}\nREGISTRY_OUTPUT\n')
     else:
-        path = Path('artifacts/ci/image/image.json')
+        path = args.directory / 'image.json'
         if args.action == 'record':
             value = receipt(env['GITHUB_REPOSITORY'], args.image, env['IMAGE_REFERENCE'],
                             env['IMAGE_DIGEST'], env['GITHUB_SHA'])

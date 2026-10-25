@@ -28,10 +28,18 @@ features. The generated `ci-lab/matrix.json` is the authority when counts change
 | `mysql57-to-mysql57-myisam` | 412 |
 | `mysql57-to-mysql57-innodb` | 436 |
 
-The workflow builds the lab once and the coverage image once. Up to 16 integration
-jobs run in parallel. Job names show profile, area, variant and image. Stateful
-sequences stay in one fixture. Unit tests and Periphery run in parallel with the
-image build. All previous profile, variant, transport and assertion checks remain.
+The workflow first builds common Linux test artifacts. This build includes the
+application, lab, test executables, coverage maps and compiler index. Unit tests
+and Periphery use the saved outputs. Integration jobs use a smaller image with
+the same application binary. These test jobs run in parallel after the build.
+Up to 16 integration jobs run at once. Job names show profile, area, variant and
+image. Stateful sequences stay in one fixture. All previous profile, variant,
+transport and assertion checks remain.
+
+Periphery checks the Linux build. The common build also prepares a small,
+separate SQL parser test package to check its independence from the application.
+No test job recompiles the application. The cache-tool test still builds its
+own small fixture to test incremental compilation.
 
 ## Before merge
 

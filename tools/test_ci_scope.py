@@ -40,7 +40,7 @@ class ScopeTests(unittest.TestCase):
     def test_main_gate_requires_production_checks_and_skips_full_tests(self):
         from ci_scope import check_results
         results = {job: dict(result='success') for job in ('select-suite', 'lab-tools', 'build-images', 'integration')}
-        results.update({job: dict(result='skipped') for job in ('tool-tests', 'swift-lint', 'unit-tests', 'periphery')})
+        results.update({job: dict(result='skipped') for job in ('test-build', 'tool-tests', 'swift-lint', 'unit-tests', 'periphery')})
         check_results('production', results)
         for job in results:
             with self.subTest(job=job), self.assertRaises(ValueError):
@@ -83,9 +83,9 @@ class ChangedScopeTests(unittest.TestCase):
         from ci_scope import check_results
         for scope in ('docs', 'tools', 'pr-smoke', 'pr-selected', 'full'):
             results = {job: {'result': 'success'} for job in
-                       ('select-suite', 'tool-tests', 'swift-lint', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration')}
+                       ('select-suite', 'test-build', 'tool-tests', 'swift-lint', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration')}
             if scope in ('docs', 'tools'):
-                for job in ('unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration'):
+                for job in ('test-build', 'unit-tests', 'periphery', 'lab-tools', 'build-images', 'integration'):
                     results[job]['result'] = 'skipped'
             check_results(scope, results)
             for job in results:
