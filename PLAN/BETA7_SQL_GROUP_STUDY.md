@@ -215,9 +215,81 @@ local suite was run. Leave the remaining profiles and variants to full CI.
 
 Evidence is in `artifacts/json-comparison-study/`: `before.json`, `after.json`,
 `compare.py`, `comparison.json`, `json-unit.log` and `batch-age-unit.log`.
-The next candidate is repeated per-column metadata and default-value probes in
-the encoding cases. Measure those calls before changing them. Keep the same
-comparison boundary after each source statement.
+The stored-default step below measures the repeated per-column probes in the
+encoding cases. Keep the same comparison boundary after each source statement.
+
+## Stored-default comparison batching
+
+The schema comparison already reads its metadata in one batch per role. It also
+caches binary table definitions within that comparison. Keep these reads and
+their scope. Do not retain metadata across source statements.
+
+The remaining default-value probes opened one client per column. Move those
+probes to `LabStoredDefaultComparison`. Batch at most 32 probes or 256 KiB of
+query SQL, plus framing. Run an oversized probe alone. Keep the same query for
+each column. Convert text defaults to UTF-8 on the server; retain exact binary
+bytes. Preserve empty defaults and trailing spaces.
+
+For `NOT NULL` columns, keep the temporary InnoDB table, its copied column
+definition, the default insert, the byte check and the explicit drop. Disable
+binary logging for these temporary-table operations, as before. Each probe uses
+a unique temporary name. A client error stops the comparison and closes the
+session. Reject missing or extra results, non-hex output, odd-length hex and
+extra rows. This also prevents a truncated result from becoming an expected value.
+
+Run these three cases in one fixture before and after the change:
+
+- `ddl-compat-table-options`: text and binary `NOT NULL` defaults, table changes,
+  `CREATE LIKE` and restarts.
+- `matrix-nativeencodings`: defaults and row values across the tested character
+  sets, with subsequent DML and DDL.
+- `matrix-textdefaults`: Unicode, binary and numeric text defaults, trailing
+  spaces, added defaults, changed defaults and dropped defaults.
+
+Both runs use `mysql57-to-mysql84-innodb`, the default variant, SQL transport and
+runtime coverage. All cases pass. Later DML steps still compare tables created
+by earlier cases. Thus, the text-default case also rechecks the character-set
+table. Do not interpret these times as separate case timings with fresh schemas.
+
+| Measurement | Before batching | After batching |
+|---|---:|---:|
+| Complete invocation, seconds | 375.24 | 182.27 |
+| Selected cases, seconds | 295.64 | 103.44 |
+| All SQL client calls | 1,524 | 486 |
+| All SQL client seconds | 268.72 | 87.08 |
+| Stored-default probes | 1,119 | 1,119 |
+| Client calls for stored defaults | 1,119 | 81 |
+| Stored-default client seconds | 196.45 | 15.31 |
+| Application runtime lines reached | 8,316 | 8,318 |
+
+The complete invocation is 192.97 seconds shorter (51.4%). Batching removes
+1,038 client calls. All 1,119 probes retain the same SQL, role, case and execution
+count after replacing only generated temporary-table names for the comparison.
+All 23 saved step results match exactly, including their checks, expected values,
+observed values, snapshots and warnings. Case and recorded assertion counts match.
+
+No measured application line is lost. Two additional lines are reached in
+`Sources/ReplicatorCapture/DownloadCache.swift`: locking and error propagation
+when the idle callback throws. No application code changed. The comparison
+verifies equal application binary hashes, server contents, server settings,
+application source hashes and mapped lines. The build-input digests and image
+IDs differ because the harness sources changed. Only the new default-comparison
+helper and `SharedCorrectness.swift` differ in the coverage source hashes.
+
+Eight default-comparison unit tests and three SQL batch unit tests pass. They
+check exact bytes, empty values, identifier quoting, temporary-table operations,
+fresh reads on each comparison, result mapping, batch limits and failure handling.
+Formatting and whitespace checks pass. No full local suite was run. Full CI must
+check the remaining profiles, variants and case combinations.
+
+Evidence is in `artifacts/default-comparison-study/`: `before.json`, `after.json`,
+`before-default-costs.json`, `compare.py`, `comparison.json` and `unit.log`.
+This is one local comparison with AMD64 containers on an ARM64 host. It does not
+establish a full-suite saving or an applier performance change.
+
+Next, measure repeated replication-position and wait queries. Combine compatible
+reads only if the same completion condition remains checked. Do not shorten or
+remove a wait to improve the measured test time.
 
 ## Checks before removing work
 

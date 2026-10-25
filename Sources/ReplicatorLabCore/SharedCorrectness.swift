@@ -378,39 +378,11 @@ public enum SharedCorrectness {
                         binaryDefinitions[key]!, partition: fields[1])
                     return fields.joined(separator: "\t")
                 }.joined(separator: "\n")
+                columnFields = try LabStoredDefaultComparison.columns(columnFields, database: database) {
+                    try f.h.sqlBatch(f.profile.service(role), $0)
+                }
                 for i in columnFields.indices {
                     let fields = columnFields[i]
-                    if fields.count == 10 && fields[7] == "<stored-default>" {
-                        func quote(_ value: String) -> String {
-                            "`" + value.replacingOccurrences(of: "`", with: "``") + "`"
-                        }
-                        let stored = "DEFAULT(t." + quote(fields[1]) + ")"
-                        let text = fields[3].hasPrefix("char(") || fields[3].hasPrefix("varchar(")
-                        let expression = text ? "CONVERT(" + stored + " USING utf8mb4)" : stored
-                        let query: String
-                        if fields[4] == "NO" {
-                            // DEFAULT on a null-complemented NOT NULL field is
-                            // NULL. Copy the native definition, not its rows.
-                            let temporary =
-                                quote(database) + "."
-                                + quote("_lab_default_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""))
-                            let value = text ? "CONVERT(v USING utf8mb4)" : "v"
-                            query =
-                                "SET sql_log_bin=0; CREATE TEMPORARY TABLE " + temporary + " ENGINE=InnoDB AS SELECT "
-                                + quote(fields[1]) + " AS v FROM " + quote(database) + "." + quote(fields[0])
-                                + " LIMIT 0; INSERT INTO " + temporary + " VALUES(DEFAULT); SELECT HEX(" + value
-                                + ") FROM " + temporary + "; DROP TEMPORARY TABLE " + temporary
-                        } else {
-                            query =
-                                "SELECT HEX(" + expression + ") FROM " + quote(database) + "." + quote(fields[0])
-                                + " AS t RIGHT JOIN (SELECT 1) AS p ON FALSE LIMIT 1"
-                        }
-                        let bytes = try sql(query, preserveWhitespace: true).trimmingCharacters(in: .newlines)
-                        try require(
-                            bytes.utf8.allSatisfy { (48...57).contains($0) || (65...70).contains($0) },
-                            "invalid native stored default bytes")
-                        columnFields[i][7] = "X'" + bytes + "'"
-                    }
                     guard
                         fields.count == 10 && (fields[3].hasPrefix("enum(") || fields[3].hasPrefix("set("))
                             && (fields[5] == "binary" || fields[5].isEmpty)
