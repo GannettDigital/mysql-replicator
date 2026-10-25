@@ -287,9 +287,78 @@ Evidence is in `artifacts/default-comparison-study/`: `before.json`, `after.json
 This is one local comparison with AMD64 containers on an ARM64 host. It does not
 establish a full-suite saving or an applier performance change.
 
-Next, measure repeated replication-position and wait queries. Combine compatible
-reads only if the same completion condition remains checked. Do not shorten or
-remove a wait to improve the measured test time.
+The position-read step below measures repeated replication-position and wait
+queries. Do not shorten or remove a wait to improve the measured test time.
+
+## Position-read batching
+
+The previous three-case run made 55 pairs of position reads. Each pair runs
+`SHOW MASTER STATUS` (5.7) or `SHOW BINARY LOG STATUS` (8.4), then
+`SELECT @@GLOBAL.gtid_executed`. These calls took 18.20 seconds in total.
+Run each pair through the existing SQL batch reader. Keep both queries in order,
+including the separate GTID query. This is not an atomic snapshot; test callers
+must still control concurrent source writes.
+
+Do not change `SharedCorrectness.wait` or `LabFixture.awaitNative`. Keep the
+source reread before the native wait, the MySQL GTID subset check, the 60-second
+applier deadline, the 0.1-second poll interval, the 90-second native wait and the
+native status report. Missing results, invalid offsets and unexpected filenames
+still fail the position read.
+
+Reuse the previous step's passing run as the baseline. Run the same three cases
+once with position batching: `ddl-compat-table-options`, `matrix-nativeencodings`
+and `matrix-textdefaults`. Use the same reverse profile, default variant, SQL
+transport and application binary, with runtime coverage. All three cases pass.
+
+| Measurement | Separate position reads | Batched position reads |
+|---|---:|---:|
+| Complete invocation, seconds | 182.27 | 172.75 |
+| Selected cases, seconds | 103.44 | 96.43 |
+| All SQL client calls | 486 | 439 |
+| All SQL client seconds | 87.08 | 77.14 |
+| Position queries | 110 | 110 |
+| Position client calls | 110 | 55 |
+| Position client seconds | 18.20 | 8.84 |
+| GTID subset polls | 28 | 36 |
+| Application runtime lines reached | 8,318 | 8,316 |
+
+The complete invocation is 9.52 seconds shorter (5.2%). Position batching saves
+55 client calls. Eight additional GTID subset polls reduce the net saving to
+47 calls. The wait still checks the same completion condition; the number of
+polls can change with timing.
+
+All 110 position queries retain the same SQL, role, case and execution count.
+All 23 saved step results match exactly. The 26 native wait queries and 26 native
+status reads also match, after replacing only the generated server UUIDs for
+comparison. This retains the GTID intervals, timeout, role and execution count.
+Case and recorded assertion counts match. Application binary hashes, server
+contents, server settings, application source hashes and mapped lines match.
+Only `NativeHarness.swift` differs in the measured coverage source hashes.
+
+Two integration coverage lines are no longer reached:
+`Sources/ReplicatorCapture/DownloadCache.swift:157` and `:158`. They lock the
+queue and propagate an idle-callback error. Their coverage depended on timing.
+Add `testIdleCallbackFailureReleasesMutexAndPreservesPublishedFrames` to check
+this path directly. Its callback publishes a frame, then throws. The test checks
+the reported error, the failed timing counter, continued queue access and the
+retained frame. It passes without a timed race. No application code changes.
+
+Six position-reader unit tests and three SQL batch unit tests pass. The direct
+download-cache test also passes. The position tests cover both MySQL status
+commands, query order, empty and tagged GTID sets, large offsets, fresh reads,
+missing results, invalid positions and client failures. Formatting and whitespace
+checks pass. Leave the remaining integration profiles and variants to full CI.
+
+Evidence is in `artifacts/position-comparison-study/`: `before.json` references
+the prior stored-default run; `after.json` records the new run. `compare.py`,
+`comparison.json`, `unit.log` and `idle-unit.log` contain the checks. The direct
+download-cache unit test was added after the integration measurement. This is
+one local comparison, not a full-suite or application performance result.
+
+The three measured batching steps now retain their checks with fewer client
+starts. Review the next full CI cost report before choosing further changes.
+Keep native wait and status queries separate until a change can also preserve
+their diagnostic output and error behavior.
 
 ## Checks before removing work
 

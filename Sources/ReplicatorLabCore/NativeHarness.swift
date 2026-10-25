@@ -17,6 +17,23 @@ public struct Boundary {
     public let position: UInt64
     public let gtids: String
     public var json: [String: Any] { ["file": file, "position": position, "gtid_executed": gtids] }
+
+    /// Keep both ordered server reads. Sharing a client does not make them an
+    /// atomic snapshot; callers must still control concurrent source writes.
+    static func read(
+        statusCommand: String, execute: ([LabSQLBatch.Query]) throws -> [String: String]
+    ) throws -> Boundary {
+        let results = try execute([
+            .init(name: "position", sql: statusCommand),
+            .init(name: "gtids", sql: "SELECT @@GLOBAL.gtid_executed"),
+        ])
+        try require(Set(results.keys) == ["position", "gtids"], "binlog boundary results differ")
+        let fields = results["position"]!.components(separatedBy: "\t")
+        guard fields.count >= 2, let position = UInt64(fields[1]) else { throw LabError("invalid binlog boundary") }
+        try require(
+            fields[0].range(of: #"^binlog\.[0-9]+$"#, options: .regularExpression) != nil, "unexpected binlog filename")
+        return Boundary(file: fields[0], position: position, gtids: results["gtids"]!)
+    }
 }
 
 public func jsonObject<T: Encodable>(_ value: T) throws -> Any {
@@ -143,12 +160,9 @@ public final class NativeHarness {
         return result
     }
     func boundary(_ service: String, statusCommand: String? = nil) throws -> Boundary {
-        let fields = try sql(service, statusCommand ?? serverVersions[service]!.binlogStatus).components(
-            separatedBy: "\t")
-        guard fields.count >= 2, let position = UInt64(fields[1]) else { throw LabError("invalid binlog boundary") }
-        try require(
-            fields[0].range(of: #"^binlog\.[0-9]+$"#, options: .regularExpression) != nil, "unexpected binlog filename")
-        return Boundary(file: fields[0], position: position, gtids: try sql(service, "SELECT @@GLOBAL.gtid_executed"))
+        try Boundary.read(statusCommand: statusCommand ?? serverVersions[service]!.binlogStatus) {
+            try sqlBatch(service, $0)
+        }
     }
     func rows(_ service: String) throws -> [[String]] {
         try sql(service, "SELECT id,value,quantity FROM poc.items ORDER BY id").components(separatedBy: "\n").filter {

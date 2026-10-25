@@ -47,6 +47,25 @@ final class DownloadCacheTests: XCTestCase {
             XCTAssertEqual(String(describing: $0), "source lost")
         }
     }
+    func testIdleCallbackFailureReleasesMutexAndPreservesPublishedFrames() throws {
+        let cache = try DownloadCache(maximumBytes: 128, maximumEventBytes: 64)
+        let stop = CaptureCancellation()
+        let timings = StageTimings()
+        XCTAssertThrowsError(
+            try cache.next(cancellation: stop, timings: timings) {
+                // The callback must run outside the queue lock. Publish a frame
+                // before failing so the next read also checks retained data.
+                try cache.append([self.frame], cancellation: stop, timings: StageTimings())
+                throw CaptureError("idle callback failed")
+            }
+        ) {
+            XCTAssertEqual(String(describing: $0), "idle callback failed")
+        }
+        XCTAssertEqual(timings.snapshot["download.cache_wait"]?.failures, 1)
+        cache.finish(.success(()))
+        XCTAssertEqual(try cache.next(cancellation: stop, timings: timings), [frame])
+        XCTAssertNil(try cache.next(cancellation: stop, timings: timings))
+    }
     func testFullCacheBackpressuresReceiverThenUnblocksOnRead() throws {
         let cache = try DownloadCache(maximumBytes: 68, maximumEventBytes: 64, maximumBatches: 1)
         let stop = CaptureCancellation()
