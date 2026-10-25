@@ -522,10 +522,22 @@ jobs:
           dpkg-deb --extract mysql-server-core.deb mysql-reference
           "$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" --no-defaults --version
           echo "MYSQLBINLOG=$RUNNER_TEMP/mysql-reference/usr/bin/mysqlbinlog" >> "$GITHUB_ENV"
-      - name: Run isolated test groups
+      - name: Prepare MySQL fixture images
+        env:
+          CI_JOB: ${{ matrix.id }}
+        run: python3 tools/ci_lab.py --prepare-job "$CI_JOB"
+      - name: Run tests with prepared images
         env:
           CI_JOB: ${{ matrix.id }}
         run: python3 tools/ci_lab.py --run-job "$CI_JOB"
+      - name: Upload image preparation measurements on failure
+        uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          overwrite: true
+          name: ci-setup-${{ matrix.id }}
+          path: artifacts/ci/setup/*.json
+          if-no-files-found: warn
       - name: Upload execution group measurements
         uses: actions/upload-artifact@v4
         if: always()

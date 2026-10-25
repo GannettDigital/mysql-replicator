@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tarfile
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / 'artifacts/ci/lab'
@@ -166,6 +167,62 @@ def run_job(identifier):
         raise RuntimeError('Failed execution groups: ' + ', '.join(failures))
 
 
+def prepare_job(identifier):
+    """Fetch/build fixture images without creating containers or data volumes."""
+    from ci_jobs import validate_jobs
+    from ci_measurements import provenance, write
+    validate_bundle()
+    manifest = matrix()
+    validate_jobs(manifest)
+    matches = [job for job in manifest['jobs'] if job['id'] == identifier]
+    if len(matches) != 1:
+        raise ValueError('unknown CI job: ' + identifier)
+    job = matches[0]
+    catalog = json.loads(lab('test', '--profile', job['profile'], '--suite', 'correctness', '--list'))
+    fixture = next(p['fixture'] for p in catalog['profiles'] if p['id'] == job['profile'])
+    env = dict(os.environ, **fixture['environment'])
+    compose = ['docker', 'compose', '-p', 'ci-image-preparation']
+    for file in fixture['compose_files']:
+        compose += ['-f', str(ROOT / file)]
+    config = json.loads(subprocess.check_output(compose + ['config', '--format', 'json'], cwd=ROOT, env=env, text=True))
+    pulls, builds, seen = [], [], set()
+    for name in fixture['services']:
+        service = config['services'][name]
+        if service['image'] in seen:
+            continue
+        seen.add(service['image'])
+        (builds if 'build' in service else pulls).append(name)
+    record = dict(version=1, job_id=identifier, **provenance(), status='failed', phases={}, images=sorted(seen))
+    started = time.monotonic()
+    try:
+        for phase, args, services in [('pull', ['pull', '--policy', 'missing'], pulls),
+                                      ('build', ['build'], builds)]:
+            if not services:
+                continue
+            begin = time.monotonic()
+            status = 'failed'
+            try:
+                subprocess.run(compose + args + services, cwd=ROOT, env=env, check=True, timeout=600)
+                status = 'passed'
+            finally:
+                record['phases'][phase] = dict(seconds=time.monotonic() - begin, status=status)
+        record['status'] = 'passed'
+    finally:
+        record['seconds'] = time.monotonic() - started
+        write(ROOT / 'artifacts/ci/setup' / (identifier + '.json'), record)
+        summary = '\n'.join(['', '### MySQL image preparation (seconds)', '',
+                             '| Phase | Seconds | Result |', '|---|---:|---|',
+                             *[f"| {p} | {v['seconds']:.1f} | {v['status']} |" for p, v in record['phases'].items()],
+                             '', 'Containers and data directories start in the test step.', ''])
+        print(summary, flush=True)
+        if os.environ.get('GITHUB_STEP_SUMMARY'):
+            with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                output.write(summary)
+    if os.environ.get('GITHUB_ENV'):
+        with open(os.environ['GITHUB_ENV'], 'a') as output:
+            output.write('REPLICATOR_LAB_IMAGES_PREPARED=true\n')
+
+
 def _run_shard(identifier):
     validate_bundle()
     manifest = matrix()
@@ -204,6 +261,7 @@ def main():
     group.add_argument('--bundle', type=Path)
     group.add_argument('--run', help='execution group ID from the bundled plan')
     group.add_argument('--run-job', help='CI job ID from the bundled plan')
+    group.add_argument('--prepare-job', help='prepare the selected job\'s MySQL images without starting containers')
     group.add_argument('--plan', type=Path, help='generate the CI matrix using this local lab binary')
     args = parser.parse_args()
     if args.bundle:
@@ -211,6 +269,8 @@ def main():
     elif args.plan:
         binary = args.plan.resolve()
         plan(lambda *arguments: subprocess.check_output([str(binary), *arguments], cwd=ROOT, text=True))
+    elif args.prepare_job:
+        prepare_job(args.prepare_job)
     elif args.run_job:
         run_job(args.run_job)
     else:

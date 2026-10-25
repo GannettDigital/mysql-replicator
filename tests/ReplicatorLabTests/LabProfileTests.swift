@@ -3,6 +3,18 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testFixturePreparationUsesTheSameComposeFilesAndServicesAsTheRunner() {
+        for profile in LabProfile.allCases {
+            XCTAssertEqual(
+                profile.fixtureDefinition["compose_files"] as? [String], ["compose.yaml", profile.composeOverlay])
+            XCTAssertEqual(
+                profile.fixtureDefinition["services"] as? [String], LabProfile.Role.allCases.map { profile.service($0) }
+            )
+            XCTAssertEqual(
+                profile.fixtureDefinition["environment"] as? [String: String],
+                [profile.evidenceVariable: "ci-image-preparation"])
+        }
+    }
     func testDiscoveryBenchmarkValidatesProfileAndBounds() throws {
         let base = ["--profile", "mysql57-to-mysql84-innodb", "--mode", "discovery", "--binary", "/tmp/applier"]
         try LabBenchmark.validate(

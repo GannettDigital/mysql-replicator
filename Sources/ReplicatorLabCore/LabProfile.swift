@@ -62,6 +62,13 @@ public enum LabProfile: String, CaseIterable, Codable {
             ["role": $0.rawValue, "version": version($0), "engine": engine($0), "service": service($0)]
         }
     }
+    var fixtureDefinition: [String: Any] {
+        [
+            "compose_files": ["compose.yaml", composeOverlay],
+            "environment": [evidenceVariable: "ci-image-preparation"],
+            "services": Role.allCases.map { service($0) },
+        ]
+    }
 }
 
 extension LabProfile {

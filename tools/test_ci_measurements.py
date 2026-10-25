@@ -3,10 +3,54 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from ci_measurements import job_timings, line_sets, markdown, record_shard, summarize
+from ci_measurements import job_timings, line_sets, markdown, record_shard, summarize, phase_times
 
 
 class MeasurementsTests(unittest.TestCase):
+    def test_phase_times_exclude_nested_cases_and_fixture_work(self):
+        def span(start, end):
+            return dict(started_monotonic_seconds=start, finished_monotonic_seconds=end)
+        fixtures = [dict(phases=dict(setup=span(0, 10), container_startup=span(2, 8),
+                                    database_setup=span(8, 10), cleanup=span(25, 28), coverage=span(23, 25)))]
+        # The outer case includes nested assertions and a second fixture setup.
+        cases = [span(10, 23), span(12, 20), span(14, 18)]
+        fixtures.append(dict(phases=dict(setup=span(15, 17))))
+        result = phase_times(fixtures, cases, 30)
+        self.assertEqual(result['setup'], 12)
+        self.assertEqual(result['container_startup'], 6)
+        self.assertEqual(result['test_execution'], 11)
+        self.assertEqual(result['coverage'], 2)
+        self.assertEqual(result['cleanup'], 3)
+        self.assertEqual(result['unclassified'], 2)
+        self.assertIsNone(result['fixture_files'])
+        self.assertEqual(phase_times([], [], 5)['unclassified'], 5)
+        self.assertIsNone(phase_times([], [], 5)['test_execution'])
+        with self.assertRaisesRegex(ValueError, 'exceed'):
+            phase_times(fixtures, cases, 1)
+
+    def test_cases_and_job_setup_are_saved_without_counting_copied_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            setup = root / 'artifacts/ci/setup/job.json'
+            setup.parent.mkdir(parents=True)
+            setup.write_text(json.dumps(dict(seconds=2, status='passed')))
+            with record_shard(root, 'group', job_id='job'):
+                for suffix in ('fixture', 'fixture/evidence-copy'):
+                    path = root / 'artifacts/lab/new' / suffix / 'cases.json'
+                    path.parent.mkdir(parents=True)
+                    # No timestamps in historical files: report unmeasured.
+                    path.write_text(json.dumps([dict(seconds=999, status='passed')]))
+            record = json.loads((root / 'artifacts/ci/measurements/group.json').read_text())
+            self.assertEqual(record['job_setup']['seconds'], 2)
+            self.assertIsNone(record['phase_seconds']['test_execution'])
+            self.assertEqual(record['phase_seconds']['unclassified'], record['seconds'])
+            manifest, base = self.fixture()
+            rendered = markdown(summarize(manifest, [dict(base, job_setup=record['job_setup'],
+                                                         phase_seconds=record['phase_seconds'])]))
+            self.assertIn('MySQL image preparation', rendered)
+            self.assertIn('Execution group times (seconds)', rendered)
+            self.assertIn('unmeasured', rendered)
+
     def fixture(self):
         row = dict(profile='p', variant='default', suite='correctness', id='ddl', status='not_run')
         shard = dict(id='release-p-ddl', profile='p', variant='default', suite='correctness',

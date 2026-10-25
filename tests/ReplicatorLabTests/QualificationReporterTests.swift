@@ -26,6 +26,9 @@ final class QualificationReporterTests: XCTestCase {
         }
         XCTAssertEqual(reporter.results[0]["status"] as? String, "passed")
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(reporter.results[0]["seconds"] as? Double), 0)
+        let start = try XCTUnwrap(reporter.results[0]["started_monotonic_seconds"] as? Double)
+        let end = try XCTUnwrap(reporter.results[0]["finished_monotonic_seconds"] as? Double)
+        XCTAssertEqual(end - start, reporter.results[0]["seconds"] as! Double, accuracy: 0.000001)
         XCTAssertEqual(messages, ["starting " + test.description, "passed " + test.description])
     }
 
@@ -54,6 +57,11 @@ final class QualificationReporterTests: XCTestCase {
             try XCTUnwrap(saved[0]["seconds"] as? Double),
             try XCTUnwrap(saved[1]["seconds"] as? Double))
         XCTAssertEqual(saved[1]["parent_id"] as? String, "ddl")
+        XCTAssertGreaterThanOrEqual(
+            try XCTUnwrap(saved[1]["started_monotonic_seconds"] as? Double),
+            try XCTUnwrap(saved[0]["started_monotonic_seconds"] as? Double))
+        XCTAssertEqual(
+            saved[0]["finished_monotonic_seconds"] as? Double, saved[1]["finished_monotonic_seconds"] as? Double)
         XCTAssertEqual(saved[1]["source_file"] as? String, child.file)
         XCTAssertEqual(saved[1]["source_line"] as? UInt, child.line)
         XCTAssertEqual(saved[1]["error"] as? String, "old table remains")

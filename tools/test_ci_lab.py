@@ -10,6 +10,44 @@ import ci_lab
 
 
 class CIShardsTests(unittest.TestCase):
+    def test_image_preparation_uses_profile_definition_and_builds_shared_image_once(self):
+        from ci_jobs import assign_jobs
+        group = dict(id='one', profile='reverse', variant='default', image='coverage', area='dml')
+        plan = assign_jobs(dict(include=[group]), dict(max_groups=1, group_timeout_minutes=45,
+                          setup_timeout_minutes=10, standalone_areas=[]))
+        job = plan['jobs'][0]['id']
+        catalog = dict(profiles=[dict(id='reverse', fixture=dict(
+            compose_files=['compose.yaml', 'docker/reverse/compose.yaml'],
+            environment={'EVIDENCE': 'ci-image-preparation'}, services=['source', 'native', 'target57']))])
+        config = dict(services={'source': dict(image='mysql:8.4'),
+                               'native': dict(image='fixture:5.7', build={}),
+                               'target57': dict(image='fixture:5.7', build={})})
+        for failure in (False, True):
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                env_file = root / 'environment'
+                with patch.object(ci_lab, 'ROOT', root), patch.object(ci_lab, 'validate_bundle'), \
+                        patch.object(ci_lab, 'matrix', return_value=plan), \
+                        patch.object(ci_lab, 'lab', return_value=json.dumps(catalog)), \
+                        patch.object(ci_lab.subprocess, 'check_output', return_value=json.dumps(config)), \
+                        patch.object(ci_lab.subprocess, 'run') as run, \
+                        patch.dict(ci_lab.os.environ, GITHUB_ENV=str(env_file)):
+                    if failure:
+                        run.side_effect = subprocess.CalledProcessError(1, ['docker'])
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            ci_lab.prepare_job(job)
+                        self.assertFalse(env_file.exists())
+                    else:
+                        ci_lab.prepare_job(job)
+                        self.assertEqual(run.call_count, 2)
+                        self.assertEqual(run.call_args_list[0].args[0][-4:], ['pull', '--policy', 'missing', 'source'])
+                        self.assertEqual(run.call_args_list[1].args[0][-2:], ['build', 'native'])
+                        self.assertTrue(all('up' not in c.args[0] for c in run.call_args_list))
+                        self.assertEqual(env_file.read_text(), 'REPLICATOR_LAB_IMAGES_PREPARED=true\n')
+                saved = json.loads((root / f'artifacts/ci/setup/{job}.json').read_text())
+                self.assertEqual(saved['status'], 'failed' if failure else 'passed')
+                self.assertEqual(saved['phases']['pull']['status'], saved['status'])
+
     def test_pr_plan_resolves_explicit_policy_against_full_catalogs(self):
         from ci_matrix import SMOKE_PROFILES
         policy = json.loads((ci_lab.ROOT / 'tools/ci_matrix.json').read_text())

@@ -43,7 +43,9 @@ public enum LabTests {
         if options.list {
             try printJSON([
                 "schema_version": 1, "selection": options.suite, "tier": options.tier,
-                "profiles": options.profiles.map { ["id": $0.rawValue, "topology": $0.topology] as [String: Any] },
+                "profiles": options.profiles.map {
+                    ["id": $0.rawValue, "topology": $0.topology, "fixture": $0.fixtureDefinition] as [String: Any]
+                },
                 "scenarios": rows,
             ])
             return

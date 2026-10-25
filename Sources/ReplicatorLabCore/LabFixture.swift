@@ -58,8 +58,11 @@ final class LabFixture {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let start = DispatchTime.now().uptimeNanoseconds
         func record(_ status: String) throws {
+            let end = DispatchTime.now().uptimeNanoseconds
             lifecycle[phase] = [
-                "seconds": Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9, "status": status,
+                "seconds": Double(end - start) / 1e9, "status": status,
+                "started_monotonic_seconds": Double(start) / 1e9,
+                "finished_monotonic_seconds": Double(end) / 1e9,
             ]
             try writeJSON(
                 [
@@ -77,6 +80,19 @@ final class LabFixture {
         try measureFixture("setup") { try prepareFixture(build: build) }
     }
     private func prepareFixture(build: Bool) throws {
+        try measureFixture("fixture_files") { try prepareFiles(build: build) }
+        try measureFixture("container_startup") {
+            stage("starting source, native reference and target: " + profile.rawValue)
+            let imageOptions =
+                ProcessInfo.processInfo.environment["REPLICATOR_LAB_IMAGES_PREPARED"] == "true"
+                ? ["--no-build", "--pull", "never"] : ["--build"]
+            _ = try h.compose(
+                ["up", "-d"] + imageOptions + ["--wait", "--wait-timeout", "300", "target57", "source", "native"],
+                timeout: 360, onOutput: { FileHandle.standardError.write($0) })
+        }
+        try measureFixture("database_setup") { try prepareDatabases() }
+    }
+    private func prepareFiles(build: Bool) throws {
         let tls = output.appendingPathComponent("tls")
         try FileManager.default.createDirectory(at: tls, withIntermediateDirectories: true)
         stage("evidence: " + output.path)
@@ -121,10 +137,9 @@ final class LabFixture {
         try FileManager.default.createDirectory(at: bundles, withIntermediateDirectories: true)
         _ = try docker(["cp", bundles.path, helper + ":/evidence/support-bundles"])
 
-        stage("starting source, native reference and target: " + profile.rawValue)
-        _ = try h.compose(
-            ["up", "-d", "--build", "--wait", "--wait-timeout", "300", "target57", "source", "native"], timeout: 360,
-            onOutput: { FileHandle.standardError.write($0) })
+    }
+    private func prepareDatabases() throws {
+        let tls = output.appendingPathComponent("tls")
         let seed = """
             CREATE DATABASE reverse_poc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
             CREATE TABLE reverse_poc.items (
@@ -237,6 +252,9 @@ final class LabFixture {
     }
     func collectCoverage(allowEmpty: Bool = false) throws {
         guard codeCoverage else { return }
+        try measureFixture("coverage") { try collectFixtureCoverage(allowEmpty: allowEmpty) }
+    }
+    private func collectFixtureCoverage(allowEmpty: Bool) throws {
         for index in coverageInvocations.indices {
             guard let label = coverageInvocations[index]["label"] as? String else { continue }
             let client = h.project + "-" + label

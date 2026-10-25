@@ -360,6 +360,123 @@ starts. Review the next full CI cost report before choosing further changes.
 Keep native wait and status queries separate until a change can also preserve
 their diagnostic output and error behavior.
 
+## Full run 40170659705 and setup separation
+
+All 250 integration jobs passed at commit
+`d416c21e12729ff70b3f21b91caa079f656160c4`. All 263 expected integration coverage
+reports are present. The unit job was cancelled after it stopped making progress.
+Thus, the complete CI result and the unit coverage baseline are not available.
+The integration reports reach 17,667 of 20,875 runtime lines (84.63%). This is
+integration coverage only; it does not show which lines unit tests also reach.
+
+The reconstructed report checks the commit, build and plan identities. It uses
+249 group records from attempt 1 and one successful retry from attempt 2. Keep
+these attempt identifiers. No group record is missing or stale. Do not mark the
+report complete while the unit result and required aggregate jobs are absent.
+Evidence is in `artifacts/ci-run-40170659705/`: `measurements/`, `jobs.json`,
+`ci-build-coverage/build.json`, `ci-lab/matrix.json`, and `report/`. The report
+directory contains the timing report and the test-area coverage comparison.
+
+### Existing setup costs
+
+The old fixture records combine image preparation, container startup and database
+setup. They cannot separate those costs after the run. They do show differences
+between profiles and variation within a profile:
+
+| Profile | Groups | Median group seconds | Median setup seconds | Setup range, seconds |
+|---|---:|---:|---:|---:|
+| 5.7 to 5.7 InnoDB | 52 | 179.2 | 19.6 | 18.1–69.3 |
+| 5.7 to 5.7 MyISAM | 49 | 179.9 | 22.7 | 18.6–64.1 |
+| 5.7 to 8.4 InnoDB | 52 | 192.6 | 33.8 | 27.7–93.5 |
+| 8.4 to 5.7 MyISAM | 97 | 208.9 | 34.5 | 28.5–77.7 |
+
+Shared-fixture records cover 249 groups and 263 fixtures. Setup took 129.3
+runner-minutes and cleanup took 51.0 runner-minutes. All groups together took
+1,153.0 runner-minutes. Setup and cleanup account for about 15.6% of that sum.
+These sums measure runner use, not elapsed workflow time. Do not assume that all
+remaining time is SQL execution, or that every case has the same startup cost.
+
+### One-case validation of the new measurements
+
+CI now prepares MySQL images in a separate step. The test step uses those images
+without pulling or building them again. Each shared fixture records file
+preparation, container startup and database setup. Group reports also show test
+execution, cleanup, coverage export and time without a phase record. Nested cases
+are counted once. Setup details are included in the setup total.
+
+Run only `database-explicit` on `mysql57-to-mysql84-innodb`, default variant,
+SQL transport, with runtime coverage. The case and its saved-schema restart
+checks pass. No full local suite or new full CI run is needed for this check.
+
+| Phase | Seconds |
+|---|---:|
+| Cached image preparation, outside the group | 3.5 |
+| Group total | 95.8 |
+| Setup total | 26.9 |
+| — Fixture files, included in setup | 1.2 |
+| — Container startup, included in setup | 22.9 |
+| — Database setup, included in setup | 2.8 |
+| Test execution | 21.4 |
+| Cleanup | 11.6 |
+| Coverage export | 8.2 |
+| Other or unmeasured work | 27.7 |
+
+The last category includes applier control, checkpoint waits and evidence work
+outside named cases. It is not a measurement of test execution. The host runs
+AMD64 containers on ARM64 with cached images. A separate Linux unit build ran
+on the same Docker VM during this check. These times validate the phase records;
+they are not a controlled benchmark or a prediction of GitHub runner times.
+They do not measure cold image downloads.
+
+The group record is `artifacts/ci/measurements/local-phase-database-explicit.json`.
+Image preparation is in `artifacts/ci/setup/local-phase-database-explicit.json`.
+The case result is `artifacts/lab/20261025T190132Z-f70c292c/result.json`.
+
+### What to review next
+
+The 249 groups with SQL records made 262,581 client calls. Their recorded client
+time totals 420.0 runner-minutes. This includes client startup and result transfer;
+it is not MySQL server execution time. It also overlaps fixture and case time.
+Do not add it to the group total.
+
+| SQL category | Calls | Client minutes |
+|---|---:|---:|
+| Mixed or unclassified | 131,811 | 211.0 |
+| Schema comparison | 37,689 | 62.8 |
+| Position or wait | 33,700 | 53.0 |
+| Result or status read | 23,958 | 37.6 |
+| Metadata read | 17,993 | 27.4 |
+| Outside a case | 16,778 | 27.2 |
+| Simple source statement | 652 | 1.0 |
+
+The source-statement row is not a count of all source SQL. Mixed batches remain
+unclassified. SQL fingerprints identify repeated calls; they do not establish
+that two calls make the same assertion against the same state.
+
+Use the existing records in this order:
+
+1. Review short SQL groups that can share one fixture. For example, reverse
+   `without-source-gtids` runs `ddl-compat-generated` in an 80.2-second group and
+   `positive` in an 87.6-second group. Check their setup, case dependencies and
+   restart assertions before combining them. The 91.8-second BINLOG group has
+   both cases but uses a different transport; retain that separate check.
+2. Review the long groups. Bootstrap uses 208.9 runner-minutes across 20 groups.
+   Columns and keys use 142.0 minutes across 14 groups. Use per-case SQL records
+   and fingerprints to identify repeated comparisons and waits. Inspect the
+   unclassified SQL before proposing a change to it.
+3. Compare catalog obligations, intermediate results and runtime line sets for
+   each proposed change. Bootstrap starts from existing schemas; replicated DDL
+   starts from source statements. Keep both behaviors even when their line sets
+   overlap. Missing unit coverage prevents a unit-versus-integration comparison
+   for this run.
+4. Run only the affected cases for the first comparison. Keep profile, variant,
+   transport and required isolation boundaries. Putting separate fixture runs
+   in one CI job saves some job setup, but does not remove container restarts.
+   To save fixture startup, compatible cases must use one fixture.
+
+No test selection, case order or group assignment changes in this measurement
+step. Use the saved full-run data before starting another full workflow.
+
 ## Checks before removing work
 
 Keep all current comparisons in this change. For a later optimization:

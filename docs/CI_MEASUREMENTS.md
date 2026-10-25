@@ -351,7 +351,41 @@ that family, with a 20% allowance and rounding up to whole minutes. These are
 scheduling estimates, not measured times for the new groups. Estimates do not
 change test selection, case order, or timeouts. Update them after a successful full run.
 
-Shared fixtures write `fixture-lifecycle.json` with setup and cleanup duration
-and outcome. The measurement report retains each fixture ID and summarizes these
-times by profile. Missing records remain unmeasured. The matrix lists every
-selected case and dependency; the job name lists its profile and test area.
+CI runs `Prepare MySQL fixture images` before `Run tests with prepared images`.
+The first step reads the profile's Compose files from the lab catalog. It pulls
+the required MySQL images and builds each shared fixture image once. It does not
+start containers or create data volumes. Its times appear in each group's
+`job_setup` record and in the measurement report. On failure, CI also saves
+`ci-setup-JOB_ID`. A failed image preparation step
+stops the tests. Shared fixtures then use `--no-build --pull never`.
+
+Shared fixtures write `fixture-lifecycle.json` with these phases:
+
+| Phase | Work measured |
+|---|---|
+| `setup` | Total fixture setup |
+| `fixture_files` | Certificates, evidence volume, and helper container |
+| `container_startup` | Start source, native replica, and target; wait for health checks |
+| `database_setup` | Seed data, users, replication configuration, and baseline position |
+| `cleanup` | Remove fixture containers and volumes; copy available failure bundles |
+| `coverage` | Collect and export runtime coverage |
+
+The three setup detail phases are part of `setup`. Do not add them to the setup
+total. `cases.json` records monotonic start and finish times. The report takes
+the union of case intervals so nested cases count once. It excludes measured
+fixture setup, cleanup, and coverage work from test execution time. Test time
+still includes SQL, assertions, and required replication waits.
+
+Each job summary and the final report show these times in seconds. The
+`phase_seconds` field retains the values for each execution group. Work without
+phase records appears as `unclassified`. This can include tool validation,
+applier control outside a case, report generation, and adapter-specific setup.
+Missing records are unmeasured, not zero. Older records do not have the interval
+fields. Demo and native adapters do not yet measure all setup phases.
+
+Check a timing change with one selected case before another full run. Use the
+completed full run for timing, coverage, SQL, and assertion comparisons. Record
+whether local images were cached. A cached local run does not measure cold image
+downloads or GitHub runner costs. Do not remove cases from line coverage alone.
+The matrix lists every selected case and dependency; job names list the profile
+and test area.

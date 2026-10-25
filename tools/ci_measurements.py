@@ -40,6 +40,47 @@ def line_sets(reports):
     return mapped, hit
 
 
+def interval_seconds(intervals):
+    total, end = 0.0, float('-inf')
+    for start, stop in sorted(intervals):
+        if stop < start:
+            raise ValueError('negative measurement interval')
+        total += max(0, stop - max(start, end))
+        end = max(end, stop)
+    return total
+
+
+def phase_times(fixtures, cases, wall_seconds):
+    """Union nested cases; exclude measured fixture work from test execution."""
+    def interval(value):
+        names = ('started_monotonic_seconds', 'finished_monotonic_seconds')
+        return [(value[names[0]], value[names[1]])] if all(n in value for n in names) else []
+    intervals = {phase: [span for f in fixtures for span in interval(f.get('phases', {}).get(phase, {}))]
+                 for phase in ('setup', 'fixture_files', 'container_startup', 'database_setup', 'cleanup', 'coverage')}
+    result = {phase: interval_seconds(spans) if spans else None for phase, spans in intervals.items()}
+    overhead = sum((intervals[p] for p in ('setup', 'cleanup', 'coverage')), [])
+    tests = [span for case in cases for span in interval(case)]
+    result['test_execution'] = (interval_seconds(tests + overhead) - interval_seconds(overhead)) if tests else None
+    accounted = interval_seconds(tests + overhead)
+    if accounted > wall_seconds + 1:
+        raise ValueError('measured phases exceed execution group time')
+    result['unclassified'] = max(0, wall_seconds - accounted)
+    return result
+
+
+def phase_table(identifier, phases):
+    def cell(name):
+        value = phases.get(name)
+        return 'unmeasured' if value is None else f'{value:.1f}'
+    return (f'| {identifier} | ' + ' | '.join(cell(p) for p in
+            ('setup', 'container_startup', 'database_setup', 'test_execution', 'cleanup', 'coverage', 'unclassified')) + ' |')
+
+
+PHASE_TABLE_HEADER = [
+    '| Group | Setup total | Container startup¹ | Database setup¹ | Tests² | Cleanup | Coverage export | Other / unmeasured |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|---:|']
+
+
 @contextmanager
 def record_shard(root, identifier, build_inputs=False, job_id=None):
     started = time.monotonic()
@@ -49,9 +90,13 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
     previous_sql = set(directory.rglob('sql-client.json'))
     previous_fixtures = set(directory.rglob('fixture-lifecycle.json'))
     previous_traces = set(directory.rglob('sql-trace.jsonl'))
+    previous_cases = set(directory.rglob('cases.json'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
     if job_id is not None:
         record['job_id'] = job_id
+        setup = root / 'artifacts/ci/setup' / (job_id + '.json')
+        if setup.exists():
+            record['job_setup'] = json.loads(setup.read_text())
     try:
         if build_inputs:
             record['build'] = json.loads((root / 'artifacts/ci/image/build.json').read_text())
@@ -70,6 +115,11 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
                                    if 'evidence' not in p.relative_to(directory).parts)
             if fixture_paths:
                 record['fixtures'] = [json.loads(p.read_text()) for p in fixture_paths]
+            case_paths = sorted(p for p in set(directory.rglob('cases.json')) - previous_cases
+                                if not any(part == 'evidence' or part.startswith('evidence-')
+                                           for part in p.relative_to(directory).parts))
+            cases = [case for path in case_paths for case in json.loads(path.read_text())]
+            record['phase_seconds'] = phase_times(record.get('fixtures', []), cases, record['seconds'])
             # Each correctness fixture writes one file outside copied evidence.
             sql_paths = sorted(p for p in set(directory.rglob('sql-client.json')) - previous_sql
                                if 'evidence' not in p.relative_to(directory).parts)
@@ -96,6 +146,15 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
             raise
         finally:
             write(root / 'artifacts/ci/measurements' / (identifier + '.json'), record)
+            if 'phase_seconds' in record:
+                summary = '\n'.join(['', '### Execution group times (seconds)', '', *PHASE_TABLE_HEADER,
+                                     phase_table(identifier, record['phase_seconds']), '',
+                                     '¹ Part of setup total. ² Nested cases are counted once; measured fixture work is excluded.',
+                                     'Other includes work without phase records. Missing measurements are not zero.', ''])
+                print(summary, flush=True)
+                if os.environ.get('GITHUB_STEP_SUMMARY'):
+                    with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                        output.write(summary)
 
 
 def seconds(start, end):
@@ -210,6 +269,7 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings) if jobs else None,
         shards=[dict(planned[k], job_id=r.get('job_id', k), seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
                      sql_client=r.get('sql_client'), fixtures=r.get('fixtures'), sql_cost=r.get('sql_cost'),
+                     phase_seconds=r.get('phase_seconds'), job_setup=r.get('job_setup'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
                      mapped_lines=len(r.get('coverage', {}).get('mapped', []))) for k, r in sorted(by_id.items())])
 
@@ -242,6 +302,22 @@ def markdown(report):
         if job['seconds'] is not None:
             lines.append(f"| {job['name']} | {job['seconds']/60:.1f} | {job['conclusion']} |")
     fixtures = [f for shard in report['shards'] for f in (shard.get('fixtures') or [])]
+    setups = {s['job_id']: s['job_setup'] for s in report['shards'] if s.get('job_setup')}
+    if setups:
+        lines += ['', '## MySQL image preparation', '',
+                  'Runs once per CI job, before fixture startup. Includes image downloads and the MySQL 5.7 fixture build.', '',
+                  '| Job | Seconds | Result |', '|---|---:|---|']
+        lines += [f"| {job} | {s['seconds']:.1f} | {s['status']} |" for job, s in sorted(setups.items())]
+    measured = [s for s in report['shards'] if s.get('phase_seconds')]
+    if measured:
+        lines += ['', '## Execution group times (seconds)', '',
+                  'Setup total includes container startup, database setup, and fixture file preparation. '
+                  'These columns overlap; do not add the setup detail to the total. '
+                  'Tests include SQL, replication waits and assertions. Nested cases are counted once. '
+                  'Measured fixture work inside a case is excluded from test time. '
+                  'Other includes validation, report generation, and work without phase records. '
+                  'Missing measurements are not zero.', '', *PHASE_TABLE_HEADER]
+        lines += [phase_table(s['id'], s['phase_seconds']) for s in measured]
     if fixtures:
         lines += ['', '## Fixture setup and cleanup', '',
                   'Measured shared fixtures only. Demo and native adapters can have other setup paths. '

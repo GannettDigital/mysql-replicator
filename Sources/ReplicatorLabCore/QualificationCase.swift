@@ -52,7 +52,9 @@ final class QualificationReporter {
         var result = test.fields
         result["status"] = "running"
         if let parent = active.last { result["parent_id"] = parent.test.id }
-        active.append((test, results.count, DispatchTime.now().uptimeNanoseconds))
+        let started = DispatchTime.now().uptimeNanoseconds
+        result["started_monotonic_seconds"] = Double(started) / 1e9
+        active.append((test, results.count, started))
         results.append(result)
         log("starting " + test.description)
         try save()
@@ -62,8 +64,9 @@ final class QualificationReporter {
         guard let current = active.last, current.test.id == id else {
             throw LabError("qualification case completion out of order: \(id)")
         }
-        results[current.index]["seconds"] =
-            Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
+        let ended = DispatchTime.now().uptimeNanoseconds
+        results[current.index]["seconds"] = Double(ended - current.started) / 1e9
+        results[current.index]["finished_monotonic_seconds"] = Double(ended) / 1e9
         results[current.index]["status"] = "passed"
         try save()
         active.removeLast()
@@ -105,9 +108,10 @@ final class QualificationReporter {
     func fail(_ error: Error) -> Error {
         let detail = String(describing: error)
         let identified = active.last.map { LabError($0.test.description + ": " + detail) }
+        let ended = DispatchTime.now().uptimeNanoseconds
         for current in active.reversed() {
-            results[current.index]["seconds"] =
-                Double(DispatchTime.now().uptimeNanoseconds - current.started) / 1_000_000_000
+            results[current.index]["seconds"] = Double(ended - current.started) / 1e9
+            results[current.index]["finished_monotonic_seconds"] = Double(ended) / 1e9
             results[current.index]["status"] = "failed"
             results[current.index]["error"] = detail
             log("failed " + current.test.description + ": " + detail)
