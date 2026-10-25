@@ -154,7 +154,9 @@ that supplemental coverage plan. It retains the cases in their full groups and
 instruments each group once. The first full run used 240 groups in 125 jobs.
 The [full-run fixes](BETA7_FULL_RUN_FIXES.md) assign those groups to 240 jobs,
 retain all 2,095 catalog obligations, and record fixture setup and cleanup time.
-PR selection remains unchanged.
+PR selection remains unchanged. The later [SQL grouping study](BETA7_SQL_GROUP_STUDY.md)
+replaces the arbitrary DDL/DML boundaries with named groups and retains all
+obligations in 250 groups/jobs. It adds case-level SQL cost reports.
 
 Use exact file/line differences to review a costly group with a small gain.
 Inspect the branch condition. Prefer a focused unit test or a small addition to

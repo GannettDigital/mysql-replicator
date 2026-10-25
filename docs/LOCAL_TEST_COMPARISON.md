@@ -94,3 +94,18 @@ expected outcomes, fixture isolation and restart boundaries before removing work
 
 A one-pass timing result is a local observation. Repeat important measurements
 with the run order reversed. Confirm CI job time and runner cost in GitHub.
+
+## Review group boundaries
+
+Use the SQL cost report in [CI measurements](CI_MEASUREMENTS.md) to find repeated
+fixture work and expensive cases. Compare only matching profiles, variants,
+transports and runtime builds. Bootstrap discovery and replicated CREATE test
+different starting conditions even when their later SQL is equal.
+
+The named DDL/DML groups in `tools/ci_matrix.json` retain explicit case lists.
+The planner keeps catalog order, adds required dependencies, and rejects missing
+or duplicate primary assignments. A newly added case in these families needs
+a group assignment. Other families retain their existing selection rules.
+
+See [the SQL grouping study](../PLAN/BETA7_SQL_GROUP_STUDY.md) for the first
+measurement and the limits of using line coverage to remove tests.

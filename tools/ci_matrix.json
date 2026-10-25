@@ -16,18 +16,241 @@
     ]
   },
   "areas": [
-    {"name": "database", "families": ["database"]},
-    {"name": "gtids", "families": ["gtids"]},
-    {"name": "ddl", "families": ["ddl"], "split_after": ["ddl-compat-generated"]},
-    {"name": "dml", "families": ["dml"], "size": 8},
-    {"name": "foreign-keys", "families": ["foreign-keys"]},
-    {"name": "indexes", "families": ["indexes"], "size": 6},
-    {"name": "bootstrap", "families": ["bootstrap"], "split_after": ["bootstrap-matrix-upsert"]},
-    {"name": "refusals", "families": ["policy", "rejections", "dml-refusals"]},
-    {"name": "ordered-ddl", "families": ["ordered"]},
-    {"name": "collation", "families": ["collation"]},
-    {"name": "filters-discovery", "families": ["filters", "discovery"]},
-    {"name": "failure-recovery-offline", "families": ["failures", "recovery", "offline"]}
+    {
+      "name": "database",
+      "families": [
+        "database"
+      ]
+    },
+    {
+      "name": "gtids",
+      "families": [
+        "gtids"
+      ]
+    },
+    {
+      "name": "ddl",
+      "families": [
+        "ddl"
+      ],
+      "groups": [
+        {
+          "name": "partitions",
+          "cases": [
+            "ddl-compat-partition-expressions",
+            "ddl-compat-partition-column-renames",
+            "ddl-compat-partition-rename-syntax",
+            "ddl-compat-partition-column-bounds",
+            "ddl-compat-partition-exchange-unchecked",
+            "ddl-compat-partition-key-algorithm",
+            "ddl-compat-partition-maintenance",
+            "ddl-compat-subpartitions",
+            "ddl-compat-partition-hash-forms",
+            "ddl-compat-partitions",
+            "ddl-compat-hash-list"
+          ]
+        },
+        {
+          "name": "stored-objects",
+          "cases": [
+            "ddl-compat-executable-comments",
+            "ddl-compat-executable-comments-target-gate",
+            "ddl-compat-executable-comments-source-gate",
+            "ddl-compat-stored-objects",
+            "ddl-compat-absent-definers",
+            "ddl-compat-view-renames",
+            "ddl-compat-conditional-routines",
+            "ddl-compat-temporary-create-select",
+            "ddl-compat-views",
+            "ddl-compat-routines",
+            "ddl-compat-temporary"
+          ]
+        },
+        {
+          "name": "encodings",
+          "cases": [
+            "ddl-compat-unicode-names",
+            "ddl-compat-query-encodings",
+            "ddl-compat-table-name-case",
+            "ddl-compat-table-charset",
+            "ddl-compat-charset-conversion",
+            "ddl-compat-compound-charset",
+            "ddl-compat-charset-defaults"
+          ]
+        },
+        {
+          "name": "columns-keys",
+          "cases": [
+            "ddl-compat-unique-row-identity",
+            "ddl-compat-keyless-rows",
+            "ddl-compat-generated-expressions",
+            "ddl-compat-generated-dependencies",
+            "ddl-compat-column-index-syntax",
+            "ddl-compat-grouped-constraints",
+            "ddl-compat-primary-key-parts",
+            "ddl-compat-column-renames",
+            "ddl-compat-column-swaps",
+            "ddl-compat-fulltext",
+            "ddl-compat-spatial-prefix-indexes",
+            "ddl-compat-json-indexes",
+            "ddl-compat-ignored-checks",
+            "ddl-compat-alter-column-keys",
+            "ddl-compat-constraints",
+            "ddl-compat-generated"
+          ]
+        },
+        {
+          "name": "table-changes",
+          "cases": [
+            "ddl-compat-alter-options",
+            "ddl-compat-alter-table-rename",
+            "ddl-compat-table-options",
+            "ddl-compat-table-maintenance",
+            "ddl-compat-alter-conversions",
+            "ddl-compat-multi-table",
+            "ddl-compat-cross-schema-relationships",
+            "ddl-compat-types",
+            "ddl-compat-alter",
+            "ddl-compat-database"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dml",
+      "families": [
+        "dml"
+      ],
+      "groups": [
+        {
+          "name": "encodings-choices",
+          "cases": [
+            "matrix-collations",
+            "matrix-nativeencodings",
+            "matrix-exactchoices",
+            "matrix-choiceboundaries",
+            "matrix-binarychoices",
+            "matrix-legacybinaryset",
+            "matrix-zerowidth",
+            "matrix-identifiercase",
+            "matrix-unicodeidentifiers",
+            "matrix-encodings",
+            "matrix-widestrings",
+            "matrix-enumzero",
+            "matrix-choices",
+            "matrix-widechoices"
+          ]
+        },
+        {
+          "name": "numeric-temporal",
+          "cases": [
+            "matrix-decimaldefaults",
+            "matrix-floatbounds",
+            "matrix-zerofill",
+            "matrix-fixedfloating",
+            "matrix-floating",
+            "matrix-bits",
+            "matrix-integers",
+            "matrix-decimal",
+            "matrix-temporal",
+            "matrix-precision",
+            "matrix-floatingautofloat",
+            "matrix-floatingautodouble",
+            "matrix-floatingautofixedfloat",
+            "matrix-floatingautounsigneddouble"
+          ]
+        },
+        {
+          "name": "row-operations",
+          "cases": [
+            "matrix-composite",
+            "matrix-textkey",
+            "matrix-values",
+            "matrix-upsert",
+            "matrix-replace",
+            "matrix-ignore",
+            "matrix-select",
+            "matrix-load",
+            "positive"
+          ]
+        },
+        {
+          "name": "structured-default-values",
+          "cases": [
+            "matrix-fulltext",
+            "matrix-binarydefaults",
+            "matrix-textdefaults",
+            "matrix-spatial",
+            "matrix-json",
+            "matrix-typedjson",
+            "matrix-jsonpartial",
+            "matrix-generated",
+            "matrix-fixed",
+            "matrix-lob",
+            "matrix-defaults",
+            "json-year-compatibility",
+            "large-values"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "foreign-keys",
+      "families": [
+        "foreign-keys"
+      ]
+    },
+    {
+      "name": "indexes",
+      "families": [
+        "indexes"
+      ],
+      "size": 6
+    },
+    {
+      "name": "bootstrap",
+      "families": [
+        "bootstrap"
+      ],
+      "split_after": [
+        "bootstrap-matrix-upsert"
+      ]
+    },
+    {
+      "name": "refusals",
+      "families": [
+        "policy",
+        "rejections",
+        "dml-refusals"
+      ]
+    },
+    {
+      "name": "ordered-ddl",
+      "families": [
+        "ordered"
+      ]
+    },
+    {
+      "name": "collation",
+      "families": [
+        "collation"
+      ]
+    },
+    {
+      "name": "filters-discovery",
+      "families": [
+        "filters",
+        "discovery"
+      ]
+    },
+    {
+      "name": "failure-recovery-offline",
+      "families": [
+        "failures",
+        "recovery",
+        "offline"
+      ]
+    }
   ],
   "demo_reports": {
     "mysql84-to-mysql57-myisam": 4,

@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from ci_matrix import SMOKE_PROFILES, case_groups, generate, generate_smoke, generate_production, key
+from ci_matrix import SMOKE_PROFILES, case_groups, named_case_groups, generate, generate_smoke, generate_production, key
 
 
 def row(identifier, family='database', suite='correctness', profile='forward',
@@ -53,6 +53,42 @@ class MatrixTests(unittest.TestCase):
         result = self.generate()
         self.assertTrue(any('new-case' in s['cases'] for s in result['include']))
         self.assertTrue(any(s['variant'] == 'new-variant' for s in result['include']))
+
+    def test_named_groups_preserve_catalog_order_and_repeat_required_dependencies(self):
+        rows = [row('create'), row('alter'), dict(row('drop'), dependencies=['create']),
+                dict(row('unsupported'), status='not_applicable')]
+        policy = copy.deepcopy(self.policy)
+        area = dict(name='database', families=['database'], groups=[
+            dict(name='changes', cases=['alter', 'create']), dict(name='remove', cases=['drop', 'unsupported'])])
+        policy['areas'][0] = area
+        plan = generate([dict(scenarios=rows)], policy)
+        self.assertEqual([(s['area'], s['cases']) for s in plan['include']],
+                         [('database-changes', ['create', 'alter']), ('database-remove', ['create', 'drop'])])
+        self.assertEqual(plan['obligations'], 3)
+        self.assertEqual(plan['inventory'], rows)
+        with self.assertRaisesRegex(ValueError, 'unassigned cases'):
+            generate([dict(scenarios=rows + [row('new')])], policy)
+        area['groups'][0]['cases'].append('typo')
+        with self.assertRaisesRegex(ValueError, 'unknown cases'):
+            generate([dict(scenarios=rows)], policy)
+
+    def test_named_groups_reject_ambiguous_assignment(self):
+        for groups in [[], [None], [dict(name='a', cases=['x']), dict(name='b', cases=['x'])],
+                       [dict(name='a', cases=['x']), dict(name='a', cases=['y'])],
+                       [dict(name='a', cases=['x', 'x'])]]:
+            with self.subTest(groups=groups), self.assertRaises(ValueError):
+                named_case_groups(['x'], dict(name='ddl', groups=groups))
+        with self.assertRaises(ValueError):
+            named_case_groups(['x'], dict(name='ddl', groups=[dict(name='a', cases=['x'])], size=1))
+
+    def test_named_groups_filter_profile_and_gtid_disabled_subsets(self):
+        rows = [row('create'), row('alter'), row('create', variant='without-source-gtids')]
+        policy = copy.deepcopy(self.policy)
+        policy['areas'][0] = dict(name='database', families=['database'], groups=[
+            dict(name='create', cases=['create']), dict(name='alter', cases=['alter'])])
+        result = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(result['obligations'], 3)
+        self.assertEqual([s['cases'] for s in result['include'] if s['variant']=='without-source-gtids'], [['create']])
 
     def test_reviewed_boundaries_preserve_order_and_include_new_cases(self):
         area = dict(name='ddl', split_after=['b', 'd'])

@@ -16,8 +16,8 @@ run MySQL and do not produce replicator coverage. Performance benchmarks use an
 uninstrumented binary. The old `ci-expanded-coverage` label and dispatch input
 remain aliases for full coverage. They do not add duplicate runs.
 
-The full plan has 2,095 catalog obligations, 240 execution groups, 240 jobs and
-253 integration coverage collections. An obligation is one case for a profile,
+The full plan has 2,095 catalog obligations, 250 execution groups, 250 jobs and
+263 integration coverage collections. An obligation is one case for a profile,
 suite and capture variant. These counts measure our catalog, not all MySQL
 features. The generated `ci-lab/matrix.json` is the authority when counts change.
 

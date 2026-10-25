@@ -15,6 +15,7 @@ from coverage_report import downloaded_inputs
 from ci_matrix import key
 from coverage_scope import description, plan_scope
 from ci_reruns import digest, validate_results
+from lab_sql_report import summarize as sql_cost_summary
 
 
 def write(path, value):
@@ -47,6 +48,7 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
     previous_coverage = set(downloaded_inputs(directory))
     previous_sql = set(directory.rglob('sql-client.json'))
     previous_fixtures = set(directory.rglob('fixture-lifecycle.json'))
+    previous_traces = set(directory.rglob('sql-trace.jsonl'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
     if job_id is not None:
         record['job_id'] = job_id
@@ -75,6 +77,13 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
                 values = [json.loads(p.read_text()) for p in sql_paths]
                 record['sql_client'] = {k: sum(v[k] for v in values) for k in
                                         ('calls', 'failures', 'seconds', 'batch_calls', 'batch_queries')}
+            traces = sorted(p for p in set(directory.rglob('sql-trace.jsonl')) - previous_traces
+                            if 'evidence' not in p.relative_to(directory).parts)
+            if traces:
+                costs = sql_cost_summary(traces)
+                costs['repeated_fingerprints'] = len(costs['repeated_calls'])
+                costs['repeated_calls'] = costs['repeated_calls'][:20]
+                record['sql_cost'] = costs
             paths = [p for p in set(downloaded_inputs(directory)) - previous_coverage
                      if p.parent.name == 'combined']
             if paths:
@@ -200,7 +209,7 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings) if jobs else None,
         shards=[dict(planned[k], job_id=r.get('job_id', k), seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
-                     sql_client=r.get('sql_client'), fixtures=r.get('fixtures'),
+                     sql_client=r.get('sql_client'), fixtures=r.get('fixtures'), sql_cost=r.get('sql_cost'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
                      mapped_lines=len(r.get('coverage', {}).get('mapped', []))) for k, r in sorted(by_id.items())])
 
@@ -244,6 +253,28 @@ def markdown(report):
             totals = [sum(f.get('phases', {}).get(phase, {}).get('seconds', 0) for f in selected)
                       for phase in ('setup', 'cleanup')]
             lines.append(f'| {profile} | {len(selected)} | {totals[0]:.1f} | {totals[1]:.1f} |')
+    case_costs = []
+    for shard in report['shards']:
+        cases = {}
+        for group in (shard.get('sql_cost') or {}).get('groups', []):
+            case = group['case_id'] or '(outside-case)'
+            cost = cases.setdefault(case, dict(calls=0, seconds=0.0, categories=Counter()))
+            cost['calls'] += group['calls']
+            cost['seconds'] += group['seconds']
+            for name, value in group['categories'].items():
+                cost['categories'][name] += value['seconds']
+        case_costs.extend((shard['id'], case, cost) for case, cost in cases.items())
+    if case_costs:
+        lines += ['', '## Highest harness SQL costs by case', '',
+                  'Client time includes startup. Categories are hints, not SQL parsing. '
+                  'Position checks can include required waits. Mixed calls remain unclassified. '
+                  'Coverage remains at execution-group level. report.json retains all case costs '
+                  'and the 20 highest-cost repeated-call fingerprints per group.', '',
+                  '| Group / case | Calls | Client seconds | Largest category (seconds) |',
+                  '|---|---:|---:|---|']
+        for identifier, case, cost in sorted(case_costs, key=lambda item: -item[2]['seconds'])[:15]:
+            name, seconds = cost['categories'].most_common(1)[0]
+            lines.append(f"| {identifier} / {case} | {cost['calls']} | {cost['seconds']:.1f} | {name} ({seconds:.1f}) |")
     sql = defaultdict(list)
     for shard in report['shards']:
         if shard.get('sql_client') is not None:

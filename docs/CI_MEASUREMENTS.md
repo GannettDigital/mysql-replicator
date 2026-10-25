@@ -62,6 +62,28 @@ add a child case's calls to its parent. It reports unfinished calls separately.
 It excludes SQL text and query results. The input traces can contain credentials
 and row data; keep them with the other restricted test artifacts.
 
+For a case-cost report with repeated-call fingerprints:
+
+```sh
+python3 tools/lab_sql_report.py artifacts/lab/RUN_ID --output artifacts/sql-cost
+```
+
+The output has `report.json` and `report.md`. It groups client cost by case and
+role. Categories identify known schema comparisons, position checks, metadata
+reads, other reads, and simple source statements. Calls outside cases remain
+separate. Mixed SQL remains unclassified. A simple source statement can be setup
+or workload SQL; review its case and assertions before deciding.
+
+Fingerprints preserve SQL bytes, literals, identifiers and query order. Only
+random batch framing is excluded. Copied `evidence/` traces are excluded when
+scanning a directory. Repeated calls can be required polling or repeated checks;
+they do not prove redundancy. The report contains no SQL text or query results.
+
+CI now saves these per-case costs under `sql_cost` in each group measurement.
+The combined report lists the most expensive cases. Its JSON retains all costs
+and the 20 most expensive repeated-call fingerprints per group. Coverage remains
+at execution-group level. Do not attribute a group's coverage to one case.
+
 To inspect the SQL for one case:
 
 ```sh
@@ -97,8 +119,10 @@ CI job. Result IDs, SQL traces and coverage remain attached to the group.
 
 `tools/ci_jobs.json` assigns one execution group to each current job. Cases
 inside a correctness group share their fixture. Jobs run in parallel, up to
-16 at a time. The scheduler starts longer estimated jobs first. Each job
-downloads its tools and image once.
+16 at a time. DDL and DML use named behavior groups with explicit case lists.
+New cases in those families must be assigned to a group; the planner rejects
+omissions and duplicate assignments. The scheduler starts longer estimated jobs
+first. Each job downloads its tools and image once.
 
 Each lab invocation has a 45-minute limit. The job timeout adds 10 minutes for
 setup. These are failure limits, not expected durations. A timed-out lab process
@@ -115,7 +139,7 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 240 | 240 | 253 |
+| Full | 250 | 250 | 263 |
 | Main production packages | 2 | 2 | 0 |
 
 All 2,095 full-catalog obligations remain. Full CI runs each apply group with
@@ -321,8 +345,11 @@ in test coverage. Use reports from the common build to compare test groups.
 
 `tools/ci_jobs.json` records conservative area estimates from successful groups
 in run `40124425871`. Jobs with larger estimates start first. Areas without a
-successful measurement use the declared fallback. Estimates do not change test
-selection, case order, or timeouts. Update them after a successful full run.
+successful measurement use the declared fallback. The named DDL/DML estimates
+use reverse-profile case times plus the largest observed fixture overhead in
+that family, with a 20% allowance and rounding up to whole minutes. These are
+scheduling estimates, not measured times for the new groups. Estimates do not
+change test selection, case order, or timeouts. Update them after a successful full run.
 
 Shared fixtures write `fixture-lifecycle.json` with setup and cleanup duration
 and outcome. The measurement report retains each fixture ID and summarizes these

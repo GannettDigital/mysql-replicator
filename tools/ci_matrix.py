@@ -63,6 +63,33 @@ def case_groups(members, area):
     return [members[offset:offset + size] for offset in range(0, len(members), size)]
 
 
+def named_case_groups(members, area):
+    """Reviewed behavior groups. Preserve catalog order, including dependencies."""
+    selections = area['groups']
+    if 'size' in area or 'split_after' in area or not isinstance(selections, list) or not selections:
+        raise ValueError('named groups cannot use size/split_after and must be nonempty')
+    names, assigned, result = set(), set(), []
+    for selection in selections:
+        if not isinstance(selection, dict):
+            raise ValueError('invalid named case group')
+        name, cases = selection.get('name'), selection.get('cases')
+        if (not isinstance(name, str) or not name or name in names
+                or not isinstance(cases, list) or not cases
+                or any(not isinstance(c, str) or not c for c in cases)):
+            raise ValueError('invalid named case group')
+        if len(set(cases)) != len(cases) or assigned.intersection(cases):
+            raise ValueError('case assigned to multiple named groups')
+        names.add(name)
+        assigned.update(cases)
+        selected = [c for c in members if c in cases]
+        if selected:
+            result.append((area['name'] + '-' + name, selected))
+    missing = set(members) - assigned
+    if missing:
+        raise ValueError(f'unassigned cases in {area["name"]}: {sorted(missing)}')
+    return result
+
+
 def generate(catalogs, policy, expanded_coverage=False):
     inventory = {}
     for catalog in catalogs:
@@ -83,6 +110,14 @@ def generate(catalogs, policy, expanded_coverage=False):
     unknown = {r['family'] for r in applicable.values() if r['suite'] == 'correctness'} - set(families)
     if unknown:
         raise ValueError(f'unassigned correctness families: {sorted(unknown)}')
+    for area in policy['areas']:
+        if 'groups' in area:
+            known = {r['id'] for r in inventory.values()
+                     if r['suite'] == 'correctness' and r['family'] in area['families']}
+            named_case_groups(sorted(known), area)
+            requested = {c for group in area['groups'] for c in group['cases']}
+            if requested - known:
+                raise ValueError(f'unknown cases in {area["name"]}: {sorted(requested - known)}')
     groups = defaultdict(list)
     for row in applicable.values():
         groups[key(row)[:3]].append(row)
@@ -108,14 +143,18 @@ def generate(catalogs, policy, expanded_coverage=False):
                     continue
                 # This variant selects a few focused cases, not the full family.
                 # Full-family timing boundaries need not exist in that subset.
-                chunks = [members] if variant == 'without-source-gtids' else case_groups(members, area)
-                for index, roots in enumerate(chunks, 1):
+                if 'groups' in area:
+                    named = named_case_groups(members, area)
+                else:
+                    chunks = [members] if variant == 'without-source-gtids' else case_groups(members, area)
+                    named = [(area['name'] + (f'-{i}' if len(chunks) > 1 else ''), roots)
+                             for i, roots in enumerate(chunks, 1)]
+                for name, roots in named:
                     resolved = resolve_cases(rows, cases=roots)
                     selected = set(resolved['cases'])
                     # Dependencies may be repeated, but each primary obligation
                     # must have exactly one owning shard.
                     cases = [r['id'] for r in rows if r['id'] in selected]
-                    name = area['name'] + (f'-{index}' if len(chunks) > 1 else '')
                     add(profile, variant, suite, name, cases, count=False)
                     shards[-1].update(owns_obligations=True, requested_cases=roots, dependency_cases=resolved['dependency_cases'])
                     owners.update((profile, variant, suite, case) for case in roots)

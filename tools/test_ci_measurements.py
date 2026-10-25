@@ -93,6 +93,28 @@ class MeasurementsTests(unittest.TestCase):
             self.assertEqual(result['scenarios'], [dict(id='new', status='failed')])
             self.assertGreaterEqual(result['seconds'], 0)
 
+    def test_sql_case_costs_are_recorded_without_sql_text_or_old_traces(self):
+        from test_lab_sql_report import SQLReportTests
+        helper = SQLReportTests()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            old = root / 'artifacts/lab/old'
+            old.mkdir(parents=True)
+            helper.trace(old, [helper.start('old'), helper.finish('old')])
+            with record_shard(root, 'new'):
+                fixture = root / 'artifacts/lab/new'
+                fixture.mkdir()
+                helper.trace(fixture, [helper.start('a', 'case'), helper.finish('a')])
+            record = json.loads((root / 'artifacts/ci/measurements/new.json').read_text())
+            self.assertEqual(record['sql_cost']['calls'], 1)
+            self.assertEqual(record['sql_cost']['groups'][0]['case_id'], 'case')
+            self.assertNotIn('secret', json.dumps(record))
+            manifest, template = self.fixture()
+            template['sql_cost'] = record['sql_cost']
+            report = summarize(manifest, [template])
+            self.assertIn('Highest harness SQL costs by case', markdown(report))
+            self.assertEqual(report['shards'][0]['sql_cost']['calls'], 1)
+
     def test_fixture_metrics_ignore_old_and_copied_records(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
