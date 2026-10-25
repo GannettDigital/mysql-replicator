@@ -1,7 +1,6 @@
 import Foundation
 import ReplicatorCapture
 import ReplicatorCodec
-import ReplicatorLogging
 
 public struct DryRunRecord: Encodable {
     public let kind = "dry_run_transaction"

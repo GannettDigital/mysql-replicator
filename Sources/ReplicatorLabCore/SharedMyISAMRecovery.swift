@@ -444,7 +444,11 @@ extension SharedCorrectness.Run {
                 configuration("partial", at: try h.boundary("source"), count: 1))
             try waitForReader(partial)
             _ = try h.sql("source", "INSERT INTO poc.items VALUES(20,'first',20),(21,'second',21)")
-            _ = try finish(partial, "partial", success: false, reason: "1062 (duplicate key)")
+            let partialResult = try finish(partial, "partial", success: false)
+            let partialProgress = partialResult["progress"] as? [String: Any]
+            let partialFailure = partialProgress?["targetFailure"] as? [String: Any]
+            let partialSQL = partialFailure?["targetSQL"] as? [String: Any]
+            try require(partialSQL?["mysqlErrorNumber"] as? Int == 1062, "expected duplicate-key failure")
             try require(
                 h.sql("target57", "SELECT id,value FROM poc.items WHERE id IN (20,21) ORDER BY id")
                     == "20\tfirst\n21\tcollision", "partial MyISAM effects differ")

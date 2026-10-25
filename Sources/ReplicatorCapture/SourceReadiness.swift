@@ -2,7 +2,6 @@ import Foundation
 import MySQLNIO
 import NIOCore
 import NIOPosix
-import ReplicatorCodec
 
 /// Checks the source without requesting a binlog stream or opening local state.
 public enum SourceReadiness {

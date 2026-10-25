@@ -10,6 +10,11 @@ final class DiscoveryReads {
         let sql: Data
         let bindings: [Data]
         let textProtocol: Bool
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(sql)
+            hasher.combine(bindings)
+            hasher.combine(textProtocol)
+        }
         init?(_ sql: String, binds: [MySQLData], textProtocol: Bool) {
             // Discovery parameters are identifiers. Bypass other parameter types.
             guard sql.hasPrefix("SELECT "), sql.contains("information_schema."),

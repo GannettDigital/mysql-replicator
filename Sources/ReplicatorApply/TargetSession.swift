@@ -79,6 +79,14 @@ final class TargetSession {
                 writer = DiscardTargetQueryConnection()
             }
             queries = TargetQueryConnections(reads: reader, writes: writer, metadataOnly: metadataOnly)
+            // Metadata identifiers and returned strings use UTF-8 on both server
+            // versions. The handshake default on 5.7 is not sufficient.
+            let timer = metadataConnection.eventLoop.scheduleTask(in: .seconds(10)) {
+                _ = reader.connection.close()
+            }
+            defer { timer.cancel() }
+            _ = try reader.execute(
+                "SET NAMES utf8mb4 COLLATE utf8mb4_bin", binds: [], textProtocol: true, rawSQL: nil)
         } catch {
             for connection in opened { try? connection.close().wait() }
             try? group.syncShutdownGracefully()
@@ -152,7 +160,10 @@ final class TargetSession {
             if executionTransport != .binlog || statementRequiresCommit {
                 _ = try query("COMMIT", textProtocol: true)
             }
-            if executionTransport != .binlog { try resetSourceGTID() }
+            // DDL can perform temporary-table metadata probes after this write.
+            // End its explicit GTID before those probes. Raw BINLOG row groups
+            // still assign the next GTID directly without this extra reset.
+            if executionTransport != .binlog || statementRequiresCommit { try resetSourceGTID() }
             return result
         }
         try require(

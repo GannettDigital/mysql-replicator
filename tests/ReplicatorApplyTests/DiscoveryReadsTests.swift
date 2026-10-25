@@ -35,6 +35,21 @@ final class DiscoveryReadsTests: XCTestCase {
         _ = read()
         XCTAssertEqual(calls, 5)
     }
+    func testTextAndPreparedReadsUseSeparateCacheEntries() {
+        let cache = DiscoveryReads()
+        let timings = StageTimings()
+        var calls = 0
+        cache.scope(table) {
+            for textProtocol in [true, false, true, false] {
+                let result = cache.read(sql, binds: [], textProtocol: textProtocol, timings: timings) {
+                    calls += 1
+                    return ([], textProtocol ? 1 : 2)
+                }
+                XCTAssertEqual(result.1, textProtocol ? 1 : 2)
+            }
+        }
+        XCTAssertEqual(calls, 2)
+    }
     func testFailureClearsScopeAndDoesNotCacheErrors() {
         let cache = DiscoveryReads()
         let timings = StageTimings()

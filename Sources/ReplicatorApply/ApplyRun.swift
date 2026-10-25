@@ -466,6 +466,13 @@ public enum ApplyRun {
                             var hasDDLIntent = false
                             do {
                                 try target.unlock()
+                                // A completed BINLOG row group leaves GTID_NEXT
+                                // undefined. DDL planning can use scratch tables.
+                                if configuration.target.transport == .binlog
+                                    && configuration.target.preserveSourceGTIDs
+                                {
+                                    try target.resetSourceGTID()
+                                }
                                 try target.checkSourceGTID(group.gtid!)
                                 try require(group.events.count == 2, "invalid standalone DDL group")
                                 guard case .query(let query) = group.events[1].control else {

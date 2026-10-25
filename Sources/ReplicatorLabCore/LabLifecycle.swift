@@ -241,9 +241,11 @@ enum LabLifecycle {
                 Thread.sleep(forTimeInterval: 0.1)
             }
         }
-        func killConnection(_ role: LabProfile.Role) throws {
+        func killConnection(_ role: LabProfile.Role, metadata: Bool = false) throws {
             let filter =
-                role == .source ? "USER='lifecycle_capture' AND COMMAND LIKE 'Binlog Dump%'" : "USER='apply_fixture'"
+                role == .source
+                ? "USER='lifecycle_capture' AND COMMAND LIKE 'Binlog Dump%'"
+                : "USER='apply_fixture' AND ID\(metadata ? "<>" : "=")IS_USED_LOCK('mysql-replicator-writer')"
             let id = try f.sql(role, "SELECT ID FROM information_schema.PROCESSLIST WHERE " + filter)
             try require(Int(id) != nil, "missing unique " + role.rawValue + " connection")
             _ = try f.sql(role, "KILL CONNECTION " + id)
@@ -445,17 +447,25 @@ enum LabLifecycle {
                 try waitProgress(client) { $0["transactionsApplied"] as? Int == 1 }
                 try killConnection(.target)
                 try waitProgress(client) { $0["lifecycle"] as? String == "TARGET_RECONNECTING" }
+                // The old source dump socket can remain visible during retry.
+                // Wait for the new target session to finish preflight first.
+                try waitProgress(client) {
+                    $0["lifecycle"] as? String == "RUNNING"
+                        && ($0["targetReconnectAttempts"] as? Int ?? 0) >= 1
+                }
+                try killConnection(.target, metadata: true)
+                try waitProgress(client) { ($0["targetReconnectAttempts"] as? Int ?? 0) >= 2 }
                 try waitReader(client)
                 _ = try f.sql(.source, "UPDATE lifecycle.target_rows SET v=11 WHERE id=1")
                 try waitProgress(client) { $0["transactionsApplied"] as? Int == 2 }
                 try server(.target, start: false)
-                try waitProgress(client) { ($0["targetReconnectAttempts"] as? Int ?? 0) >= 2 }
+                try waitProgress(client) { ($0["targetReconnectAttempts"] as? Int ?? 0) >= 3 }
                 try server(.target, start: true)
                 try waitReader(client)
                 _ = try f.sql(.source, "INSERT INTO lifecycle.target_rows VALUES(2,20)")
                 let result = try finish(client, label)
                 try require(
-                    (result["targetReconnectAttempts"] as? Int ?? 0) >= 2, "target interruptions were not exercised")
+                    (result["targetReconnectAttempts"] as? Int ?? 0) >= 3, "target interruptions were not exercised")
                 try caughtUp(result, label)
                 try compare("SELECT id,v FROM lifecycle.target_rows ORDER BY id", "1\t11\n2\t20")
                 try checkpoint(label, "STOPPED", 3, 3)
