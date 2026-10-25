@@ -155,6 +155,70 @@ This is another one-pass comparison; it does not measure all four DML groups.
   263 expected coverage collections. Compare its time and SQL reports with the
   earlier run. Do not claim a full-suite time reduction from these local pairs.
 
+## JSON comparison batching
+
+The harness previously opened a MySQL client for each JSON inspection query.
+Each query checks at most 32 JSON paths in one row and column. Keep these queries
+and combine them into batches of at most 32 queries or 256 KiB of query SQL.
+Batch framing adds a small amount of SQL. A query larger than the byte limit runs
+alone. Use the existing SQL batch reader to preserve result boundaries and exact
+whitespace. Reject missing, extra, truncated or multiple-row inspection results.
+
+Keep every type and scalar-value check. Keep SQL NULL distinct from JSON null.
+Do not change row order, duplicate-row checks, intermediate comparisons, restart
+checks or replay checks. No application code, test selection or fixture grouping
+changes in this step.
+
+Run `ddl-compat-keyless-rows` and `matrix-typedjson` together before and after the
+change. Both runs use `mysql57-to-mysql84-innodb`, the default variant, SQL
+transport and runtime coverage. Both pass. Builds run before measurement.
+
+| Measurement | Before batching | After batching |
+|---|---:|---:|
+| Complete invocation, seconds | 339.71 | 300.88 |
+| Selected cases, seconds | 244.64 | 205.92 |
+| All SQL client calls | 1,171 | 945 |
+| All SQL client seconds | 204.78 | 168.46 |
+| JSON inspection queries | 378 | 378 |
+| Client calls for JSON inspection | 378 | 153 |
+| JSON inspection client seconds | 65.25 | 27.90 |
+| Application runtime lines reached | 11,453 | 11,452 |
+
+The complete invocation is 38.83 seconds shorter (11.4%). It includes fixture
+setup, cleanup and coverage export. JSON batching removes 225 client calls.
+One additional call differs outside the cases. Keyless JSON inspection changes
+from 366 client calls to 147; typed JSON changes from 12 to six. All 378 inspection
+queries retain the same SQL, role, case and execution count.
+
+All 37 saved step results match exactly. This includes checks, expected values,
+observed values, snapshots and warnings. Case and recorded assertion counts also
+match. These are single local runs on AMD64 containers on an ARM64 host. They do
+not establish a full-suite saving or an applier performance change.
+
+The harness change requires different build-input digests and image IDs. The
+comparison verifies the same application binary hash, server contents and server
+settings. Application source hashes and mapped lines also match. The only changed
+coverage source hash is `Sources/ReplicatorLabCore/LabJSONComparison.swift`.
+The general comparison tool still requires identical build inputs. A separate
+script records this specific harness-only comparison.
+
+One runtime line is no longer reached: `Sources/ReplicatorApply/DMLBatch.swift:129`,
+the call that flushes an expired batch. The integration cases do not control
+this timer. The existing `testBatchCollectionBoundsIdleFlushAndNoRetryAfterFailure`
+unit test advances an injected clock and checks the flush. That test passes.
+Do not treat incidental timer coverage as a replacement for this controlled test.
+
+Twelve focused JSON comparison and SQL batch unit tests pass. They cover result
+mapping, path chunks, duplicate rows, exact empty values, NULL values, count and
+byte limits, oversized queries, malformed replies and client errors. No full
+local suite was run. Leave the remaining profiles and variants to full CI.
+
+Evidence is in `artifacts/json-comparison-study/`: `before.json`, `after.json`,
+`compare.py`, `comparison.json`, `json-unit.log` and `batch-age-unit.log`.
+The next candidate is repeated per-column metadata and default-value probes in
+the encoding cases. Measure those calls before changing them. Keep the same
+comparison boundary after each source statement.
+
 ## Checks before removing work
 
 Keep all current comparisons in this change. For a later optimization:

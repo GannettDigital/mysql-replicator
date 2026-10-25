@@ -45,6 +45,85 @@ enum LabJSONComparison {
         guard let text = String(bytes: data, encoding: .utf8) else { throw LabError("invalid JSON comparison UTF-8") }
         return text
     }
+    /// Keep the same per-row SELECTs, but share a client connection across reads.
+    /// Limit SQL bytes and query count. A larger single query runs alone.
+    static func rows(
+        _ raw: String, columns: [String], jsonColumns: [String], from: String,
+        execute: ([LabSQLBatch.Query]) throws -> [String: String]
+    ) throws -> String {
+        guard !raw.isEmpty, !jsonColumns.isEmpty else { return raw }
+        struct Cell {
+            let row: Int
+            let column: Int
+            var nodes: [[String]] = []
+        }
+        struct Inspection {
+            let cell: Int
+            let paths: [String]
+            let query: LabSQLBatch.Query
+        }
+        var rows = raw.components(separatedBy: "\n").map { $0.components(separatedBy: "\t") }
+        try require(rows.allSatisfy { $0.count == columns.count }, "JSON comparison row width differs")
+        var cells: [Cell] = []
+        var pending: [Inspection] = []
+        var pendingBytes = 0
+        let maximumQueries = 32
+        let maximumSQLBytes = 256 * 1024
+        func flush() throws {
+            guard !pending.isEmpty else { return }
+            let results = try execute(pending.map(\.query))
+            try require(
+                Set(results.keys) == Set(pending.map { $0.query.name }), "JSON comparison batch results differ")
+            for item in pending {
+                let output = results[item.query.name]!
+                let fields = output.components(separatedBy: "\t")
+                try require(
+                    !output.contains("\n") && fields.count == item.paths.count * 2,
+                    "JSON comparison path result differs")
+                for (i, path) in item.paths.enumerated() {
+                    let type = fields[i * 2]
+                    cells[item.cell].nodes.append([path, type, try scalar(type, fields[i * 2 + 1])])
+                }
+            }
+            pending.removeAll(keepingCapacity: true)
+            pendingBytes = 0
+        }
+        for row in rows.indices {
+            for (index, column) in columns.enumerated()
+            where jsonColumns.contains(where: { LabSQLName.equal($0, column) }) && rows[row][index] != "<NULL>" {
+                let paths = try paths(decode(rows[row][index]))
+                let cell = cells.count
+                cells.append(Cell(row: row, column: index))
+                for start in stride(from: 0, to: paths.count, by: 32) {
+                    let part = Array(paths[start..<min(start + 32, paths.count)])
+                    let selections = part.flatMap { path -> [String] in
+                        let hex = path.utf8.map { String(format: "%02x", $0) }.joined()
+                        let value =
+                            "JSON_EXTRACT(`" + column.replacingOccurrences(of: "`", with: "``") + "`,CONVERT(0x" + hex
+                            + " USING utf8mb4))"
+                        return ["JSON_TYPE(" + value + ")", "HEX(JSON_UNQUOTE(" + value + "))"]
+                    }
+                    let query = LabSQLBatch.Query(
+                        name: "json-\(cell)-\(start)",
+                        sql: "SET NAMES utf8mb4; SET time_zone='+00:00'; SELECT "
+                            + selections.joined(separator: ",") + from + " LIMIT 1 OFFSET \(row)",
+                        preserveWhitespace: true)
+                    let bytes = query.sql.utf8.count
+                    if !pending.isEmpty && pendingBytes + bytes > maximumSQLBytes {
+                        try flush()
+                    }
+                    pending.append(Inspection(cell: cell, paths: part, query: query))
+                    pendingBytes += bytes
+                    if pending.count == maximumQueries || pendingBytes >= maximumSQLBytes { try flush() }
+                }
+            }
+        }
+        try flush()
+        for cell in cells {
+            rows[cell.row][cell.column] = try JSONSerialization.data(withJSONObject: cell.nodes).base64EncodedString()
+        }
+        return rows.map { $0.joined(separator: "\t") }.joined(separator: "\n")
+    }
 }
 
 extension LabFixture {
@@ -57,37 +136,8 @@ extension LabFixture {
         let from = " FROM " + table + " ORDER BY " + orderBy
         let raw = try sql(
             role, "SET NAMES utf8mb4; SET time_zone='+00:00'; SELECT " + expressions + from, preserveWhitespace: true)
-        guard !raw.isEmpty, !jsonColumns.isEmpty else { return raw }
-        return try raw.components(separatedBy: "\n").enumerated().map { row, line in
-            var values = line.components(separatedBy: "\t")
-            try require(values.count == columns.count, "JSON comparison row width differs")
-            for (index, column) in columns.enumerated()
-            where jsonColumns.contains(where: { LabSQLName.equal($0, column) }) && values[index] != "<NULL>" {
-                let paths = try LabJSONComparison.paths(LabJSONComparison.decode(values[index]))
-                var nodes: [[String]] = []
-                for start in stride(from: 0, to: paths.count, by: 32) {
-                    let part = Array(paths[start..<min(start + 32, paths.count)])
-                    let selections = part.flatMap { path -> [String] in
-                        let hex = path.utf8.map { String(format: "%02x", $0) }.joined()
-                        let value =
-                            "JSON_EXTRACT(`" + column.replacingOccurrences(of: "`", with: "``") + "`,CONVERT(0x" + hex
-                            + " USING utf8mb4))"
-                        return ["JSON_TYPE(" + value + ")", "HEX(JSON_UNQUOTE(" + value + "))"]
-                    }
-                    let result = try sql(
-                        role,
-                        "SET NAMES utf8mb4; SET time_zone='+00:00'; SELECT " + selections.joined(separator: ",") + from
-                            + " LIMIT 1 OFFSET \(row)", preserveWhitespace: true
-                    ).components(separatedBy: "\t")
-                    try require(result.count == part.count * 2, "JSON comparison path result differs")
-                    for (i, path) in part.enumerated() {
-                        let type = result[i * 2]
-                        nodes.append([path, type, try LabJSONComparison.scalar(type, result[i * 2 + 1])])
-                    }
-                }
-                values[index] = try JSONSerialization.data(withJSONObject: nodes).base64EncodedString()
-            }
-            return values.joined(separator: "\t")
-        }.joined(separator: "\n")
+        return try LabJSONComparison.rows(raw, columns: columns, jsonColumns: jsonColumns, from: from) {
+            try h.sqlBatch(profile.service(role), $0)
+        }
     }
 }
