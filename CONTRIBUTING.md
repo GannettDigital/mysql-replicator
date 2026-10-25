@@ -216,10 +216,10 @@ scenario remain sequential, including the failure/recovery/offline transition.
 plan is retained in the `ci-lab` artifact. See [the test lab](docs/TEST_LAB.md)
 for local plan inspection and reproduction.
 
-The existing **Debian Packaging & Integration Smoke** check keeps its historical
-name for branch protection. It requires all selected checks to pass. It accepts
+The **Selected CI Checks** check requires all selected jobs to pass. It accepts
 skips only for jobs excluded by the selector. The runtime PR selection does not
-build packages. Full CI checks native-reference DDL, recovery and demos. Main checks packages. A successful PR smoke run is not release certification.
+build packages. Full CI checks native-reference DDL, recovery and demos. Main
+checks packages. A successful PR smoke run does not replace full release tests.
 
 Test jobs verify image digests or archive checksums and the lab source/fixture fingerprint, and
 release shards check that their applier matches the release archive binary.

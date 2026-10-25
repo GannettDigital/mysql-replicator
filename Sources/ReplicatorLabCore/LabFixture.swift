@@ -12,6 +12,7 @@ final class LabFixture {
     var bootstrap: [String: Any] = [:]
     var versions: [String: Any] = [:]
     var clients: [String] = []
+    private var lifecycle: [String: Any] = [:]
     var coverageInvocations: [[String: Any]] = []
     var output: URL { h.output }
     var runner: ProcessRunner { h.runner }
@@ -53,7 +54,29 @@ final class LabFixture {
     func docker(_ args: [String], checked: Bool = true) throws -> CommandResult {
         try runner.run(["docker"] + args, checked: checked)
     }
+    private func measureFixture(_ phase: String, _ body: () throws -> Void) throws {
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let start = DispatchTime.now().uptimeNanoseconds
+        func record(_ status: String) throws {
+            lifecycle[phase] = [
+                "seconds": Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9, "status": status,
+            ]
+            try writeJSON(
+                [
+                    "version": 1, "fixture": h.project, "profile": profile.rawValue,
+                    "variant": variant.rawValue, "dml_transport": dmlTransport, "phases": lifecycle,
+                ], to: output.appendingPathComponent("fixture-lifecycle.json"))
+        }
+        do { try body() } catch {
+            try? record("failed")
+            throw error
+        }
+        try record("passed")
+    }
     func prepare(build: Bool) throws {
+        try measureFixture("setup") { try prepareFixture(build: build) }
+    }
+    private func prepareFixture(build: Bool) throws {
         let tls = output.appendingPathComponent("tls")
         try FileManager.default.createDirectory(at: tls, withIntermediateDirectories: true)
         stage("evidence: " + output.path)
@@ -301,6 +324,9 @@ final class LabFixture {
         }
     }
     func cleanup() throws {
+        try measureFixture("cleanup") { try cleanupFixture() }
+    }
+    private func cleanupFixture() throws {
         // Retained demo applier has a stable name; suite clients are tracked.
         for client in clients {
             if try docker(["inspect", client], checked: false).status == 0 {

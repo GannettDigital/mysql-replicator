@@ -46,6 +46,7 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
     before = set(directory.glob('*/result.json'))
     previous_coverage = set(downloaded_inputs(directory))
     previous_sql = set(directory.rglob('sql-client.json'))
+    previous_fixtures = set(directory.rglob('fixture-lifecycle.json'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
     if job_id is not None:
         record['job_id'] = job_id
@@ -63,6 +64,10 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
                 record['scenarios'].extend({k: row[k] for k in
                     ('profile', 'variant', 'suite', 'id', 'family', 'status', 'seconds') if k in row}
                     for row in report.get('scenarios', []))
+            fixture_paths = sorted(p for p in set(directory.rglob('fixture-lifecycle.json')) - previous_fixtures
+                                   if 'evidence' not in p.relative_to(directory).parts)
+            if fixture_paths:
+                record['fixtures'] = [json.loads(p.read_text()) for p in fixture_paths]
             # Each correctness fixture writes one file outside copied evidence.
             sql_paths = sorted(p for p in set(directory.rglob('sql-client.json')) - previous_sql
                                if 'evidence' not in p.relative_to(directory).parts)
@@ -195,7 +200,7 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings) if jobs else None,
         shards=[dict(planned[k], job_id=r.get('job_id', k), seconds=r['seconds'], status=r['status'], attempt=r.get('attempt'),
-                     sql_client=r.get('sql_client'),
+                     sql_client=r.get('sql_client'), fixtures=r.get('fixtures'),
                      covered_lines=len(r.get('coverage', {}).get('hit', [])),
                      mapped_lines=len(r.get('coverage', {}).get('mapped', []))) for k, r in sorted(by_id.items())])
 
@@ -227,6 +232,18 @@ def markdown(report):
     for job in sorted(report['jobs'], key=lambda j: j['seconds'] or 0, reverse=True)[:12]:
         if job['seconds'] is not None:
             lines.append(f"| {job['name']} | {job['seconds']/60:.1f} | {job['conclusion']} |")
+    fixtures = [f for shard in report['shards'] for f in (shard.get('fixtures') or [])]
+    if fixtures:
+        lines += ['', '## Fixture setup and cleanup', '',
+                  'Measured shared fixtures only. Demo and native adapters can have other setup paths. '
+                  'Missing records are not zero. Fixture IDs and phase outcomes are in report.json.', '',
+                  '| Profile | Fixtures | Setup seconds | Cleanup seconds |',
+                  '|---|---:|---:|---:|']
+        for profile in sorted({f['profile'] for f in fixtures}):
+            selected = [f for f in fixtures if f['profile'] == profile]
+            totals = [sum(f.get('phases', {}).get(phase, {}).get('seconds', 0) for f in selected)
+                      for phase in ('setup', 'cleanup')]
+            lines.append(f'| {profile} | {len(selected)} | {totals[0]:.1f} | {totals[1]:.1f} |')
     sql = defaultdict(list)
     for shard in report['shards']:
         if shard.get('sql_client') is not None:

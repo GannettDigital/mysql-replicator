@@ -546,7 +546,7 @@ jobs:
 
   packaging-and-smoke:
     # Preserve the required check name. Production scope checks packages after merge.
-    name: Debian Packaging & Integration Smoke
+    name: Selected CI Checks
     needs: [select-suite, test-build, tool-tests, unit-tests, periphery, swift-lint, lab-tools, build-images, integration]
     if: always() && needs.select-suite.result != 'skipped'
     runs-on: ubuntu-24.04

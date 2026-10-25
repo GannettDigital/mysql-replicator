@@ -1,9 +1,48 @@
 {
-  "max_groups": 3,
+  "max_groups": 1,
   "group_timeout_minutes": 45,
   "setup_timeout_minutes": 10,
   "standalone_areas": [
-    "ddl-1", "dml-1", "bootstrap-1", "failure-recovery-offline",
-    "native-ddl", "demo", "reconnect", "recovery", "binlog-reconnect"
-  ]
+    "ddl-1",
+    "dml-1",
+    "bootstrap-1",
+    "failure-recovery-offline",
+    "native-ddl",
+    "demo",
+    "reconnect",
+    "recovery",
+    "binlog-reconnect"
+  ],
+  "timing_source_run": "40124425871",
+  "unmeasured_group_seconds": 1800,
+  "estimated_seconds_by_area": {
+    "binlog-gtids-disabled": 120,
+    "bootstrap-1": 1200,
+    "bootstrap-2": 420,
+    "collation": 120,
+    "database": 180,
+    "ddl": 120,
+    "ddl-1": 2400,
+    "ddl-2": 180,
+    "demo": 420,
+    "dml": 60,
+    "dml-1": 1140,
+    "dml-2": 360,
+    "dml-3": 180,
+    "dml-4": 120,
+    "dml-5": 120,
+    "dml-6": 240,
+    "failure-recovery-offline": 240,
+    "filters-discovery": 180,
+    "foreign-keys": 900,
+    "gtids": 180,
+    "indexes-1": 300,
+    "indexes-2": 480,
+    "indexes-3": 480,
+    "indexes-4": 360,
+    "native-ddl": 300,
+    "ordered-ddl": 240,
+    "recovery": 120,
+    "refusals": 240
+  }
 }

@@ -95,30 +95,27 @@ The JSON files retain the name `shard` for these groups. The bundled plan stores
 them in `include`. Its separate `jobs` list assigns every group to exactly one
 CI job. Result IDs, SQL traces and coverage remain attached to the group.
 
-`tools/ci_jobs.json` controls job assignment. The current policy puts at most
-three groups with the same profile, variant and build type in one job. Long
-areas and the two PR selections keep separate jobs. Jobs run in parallel, up to
-16 at a time. Groups within a job run in sequence and use separate fixtures.
-The job downloads its tools and image once.
+`tools/ci_jobs.json` assigns one execution group to each current job. Cases
+inside a correctness group share their fixture. Jobs run in parallel, up to
+16 at a time. The scheduler starts longer estimated jobs first. Each job
+downloads its tools and image once.
 
-A failed group records failure. The job then runs its remaining groups and
-returns failure. Cancellation stops the job. Each lab invocation has a 45-minute
-limit. The job timeout adds 10 minutes for setup to the sum of its group limits.
-These are failure limits, not expected durations. A timed-out lab process can
-leave containers on its disposable runner; later groups use different project
-names. The runner removes those resources when the job ends.
+Each lab invocation has a 45-minute limit. The job timeout adds 10 minutes for
+setup. These are failure limits, not expected durations. A timed-out lab process
+can leave containers on its disposable runner. The runner removes those
+resources when the job ends.
 
 Coverage checks count only the files produced by the current group. Each
 measurement includes its CI `job_id`. The aggregate rejects a missing group or
-a result assigned to the wrong job. A failed-job rerun runs all groups in that
-job and replaces its measurement and coverage artifacts.
+a result assigned to the wrong job. A failed-job rerun runs that group and
+replaces its measurement and coverage artifacts.
 
 The beta.7 catalog currently produces these plans:
 
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 240 | 125 | 253 |
+| Full | 240 | 240 | 253 |
 | Main production packages | 2 | 2 | 0 |
 
 All 2,095 full-catalog obligations remain. Full CI runs each apply group with
@@ -319,3 +316,15 @@ code. The main-branch production package build remains separate.
 Unit tests now use release coverage maps. Older unit reports used debug maps.
 A change in the line total across this switch does not, by itself, show a change
 in test coverage. Use reports from the common build to compare test groups.
+
+## Fixture costs and time estimates
+
+`tools/ci_jobs.json` records conservative area estimates from successful groups
+in run `40124425871`. Jobs with larger estimates start first. Areas without a
+successful measurement use the declared fallback. Estimates do not change test
+selection, case order, or timeouts. Update them after a successful full run.
+
+Shared fixtures write `fixture-lifecycle.json` with setup and cleanup duration
+and outcome. The measurement report retains each fixture ID and summarizes these
+times by profile. Missing records remain unmeasured. The matrix lists every
+selected case and dependency; the job name lists its profile and test area.

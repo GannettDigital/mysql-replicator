@@ -93,6 +93,26 @@ class MeasurementsTests(unittest.TestCase):
             self.assertEqual(result['scenarios'], [dict(id='new', status='failed')])
             self.assertGreaterEqual(result['seconds'], 0)
 
+    def test_fixture_metrics_ignore_old_and_copied_records(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            value = dict(version=1, fixture='f', profile='p', phases={
+                'setup': dict(seconds=12, status='passed'), 'cleanup': dict(seconds=3, status='passed')})
+            old = root / 'artifacts/lab/old/fixture-lifecycle.json'
+            old.parent.mkdir(parents=True)
+            old.write_text(json.dumps(value))
+            with record_shard(root, 'fixture'):
+                for suffix in ('fixture', 'fixture/evidence/copy'):
+                    path = root / 'artifacts/lab/new' / suffix / 'fixture-lifecycle.json'
+                    path.parent.mkdir(parents=True)
+                    path.write_text(json.dumps(value))
+            record = json.loads((root / 'artifacts/ci/measurements/fixture.json').read_text())
+            self.assertEqual(record['fixtures'], [value])
+            manifest, base = self.fixture()
+            report = summarize(manifest, [dict(base, fixtures=[value])])
+            self.assertEqual(report['shards'][0]['fixtures'], [value])
+            self.assertIn('| p | 1 | 12.0 | 3.0 |', markdown(report))
+
     def test_job_pages_and_incomplete_jobs(self):
         jobs = job_timings([dict(jobs=[dict(name='build', started_at='2026-10-10T00:00:00Z',
                     completed_at='2026-10-10T00:01:00Z', steps=[])]), dict(jobs=[dict(name='report')])])

@@ -56,10 +56,11 @@ branch. Deletions count. Renames count at both the old and new paths. CI reads t
 Git diff without an API file-count limit. A missing base, an unreadable diff, or
 an empty change list selects full checks.
 
-`ci-full` and `ci-expanded-coverage` override path selection. Main pushes still
-run full CI. Manual runs use their explicit suite input. The selection step saves
+`ci-full` and `ci-expanded-coverage` override path selection. Main pushes build
+production packages and run short package checks. Manual runs use their explicit
+suite input. The selection step saves
 `test-selection.json` and lists the reason for each path in its job summary.
-The required **Debian Packaging & Integration Smoke** check uses `always()` and
+The required **Selected CI Checks** check uses `always()` and
 verifies all selected jobs. This follows GitHub guidance for
 [required checks with job dependencies](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks). It accepts a skipped job only when the selector excluded that job.
 

@@ -1,4 +1,6 @@
 import copy
+import json
+from pathlib import Path
 import unittest
 
 from ci_jobs import assign_jobs, validate_jobs
@@ -37,6 +39,26 @@ class JobPlanTests(unittest.TestCase):
         self.assertEqual([j['group_ids'] for j in jobs], [['first', 'last'], ['long']])
         jobs = assign_jobs(dict(include=groups, scope='pr-smoke'), self.policy)['jobs']
         self.assertEqual([j['group_ids'] for j in jobs], [['first'], ['long'], ['last']])
+
+    def test_current_policy_assigns_one_fixture_group_to_each_job(self):
+        policy = json.loads(Path(__file__).with_name('ci_jobs.json').read_text())
+        groups = [group(str(i)) for i in range(240)]
+        result = assign_jobs(dict(include=groups), policy)
+        self.assertEqual(len(result['jobs']), 240)
+        self.assertTrue(all(len(j['group_ids']) == 1 for j in result['jobs']))
+        self.assertEqual(result['include'], groups)
+
+    def test_longest_estimated_jobs_start_first_without_changing_cases(self):
+        groups = [group('short', area='short'), group('long', area='long'), group('unknown', area='new')]
+        policy = dict(self.policy, max_groups=1, estimated_seconds_by_area={'short': 5, 'long': 100},
+                      unmeasured_group_seconds=200)
+        result = assign_jobs(dict(include=groups), policy)
+        self.assertEqual([j['group_ids'] for j in result['jobs']], [['unknown'], ['long'], ['short']])
+        self.assertEqual(result['include'], groups)
+        self.assertTrue(all(j['timeout_minutes'] == 55 for j in result['jobs']))
+        for value in (-1, True, float('nan'), float('inf')):
+            with self.assertRaisesRegex(ValueError, 'estimate'):
+                assign_jobs(dict(include=groups), dict(policy, estimated_seconds_by_area={'short': value}))
 
     def test_unknown_missing_duplicate_and_incompatible_assignments_fail(self):
         original = assign_jobs(dict(include=[group('first'), group('second')]), self.policy)

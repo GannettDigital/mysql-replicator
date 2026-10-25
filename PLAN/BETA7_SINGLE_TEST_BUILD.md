@@ -34,7 +34,7 @@ current working branches until release preparation.
 | --- | ---: | ---: | ---: | ---: |
 | Previous full | 244 | 129 | 2,095 | 22 |
 | Previous expanded | 477 | 246 | 2,095 | 255 |
-| New full | 240 | 125 | 2,095 | 253 |
+| Initial full plan | 240 | 125 | 2,095 | 253 |
 | Main production checks | 2 | 2 | 4 | 0 |
 
 These are generated plan counts, not measured GitHub times. The new full plan
@@ -137,3 +137,8 @@ DDL catalog checks passed. Swift unit execution and Periphery did not complete
 within the local time limits. This does not establish their cause or a passing
 Linux test result. Verify both consumers on the native x86_64 GitHub runner.
 No full database suite was rerun for this build change.
+
+
+The later [full-run fixes](BETA7_FULL_RUN_FIXES.md) assign one execution group to
+each job. That plan has 240 jobs with the same 2,095 obligations and 253 coverage
+collections. This replaces the initial 125-job packing above.

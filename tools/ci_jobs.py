@@ -38,6 +38,13 @@ def assign_jobs(plan, policy):
     standalone = policy['standalone_areas']
     if not isinstance(standalone, list) or any(not isinstance(a, str) or not a for a in standalone):
         raise ValueError('standalone areas must be a list of names')
+    estimates = policy.get('estimated_seconds_by_area', {})
+    fallback = policy.get('unmeasured_group_seconds', minutes * 60)
+    if not isinstance(estimates, dict) or any(not isinstance(k, str) or not k for k in estimates):
+        raise ValueError('invalid area time estimates')
+    if any(not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 < v <= 21600
+           for v in [fallback, *estimates.values()]):
+        raise ValueError('invalid group time estimate')
     jobs, pending, counters = [], {}, Counter()
     # Keep the existing priority order. Only combine compatible executions.
     for group in plan['include']:
@@ -49,7 +56,7 @@ def assign_jobs(plan, policy):
             profile, variant, image = key
             job = dict(id=f'job-{image}-{profile}-{variant}-{counters[key]}',
                        profile=profile, variant=variant, image=image, area='', group_ids=[], reports=0,
-                       timeout_minutes=setup)
+                       timeout_minutes=setup, estimated_seconds=0)
             jobs.append(job)
             if not isolated:
                 pending[key] = job
@@ -57,8 +64,12 @@ def assign_jobs(plan, policy):
         job['reports'] += group.get('reports', 0)
         job['area'] += (' + ' if job['area'] else '') + group['area']
         job['timeout_minutes'] += minutes
+        job['estimated_seconds'] += estimates.get(group['area'], fallback)
         if len(job['group_ids']) == maximum:
             pending.pop(key, None)
+    # Longest estimated jobs enter the runner queue first. Never reorder cases.
+    # Equal estimates retain the catalog order. Estimates do not set timeouts.
+    jobs.sort(key=lambda job: -job['estimated_seconds'])
     result = dict(plan, jobs=jobs, group_timeout_seconds=minutes * 60)
     validate_jobs(result)
     return result
