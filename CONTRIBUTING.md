@@ -182,6 +182,12 @@ One Linux build prepares the application, lab, test binaries and compiler index.
 Unit tests, Periphery and integration jobs then use those outputs in parallel.
 They do not compile the application again. Periphery now checks Linux code;
 it does not check declarations that are compiled only on macOS.
+
+The Swift unit test command has a five-minute limit. CI flushes test output
+as it is written and saves it in the `unit-test-log` artifact. If a test hangs,
+use this log to find the last test that started. A timeout fails the job;
+it does not count as a successful test or a complete coverage report.
+
 PRs with `ci-full` and default manual runs use the full four-profile matrix.
 Each apply group uses the coverage binary once. Main builds production packages
 and runs short application and replay checks. See [release testing](docs/RELEASE_TESTING.md).

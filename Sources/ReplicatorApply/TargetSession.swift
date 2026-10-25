@@ -9,6 +9,7 @@ final class TargetSession {
     let group: MultiThreadedEventLoopGroup
     let metadataConnection: MySQLConnection
     private let writeConnection: MySQLConnection?
+    private var resourcesReleased = false
     // Existing session-local operations keep the writer. Preview has no writer.
     var connection: MySQLConnection { writeConnection ?? metadataConnection }
     let timings: StageTimings
@@ -88,6 +89,9 @@ final class TargetSession {
             _ = try reader.execute(
                 "SET NAMES utf8mb4 COLLATE utf8mb4_bin", binds: [], textProtocol: true, rawSQL: nil)
         } catch {
+            // A throw after all stored properties are initialized also runs
+            // deinit. Do not close channels on an already stopped event loop.
+            resourcesReleased = true
             for connection in opened { try? connection.close().wait() }
             try? group.syncShutdownGracefully()
             let missingSocket = configuration.target.unixSocket != nil && (error as? IOError)?.errnoCode == ENOENT
@@ -98,6 +102,7 @@ final class TargetSession {
         }
     }
     deinit {
+        guard !resourcesReleased else { return }
         try? writeConnection?.close().wait()
         try? metadataConnection.close().wait()
         try? group.syncShutdownGracefully()

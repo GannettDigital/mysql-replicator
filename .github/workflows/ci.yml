@@ -214,17 +214,27 @@ jobs:
       - name: Load the common build by digest
         run: python3 tools/ci_test_build.py load
       - name: Run prebuilt Rust and Swift unit tests
+        timeout-minutes: 10
         run: |
+          set -o pipefail
           mkdir -p artifacts/coverage
           docker run --rm --platform linux/amd64 -v "$PWD/artifacts/coverage:/workspace/artifacts/coverage" \
             mysql-replicator:test-build bash -e -c '
               python3 tools/release_version.py
               python3 tools/ci_test_build.py rust-test
-              python3 tools/code_coverage.py unit --prebuilt
+              timeout --signal=TERM --kill-after=15s 5m stdbuf -oL -eL python3 -u tools/code_coverage.py unit --prebuilt
               python3 tools/syntax_tests.py --coverage --skip-build
               .build/release/replicator-lab ddl-catalog check
               SWIFT_CACHE_INTEGRATION=1 python3 -m unittest discover -s tools -p test_swift_cache.py
-            '
+            ' 2>&1 | tee artifacts/coverage/unit-tests.log
+      - name: Upload unit test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-log
+          overwrite: true
+          path: artifacts/coverage/unit-tests.log
+          if-no-files-found: warn
       - name: Upload unit coverage
         if: always()
         uses: actions/upload-artifact@v4
