@@ -114,10 +114,17 @@ libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x3)
             '--case', 'target-uncertain', '--case', 'target-uncertain-resume'])
 
     def test_adapters_use_shared_entrypoint_without_unsupported_selectors(self):
-        for suite in ['native', 'recovery', 'demo']:
+        for suite in ['native', 'recovery']:
             shard = dict(profile='profile', suite=suite, image='release', cases=['internal-case'])
             self.assertEqual(ci_lab.command(shard),
                              ['test', '--profile', 'profile', '--suite', suite, '--skip-build'])
+
+    def test_demo_passes_only_the_selected_fixture_session(self):
+        shard = dict(profile='profile', suite='demo', image='coverage',
+                     cases=['demo-idle-sigint', 'demo-resume-baseline-gtid'])
+        self.assertEqual(ci_lab.command(shard), [
+            'test', '--profile', 'profile', '--suite', 'demo', '--skip-build', '--coverage',
+            '--case', 'demo-idle-sigint', '--case', 'demo-resume-baseline-gtid'])
 
     def test_coverage_smoke_remains_instrumented(self):
         args = ci_lab.command(dict(profile='profile', suite='correctness', image='coverage',

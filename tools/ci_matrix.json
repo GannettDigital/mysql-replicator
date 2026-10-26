@@ -23,9 +23,32 @@
       ]
     },
     {
-      "name": "gtids",
-      "families": [
-        "gtids"
+      "name": "keys-rows-gtids",
+      "cases": [
+        "ddl-compat-unique-row-identity",
+        "ddl-compat-keyless-rows",
+        "ddl-compat-grouped-constraints",
+        "ddl-compat-primary-key-row-matching",
+        "ddl-compat-primary-key-parts",
+        "ddl-compat-constraints",
+        "matrix-select",
+        "matrix-load",
+        "positive",
+        "ddl-index-create",
+        "ddl-index-unique",
+        "ddl-index-prefix",
+        "ddl-index-rename",
+        "ddl-index-drop",
+        "ddl-index-drop-alter",
+        "ddl-index-replace",
+        "ddl-modify-indexed",
+        "ddl-index-like",
+        "ddl-index-table-rename",
+        "ddl-index-truncate",
+        "ddl-index-unique-null",
+        "ddl-compat-key-conflicts",
+        "ddl-compat-source-gtid-preservation",
+        "ddl-compat-tagged-gtids"
       ]
     },
     {
@@ -65,128 +88,6 @@
             "ddl-compat-routines",
             "ddl-compat-temporary"
           ]
-        },
-        {
-          "name": "encodings",
-          "cases": [
-            "ddl-compat-unicode-names",
-            "ddl-compat-query-encodings",
-            "ddl-compat-table-name-case",
-            "ddl-compat-table-charset",
-            "ddl-compat-charset-conversion",
-            "ddl-compat-compound-charset",
-            "ddl-compat-charset-defaults"
-          ]
-        },
-        {
-          "name": "columns-keys",
-          "cases": [
-            "ddl-compat-unique-row-identity",
-            "ddl-compat-keyless-rows",
-            "ddl-compat-generated-expressions",
-            "ddl-compat-generated-dependencies",
-            "ddl-compat-column-index-syntax",
-            "ddl-compat-grouped-constraints",
-            "ddl-compat-primary-key-row-matching",
-            "ddl-compat-primary-key-parts",
-            "ddl-compat-column-renames",
-            "ddl-compat-column-swaps",
-            "ddl-compat-fulltext",
-            "ddl-compat-spatial-prefix-indexes",
-            "ddl-compat-json-indexes",
-            "ddl-compat-ignored-checks",
-            "ddl-compat-alter-column-keys",
-            "ddl-compat-constraints",
-            "ddl-compat-generated"
-          ]
-        },
-        {
-          "name": "table-changes",
-          "cases": [
-            "ddl-compat-alter-options",
-            "ddl-compat-alter-table-rename",
-            "ddl-compat-table-options",
-            "ddl-compat-table-maintenance",
-            "ddl-compat-alter-conversions",
-            "ddl-compat-multi-table",
-            "ddl-compat-cross-schema-relationships",
-            "ddl-compat-types",
-            "ddl-compat-alter",
-            "ddl-compat-database"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "dml",
-      "families": [
-        "dml"
-      ],
-      "groups": [
-        {
-          "name": "encodings-choices",
-          "cases": [
-            "matrix-collations",
-            "matrix-nativeencodings",
-            "matrix-exactchoices",
-            "matrix-choiceboundaries",
-            "matrix-binarychoices",
-            "matrix-legacybinaryset",
-            "matrix-zerowidth",
-            "matrix-identifiercase",
-            "matrix-unicodeidentifiers",
-            "matrix-encodings",
-            "matrix-widestrings",
-            "matrix-enumzero",
-            "matrix-choices",
-            "matrix-widechoices"
-          ]
-        },
-        {
-          "name": "numeric-temporal",
-          "cases": [
-            "matrix-decimaldefaults",
-            "matrix-floatbounds",
-            "matrix-zerofill",
-            "matrix-fixedfloating",
-            "matrix-floating",
-            "matrix-bits",
-            "matrix-integers",
-            "matrix-decimal",
-            "matrix-temporal",
-            "matrix-precision",
-            "matrix-floatingautofloat",
-            "matrix-floatingautodouble",
-            "matrix-floatingautofixedfloat",
-            "matrix-floatingautounsigneddouble"
-          ]
-        },
-        {
-          "name": "row-operations",
-          "cases": [
-            "matrix-upsert",
-            "matrix-replace",
-            "matrix-ignore",
-            "matrix-select",
-            "matrix-load",
-            "positive"
-          ]
-        },
-        {
-          "name": "structured-default-values",
-          "cases": [
-            "matrix-binarydefaults",
-            "matrix-textdefaults",
-            "matrix-spatial",
-            "matrix-json",
-            "matrix-typedjson",
-            "matrix-jsonpartial",
-            "matrix-fixed",
-            "matrix-lob",
-            "matrix-defaults",
-            "json-year-compatibility",
-            "large-values"
-          ]
         }
       ]
     },
@@ -197,117 +98,9 @@
       ]
     },
     {
-      "name": "indexes",
-      "families": [
-        "indexes"
-      ],
-      "groups": [
-        {
-          "name": "column-modifications",
-          "cases": [
-            "ddl-modify-demo-varchar-120",
-            "ddl-modify-narrow-text",
-            "ddl-modify-binary-width",
-            "ddl-modify-binary-narrow",
-            "ddl-modify-integer-signed",
-            "ddl-modify-primary-widen",
-            "ddl-modify-integer-narrow",
-            "ddl-modify-not-null",
-            "ddl-modify-first",
-            "ddl-modify-after"
-          ]
-        },
-        {
-          "name": "index-changes",
-          "cases": [
-            "ddl-index-create",
-            "ddl-index-unique",
-            "ddl-index-prefix",
-            "ddl-index-rename",
-            "ddl-index-drop",
-            "ddl-index-drop-alter",
-            "ddl-index-replace",
-            "ddl-modify-indexed",
-            "ddl-index-like",
-            "ddl-index-table-rename",
-            "ddl-index-truncate",
-            "ddl-index-unique-null"
-          ]
-        }
-      ]
-    },
-    {
-      "name": "bootstrap",
+      "name": "bootstrap-schema-discovery",
       "families": [
         "bootstrap"
-      ],
-      "groups": [
-        {
-          "name": "encodings-defaults",
-          "cases": [
-            "bootstrap-matrix-collations",
-            "bootstrap-matrix-nativeencodings",
-            "bootstrap-matrix-exactchoices",
-            "bootstrap-matrix-choiceboundaries",
-            "bootstrap-matrix-binarychoices",
-            "bootstrap-matrix-legacybinaryset",
-            "bootstrap-matrix-binarydefaults",
-            "bootstrap-matrix-textdefaults",
-            "bootstrap-matrix-zerowidth",
-            "bootstrap-matrix-identifiercase",
-            "bootstrap-matrix-unicodeidentifiers",
-            "bootstrap-matrix-encodings",
-            "bootstrap-matrix-widestrings",
-            "bootstrap-matrix-enumzero",
-            "bootstrap-matrix-choices",
-            "bootstrap-matrix-widechoices"
-          ]
-        },
-        {
-          "name": "numeric-temporal",
-          "cases": [
-            "bootstrap-matrix-decimaldefaults",
-            "bootstrap-matrix-floatbounds",
-            "bootstrap-matrix-zerofill",
-            "bootstrap-matrix-fixedfloating",
-            "bootstrap-matrix-floating",
-            "bootstrap-matrix-bits",
-            "bootstrap-matrix-values",
-            "bootstrap-matrix-integers",
-            "bootstrap-matrix-decimal",
-            "bootstrap-matrix-temporal",
-            "bootstrap-matrix-precision",
-            "bootstrap-matrix-defaults",
-            "bootstrap-matrix-floatingautofloat",
-            "bootstrap-matrix-floatingautodouble",
-            "bootstrap-matrix-floatingautofixedfloat",
-            "bootstrap-matrix-floatingautounsigneddouble"
-          ]
-        },
-        {
-          "name": "structured-rows-metadata",
-          "cases": [
-            "json-target84-schema",
-            "target84-index-spatial-metadata",
-            "expression-target84-dependencies",
-            "alter-rename-target84-refusal",
-            "bootstrap-matrix-fulltext",
-            "bootstrap-matrix-spatial",
-            "bootstrap-matrix-json",
-            "bootstrap-matrix-typedjson",
-            "bootstrap-matrix-jsonpartial",
-            "bootstrap-matrix-generated",
-            "bootstrap-matrix-fixed",
-            "bootstrap-matrix-composite",
-            "bootstrap-matrix-textkey",
-            "bootstrap-matrix-upsert",
-            "bootstrap-matrix-replace",
-            "bootstrap-matrix-ignore",
-            "bootstrap-matrix-select",
-            "bootstrap-matrix-load",
-            "bootstrap-matrix-lob"
-          ]
-        }
       ]
     },
     {
@@ -344,14 +137,100 @@
         "recovery",
         "offline"
       ]
+    },
+    {
+      "name": "table-column-changes",
+      "cases": [
+        "ddl-compat-generated-expressions",
+        "ddl-compat-generated-dependencies",
+        "ddl-compat-column-index-syntax",
+        "ddl-compat-column-renames",
+        "ddl-compat-column-swaps",
+        "ddl-compat-fulltext",
+        "ddl-compat-spatial-prefix-indexes",
+        "ddl-compat-json-indexes",
+        "ddl-compat-ignored-checks",
+        "ddl-compat-alter-column-keys",
+        "ddl-compat-generated",
+        "ddl-compat-alter-options",
+        "ddl-compat-alter-table-rename",
+        "ddl-compat-table-options",
+        "ddl-compat-table-maintenance",
+        "ddl-compat-alter-conversions",
+        "ddl-compat-multi-table",
+        "ddl-compat-cross-schema-relationships",
+        "ddl-compat-types",
+        "ddl-compat-alter",
+        "ddl-compat-database",
+        "ddl-modify-demo-varchar-120",
+        "ddl-modify-narrow-text",
+        "ddl-modify-binary-width",
+        "ddl-modify-binary-narrow",
+        "ddl-modify-integer-signed",
+        "ddl-modify-primary-widen",
+        "ddl-modify-integer-narrow",
+        "ddl-modify-not-null",
+        "ddl-modify-first",
+        "ddl-modify-after"
+      ]
+    },
+    {
+      "name": "character-sets-collations",
+      "cases": [
+        "ddl-compat-unicode-names",
+        "ddl-compat-query-encodings",
+        "ddl-compat-table-name-case",
+        "ddl-compat-table-charset",
+        "ddl-compat-charset-conversion",
+        "ddl-compat-compound-charset",
+        "ddl-compat-charset-defaults",
+        "matrix-collations",
+        "matrix-nativeencodings",
+        "matrix-exactchoices",
+        "matrix-choiceboundaries",
+        "matrix-binarychoices",
+        "matrix-legacybinaryset",
+        "matrix-zerowidth",
+        "matrix-identifiercase",
+        "matrix-unicodeidentifiers",
+        "matrix-encodings",
+        "matrix-widestrings",
+        "matrix-enumzero",
+        "matrix-choices",
+        "matrix-widechoices"
+      ]
+    },
+    {
+      "name": "data-types-values",
+      "cases": [
+        "matrix-decimaldefaults",
+        "matrix-floatbounds",
+        "matrix-zerofill",
+        "matrix-fixedfloating",
+        "matrix-floating",
+        "matrix-bits",
+        "matrix-integers",
+        "matrix-decimal",
+        "matrix-temporal",
+        "matrix-precision",
+        "matrix-floatingautofloat",
+        "matrix-floatingautodouble",
+        "matrix-floatingautofixedfloat",
+        "matrix-floatingautounsigneddouble",
+        "matrix-binarydefaults",
+        "matrix-textdefaults",
+        "matrix-spatial",
+        "matrix-json",
+        "matrix-typedjson",
+        "matrix-jsonpartial",
+        "matrix-fixed",
+        "matrix-lob",
+        "matrix-defaults",
+        "json-year-compatibility",
+        "large-values"
+      ]
     }
   ],
-  "demo_reports": {
-    "mysql84-to-mysql57-myisam": 4,
-    "mysql57-to-mysql84-innodb": 5,
-    "mysql57-to-mysql57-myisam": 4,
-    "mysql57-to-mysql57-innodb": 5
-  },
   "binlog_selections": [
     {
       "area": "rows-json-replay",
@@ -450,6 +329,47 @@
         "target-reconnect",
         "target-uncertain",
         "target-uncertain-resume"
+      ]
+    }
+  ],
+  "demo_groups": [
+    {
+      "name": "workbook",
+      "cases": [
+        "demo-prepared",
+        "demo-start-idle",
+        "demo-success",
+        "demo-fail-stop",
+        "demo-skip-and-resume",
+        "demo-modify-index"
+      ]
+    },
+    {
+      "name": "container-repair",
+      "cases": [
+        "demo-container-repair"
+      ]
+    },
+    {
+      "name": "baseline-gtid-resume",
+      "cases": [
+        "demo-idle-sigint",
+        "demo-resume-baseline-gtid"
+      ]
+    },
+    {
+      "name": "applied-checkpoint-resume",
+      "cases": [
+        "demo-applied-sigterm",
+        "demo-resume-applied-position",
+        "demo-resume-applied-gtid"
+      ]
+    },
+    {
+      "name": "reverse-workbook-recovery",
+      "cases": [
+        "demo-reverse-workbook",
+        "demo-reverse-recovery"
       ]
     }
   ]

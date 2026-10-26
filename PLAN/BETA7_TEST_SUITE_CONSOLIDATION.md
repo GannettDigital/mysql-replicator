@@ -13,11 +13,13 @@ Current progress:
   committed as `0bd7c2e`.
 - Composite and text PRIMARY KEY cases are combined in
   `ddl-compat-primary-key-row-matching` (Slice 6). Focused tests passed on both
-  InnoDB and MyISAM targets. Local validation is complete. Next: define shared
-  groups for key and conflict workflows, then review conflict and GTID checks.
-- Feature ownership is explicit. Existing family and execution-group names remain
-  until Step 4. Fixture changes, full-CI balancing and PR selection follow in
-  Steps 5–7. Cleanup is Step 8.
+  InnoDB and MyISAM targets. Committed as `c3c8c3d`.
+- Slice 7 combines conflict statements, adds cross-family shared fixtures and
+  growth checks. Focused local checks passed. The plan has 179 jobs, each
+  with one fixture group. GTID assertion consolidation remains in Step 3.
+- Feature ownership is explicit. Slice 7 implements the first shared feature
+  groups from Steps 4–5. Full-CI timing and coverage checks, remaining feature
+  organization and final PR selection are still required. Cleanup is Step 8.
 
 ## Goal
 
@@ -59,17 +61,17 @@ variant. These are planning checks, not extra test combinations to run now.
 Use them to choose a job budget below the planner's 256-job limit. Do not aim for
 255 jobs or require an emergency redesign each time a profile is added.
 
-The current four-profile plan has 240 execution groups and 240 jobs. Its profiles
-contribute 50, 47, 50 and 93 groups. The current policy keeps 85 groups in areas
-that must run alone. With those exclusions unchanged, planning the same selection
-with `max_groups` set to 2, 3 or 4 produces 164, 142 or 129 jobs, respectively.
-These are planning counts, not validated runtime recommendations. They show that
-job assignment can provide room for growth without removing tests. They do not
-prove reduced container startup cost or acceptable job duration.
+The current four-profile plan has 179 execution groups and 179 jobs. Each job
+runs one fixture group. The policy rejects current plans above 185 jobs. It also
+checks two separate growth scenarios against a 250-job budget: one additional
+profile, or one additional source variant across current profiles. Both need at
+most 245 jobs. These checks run during full planning and do not schedule the
+hypothetical tests. They are capacity estimates, not proof that a new topology
+is supported.
 
-Do not change `max_groups` alone and call fixture reuse complete. Review which
-areas really need isolation. Prefer coherent shared feature groups. Use multiple
-separately reported groups per job when their fixtures must remain separate.
+Do not pack separate fixture invocations into a job to reduce matrix entries.
+Combine compatible cases in the same fixture. If cases cannot share setup,
+keep separate jobs and include that cost in the growth budget.
 
 ## Starting evidence
 
@@ -99,10 +101,10 @@ Keep the existing three levels:
 2. An **execution group** runs compatible cases in one fixture invocation.
    Its name describes their behavior. It must not hide several sequential
    container setups under one test step.
-3. A **CI job** runs one or more compatible execution groups. Independent jobs
-   run in parallel. Each group must report its own setup, test and cleanup time.
-   Packing groups into a job reduces matrix entries, but does not itself share
-   containers. Prefer a shared execution group when cases can safely reuse setup.
+3. A **CI job** runs exactly one execution group. Independent jobs run in
+   parallel. Report setup, test and cleanup time separately. Cases in a group
+   share the MySQL containers. Required restart/replay operations remain named
+   test steps; they must not hide repeated fixture setup.
 
 Use the catalog's family field for the feature. Use the plan's area for a
 descriptive execution group within that feature. Local selection and CI must
@@ -318,8 +320,8 @@ producing results. An unsafe fixture must stop with a clear reason.
 - Aim for about five minutes per ordinary integration job with cached builds
   and images. Treat this as a balancing target, not a reason to create excessive
   jobs. Check the growth budget before splitting groups. Combine small related
-  groups and pack incompatible fixtures into separately reported groups when
-  needed. Retain and explain longer inseparable recovery workflows.
+  groups only when they can share a fixture. Keep incompatible fixtures in
+  separate jobs. Retain and explain longer inseparable recovery workflows.
 - Fix failed cases and rerun only affected jobs. Repeat the full suite only if
   the fixes or grouping changes justify it.
 
@@ -789,3 +791,118 @@ that design. Preserve their conflict and no-op conditions. Keep individually
 selectable cases where useful; they can share a group without becoming one case.
 Measure job count and setup reuse as well as time. Preserve the combined
 workflow's exact named assertions when removing repeated setup or checkpoints.
+
+
+## Slice 7 — Shared feature fixtures, conflict statements and growth checks
+
+This slice implements the next Step 3 conflict migration and the related fixture
+boundaries from Steps 4–5. It does not complete all feature reviews or GTID work.
+
+### Shared fixtures
+
+The planner accepts an explicit `cases` area across existing catalog families.
+Explicit owners take precedence over family fallback. Duplicate owners, unknown
+cases, stale named-group assignments and omitted families fail planning. Required
+dependencies and catalog order remain intact. New cases can join an existing
+group without another job.
+
+The new shared groups are `keys-rows-gtids`, `table-column-changes`,
+`character-sets-collations`, `data-types-values` and `bootstrap-schema-discovery`.
+The key group combines relevant key DDL, index changes, row operations and the
+existing GTID cases. These GTID assertions have moved, not been removed or merged.
+The bootstrap group retains each case's isolated state and saved-state resume,
+while reusing its MySQL containers. Other groups retain their profile, source
+variant, transport and applicability rules.
+
+`max_groups` remains 1. A policy test enforces one group per job. No job starts
+another fixture to run a second group. This replaces the earlier idea of packing
+separate groups into fewer jobs. Required restart and replay tests remain intact.
+
+The existing demo jobs were an exception: each started four or five fixtures.
+The planner now separates their sessions into workbook, container repair,
+baseline-GTID resume, applied-checkpoint resume and reverse workbook/recovery.
+Each session keeps its related assertions and its fresh state. Dependencies cannot
+cross demo groups. CI passes the selected cases to the demo command and expects
+one combined coverage report per session.
+
+### Conflict statements
+
+Use the MySQL names:
+[INSERT ... ON DUPLICATE KEY UPDATE](https://dev.mysql.com/doc/refman/8.4/en/insert-on-duplicate.html),
+[REPLACE](https://dev.mysql.com/doc/refman/8.4/en/replace.html) and
+[INSERT IGNORE](https://dev.mysql.com/doc/refman/8.4/en/insert.html).
+
+`ddl-compat-key-conflicts` replaces the three live matrix cases. It retains all
+11 CREATE/row statements and three independent tables with their original column
+and key definitions. It checks exact rows after every row statement:
+
+- INSERT ON DUPLICATE KEY UPDATE changes one existing row and inserts another.
+  Repeating a value then changes no rows.
+- REPLACE conflicts with two different existing rows through PRIMARY KEY and
+  UNIQUE KEY. Both conflicting rows must be replaced by the expected result.
+- INSERT IGNORE skips both primary-key and unique-key conflicts while inserting
+  a valid row. Its later duplicate-only statement changes no rows.
+
+The three bootstrap fixtures retain all eight phases. Three migration records
+retain all 30 original profile/variant/transport executions in ten combined
+executions. This changes 2,055 catalog obligations to 2,035, without removing a
+source condition. The other executions and the PR selection are unchanged.
+
+### Job count and growth
+
+| Plan | Execution groups | CI jobs | Fixture setups | Coverage collections |
+|---|---:|---:|---:|---:|
+| Before Slice 7 | 240 | 240 | 254 | 253 |
+| Shared feature fixtures | 179 | 179 | 179 | 178 |
+
+The reduction removes 75 fixture invocations. Coverage collections decrease
+because each combined fixture emits a union report, not because cases stop
+running. The native-only fixture does not produce application coverage. Separating
+the demo sessions keeps their 18 fixtures and makes each setup visible in its own
+job. The planner still checks case ownership and required assertions.
+
+Full planning enforces 185 current jobs and 250 jobs in each growth scenario.
+The fifth-profile check clones each current profile in turn, including its
+variants, suites and transport groups. It needs 214–245 jobs. A separate source
+variant check clones the default correctness/lifecycle groups across current
+profiles; it needs 242 jobs. These are separate simulations. Simultaneous profile
+and variant additions need a new review.
+
+Scheduling estimates sum prior areas. Some combined groups can be long. The full
+CI run must measure their duration, memory use and coverage output before final
+balancing. Keep the current one-fixture-per-job rule when adjusting boundaries.
+
+### Validation
+
+Evidence is under `artifacts/test-suite-consolidation/key-conflicts/`. The plan
+audit compares all executions before and after the change and checks one group
+per job. It retains all unrelated executions and the exact PR selection.
+
+The selected InnoDB run combined the conflict workflow with representative
+constraint, index, row-operation and bootstrap cases in one fixture. The baseline
+and candidate used the same application binary and server settings. The candidate
+passed all 11 conflict assertions. All eight bootstrap phases matched. The
+original source statements and table observations matched after table/database
+name substitution. No covered lines were lost; 28 lines were added. Runtime was
+338.66s versus 322.52s, with 865 SQL calls versus 840. This comparison checks
+retained behavior; it does not measure the full merged group or a reduction in
+setup, because both selected local runs used one fixture.
+
+The conflict workflow also passed on 8.4 → 5.7 MyISAM in 104.91s. Both no-op
+statements retained their zero-transaction checks. The focused Swift unit test,
+117 CI-tool tests, 43 lab-tool tests and 24 component/selection tests passed.
+
+The selected `demo-container-repair` session passed on 5.7 → 8.4 InnoDB. Its
+raw results contain one fixture and one combined coverage report. Fixture setup
+took 28.39s, including 24.68s for container startup and 3.12s for database setup.
+The `lab_compare.py record` wrapper failed after the successful test because it
+expects `runtime.json` directly in the case evidence directory. Demo fixtures
+are nested below that directory. `demo-validation.json` records the raw result
+and coverage checks. Extend that local comparison helper before comparing whole
+demo runs; this does not affect CI's recursive coverage collection.
+
+Leave the full merged groups and complete profile/variant matrix to GitHub Actions.
+
+Next: finish the Step 3 GTID review, then review the remaining Step 4 feature
+boundaries. Use full CI for Step 6 timing and coverage checks. Select the final
+short PR test set last.

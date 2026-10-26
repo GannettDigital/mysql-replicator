@@ -3,6 +3,45 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testKeyConflictMigrationKeepsSourceStatementsAndBootstrapStates() throws {
+        let cases = LabScenario.correctness
+        let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-key-conflicts" })
+        let steps = DDLCompatibilityCases.keyConflicts.steps
+        XCTAssertEqual(steps.count, 11)
+        for profile in LabProfile.allCases {
+            XCTAssertNil(replacement.reason(profile))
+            XCTAssertEqual(
+                replacement.fields(profile)["replaces"] as? [String],
+                ["matrix-upsert", "matrix-replace", "matrix-ignore"])
+            XCTAssertEqual((replacement.fields(profile)["assertions"] as? [String])?.count, 11)
+        }
+        for (id, table, count) in [
+            ("upsert", "insert_on_duplicate", 3), ("replace", "replace_rows", 2), ("ignore", "insert_ignore", 3),
+        ] {
+            let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == id })
+            XCTAssertEqual(fixture.phases.count, count)
+            XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-" + id })
+            XCTAssertFalse(cases.contains { $0.id == "matrix-" + id })
+            let actual = steps.filter { $0.sql.contains("ddlcompat." + table) }
+            XCTAssertEqual(actual.count, count + 1)
+            XCTAssertEqual(
+                actual.first?.sql,
+                "CREATE TABLE ddlcompat.\(table)(\(fixture.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+            for (phase, step) in zip(fixture.phases, actual.dropFirst()) {
+                XCTAssertEqual(
+                    step.sql, phase.sql.replacingOccurrences(of: "poc.matrix_" + id, with: "ddlcompat." + table))
+                XCTAssertEqual(step.checks.count, 1)
+                XCTAssertNotNil(step.assertionID)
+            }
+            XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-" + id])) { error in
+                XCTAssertTrue(String(describing: error).contains("was replaced by ddl-compat-key-conflicts"))
+            }
+        }
+        XCTAssertEqual(
+            steps.filter { $0.transactions == 0 }.map(\.assertionID),
+            ["insert-on-duplicate-noop", "insert-ignore-noop"])
+    }
+
     func testCompositeAndTextPrimaryKeyMigrationRetainsDiscoveryAndKeyConditions() throws {
         let cases = LabScenario.correctness
         let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-primary-key-row-matching" })

@@ -14,7 +14,7 @@ class MatrixTests(unittest.TestCase):
     def setUp(self):
         self.policy = dict(areas=[dict(name='database', families=['database'], size=2),
                                  dict(name='failure-recovery-offline', families=['failures', 'recovery', 'offline'])],
-                           demo_reports=dict(forward=4, reverse=5))
+                           demo_groups=[dict(name="session", cases=["demo-start"])])
         self.rows = [row('create'), row('alter'), row('drop'),
                      row('reconnect', suite='lifecycle'), row('demo-start', suite='demo'),
                      row('native', suite='native'), row('retry', suite='recovery', profile='reverse')]
@@ -33,7 +33,7 @@ class MatrixTests(unittest.TestCase):
             covered.update((shard['profile'], shard['variant'], shard['suite'], c) for c in shard['cases'])
         self.assertEqual(covered, {key(r) for r in self.rows})
         self.assertEqual(result['obligations'], len(self.rows))
-        self.assertEqual(result['coverage_reports'], 18)
+        self.assertEqual(result['coverage_reports'], 11)
         second = next(s for s in result['include'] if s['area'] == 'database-2')
         self.assertEqual(second['cases'], ['create', 'drop'])
         self.assertEqual(len(result['include']), len({s['id'] for s in result['include']}))
@@ -54,6 +54,27 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(any('new-case' in s['cases'] for s in result['include']))
         self.assertTrue(any(s['variant'] == 'new-variant' for s in result['include']))
 
+    def test_demo_groups_keep_session_dependencies_and_one_collection(self):
+        self.rows += [dict(row('resume', suite='demo'), dependencies=['demo-start']),
+                      row('repair', suite='demo')]
+        self.policy['demo_groups'] = [dict(name='session', cases=['demo-start', 'resume']),
+                                      dict(name='repair', cases=['repair'])]
+        result = self.generate()
+        demos = [g for g in result['include'] if g['suite'] == 'demo']
+        self.assertEqual([(g['profile'], g['cases'], g['reports']) for g in demos],
+                         [('forward', ['demo-start', 'resume'], 1),
+                          ('forward', ['repair'], 1), ('reverse', ['demo-start'], 1)])
+        self.policy['demo_groups'][0]['cases'].remove('resume')
+        self.policy['demo_groups'][1]['cases'].append('resume')
+        with self.assertRaisesRegex(ValueError, 'dependencies cross fixture groups'):
+            self.generate()
+        self.policy['demo_groups'][1]['cases'].remove('resume')
+        with self.assertRaisesRegex(ValueError, 'unassigned cases'):
+            self.generate()
+        self.policy['demo_groups'][0]['cases'].extend(['resume', 'typo'])
+        with self.assertRaisesRegex(ValueError, 'unknown demo cases'):
+            self.generate()
+
     def test_named_groups_preserve_catalog_order_and_repeat_required_dependencies(self):
         rows = [row('create'), row('alter'), dict(row('drop'), dependencies=['create']),
                 dict(row('unsupported'), status='not_applicable')]
@@ -70,6 +91,43 @@ class MatrixTests(unittest.TestCase):
             generate([dict(scenarios=rows + [row('new')])], policy)
         area['groups'][0]['cases'].append('typo')
         with self.assertRaisesRegex(ValueError, 'unknown cases'):
+            generate([dict(scenarios=rows)], policy)
+
+    def test_explicit_feature_group_crosses_families_without_duplicate_ownership(self):
+        rows = [row('ddl', family='ddl'), row('write', family='dml'), row('other', family='ddl'),
+                row('ddl', family='ddl', variant='new-mode'),
+                dict(row('write', family='dml', variant='new-mode'), status='not_applicable')]
+        policy = dict(areas=[dict(name='keys', cases=['write', 'ddl']),
+                             dict(name='ddl', families=['ddl'], groups=[dict(name='other', cases=['other'])]),
+                             dict(name='dml', families=['dml'])], demo_groups=[])
+        plan = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(plan['obligations'], 4)
+        self.assertEqual([(g['area'], g['variant'], g['cases']) for g in plan['include']],
+                         [('keys', 'default', ['ddl', 'write']), ('ddl-other', 'default', ['other']),
+                          ('keys', 'new-mode', ['ddl'])])
+        # An added case extends the existing feature group, without another job.
+        rows.append(row('new-key', family='dml'))
+        policy['areas'][0]['cases'].append('new-key')
+        extended = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(len(extended['include']), len(plan['include']))
+        self.assertEqual(extended['obligations'], 5)
+        self.assertIn('new-key', extended['include'][0]['cases'])
+        policy['areas'].append(dict(name='overlap', cases=['write']))
+        with self.assertRaisesRegex(ValueError, 'multiple explicit areas'):
+            generate([dict(scenarios=rows)], policy)
+
+    def test_explicit_groups_keep_dependency_closure_and_reject_stale_selectors(self):
+        rows = [row('create', family='ddl'), dict(row('update', family='dml'), dependencies=['create'])]
+        policy = dict(areas=[dict(name='keys', cases=['update']), dict(name='ddl', families=['ddl'])], demo_groups=[])
+        plan = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(plan['include'][0]['cases'], ['create', 'update'])
+        self.assertEqual(plan['include'][0]['dependency_cases'], ['create'])
+        self.assertEqual(plan['obligations'], 2)
+        for cases in ([], ['typo'], ['update', 'update'], 'update'):
+            with self.subTest(cases=cases), self.assertRaises(ValueError):
+                generate([dict(scenarios=rows)], dict(policy, areas=[dict(name='keys', cases=cases)]))
+        policy['areas'][0]['families'] = ['dml']
+        with self.assertRaisesRegex(ValueError, 'cannot use family'):
             generate([dict(scenarios=rows)], policy)
 
     def test_named_groups_reject_ambiguous_assignment(self):
@@ -218,7 +276,7 @@ class MatrixTests(unittest.TestCase):
 
     def test_pr_cases_are_not_repeated_as_supplemental_full_runs(self):
         rows = [row(c, profile=p) for p in SMOKE_PROFILES for c in ['create', 'alter', 'full-only']]
-        policy = dict(areas=[dict(name='database', families=['database'])], demo_reports={},
+        policy = dict(areas=[dict(name='database', families=['database'])], demo_groups=[],
                       pr_smoke=dict(area='selected', cases=['create']))
         full = generate([dict(scenarios=rows)], policy)
         self.assertEqual(len(full['include']), 2)

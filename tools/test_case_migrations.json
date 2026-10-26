@@ -380,6 +380,230 @@
           "assertion": "text-primary-key-delete-case-insensitive"
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-upsert",
+      "replacement": "ddl-compat-key-conflicts",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "assertion": "upsert-table-create",
+          "condition": "Replicated CREATE with INT PRIMARY KEY, non-NULL INT value and UNIQUE KEY uk(v)."
+        },
+        {
+          "assertion": "insert-on-duplicate-seed",
+          "condition": "Insert (1,10),(2,20) as the independent starting state."
+        },
+        {
+          "assertion": "insert-on-duplicate-mixed",
+          "condition": "One statement changes the duplicate primary-key row to (1,11) and inserts (3,30), while (2,20) remains."
+        },
+        {
+          "assertion": "insert-on-duplicate-noop",
+          "condition": "Repeat (1,11) with ON DUPLICATE KEY UPDATE; check all exact rows remain unchanged."
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-replace",
+      "replacement": "ddl-compat-key-conflicts",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "assertion": "replace-table-create",
+          "condition": "Replicated CREATE with INT PRIMARY KEY, non-NULL INT value and UNIQUE KEY uk(v)."
+        },
+        {
+          "assertion": "replace-seed",
+          "condition": "Insert (1,10),(2,20) as a separate starting state."
+        },
+        {
+          "assertion": "replace-primary-and-unique-conflicts",
+          "condition": "REPLACE (1,20),(3,30) conflicts with two different existing rows through PRIMARY KEY and UNIQUE KEY; check only (1,20),(3,30) remain."
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-ignore",
+      "replacement": "ddl-compat-key-conflicts",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "assertion": "ignore-table-create",
+          "condition": "Replicated CREATE with INT PRIMARY KEY, non-NULL INT value and UNIQUE KEY uk(v)."
+        },
+        {
+          "assertion": "insert-ignore-seed",
+          "condition": "Insert only (1,10) as a separate starting state."
+        },
+        {
+          "assertion": "insert-ignore-mixed-conflicts",
+          "condition": "INSERT IGNORE skips (1,11) on primary key and (3,10) on unique key, but inserts (2,20)."
+        },
+        {
+          "assertion": "insert-ignore-noop",
+          "condition": "INSERT IGNORE (1,99) changes no rows; check both original rows remain unchanged."
+        }
+      ]
     }
   ]
 }

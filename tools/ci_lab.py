@@ -29,7 +29,7 @@ def command(shard):
         args += ['--dml-transport', shard['dml_transport']]
     if shard['suite'] == 'correctness':
         args += ['--tier', shard['tier']]
-    if shard['suite'] in ('correctness', 'lifecycle'):
+    if shard['suite'] in ('correctness', 'lifecycle', 'demo'):
         for case in shard['cases']:
             args += ['--case', case]
     return args

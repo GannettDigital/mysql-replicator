@@ -128,7 +128,8 @@ class FeatureTests(unittest.TestCase):
             self.assertEqual(owners[('correctness', case)], 'full-text-search')
         for case in ('ddl-compat-constraints', 'bootstrap-matrix-values',
                      'ddl-compat-primary-key-row-matching', 'bootstrap-matrix-composite',
-                     'bootstrap-matrix-textkey'):
+                     'bootstrap-matrix-textkey', 'ddl-compat-key-conflicts',
+                     'bootstrap-matrix-upsert', 'bootstrap-matrix-replace', 'bootstrap-matrix-ignore'):
             self.assertEqual(owners[('correctness', case)], 'indexes')
         self.assertEqual(definitions['runtime-control']['kind'], 'project')
 

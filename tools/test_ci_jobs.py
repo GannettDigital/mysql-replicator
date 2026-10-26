@@ -40,7 +40,7 @@ class JobPlanTests(unittest.TestCase):
         jobs = assign_jobs(dict(include=groups, scope='pr-smoke'), self.policy)['jobs']
         self.assertEqual([j['group_ids'] for j in jobs], [['first'], ['long'], ['last']])
 
-    def test_current_policy_assigns_one_fixture_group_to_each_job(self):
+    def test_current_policy_keeps_one_shared_fixture_per_job(self):
         policy = json.loads(Path(__file__).with_name('ci_jobs.json').read_text())
         groups = [group(str(i)) for i in range(240)]
         result = assign_jobs(dict(include=groups), policy)
@@ -78,6 +78,28 @@ class JobPlanTests(unittest.TestCase):
         self.assertEqual(len(plan['jobs']), 200)
         with self.assertRaisesRegex(ValueError, '256 jobs'):
             assign_jobs(dict(include=[group(str(i), area='long') for i in range(257)]), self.policy)
+
+    def test_growth_checks_are_separate_simulations_and_do_not_change_real_plan(self):
+        groups = [group('create'), group('ddl', area='long'),
+                  group('other-profile', profile='reverse'),
+                  group('demo', suite='demo'), group('native', suite='native')]
+        original = copy.deepcopy(groups)
+        policy = dict(self.policy, growth_budget=dict(max_jobs=10, max_growth_jobs=20))
+        result = assign_jobs(dict(scope='full', include=groups), policy)
+        report = result['growth_check']
+        self.assertEqual(result['include'], original)
+        self.assertEqual(set(report['additional_profile']), {'forward', 'reverse'})
+        self.assertEqual(report['additional_source_variant']['groups'], len(groups) + 3)
+        self.assertEqual(report['additional_profile']['forward']['groups'], len(groups) + 4)
+        self.assertNotIn('growth_check', assign_jobs(dict(scope='pr-smoke', include=groups), policy))
+        with self.assertRaisesRegex(ValueError, 'current CI jobs exceed'):
+            assign_jobs(dict(scope='full', include=groups), dict(policy, growth_budget=dict(max_jobs=1, max_growth_jobs=20)))
+        with self.assertRaisesRegex(ValueError, 'projected CI jobs exceed'):
+            assign_jobs(dict(scope='full', include=groups), dict(policy, growth_budget=dict(max_jobs=3, max_growth_jobs=3)))
+        for budget in ({}, {'max_jobs': True, 'max_growth_jobs': 240},
+                       {'max_jobs': 160, 'max_growth_jobs': 257}, {'max_jobs': 160, 'max_growth_jobs': 159}):
+            with self.subTest(budget=budget), self.assertRaises(ValueError):
+                assign_jobs(dict(scope='full', include=groups), dict(policy, growth_budget=budget))
 
     def test_invalid_policy_and_duplicate_ids_fail(self):
         for key in ('max_groups', 'group_timeout_minutes', 'setup_timeout_minutes'):

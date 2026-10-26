@@ -234,9 +234,16 @@ UPDATE/DELETE from multirow INSERT/UPDATE/DELETE. The multirow phases replace
 value column. Each phase checks exact rows, including unaffected rows.
 `bootstrap-matrix-values` retains the original existing-schema workload.
 
-The default CI variants group the `positive` single-row case with other row
-operations. The SQL `without-source-gtids` variant runs only `positive` in its
-row-operation group, once per profile. That case also tests INSERT, counters,
+`ddl-compat-key-conflicts` combines the former `matrix-upsert`, `matrix-replace`
+and `matrix-ignore` cases. It keeps separate tables and the original SQL for each
+starting state. Named assertions check mixed insert/update effects, REPLACE
+conflicts with two different rows, skipped duplicate rows, and no-op statements.
+Each check compares exact rows on source, native and target. The three
+`bootstrap-matrix-*` cases retain their existing-schema and resume checks.
+
+The `keys-rows-gtids` group contains the `positive` single-row case and related
+key, row and GTID cases. The SQL `without-source-gtids` variant runs `positive`
+and any applicable tagged-GTID case in this group. That case also tests INSERT, counters,
 binlogs and saved state; it is not an UPDATE/DELETE-only test. Other single-row
 operations run in cases that check specific keys, types and schema changes:
 
@@ -258,8 +265,8 @@ and a case-insensitive DELETE.
 `bootstrap-matrix-composite` and `bootstrap-matrix-textkey` retain existing-schema
 discovery and resume. Prefix-key and UNIQUE-key workflows remain separate. The
 [measured review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md#slice-6--composite-and-text-primary-key-review)
-records preserved coverage and the accepted time increase. Combining compatible
-execution groups to share setup and reduce CI jobs is the next design step.
+records preserved coverage and the accepted time increase. These cases now share
+the `keys-rows-gtids` fixture with related key and row tests.
 
 Here, single-row means one changed row per statement. It does not mean MySQL's
 single-table statement syntax, which can change many rows. Select cases with
@@ -627,35 +634,30 @@ prerequisites. New cases do not enter the baseline automatically. They enter com
 when they belong to a selected family or complete execution group.
 Full CI uses the same selection for its two cross-version coverage supplements.
 Local `--tier smoke` keeps its existing convenience selection.
-`tools/ci_matrix.json` also assigns full CI
-correctness families to areas and sets group sizes or explicit case boundaries.
-New cases automatically join
-their area, while an unassigned family or suite fails planning. The generated
-`ci-lab` artifact contains `matrix.json`, including all obligations, explicit
-not-applicable entries and exact execution-group selections in `include`.
-Each applicable obligation has one owning group; prerequisites can also run in
-dependent groups. `tools/ci_jobs.json` assigns groups to the separate `jobs` list.
-A job can run several groups, each with its own fixtures and artifacts. See
-[execution groups and CI jobs](CI_MEASUREMENTS.md#execution-groups-and-ci-jobs)
-for failure handling, coverage counts and time limits.
+`tools/ci_matrix.json` assigns full CI cases to shared-fixture feature groups.
+An area with an explicit `cases` list can select related cases across DDL, DML
+and index families. Those cases have one explicit owner. Remaining cases keep
+their family area. New cases normally extend an existing named group. Unknown
+cases, duplicate owners and missing named-group assignments fail planning.
 
-For groups balanced by measured time, `split_after` lists the final case in each
-group except the last. DDL splits after `ddl-compat-generated`. Bootstrap splits
-after `bootstrap-matrix-upsert`. Each area has two groups per profile and variant.
-These boundaries come from the [PR #41 review](../PLAN/PR41_TEST_SUITE_RESULTS.md).
-The planner preserves catalog order and adds prerequisites to each group.
-Missing, repeated, or reversed boundaries fail planning. A boundary cannot
-select the last applicable case, because that would leave an empty final group.
-Do not combine `split_after` with `size`. Keep `size` for groups with fixed counts.
-Review the timing report after adding cases; boundaries do not enforce a time limit.
+The generated `ci-lab` artifact contains `matrix.json`, with all obligations,
+not-applicable entries and exact group selections in `include`. Each applicable
+obligation has one owning group; prerequisites can also run in dependent groups.
+The planner preserves catalog order within each group.
 
-Jobs show profile, area, capture variant and image type. Large DDL, index and
-bootstrap areas are split into case groups, with up to 16 jobs running at once.
-Each job owns a fresh fixture. Ordered scenarios and the forward
-failure → recovery → offline/control sequence stay together. CI builds the lab
-once and each applier image once. Test jobs pull images from GHCR by digest;
-fork PRs use checksummed image archives. Release jobs verify they use the
-packaged binary. See [CI build caching](CI_BUILD_CACHE.md).
+`tools/ci_jobs.json` assigns exactly one execution group to each job. All cases
+in that group reuse its MySQL containers and environment setup. Bootstrap state
+isolation and required restart/replay operations remain explicit test steps.
+A job does not run a second fixture group. The `growth_check` report models one
+extra profile or one extra source variant without adding either to the test run.
+See [execution groups and CI jobs](CI_MEASUREMENTS.md#execution-groups-and-ci-jobs)
+for group scope, budgets, coverage counts and time limits.
+
+Jobs show profile, area, capture variant and image type. Up to 16 jobs run in
+parallel. Ordered scenarios and the forward failure → recovery → offline/control
+sequence stay together. CI builds the lab once and each applier image once.
+Test jobs pull images from GHCR by digest; fork PRs use checksummed image archives.
+Release jobs verify they use the packaged binary. See [CI build caching](CI_BUILD_CACHE.md).
 
 Generate and inspect the same plan locally:
 

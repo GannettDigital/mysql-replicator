@@ -94,6 +94,7 @@ enum DDLCompatibilityCases {
         columnIndexSyntax,
         groupedConstraints,
         primaryKeyRowMatching,
+        keyConflicts,
         primaryKeyParts,
         columnRenames,
         columnSwaps,

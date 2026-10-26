@@ -472,7 +472,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "INSERT INTO poc.matrix_upsert VALUES(1,11) ON DUPLICATE KEY UPDATE v=VALUES(v)",
                         check: "SELECT COUNT(*)=3 AND SUM(v)=61 FROM poc.matrix_upsert"),
-                ]),
+                ], replicatedReplacement: "ddl-compat-key-conflicts"),
             Case(
                 id: "replace", definition: "id INT PRIMARY KEY,v INT NOT NULL,UNIQUE KEY uk(v)",
                 phases: [
@@ -482,7 +482,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "REPLACE INTO poc.matrix_replace VALUES(1,20),(3,30)",
                         check: "SELECT COUNT(*)=2 AND SUM(id)=4 AND SUM(v)=50 FROM poc.matrix_replace"),
-                ]),
+                ], replicatedReplacement: "ddl-compat-key-conflicts"),
             Case(
                 id: "ignore", definition: "id INT PRIMARY KEY,v INT NOT NULL,UNIQUE KEY uk(v)",
                 phases: [
@@ -495,7 +495,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "INSERT IGNORE INTO poc.matrix_ignore VALUES(1,99)",
                         check: "SELECT COUNT(*)=2 AND SUM(v)=30 FROM poc.matrix_ignore"),
-                ]),
+                ], replicatedReplacement: "ddl-compat-key-conflicts"),
             Case(
                 id: "select", definition: "id INT PRIMARY KEY,v INT NOT NULL",
                 phases: [

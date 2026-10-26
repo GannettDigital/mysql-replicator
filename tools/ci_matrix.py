@@ -104,16 +104,52 @@ def generate(catalogs, policy, expanded_coverage=False):
     applicable = {k: r for k, r in inventory.items() if r['status'] == 'not_run'}
     if not applicable:
         raise ValueError('empty lab catalog')
-    families = [f for area in policy['areas'] for f in area['families']]
+    # Explicit feature selections cross legacy family boundaries. Remaining
+    # cases keep their family owner. Every case still has exactly one owner.
+    areas = policy['areas']
+    if len({area['name'] for area in areas}) != len(areas):
+        raise ValueError('duplicate area name')
+    explicit = {}
+    known_cases = {r['id'] for r in inventory.values() if r['suite'] == 'correctness'}
+    for area in areas:
+        if 'cases' not in area:
+            continue
+        cases = area['cases']
+        if any(k in area for k in ('families', 'groups', 'size', 'split_after')):
+            raise ValueError('explicit case area cannot use family or split selectors')
+        if (not isinstance(cases, list) or not cases
+                or any(not isinstance(c, str) or not c for c in cases)
+                or len(cases) != len(set(cases))):
+            raise ValueError('invalid explicit area cases')
+        if set(cases) - known_cases:
+            raise ValueError(f'unknown explicit cases: {sorted(set(cases) - known_cases)}')
+        for case in cases:
+            if case in explicit:
+                raise ValueError('case belongs to multiple explicit areas: ' + case)
+            explicit[case] = area['name']
+
+    def belongs(row, area):
+        if row['id'] in explicit:
+            return explicit[row['id']] == area['name']
+        return row['family'] in area.get('families', [])
+
+    families = [f for area in areas for f in area.get('families', [])]
     if len(families) != len(set(families)):
         raise ValueError('a family belongs to multiple areas')
-    unknown = {r['family'] for r in applicable.values() if r['suite'] == 'correctness'} - set(families)
+    unknown = {r['family'] for r in applicable.values() if r['suite'] == 'correctness' and r['id'] not in explicit} - set(families)
     if unknown:
         raise ValueError(f'unassigned correctness families: {sorted(unknown)}')
+    demo_area = dict(name='demo', groups=policy.get('demo_groups', []))
+    demo_known = {r['id'] for r in inventory.values() if r['suite'] == 'demo'}
+    if demo_known:
+        named_case_groups(sorted(demo_known), demo_area)
+        requested = {c for group in demo_area['groups'] for c in group['cases']}
+        if requested - demo_known:
+            raise ValueError(f'unknown demo cases: {sorted(requested - demo_known)}')
     for area in policy['areas']:
         if 'groups' in area:
             known = {r['id'] for r in inventory.values()
-                     if r['suite'] == 'correctness' and r['family'] in area['families']}
+                     if r['suite'] == 'correctness' and belongs(r, area)}
             named_case_groups(sorted(known), area)
             requested = {c for group in area['groups'] for c in group['cases']}
             if requested - known:
@@ -138,7 +174,7 @@ def generate(catalogs, policy, expanded_coverage=False):
             # prerequisites must not be hidden by the lab's selection expansion.
             resolve_cases(rows)
             for area in policy['areas']:
-                members = [r['id'] for r in rows if r['family'] in area['families']]
+                members = [r['id'] for r in rows if belongs(r, area)]
                 if not members:
                     continue
                 # This variant selects a few focused cases, not the full family.
@@ -158,8 +194,16 @@ def generate(catalogs, policy, expanded_coverage=False):
                     add(profile, variant, suite, name, cases, count=False)
                     shards[-1].update(owns_obligations=True, requested_cases=roots, dependency_cases=resolved['dependency_cases'])
                     owners.update((profile, variant, suite, case) for case in roots)
-        elif suite in ('lifecycle', 'recovery', 'native', 'demo'):
-            reports = policy['demo_reports'][profile] if suite == 'demo' else (0 if suite == 'native' else 1)
+        elif suite == 'demo':
+            # Each demo session creates its own clean fixture. Keep all assertions
+            # for a session together, but never start another session in its job.
+            for area, cases in named_case_groups([r['id'] for r in rows], demo_area):
+                resolved = resolve_cases(rows, cases=cases)
+                if set(resolved['cases']) != set(cases):
+                    raise ValueError('demo dependencies cross fixture groups: ' + area)
+                add(profile, variant, suite, area, cases)
+        elif suite in ('lifecycle', 'recovery', 'native'):
+            reports = 0 if suite == 'native' else 1
             area = {'native': 'native-ddl', 'lifecycle': 'reconnect'}.get(suite, suite)
             add(profile, variant, suite, area, [r['id'] for r in rows],
                 reports=reports)

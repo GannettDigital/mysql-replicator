@@ -72,4 +72,50 @@ def assign_jobs(plan, policy):
     jobs.sort(key=lambda job: -job['estimated_seconds'])
     result = dict(plan, jobs=jobs, group_timeout_seconds=minutes * 60)
     validate_jobs(result)
+    if plan.get('scope') == 'full' and 'growth_budget' in policy:
+        result['growth_check'] = check_growth(result, policy)
     return result
+
+
+def check_growth(plan, policy):
+    """Plan extra profiles/variants without adding them to the runnable matrix."""
+    budget = policy['growth_budget']
+    if not isinstance(budget, dict) or set(budget) != {'max_jobs', 'max_growth_jobs'}:
+        raise ValueError('invalid CI growth budget')
+    if any(type(v) is not int or not 1 <= v <= 256 for v in budget.values()):
+        raise ValueError('CI growth budgets must be between 1 and 256')
+    if budget['max_jobs'] > budget['max_growth_jobs']:
+        raise ValueError('CI growth budget is below current job budget')
+    if len(plan['jobs']) > budget['max_jobs']:
+        raise ValueError(f"current CI jobs exceed growth budget: {len(plan['jobs'])} > {budget['max_jobs']}")
+    policy = {k: v for k, v in policy.items() if k != 'growth_budget'}
+    groups = plan['include']
+    profiles = sorted({g['profile'] for g in groups})
+    extra_profile, extra_variant = '__growth_profile__', '__growth_variant__'
+    if extra_profile in profiles or any(g.get('variant') == extra_variant for g in groups):
+        raise ValueError('reserved CI growth-check identity in real matrix')
+
+    def variant_copy(items):
+        # Source variants apply to correctness/lifecycle, not demo or native suites.
+        return [dict(g, id='growth-variant:' + g['id'], variant=extra_variant)
+                for g in items if g.get('variant', 'default') == 'default'
+                and g['suite'] in ('correctness', 'lifecycle')]
+
+    def measure(items):
+        candidate = assign_jobs(dict(include=items), policy)
+        count = len(candidate['jobs'])
+        if count > budget['max_growth_jobs']:
+            raise ValueError(f"projected CI jobs exceed growth budget: {count} > {budget['max_growth_jobs']}")
+        return dict(groups=len(items), jobs=count)
+
+    # Try every existing profile as the model. Do not assume the largest group
+    # count also produces the largest packed job count.
+    profile_runs = {}
+    for profile in profiles:
+        extended = groups + [dict(g, id='growth-profile:' + g['id'], profile=extra_profile)
+                             for g in groups if g['profile'] == profile]
+        profile_runs[profile] = measure(extended)
+    return dict(budget=budget, current=dict(groups=len(groups), jobs=len(plan['jobs'])),
+                additional_profile=profile_runs,
+                additional_source_variant=measure(groups + variant_copy(groups)),
+                scope='Separate planning scenarios: one extra profile OR one extra source variant. Real selections are unchanged.')

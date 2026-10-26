@@ -100,7 +100,11 @@
           "ddl-compat-primary-key-row-matching",
           "bootstrap-matrix-composite",
           "bootstrap-matrix-textkey",
-          "bootstrap-matrix-values"
+          "bootstrap-matrix-values",
+          "ddl-compat-key-conflicts",
+          "bootstrap-matrix-upsert",
+          "bootstrap-matrix-replace",
+          "bootstrap-matrix-ignore"
         ]
       }
     },
@@ -415,14 +419,8 @@
       },
       "cases": {
         "correctness": [
-          "matrix-upsert",
-          "matrix-replace",
-          "matrix-ignore",
           "matrix-select",
           "matrix-load",
-          "bootstrap-matrix-upsert",
-          "bootstrap-matrix-replace",
-          "bootstrap-matrix-ignore",
           "bootstrap-matrix-select",
           "bootstrap-matrix-load",
           "positive"

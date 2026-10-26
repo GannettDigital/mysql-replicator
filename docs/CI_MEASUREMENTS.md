@@ -139,10 +139,10 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 240 | 240 | 253 |
+| Full | 179 | 179 | 178 |
 | Main production packages | 2 | 2 | 0 |
 
-The full plan has 2,055 applicable obligations. Before the case migrations,
+The full plan has 2,035 applicable obligations. Before the case migrations,
 it had 2,095. Ten executions each belonged to `matrix-generated`, `matrix-fulltext`
 and `matrix-values`. Their conditions now run in `ddl-compat-generated`,
 `ddl-compat-fulltext` and `ddl-compat-constraints`, respectively, in the same
@@ -150,9 +150,15 @@ profile/variant/transport selections. The 20 `matrix-composite` and `matrix-text
 executions now run as ten `ddl-compat-primary-key-row-matching` executions.
 They retain both sets of source statements and check exact rows. The PR selection
 uses the combined workflow in place of `matrix-composite`; it gains the text-key
-checks. Their existing-schema tests remain separate. See the
+checks. The 30 conflict-case executions now run as ten
+`ddl-compat-key-conflicts` executions, with all original statements and distinct
+starting states. Their existing-schema tests remain separate. See the
 [migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for assertion and
-line-coverage evidence. This change does not reduce the number of fixtures.
+line-coverage evidence. Shared feature groups reduce the number of fixture
+invocations from 254 to 179. Case migrations and fixture grouping are separate
+changes; a lower case count alone does not reduce setup.
+The previous 240 jobs included four demo jobs that started 18 fixtures. Each
+demo session now has a separate job. Thus 61 fewer jobs remove 75 fixture setups.
 Full CI runs each apply group with
 coverage once. It does not add copies for coverage or repeat the PR baseline.
 The [sample comparison](../PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md) records the
@@ -160,14 +166,38 @@ previous consolidation. Its cases now run in their full-catalog groups.
 The planner checks the 256-job limit after grouping. These are local plan counts;
 GitHub runtime measurements are still needed.
 
-Index tests use two groups: column modifications and index changes. Bootstrap
-tests use three groups: encodings/defaults, numeric/temporal values, and structured
-values/row operations/target metadata. Each group retains its selected cases and
-assertions. The change reduces fixture count without removing any catalog
-obligation. Scheduling estimates use run `40170659705`; new group estimates add
-the recorded case times and the median time outside named cases. They include
-20% headroom, rounded up to a minute. They are not measured runtimes for the new
-groups. See [the grouping study](../PLAN/BETA7_INTEGRATION_GROUP_PROPOSAL.md).
+The shared groups include:
+
+- `keys-rows-gtids`: PRIMARY/UNIQUE keys, row matching, conflicts, index changes,
+  row statements and the existing GTID cases.
+- `table-column-changes`: table/column changes, generated columns, special index
+  definitions and column modifications.
+- `character-sets-collations`: character-set DDL and encoded row values.
+- `data-types-values`: numeric, temporal, structured and default values.
+- `bootstrap-schema-discovery`: existing-schema discovery with the retained
+  isolated state and resume phases. These phases reuse the same containers.
+
+Each job runs exactly one group. The configuration keeps `max_groups: 1`, and a
+unit test enforces that policy. Required restart/replay checks remain test steps;
+they are not a second fixture setup hidden in a job. The scheduler uses the sum
+of prior area estimates for the new groups. These estimates are conservative
+ordering inputs, not measured runtimes. Full CI must check the longest groups
+before further balancing.
+
+Demo groups match the sessions in the demo runner: workbook, container repair,
+baseline-GTID resume, applied-checkpoint resume, and reverse workbook/recovery.
+Each group retains all assertions for its session. The planner rejects dependencies
+that cross session groups. CI passes the exact case selection to the demo command
+and expects one combined coverage report from each job.
+
+Full planning enforces a 185-job current budget and a 250-job growth budget.
+`matrix.json` includes `growth_check`. It models an extra profile by copying each
+existing profile in turn, then reports every result. A separate check adds one
+source variant to the default correctness/lifecycle selections across all current
+profiles. These are separate scenarios, not a simultaneous expansion. Neither
+adds jobs to the actual run. Both require at most 245 jobs with the current plan.
+The checks do not establish support for a new MySQL topology. They test matrix
+capacity with the existing selections and isolation rules.
 
 ## Normal CI
 
