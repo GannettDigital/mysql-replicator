@@ -45,7 +45,7 @@ enum DMLCompatibilityCases {
                         check:
                             "SELECT COUNT(*)=0 FROM poc.matrix_fulltext WHERE MATCH(body) AGAINST('qqvvq' IN BOOLEAN MODE)"
                     ),
-                ]),
+                ], replicatedReplacement: "ddl-compat-fulltext"),
             characterCollations,
             nativeEncodings,
             exactChoices,

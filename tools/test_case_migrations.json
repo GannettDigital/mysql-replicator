@@ -72,6 +72,82 @@
           "assertion": "generated-delete-retains-null"
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-fulltext",
+      "replacement": "ddl-compat-fulltext",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Replicated CREATE TABLE with an integer primary key, nullable TEXT and FULLTEXT KEY ft(body) WITH PARSER ngram; establish its schema through captured CREATE before its first row write.",
+          "assertion": "fulltext-ngram-create"
+        },
+        {
+          "condition": "Multirow INSERT of (1,'xyzzy') and (2,'qqvvq'); a BOOLEAN MODE search for xyzzy returns only row 1.",
+          "assertion": "fulltext-ngram-insert"
+        },
+        {
+          "condition": "UPDATE row 1 to rrwwr; a BOOLEAN MODE search for xyzzy returns no rows.",
+          "assertion": "fulltext-ngram-update"
+        },
+        {
+          "condition": "DELETE row 2; a BOOLEAN MODE search for qqvvq returns no rows.",
+          "assertion": "fulltext-ngram-delete"
+        }
+      ]
     }
   ]
 }

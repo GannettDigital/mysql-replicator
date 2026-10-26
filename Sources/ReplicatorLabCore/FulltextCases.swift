@@ -59,5 +59,32 @@ extension DDLCompatibilityCases {
                         "SELECT id FROM ddlcompat.copy WHERE MATCH(body) AGAINST('xyzzy' IN BOOLEAN MODE) ORDER BY id",
                         "3")
                 ]),
+            // Keep explicit CREATE WITH PARSER separate from ALTER ADD and LIKE.
+            // These strings retain the existing-schema fixture's ngram searches.
+            // Each step already compares source/native/target schema and rows.
+            .init(
+                "CREATE TABLE ddlcompat.ngram_created(id INT PRIMARY KEY,body TEXT,FULLTEXT KEY ft(body) WITH PARSER ngram) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                assertionID: "fulltext-ngram-create"),
+            .init(
+                "INSERT INTO ddlcompat.ngram_created VALUES(1,'xyzzy'),(2,'qqvvq')",
+                [
+                    .init(
+                        "SELECT COUNT(*)=1 AND MIN(id)=1 FROM ddlcompat.ngram_created WHERE MATCH(body) AGAINST('xyzzy' IN BOOLEAN MODE)",
+                        "1")
+                ], assertionID: "fulltext-ngram-insert"),
+            .init(
+                "UPDATE ddlcompat.ngram_created SET body='rrwwr' WHERE id=1",
+                [
+                    .init(
+                        "SELECT COUNT(*)=0 FROM ddlcompat.ngram_created WHERE MATCH(body) AGAINST('xyzzy' IN BOOLEAN MODE)",
+                        "1")
+                ], assertionID: "fulltext-ngram-update"),
+            .init(
+                "DELETE FROM ddlcompat.ngram_created WHERE id=2",
+                [
+                    .init(
+                        "SELECT COUNT(*)=0 FROM ddlcompat.ngram_created WHERE MATCH(body) AGAINST('qqvvq' IN BOOLEAN MODE)",
+                        "1")
+                ], assertionID: "fulltext-ngram-delete"),
         ])
 }

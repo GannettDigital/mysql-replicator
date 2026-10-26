@@ -1,7 +1,18 @@
 # Beta.7 test suite consolidation
 
-Status: approved; implementation proceeds in slices. Do not remove tests during
-the baseline slice. Keep changes local until the user requests a push.
+Status: implementation proceeds in slices. Keep changes local until the user
+requests a push.
+
+Current progress:
+
+- Baseline, feature ownership, migration checks and generated-column changes:
+  committed as `a0a130a` (Slices 1–3).
+- Step 2: generated-column and FULLTEXT migrations pass focused local checks.
+  FULLTEXT changes remain uncommitted (Slice 4). Full CI is still required.
+- Next: Step 3, row-key and conflict checks, starting with `matrix-values`.
+- Feature ownership is explicit. Existing family and execution-group names remain
+  until Step 4. Fixture changes, full-CI balancing and PR selection follow in
+  Steps 5–7. Cleanup is Step 8.
 
 ## Goal
 
@@ -32,8 +43,8 @@ the short PR selection.
 - Focused local comparisons passed. The combined MODIFY selection saved about
   70 seconds. The bootstrap setup change saved about 25 seconds. No runtime
   line was lost from the union of those compared selections.
-- These local changes are not yet committed. Preserve them as the starting
-  change. See [the grouping study](BETA7_INTEGRATION_GROUP_PROPOSAL.md).
+- The starting changes and Slices 1–3 were committed as `a0a130a`. See
+  [the grouping study](BETA7_INTEGRATION_GROUP_PROPOSAL.md).
 
 The saved coverage is at group level. It cannot prove that an individual case
 is redundant. Review SQL, expected values, failures and restart conditions too.
@@ -458,3 +469,91 @@ Runtime code did not change. Changes remain uncommitted.
 Next slice: review the FULLTEXT replicated cases with the same migration checks.
 Keep existing-schema checks and engine-specific search expectations where they
 test different conditions. Compare SQL, assertions and coverage before removal.
+
+### Slice 4 — Full-Text Search
+
+This is the second migration in Step 2. The feature name remains **Full-Text
+Search**. The naming review checked the 8.4 manual's
+[ngram Full-Text Parser](https://dev.mysql.com/doc/refman/8.4/en/fulltext-search-ngram.html)
+section. It documents `WITH PARSER ngram` for CREATE TABLE and ALTER TABLE.
+The 5.7 manual link redirects to 9.7, so it is not used as 5.7 evidence. The
+local 5.7 source at `f7680e98` includes
+`mysql-test/suite/innodb_fts/t/ngram.test`, with ngram index creation and deletion
+checks. Focused runs use the actual project profiles.
+
+Review of the SQL at `a0a130a` found distinct conditions:
+
+- `ddl-compat-fulltext` checks a multi-column default-parser index, ignored index
+  prefixes, search after INSERT/UPDATE/DELETE, DROP/CREATE/RENAME INDEX, ALTER ADD
+  with ngram, two applier restarts, and CREATE TABLE LIKE with INSERT SELECT.
+- `matrix-fulltext` creates an ngram index in CREATE TABLE. It inserts two rows,
+  updates one row and deletes the other. Each phase checks a BOOLEAN MODE search.
+- `bootstrap-matrix-fulltext` uses the same three phases with an existing schema.
+
+Keep all these conditions. A separate table in the DDL workflow retains the
+explicit ngram CREATE and the exact input strings and search predicates from
+`matrix-fulltext`. Do not replace the existing ALTER ADD or LIKE operations.
+The bootstrap fixture is unchanged. The retained conditions now belong to one
+replicated feature case; no required row write was removed.
+
+The replicated `matrix-fulltext` case is now retired. The bootstrap definition
+is unchanged. The migration record retains all ten original execution selections.
+The feature map, CI selections, support catalog and test guide use the replacement.
+The old ID remains only in migration checks and historical/review descriptions.
+
+The reverse-profile comparison used `mysql57-to-mysql84-innodb`, SQL transport
+and the default variant. Before and after used the same application binary,
+server settings and runtime line map. Only `FulltextCases.swift` and
+`DMLCompatibilityCases.swift` changed in the coverage source manifest.
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Selected cases | 3 | 2 |
+| Elapsed seconds | 206.80 | 203.35 |
+| SQL calls | 394 | 394 |
+| SQL seconds | 80.59 | 76.52 |
+| Runtime lines executed | 8,042 | 8,042 |
+
+No runtime lines were lost or gained. The original DDL queries and observed
+values match. All three retired row statements and search predicates match after
+changing only the qualified table name and removing `USE poc`. The bootstrap
+SQL, expected/observed values and transaction counts match for all three phases.
+Four replacement assertions passed and saved their SQL and observed values.
+The total SQL call count is unchanged. One run is not a stable timing estimate.
+
+This replacement provides one Full-Text Search workflow. Both selections use
+one fixture, so it cannot save container setup time. The first candidate added
+three explicit queries and had seven more SQL calls. Its results are retained
+as `reverse-after.json`, `forward-after.json` and `comparison.json`. The shared
+step already compares schema and row snapshots. The final code removes these
+extra queries and keeps the original search predicates. The CREATE assertion
+saves the compared schema snapshot. This keeps the required conditions without
+adding repeated verification queries. Further fixture reductions belong to
+Step 5.
+
+Planning removes exactly ten `matrix-fulltext` executions. Each replacement was
+already selected in its original profile, variant and transport. Other execution
+selections, group IDs and remaining case order are unchanged. Full CI now has
+240 groups, 2,075 obligations and 253 coverage collections. The PR selection
+remains two groups and 22 obligations. No new fixture groups were added.
+
+The focused Swift migration test, four support-catalog tests, 43 lab-tool Python
+tests and 23 matrix tests pass. Evidence is in
+`artifacts/test-suite-consolidation/fulltext/`: before/after measurements,
+`comparison-final.json`, `plan-comparison.json`, source-image inputs and test logs.
+No runtime replication code changed.
+
+
+The final `ddl-compat-fulltext` case also passed on
+`mysql84-to-mysql57-myisam`. Its four named assertions matched the source,
+native replica and target. The unchanged bootstrap fixture passed all three
+phases in the earlier forward run. The final forward rerun selected only the
+changed DDL case. See `forward-final.json` and `forward-validation.json`.
+
+Step 2 is complete for the focused local checks. The full profile/variant matrix
+remains for GitHub Actions. These FULLTEXT changes are not committed.
+Next: Step 3, starting with `matrix-values`. Review exact multirow UPDATE/DELETE
+results and unaffected rows before choosing a receiving row-key workflow.
+Do not remove PRIMARY KEY, composite-key or conflict conditions merely because
+they execute the same code. Keep final group naming, fixture boundaries,
+full-CI balancing and short PR selection in their later plan steps.

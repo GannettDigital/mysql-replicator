@@ -219,9 +219,12 @@ The former `reject-geometry` and `reject-fulltext` refusal cases have positive
 coverage. The refusal selection now uses `reject-engine`.
 
 `ddl-compat-fulltext` checks index creation, changes, parser metadata, search
-results, CREATE TABLE LIKE and restart. `matrix-fulltext` and
-`bootstrap-matrix-fulltext` check row changes and discovery with the ngram
-parser. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md).
+results, CREATE TABLE LIKE and restart. It also checks explicit ngram index
+creation and searches after multirow INSERT, UPDATE and DELETE. These named
+assertions replace `matrix-fulltext`. `bootstrap-matrix-fulltext` retains all
+three original row-change phases with initial discovery of an existing ngram
+index. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md) and the
+[migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md).
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML

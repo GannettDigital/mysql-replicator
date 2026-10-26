@@ -42,7 +42,9 @@ still need qualification.
 - `ddl-compat-fulltext`: inline and standalone CREATE, ADD, DROP and RENAME,
   ignored prefixes, default parser, ngram, CREATE TABLE LIKE, following DML and
   restart before row changes.
-- `matrix-fulltext`: INSERT, UPDATE and DELETE with ngram search assertions.
+- The ngram CREATE, INSERT, UPDATE and DELETE assertions now run in
+  `ddl-compat-fulltext`. They replace the replicated `matrix-fulltext` case.
+  See [the consolidation review](BETA7_TEST_SUITE_CONSOLIDATION.md).
 - `bootstrap-matrix-fulltext`: initial discovery of an existing ngram index,
   row changes and saved-schema restart.
 

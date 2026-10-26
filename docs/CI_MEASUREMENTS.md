@@ -142,10 +142,11 @@ The beta.7 catalog currently produces these plans:
 | Full | 240 | 240 | 253 |
 | Main production packages | 2 | 2 | 0 |
 
-The full plan has 2,085 applicable obligations. The previous plan had 2,095.
-The ten removed executions belong to `matrix-generated`; their conditions now
-run in `ddl-compat-generated` in the same profile/variant/transport selections.
-Existing-schema generated-column tests remain separate. See the
+The full plan has 2,075 applicable obligations. Before the two case migrations,
+it had 2,095. Ten executions belonged to `matrix-generated` and ten belonged to
+`matrix-fulltext`. Their conditions now run in `ddl-compat-generated` and
+`ddl-compat-fulltext` in the same profile/variant/transport selections.
+Existing-schema generated-column and FULLTEXT tests remain separate. See the
 [migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for assertion and
 line-coverage evidence. This change does not reduce the number of fixtures.
 Full CI runs each apply group with

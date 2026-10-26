@@ -574,7 +574,6 @@
       ],
       "candidate_cases": [
         "ddl-compat-fulltext",
-        "matrix-fulltext",
         "bootstrap-matrix-fulltext"
       ],
       "code_references": [

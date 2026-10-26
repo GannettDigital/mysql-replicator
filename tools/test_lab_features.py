@@ -124,7 +124,7 @@ class FeatureTests(unittest.TestCase):
         definitions, owners = feature_index(load_features())
         for case in ('ddl-compat-generated', 'bootstrap-matrix-generated'):
             self.assertEqual(owners[('correctness', case)], 'generated-columns')
-        for case in ('ddl-compat-fulltext', 'matrix-fulltext', 'bootstrap-matrix-fulltext'):
+        for case in ('ddl-compat-fulltext', 'bootstrap-matrix-fulltext'):
             self.assertEqual(owners[('correctness', case)], 'full-text-search')
         self.assertEqual(definitions['runtime-control']['kind'], 'project')
 

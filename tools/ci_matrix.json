@@ -177,7 +177,6 @@
         {
           "name": "structured-default-values",
           "cases": [
-            "matrix-fulltext",
             "matrix-binarydefaults",
             "matrix-textdefaults",
             "matrix-spatial",

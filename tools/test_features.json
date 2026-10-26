@@ -181,7 +181,6 @@
       "cases": {
         "correctness": [
           "ddl-compat-fulltext",
-          "matrix-fulltext",
           "bootstrap-matrix-fulltext"
         ]
       }

@@ -3,6 +3,26 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testFulltextMigrationRetainsBootstrapAndNamesReplacementAssertions() throws {
+        let cases = LabScenario.correctness
+        XCTAssertFalse(cases.contains { $0.id == "matrix-fulltext" })
+        XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-fulltext" })
+        let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-fulltext" })
+        for profile in LabProfile.allCases {
+            XCTAssertNil(replacement.reason(profile))
+            XCTAssertEqual(replacement.fields(profile)["replaces"] as? [String], ["matrix-fulltext"])
+            XCTAssertEqual(
+                replacement.fields(profile)["assertions"] as? [String],
+                ["fulltext-ngram-create", "fulltext-ngram-insert", "fulltext-ngram-update", "fulltext-ngram-delete"])
+        }
+        XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-fulltext"])) { error in
+            XCTAssertTrue(String(describing: error).contains("was replaced by ddl-compat-fulltext"))
+        }
+        let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "fulltext" })
+        XCTAssertEqual(fixture.phases.count, 3)
+        XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == "fulltext" })
+        XCTAssertEqual(DDLCompatibilityCases.fulltextIndexes.steps.filter(\.restartBefore).count, 2)
+    }
     func testGeneratedColumnMigrationRetainsBootstrapAndNamesReplacementAssertions() throws {
         let cases = LabScenario.correctness
         XCTAssertFalse(cases.contains { $0.id == "matrix-generated" })
