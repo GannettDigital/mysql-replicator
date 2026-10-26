@@ -165,7 +165,6 @@
           "cases": [
             "matrix-composite",
             "matrix-textkey",
-            "matrix-values",
             "matrix-upsert",
             "matrix-replace",
             "matrix-ignore",

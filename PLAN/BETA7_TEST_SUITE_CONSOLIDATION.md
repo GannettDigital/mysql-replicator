@@ -8,8 +8,10 @@ Current progress:
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
 - Step 2: generated-column and FULLTEXT migrations pass focused local checks.
-  FULLTEXT changes remain uncommitted (Slice 4). Full CI is still required.
-- Next: Step 3, row-key and conflict checks, starting with `matrix-values`.
+  FULLTEXT changes were committed as `615ed94` (Slice 4). Full CI is still required.
+- Step 3: the `matrix-values` migration passes focused local checks (Slice 5);
+  its changes remain uncommitted. Next: composite and text primary-key conditions,
+  then conflict and GTID checks.
 - Feature ownership is explicit. Existing family and execution-group names remain
   until Step 4. Fixture changes, full-CI balancing and PR selection follow in
   Steps 5–7. Cleanup is Step 8.
@@ -551,9 +553,102 @@ phases in the earlier forward run. The final forward rerun selected only the
 changed DDL case. See `forward-final.json` and `forward-validation.json`.
 
 Step 2 is complete for the focused local checks. The full profile/variant matrix
-remains for GitHub Actions. These FULLTEXT changes are not committed.
+remains for GitHub Actions. These FULLTEXT changes were committed as `615ed94`.
 Next: Step 3, starting with `matrix-values`. Review exact multirow UPDATE/DELETE
 results and unaffected rows before choosing a receiving row-key workflow.
 Do not remove PRIMARY KEY, composite-key or conflict conditions merely because
 they execute the same code. Keep final group naming, fixture boundaries,
 full-CI balancing and short PR selection in their later plan steps.
+
+
+### Slice 5 — Primary-key single-row and multirow writes
+
+This is the first slice of Step 3. Keep composite keys, text primary keys,
+conflicts and the GTID workload until their separate conditions are reviewed.
+
+The suite has single-row UPDATE/DELETE checks. The four SQL
+`without-source-gtids` row-operation groups select only `positive`. Default
+variants combine `positive` with other row-operation cases. This case also checks
+INSERT, binlogs, counters and saved state. Existing feature cases check integer and text primary keys,
+unique keys, keyless matching, generated columns, FULLTEXT and post-DDL writes.
+Their different schemas, lookup rules and restart conditions matter. Shared code
+coverage does not make these cases interchangeable.
+
+The terminology review used the MySQL 8.4
+[UPDATE](https://dev.mysql.com/doc/refman/8.4/en/update.html) and
+[DELETE](https://dev.mysql.com/doc/refman/8.4/en/delete.html) statement references.
+Single-row and multirow describe how many rows a statement changes. They are
+not the manual's single-table and multiple-table syntax categories. The migrated
+workload changes two rows in one statement on one table.
+
+Receiving case: `ddl-compat-constraints`, which already checks a single-row
+UPDATE and DELETE through an integer primary key, with unaffected rows and
+nullable UNIQUE-key values. Name those existing checks without changing their
+SQL or expectations. Add `matrix-values` on a separate table with its original
+`id INT PRIMARY KEY,v INT NOT NULL` definition and no secondary key. Reusing the
+nullable, UNIQUE-indexed table would change the original schema conditions.
+Retain the original INSERT/UPDATE/DELETE predicates and values. Use one exact
+row query per phase instead of the original aggregate query, so the expected
+result identifies every changed and unaffected row. Keep the shared schema/row
+comparison after every statement. Do not add duplicate verification queries.
+
+Keep `bootstrap-matrix-values` unchanged. It checks the existing-schema path
+with fresh applier state. Do not create a second fixture group for single-row
+writes; show these conditions in named assertions within the feature workflow.
+
+
+The replicated `matrix-values` case is retired. Its four replacement assertions
+are `primary-key-row-values-create` and `primary-key-multirow-insert`,
+`primary-key-multirow-update`, `primary-key-multirow-delete`. The existing
+single-row phases now have the names `primary-key-single-row-update` and
+`primary-key-single-row-delete`. Their SQL and expected results did not change.
+The replacement and `bootstrap-matrix-values` share the Indexes feature owner.
+The bootstrap phase definitions are unchanged.
+
+The reverse-profile comparison used `mysql57-to-mysql84-innodb`, SQL transport
+and the default variant. It used the same application binary, server settings
+and line map before and after. Only the two lab case-definition source files
+changed. Exact original CREATE and row SQL match after changing the qualified
+table name and removing `USE poc`. Column, index, table, partition and row
+observations match for the migrated table after each statement on all three
+servers. The original constraint query results and all three bootstrap phases
+also match. The new exact expectations identify changed and unaffected rows;
+they use the same number of check queries as the old aggregate expectations.
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Selected cases | 3 | 2 |
+| Elapsed seconds | 163.24 | 166.37 |
+| SQL calls | 331 | 331 |
+| SQL seconds | 59.51 | 63.20 |
+| Runtime lines executed | 8,036 | 8,036 |
+
+No runtime lines were lost or gained. This is an organization and assertion
+clarity change, not a demonstrated speed improvement. It uses one fixture before
+and after. Do not infer performance changes from one timing sample.
+
+Full planning removes exactly ten `matrix-values` executions. Each replacement
+already runs in the same profile, variant and transport. Remaining case order
+and group IDs are unchanged. Full CI has 240 groups, 2,065 obligations and 253
+coverage collections. PR selection remains two groups and 22 obligations.
+The four SQL `without-source-gtids` groups that select only `positive` remain
+unchanged. No group is added for the new named row-count assertions.
+
+The focused Swift migration test, 43 lab-tool Python tests and 23 matrix tests
+pass. Swift formatting and whitespace checks pass. Evidence is in
+`artifacts/test-suite-consolidation/row-values/`: before/after measurements,
+`comparison.json`, `plan-comparison.json`, source-image inputs and test logs.
+Runtime replication code did not change.
+
+
+The changed `ddl-compat-constraints` case also passed on
+`mysql84-to-mysql57-myisam`. All six named assertions passed, with matching
+source/native/target schema and row snapshots. The forward run selected only
+the changed case. See `forward-after.json` and `forward-validation.json`.
+
+This completes the `matrix-values` part of Step 3. It does not complete all of
+Step 3. The changes remain uncommitted. Next: review `matrix-composite` and
+`matrix-textkey`, including equal IDs on different dates, separate changes to
+both composite-key columns, and a case-only text PRIMARY KEY change. Keep their
+bootstrap cases. Conflict and GTID conditions follow. Leave full profile/variant
+execution to GitHub Actions.

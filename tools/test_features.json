@@ -100,7 +100,8 @@
           "matrix-composite",
           "matrix-textkey",
           "bootstrap-matrix-composite",
-          "bootstrap-matrix-textkey"
+          "bootstrap-matrix-textkey",
+          "bootstrap-matrix-values"
         ]
       }
     },
@@ -415,13 +416,11 @@
       },
       "cases": {
         "correctness": [
-          "matrix-values",
           "matrix-upsert",
           "matrix-replace",
           "matrix-ignore",
           "matrix-select",
           "matrix-load",
-          "bootstrap-matrix-values",
           "bootstrap-matrix-upsert",
           "bootstrap-matrix-replace",
           "bootstrap-matrix-ignore",

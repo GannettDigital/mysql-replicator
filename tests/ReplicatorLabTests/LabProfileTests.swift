@@ -3,6 +3,28 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testPrimaryKeyRowMigrationRetainsBootstrapAndSingleRowAssertions() throws {
+        let cases = LabScenario.correctness
+        XCTAssertFalse(cases.contains { $0.id == "matrix-values" })
+        XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-values" })
+        let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-constraints" })
+        for profile in LabProfile.allCases {
+            XCTAssertNil(replacement.reason(profile))
+            XCTAssertEqual(replacement.fields(profile)["replaces"] as? [String], ["matrix-values"])
+            XCTAssertEqual(
+                replacement.fields(profile)["assertions"] as? [String],
+                [
+                    "primary-key-single-row-update", "primary-key-single-row-delete", "primary-key-row-values-create",
+                    "primary-key-multirow-insert", "primary-key-multirow-update", "primary-key-multirow-delete",
+                ])
+        }
+        XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-values"])) { error in
+            XCTAssertTrue(String(describing: error).contains("was replaced by ddl-compat-constraints"))
+        }
+        let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "values" })
+        XCTAssertEqual(fixture.phases.count, 3)
+        XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == "values" })
+    }
     func testFulltextMigrationRetainsBootstrapAndNamesReplacementAssertions() throws {
         let cases = LabScenario.correctness
         XCTAssertFalse(cases.contains { $0.id == "matrix-fulltext" })

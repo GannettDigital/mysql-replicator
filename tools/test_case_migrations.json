@@ -148,6 +148,82 @@
           "assertion": "fulltext-ngram-delete"
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-values",
+      "replacement": "ddl-compat-constraints",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Replicated CREATE of id INT PRIMARY KEY and v INT NOT NULL, without a secondary key; retain a separate table from nullable UNIQUE-key tests.",
+          "assertion": "primary-key-row-values-create"
+        },
+        {
+          "condition": "One INSERT creates (1,10),(2,20),(3,30); check all rows and exact values.",
+          "assertion": "primary-key-multirow-insert"
+        },
+        {
+          "condition": "One UPDATE doubles v for ids 1 and 2; check (1,20),(2,40),(3,30), including unaffected id 3.",
+          "assertion": "primary-key-multirow-update"
+        },
+        {
+          "condition": "One DELETE removes ids 1 and 3; check that only (2,40) remains.",
+          "assertion": "primary-key-multirow-delete"
+        }
+      ]
     }
   ]
 }

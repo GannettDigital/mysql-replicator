@@ -118,7 +118,7 @@ enum DDLCompatibilityCases {
         crossSchemaRelationships,
         .init(
             "constraints",
-            "Named PRIMARY/UNIQUE constraints in CREATE and ALTER preserve index names and following DML",
+            "PRIMARY/UNIQUE constraint names and single-row/multirow writes through primary keys",
             [
                 .init(
                     "CREATE TABLE ddlcompat.aux(id INT, val INT, CONSTRAINT pk PRIMARY KEY(id), CONSTRAINT initial_uni UNIQUE(val))",
@@ -139,7 +139,8 @@ enum DDLCompatibilityCases {
                 .init("INSERT INTO ddlcompat.aux VALUES(2,20),(3,NULL),(4,NULL)"),
                 .init(
                     "UPDATE ddlcompat.aux SET val=21 WHERE id=2",
-                    [.init("SELECT id,val FROM ddlcompat.aux ORDER BY id", "1\t10\n2\t21\n3\tNULL\n4\tNULL")]),
+                    [.init("SELECT id,val FROM ddlcompat.aux ORDER BY id", "1\t10\n2\t21\n3\tNULL\n4\tNULL")],
+                    assertionID: "primary-key-single-row-update"),
                 .init(
                     "ALTER TABLE ddlcompat.aux DROP INDEX val_uni, ADD CONSTRAINT ignored_symbol UNIQUE INDEX explicit_uni(val)",
                     [
@@ -157,7 +158,25 @@ enum DDLCompatibilityCases {
                 .init("ALTER TABLE ddlcompat.aux DROP PRIMARY KEY, ADD CONSTRAINT named_pk PRIMARY KEY(id)"),
                 .init(
                     "DELETE FROM ddlcompat.aux WHERE id=2",
-                    [.init("SELECT id,val FROM ddlcompat.aux ORDER BY id", "1\t10\n3\tNULL\n4\tNULL")]),
+                    [.init("SELECT id,val FROM ddlcompat.aux ORDER BY id", "1\t10\n3\tNULL\n4\tNULL")],
+                    assertionID: "primary-key-single-row-delete"),
+                // Keep the original non-null value column and primary-key-only
+                // schema. The UNIQUE-key table above tests different conditions.
+                .init(
+                    "CREATE TABLE ddlcompat.row_values(id INT PRIMARY KEY,v INT NOT NULL) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                    assertionID: "primary-key-row-values-create"),
+                .init(
+                    "INSERT INTO ddlcompat.row_values VALUES(1,10),(2,20),(3,30)",
+                    [.init("SELECT id,v FROM ddlcompat.row_values ORDER BY id", "1\t10\n2\t20\n3\t30")],
+                    assertionID: "primary-key-multirow-insert"),
+                .init(
+                    "UPDATE ddlcompat.row_values SET v=v*2 WHERE id IN (1,2)",
+                    [.init("SELECT id,v FROM ddlcompat.row_values ORDER BY id", "1\t20\n2\t40\n3\t30")],
+                    assertionID: "primary-key-multirow-update"),
+                .init(
+                    "DELETE FROM ddlcompat.row_values WHERE id IN (1,3)",
+                    [.init("SELECT id,v FROM ddlcompat.row_values ORDER BY id", "2\t40")],
+                    assertionID: "primary-key-multirow-delete"),
             ]),
         .init(
             "types", "CREATE supported column types, defaults, auto increment, inline keys; follow with DML",

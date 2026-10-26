@@ -228,7 +228,32 @@ index. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md) and the
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
-after the changes on all profiles.
+after the changes on all profiles. Named assertions distinguish single-row
+UPDATE/DELETE from multirow INSERT/UPDATE/DELETE. The multirow phases replace
+`matrix-values`; they retain its separate integer-primary-key table and non-NULL
+value column. Each phase checks exact rows, including unaffected rows.
+`bootstrap-matrix-values` retains the original existing-schema workload.
+
+The default CI variants group the `positive` single-row case with other row
+operations. The SQL `without-source-gtids` variant runs only `positive` in its
+row-operation group, once per profile. That case also tests INSERT, counters,
+binlogs and saved state; it is not an UPDATE/DELETE-only test. Other single-row
+operations run in cases that check specific keys, types and schema changes:
+
+| Case | Row-write conditions |
+|---|---|
+| `positive` | Single-row INSERT, UPDATE and DELETE; exact counters, binlog operations and saved checkpoints |
+| `ddl-compat-constraints` | Named `primary-key-single-row-update` and `primary-key-single-row-delete` assertions; separate `primary-key-multirow-*` assertions |
+| `matrix-composite` | Single-row UPDATE of each composite-key component and DELETE using the complete key |
+| `matrix-textkey` | Case-only text primary-key UPDATE and case-insensitive DELETE |
+| `ddl-compat-keyless-rows` | Single-row and multirow changes without a usable unique key, including duplicate rows |
+
+Here, single-row means one changed row per statement. It does not mean MySQL's
+single-table statement syntax, which can change many rows. Select cases with
+`--case`; named assertions describe the recorded checks within each case and
+cannot be selected separately. A multirow test does not replace a distinct
+single-row key, type, restart or failure condition merely because coverage overlaps.
+
 `ddl-compat-ignored-checks` checks ignored 5.7 CHECK clauses, compound DDL,
 violating rows, the durable no-op ALTER record, restart and offline replay.
 `check-target57-limits` checks that an enforced 8.4 constraint stops before

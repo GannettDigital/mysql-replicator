@@ -459,7 +459,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_values WHERE id IN (1,3)",
                         check: "SELECT COUNT(*)=1 AND MIN(id)=2 AND MIN(v)=40 FROM poc.matrix_values"),
-                ]),
+                ], replicatedReplacement: "ddl-compat-constraints"),
             Case(
                 id: "upsert", definition: "id INT PRIMARY KEY,v INT NOT NULL,UNIQUE KEY uk(v)",
                 phases: [
