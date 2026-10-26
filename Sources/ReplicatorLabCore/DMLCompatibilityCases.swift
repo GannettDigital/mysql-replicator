@@ -433,7 +433,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_composite WHERE report_date='2026-01-01' AND id=8",
                         check: "SELECT COUNT(*)=2 AND SUM(id)=16 FROM poc.matrix_composite"),
-                ], orderBy: "report_date,id"),
+                ], orderBy: "report_date,id", replicatedReplacement: "ddl-compat-primary-key-row-matching"),
             Case(
                 id: "textkey", definition: "id VARCHAR(20) COLLATE utf8mb4_unicode_ci PRIMARY KEY,v INT",
                 phases: [
@@ -446,7 +446,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_textkey WHERE id='key'",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_textkey WHERE id='other'"),
-                ]),
+                ], replicatedReplacement: "ddl-compat-primary-key-row-matching"),
             Case(
                 id: "values", definition: "id INT PRIMARY KEY,v INT NOT NULL",
                 phases: [

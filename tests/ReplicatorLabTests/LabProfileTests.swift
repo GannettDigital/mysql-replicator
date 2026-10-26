@@ -3,6 +3,49 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testCompositeAndTextPrimaryKeyMigrationRetainsDiscoveryAndKeyConditions() throws {
+        let cases = LabScenario.correctness
+        let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-primary-key-row-matching" })
+        for profile in LabProfile.allCases {
+            XCTAssertNil(replacement.reason(profile))
+            XCTAssertEqual(
+                replacement.fields(profile)["replaces"] as? [String], ["matrix-composite", "matrix-textkey"])
+            XCTAssertEqual(
+                replacement.fields(profile)["assertions"] as? [String],
+                [
+                    "composite-primary-key-create", "composite-primary-key-insert",
+                    "composite-primary-key-update-date", "composite-primary-key-update-id",
+                    "composite-primary-key-delete",
+                    "text-primary-key-create", "text-primary-key-insert", "text-primary-key-update-case",
+                    "text-primary-key-delete-case-insensitive",
+                ])
+        }
+        let steps = DDLCompatibilityCases.primaryKeyRowMatching.steps
+        // Keep the original CREATE and write statements, including one transaction per statement.
+        for (id, table, count) in [("composite", "composite_key", 4), ("textkey", "text_key", 3)] {
+            XCTAssertFalse(cases.contains { $0.id == "matrix-" + id })
+            XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-" + id })
+            XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == id })
+            let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == id })
+            XCTAssertEqual(fixture.phases.count, count)
+            let tableSteps = steps.filter { $0.sql.contains("ddlcompat." + table) }
+            XCTAssertEqual(tableSteps.count, count + 1)
+            XCTAssertEqual(
+                tableSteps.first?.sql,
+                "CREATE TABLE ddlcompat.\(table)(\(fixture.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+            for (phase, step) in zip(fixture.phases, tableSteps.dropFirst()) {
+                XCTAssertEqual(
+                    step.sql, phase.sql.replacingOccurrences(of: "poc.matrix_" + id, with: "ddlcompat." + table))
+                XCTAssertEqual(step.transactions, 1)
+                XCTAssertFalse(step.restartBefore)
+                XCTAssertEqual(step.checks.count, 1)
+            }
+            XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-" + id])) { error in
+                XCTAssertTrue(String(describing: error).contains("was replaced by ddl-compat-primary-key-row-matching"))
+            }
+        }
+    }
+
     func testPrimaryKeyRowMigrationRetainsBootstrapAndSingleRowAssertions() throws {
         let cases = LabScenario.correctness
         XCTAssertFalse(cases.contains { $0.id == "matrix-values" })
@@ -73,7 +116,9 @@ final class LabProfileTests: XCTestCase {
             for test in bootstrap {
                 XCTAssertEqual(test.fields(profile)["requires_main_applier"] as? Bool, false)
             }
-            for shared in ["database-explicit", "matrix-composite", "ddl-index-create", "ddl-compat-types"] {
+            for shared in [
+                "database-explicit", "ddl-compat-primary-key-row-matching", "ddl-index-create", "ddl-compat-types",
+            ] {
                 XCTAssertTrue(LabScenario.needsMainApplier(selected: selected.union([shared]), slice: "all"))
             }
         }

@@ -158,7 +158,7 @@ the release packages.
 | Database | `database-explicit` | Create a database with explicit compatible encoding. |
 | DDL | `ddl-compat-types` | Create and use representative supported column types. |
 | DDL | `ddl-compat-database` | Apply database and table lifecycle operations. |
-| DML | `matrix-composite` | Apply changes with a composite primary key. |
+| Primary keys | `ddl-compat-primary-key-row-matching` | Apply composite-key changes, a case-only text key change, and a case-insensitive DELETE. |
 | Index | `ddl-index-create` | Create an index and verify schema history, following DML, and binlog operations. |
 | Trigger policy | `ddl-compat-skip-trigger` | Skip trigger definitions and apply their source row effects once. |
 | Refusal | `reject-engine` | Reject an engine that does not match the target profile before target SQL. |

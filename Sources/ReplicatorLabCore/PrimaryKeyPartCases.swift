@@ -1,6 +1,61 @@
 import Foundation
 
 extension DDLCompatibilityCases {
+    static let primaryKeyRowMatching = Case(
+        "primary-key-row-matching", "Composite and text PRIMARY KEY changes and row matching",
+        [
+            .init(
+                "CREATE TABLE ddlcompat.composite_key(id INT NOT NULL,report_date DATE NOT NULL,v VARCHAR(40),PRIMARY KEY(report_date,id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                assertionID: "composite-primary-key-create"),
+            .init(
+                "INSERT INTO ddlcompat.composite_key VALUES(7,'2026-01-01','a'),(7,'2026-01-02','b'),(8,'2026-01-01','c')",
+                [
+                    .init(
+                        "SELECT report_date,id,v FROM ddlcompat.composite_key ORDER BY report_date,id",
+                        "2026-01-01\t7\ta\n2026-01-01\t8\tc\n2026-01-02\t7\tb")
+                ],
+                assertionID: "composite-primary-key-insert"),
+            .init(
+                "UPDATE ddlcompat.composite_key SET report_date='2026-01-03',v='moved-date' WHERE report_date='2026-01-01' AND id=7",
+                [
+                    .init(
+                        "SELECT report_date,id,v FROM ddlcompat.composite_key ORDER BY report_date,id",
+                        "2026-01-01\t8\tc\n2026-01-02\t7\tb\n2026-01-03\t7\tmoved-date")
+                ],
+                assertionID: "composite-primary-key-update-date"),
+            .init(
+                "UPDATE ddlcompat.composite_key SET id=9,v='moved-id' WHERE report_date='2026-01-02' AND id=7",
+                [
+                    .init(
+                        "SELECT report_date,id,v FROM ddlcompat.composite_key ORDER BY report_date,id",
+                        "2026-01-01\t8\tc\n2026-01-02\t9\tmoved-id\n2026-01-03\t7\tmoved-date")
+                ],
+                assertionID: "composite-primary-key-update-id"),
+            .init(
+                "DELETE FROM ddlcompat.composite_key WHERE report_date='2026-01-01' AND id=8",
+                [
+                    .init(
+                        "SELECT report_date,id,v FROM ddlcompat.composite_key ORDER BY report_date,id",
+                        "2026-01-02\t9\tmoved-id\n2026-01-03\t7\tmoved-date")
+                ],
+                assertionID: "composite-primary-key-delete"),
+            .init(
+                "CREATE TABLE ddlcompat.text_key(id VARCHAR(20) COLLATE utf8mb4_unicode_ci PRIMARY KEY,v INT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                assertionID: "text-primary-key-create"),
+            .init(
+                "INSERT INTO ddlcompat.text_key VALUES('Key',1),('other',2)",
+                [.init("SELECT HEX(id),v FROM ddlcompat.text_key ORDER BY id", "4B6579\t1\n6F74686572\t2")],
+                assertionID: "text-primary-key-insert"),
+            .init(
+                "UPDATE ddlcompat.text_key SET id='KEY',v=3 WHERE id='Key'",
+                [.init("SELECT HEX(id),v FROM ddlcompat.text_key ORDER BY id", "4B4559\t3\n6F74686572\t2")],
+                assertionID: "text-primary-key-update-case"),
+            .init(
+                "DELETE FROM ddlcompat.text_key WHERE id='key'",
+                [.init("SELECT HEX(id),v FROM ddlcompat.text_key ORDER BY id", "6F74686572\t2")],
+                assertionID: "text-primary-key-delete-case-insensitive"),
+        ])
+
     static let primaryKeyParts = Case(
         "primary-key-parts", "Primary-key prefixes, complete-value lookups, ALTER, restart and replay",
         [

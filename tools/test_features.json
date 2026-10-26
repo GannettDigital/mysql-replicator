@@ -97,8 +97,7 @@
           "ddl-index-truncate",
           "ddl-index-unique-null",
           "ddl-index-resume",
-          "matrix-composite",
-          "matrix-textkey",
+          "ddl-compat-primary-key-row-matching",
           "bootstrap-matrix-composite",
           "bootstrap-matrix-textkey",
           "bootstrap-matrix-values"

@@ -142,11 +142,15 @@ The beta.7 catalog currently produces these plans:
 | Full | 240 | 240 | 253 |
 | Main production packages | 2 | 2 | 0 |
 
-The full plan has 2,065 applicable obligations. Before the three case migrations,
+The full plan has 2,055 applicable obligations. Before the case migrations,
 it had 2,095. Ten executions each belonged to `matrix-generated`, `matrix-fulltext`
 and `matrix-values`. Their conditions now run in `ddl-compat-generated`,
 `ddl-compat-fulltext` and `ddl-compat-constraints`, respectively, in the same
-profile/variant/transport selections. Their existing-schema tests remain separate. See the
+profile/variant/transport selections. The 20 `matrix-composite` and `matrix-textkey`
+executions now run as ten `ddl-compat-primary-key-row-matching` executions.
+They retain both sets of source statements and check exact rows. The PR selection
+uses the combined workflow in place of `matrix-composite`; it gains the text-key
+checks. Their existing-schema tests remain separate. See the
 [migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for assertion and
 line-coverage evidence. This change does not reduce the number of fixtures.
 Full CI runs each apply group with

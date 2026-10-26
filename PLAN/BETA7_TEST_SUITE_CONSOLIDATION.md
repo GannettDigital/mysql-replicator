@@ -10,8 +10,11 @@ Current progress:
 - Step 2: generated-column and FULLTEXT migrations pass focused local checks.
   FULLTEXT changes were committed as `615ed94` (Slice 4). Full CI is still required.
 - Step 3: the `matrix-values` migration passes focused local checks (Slice 5);
-  its changes remain uncommitted. Next: composite and text primary-key conditions,
-  then conflict and GTID checks.
+  committed as `0bd7c2e`.
+- Composite and text PRIMARY KEY cases are combined in
+  `ddl-compat-primary-key-row-matching` (Slice 6). Focused tests passed on both
+  InnoDB and MyISAM targets. Local validation is complete. Next: define shared
+  groups for key and conflict workflows, then review conflict and GTID checks.
 - Feature ownership is explicit. Existing family and execution-group names remain
   until Step 4. Fixture changes, full-CI balancing and PR selection follow in
   Steps 5–7. Cleanup is Step 8.
@@ -21,7 +24,9 @@ Current progress:
 Build a test suite organized by MySQL features and replication behavior. Each
 group must state what it tests. A feature workflow can contain DDL, DML, restart
 and replay checks. Remove separate cases when that workflow can check all their
-required conditions with less repeated work.
+required conditions with less repeated work or a clearer structure for future
+extensions. Fewer CI jobs and shared fixture setup take priority over a small
+increase in test-body time. A lower case count alone is not a smaller CI matrix.
 
 Keep the current four profiles, source variants and SQL/BINLOG transport
 selections. Do not expand every case into every combination. Keep existing
@@ -31,6 +36,40 @@ replication code as part of this work.
 Use the existing shared catalog, planner, runners and measurement tools. Do not
 build a second test framework. Finish the full-suite organization before choosing
 the short PR selection.
+
+## Growth and acceptance criteria
+
+Design the suite so that a new case normally extends an existing feature group.
+It must not create a CI job by default. A new profile or variant reuses the same
+reviewed groups. Keep exclusions explicit; do not multiply every case by every
+profile, transport and setting.
+
+Assess each change in this order:
+
+1. Preserve required assertions, failure conditions and applicable combinations.
+2. Reduce execution groups and CI jobs. Leave room for new profiles and variants.
+3. Reuse container setup where the state and server settings are compatible.
+4. Keep cases visible by name, with their own results, SQL and coverage records.
+5. Balance job time. Accept a few extra seconds for a useful reduction in jobs
+   or a clearer structure for future additions. Do not reject a merge on elapsed
+   time alone. Check total runner time and the longest job too.
+
+Before Step 6, add planner checks for a fifth profile and an additional source
+variant. These are planning checks, not extra test combinations to run now.
+Use them to choose a job budget below the planner's 256-job limit. Do not aim for
+255 jobs or require an emergency redesign each time a profile is added.
+
+The current four-profile plan has 240 execution groups and 240 jobs. Its profiles
+contribute 50, 47, 50 and 93 groups. The current policy keeps 85 groups in areas
+that must run alone. With those exclusions unchanged, planning the same selection
+with `max_groups` set to 2, 3 or 4 produces 164, 142 or 129 jobs, respectively.
+These are planning counts, not validated runtime recommendations. They show that
+job assignment can provide room for growth without removing tests. They do not
+prove reduced container startup cost or acceptable job duration.
+
+Do not change `max_groups` alone and call fixture reuse complete. Review which
+areas really need isolation. Prefer coherent shared feature groups. Use multiple
+separately reported groups per job when their fixtures must remain separate.
 
 ## Starting evidence
 
@@ -60,8 +99,10 @@ Keep the existing three levels:
 2. An **execution group** runs compatible cases in one fixture invocation.
    Its name describes their behavior. It must not hide several sequential
    container setups under one test step.
-3. A **CI job** runs one execution group. Independent jobs run in parallel.
-   Keep this model while measuring the new groups.
+3. A **CI job** runs one or more compatible execution groups. Independent jobs
+   run in parallel. Each group must report its own setup, test and cleanup time.
+   Packing groups into a job reduces matrix entries, but does not itself share
+   containers. Prefer a shared execution group when cases can safely reuse setup.
 
 Use the catalog's family field for the feature. Use the plan's area for a
 descriptive execution group within that feature. Local selection and CI must
@@ -221,7 +262,9 @@ and the obsolete replicated cases have no selection or documentation references.
 
 Done when the selected row and GTID migrations pass and the case list shows which
 key, transaction and conflict conditions remain. Leave a case in place if a
-replacement would make the receiving workflow harder to understand or slower.
+replacement would lose a distinct condition or obscure the workflow. A small
+time increase is acceptable for fewer groups or easier extension. Compare CI
+job and fixture counts; do not decide from case runtime alone.
 
 ## Step 4 — Organize all remaining feature workflows
 
@@ -236,12 +279,16 @@ replacement would make the receiving workflow harder to understand or slower.
 - Finish the case-to-feature inventory. No case may remain in a catch-all area.
 
 Done when every current behavior has a named home. Each deletion needs a tested
-migration; a move alone must retain the selected execution set.
+migration; a move alone must retain the selected execution set. Adding a case
+to a feature must not create another execution group unless its setup requires it.
 
 ## Step 5 — Set fixture boundaries and remove repeated setup
 
 - Combine compatible cases within the same profile, variant, transport and
   server settings. Each execution group starts its MySQL containers once.
+- Review key-related DDL, row-key and conflict workflows as a shared feature
+  group. Preserve individual case results. Combining their assertions in one
+  catalog entry is optional; reducing separate setup and job count is the aim.
 - Combine the small SQL no-preservation selections where compatible. Keep
   `positive`, generated-column and applicable tagged-GTID checks visible.
 - Extend the reviewed setup requirements beyond bootstrap. Skip the main
@@ -269,14 +316,17 @@ producing results. An unsafe fixture must stop with a clear reason.
   cleanup and coverage-export time separately. Report runner-minutes and workflow
   elapsed time separately.
 - Aim for about five minutes per ordinary integration job with cached builds
-  and images. Split slow groups at independent case boundaries. Combine small
-  related groups. Retain and explain longer inseparable recovery workflows.
+  and images. Treat this as a balancing target, not a reason to create excessive
+  jobs. Check the growth budget before splitting groups. Combine small related
+  groups and pack incompatible fixtures into separately reported groups when
+  needed. Retain and explain longer inseparable recovery workflows.
 - Fix failed cases and rerun only affected jobs. Repeat the full suite only if
   the fixes or grouping changes justify it.
 
 Done when the final matrix passes and the report accounts for removed cases,
-coverage changes and remaining long jobs. Do not promise a job count before
-measuring the final selections.
+coverage changes and remaining long jobs. The planner must also pass the
+profile/variant growth checks within the selected job budget. Confirm runtime
+with measurements before adopting the final job assignment.
 
 ## Step 7 — Select the short PR test set last
 
@@ -647,8 +697,95 @@ source/native/target schema and row snapshots. The forward run selected only
 the changed case. See `forward-after.json` and `forward-validation.json`.
 
 This completes the `matrix-values` part of Step 3. It does not complete all of
-Step 3. The changes remain uncommitted. Next: review `matrix-composite` and
+Step 3. Committed as `0bd7c2e`. Next: review `matrix-composite` and
 `matrix-textkey`, including equal IDs on different dates, separate changes to
 both composite-key columns, and a case-only text PRIMARY KEY change. Keep their
 bootstrap cases. Conflict and GTID conditions follow. Leave full profile/variant
 execution to GitHub Actions.
+
+
+## Slice 6 — Composite and text PRIMARY KEY review
+
+Decision: combine `matrix-composite` and `matrix-textkey` in
+`ddl-compat-primary-key-row-matching`. Retain both bootstrap cases. This gives
+PRIMARY KEY row matching one clear workflow with named exact-value assertions.
+Accept the measured overhead as a tradeoff for this structure. This slice still
+has 240 execution groups and jobs; it is not the job-count reduction. The next
+step must combine compatible execution groups and share setup.
+
+Use PRIMARY KEY as defined in the MySQL 8.4
+[CREATE TABLE statement](https://dev.mysql.com/doc/refman/8.4/en/create-table.html).
+The manual describes composite keys under
+[Multiple-Column Indexes](https://dev.mysql.com/doc/refman/8.4/en/multiple-column-indexes.html).
+Use `VARCHAR` and the explicit collation name for the text-key condition.
+
+### Conditions that must remain
+
+- The former `matrix-composite` declares columns in the order `id,report_date,v`, but uses
+  `PRIMARY KEY(report_date,id)`. It inserts equal IDs on different dates and
+  different IDs on the same date. Separate UPDATE statements change the date
+  and integer key parts. DELETE uses both key parts.
+- The former `matrix-textkey` uses a separate `VARCHAR(20)` PRIMARY KEY with
+  `utf8mb4_unicode_ci`. It changes `Key` to `KEY`, checks the stored bytes, then
+  deletes the row with lowercase `key`.
+- `bootstrap-matrix-composite` and `bootstrap-matrix-textkey` test discovery of
+  existing schemas and resume from saved state. Keep their seven phases.
+- `ddl-compat-primary-key-parts` tests prefixes, binary values, ALTER, restart
+  and replay. `ddl-compat-unique-row-identity` tests UNIQUE keys and key selection.
+  Neither replaces these PRIMARY KEY conditions.
+
+### Measurement and validation
+
+The local candidate combined the two live cases in a new
+`ddl-compat-primary-key-row-matching` workflow. It kept all nine source statements
+and added named assertions with exact rows after each write. It did not add the
+prefix workflow's replay checks. The generic DDL runner still added database
+setup, a saved-state check and an applier restart.
+
+The baseline and candidate used the same application binary and MySQL images.
+Only three lab source files changed. Their runtime coverage line maps matched.
+Both runs included the same two bootstrap cases.
+
+| MySQL 5.7 → 8.4 InnoDB selection | Elapsed seconds | SQL calls | SQL seconds | Runtime lines hit |
+|---|---:|---:|---:|---:|
+| Two original live cases plus bootstrap | 188.84 | 306 | 56.68 | 7,592 |
+| Combined DDL workflow plus bootstrap | 203.42 | 332 | 62.19 | 7,635 |
+
+The candidate made 26 more SQL calls. One local run does not establish a stable
+elapsed-time difference, but it confirms added SQL work. No source statement was
+redundant. The combined workflow does not reduce jobs or fixtures yet. We accept
+the overhead for the clearer structure and stronger assertions. Group reduction
+and shared setup remain required follow-up work.
+
+The comparison found no lost runtime lines. All 43 added lines were already hit
+by the retained `ddl-compat-constraints` plus `bootstrap-matrix-values` run from
+Slice 5. They were in `DDLSession.swift` (21), `DDL.swift` (10), `DDLParser.swift`
+(9) and `SchemaMetadataCache.swift` (3). These lines add no coverage to the suite
+as a whole. Coverage is preserved; future extension is the reason for the merge.
+
+All nine replacement assertions passed. The original CREATE and row statements
+matched after table/database-name substitution. Table columns, indexes,
+partitions and exact rows matched at every phase on source, native and target.
+All seven bootstrap comparison files matched, except for binlog positions.
+The candidate also passed all nine assertions on 8.4 → 5.7 MyISAM in 102.42s.
+Two focused Swift unit tests and 66 lab-tool tests passed for the candidate.
+
+The plan comparison preserves all 20 original profile/variant selections in
+ten combined executions. This reduces catalog entries, but does not remove
+source SQL or fixtures. The full plan has 240 groups, 2,055 obligations and
+253 coverage collections. The PR selection replaces `matrix-composite` with
+the combined case, so it also gains the four text-key statements. It remains
+two jobs and 22 case executions. Final PR selection remains Step 7.
+
+Evidence is under `artifacts/test-suite-consolidation/primary-key-row-matching/`:
+`candidate.patch`, `reverse-before.json`, `reverse-after.json`, `comparison.json`,
+`forward-after.json`, `forward-validation.json` and `plan-comparison.json`.
+The first baseline attempt stopped at Docker access checks in the sandbox. It
+executed no tests; its files use the `reverse-before-sandbox` prefix.
+
+Next: define the shared group boundary for PRIMARY KEY, UNIQUE-key and conflict
+workflows. Review `matrix-upsert`, `matrix-replace` and `matrix-ignore` within
+that design. Preserve their conflict and no-op conditions. Keep individually
+selectable cases where useful; they can share a group without becoming one case.
+Measure job count and setup reuse as well as time. Preserve the combined
+workflow's exact named assertions when removing repeated setup or checkpoints.

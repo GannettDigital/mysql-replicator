@@ -5,7 +5,7 @@
       "database-explicit",
       "ddl-compat-types",
       "ddl-compat-database",
-      "matrix-composite",
+      "ddl-compat-primary-key-row-matching",
       "ddl-index-create",
       "ddl-compat-skip-trigger",
       "reject-engine",
@@ -87,6 +87,7 @@
             "ddl-compat-generated-dependencies",
             "ddl-compat-column-index-syntax",
             "ddl-compat-grouped-constraints",
+            "ddl-compat-primary-key-row-matching",
             "ddl-compat-primary-key-parts",
             "ddl-compat-column-renames",
             "ddl-compat-column-swaps",
@@ -163,8 +164,6 @@
         {
           "name": "row-operations",
           "cases": [
-            "matrix-composite",
-            "matrix-textkey",
             "matrix-upsert",
             "matrix-replace",
             "matrix-ignore",

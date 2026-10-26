@@ -224,6 +224,162 @@
           "assertion": "primary-key-multirow-delete"
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-composite",
+      "replacement": "ddl-compat-primary-key-row-matching",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Replicated CREATE with PRIMARY KEY(report_date,id), declared columns id then report_date, and nullable VARCHAR(40) payload.",
+          "assertion": "composite-primary-key-create"
+        },
+        {
+          "condition": "Insert equal ids on different dates and a different id on the same date; check every row.",
+          "assertion": "composite-primary-key-insert"
+        },
+        {
+          "condition": "Change only the date key part for id 7 on 2026-01-01; retain the other id 7 row and the unaffected id 8 row.",
+          "assertion": "composite-primary-key-update-date"
+        },
+        {
+          "condition": "Change only the integer key part from 7 to 9 on 2026-01-02; retain the other date and unaffected row.",
+          "assertion": "composite-primary-key-update-id"
+        },
+        {
+          "condition": "DELETE by both key parts; check both remaining rows and their payloads.",
+          "assertion": "composite-primary-key-delete"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "matrix-textkey",
+      "replacement": "ddl-compat-primary-key-row-matching",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Replicated CREATE with VARCHAR(20) PRIMARY KEY and utf8mb4_unicode_ci, plus a nullable INT value.",
+          "assertion": "text-primary-key-create"
+        },
+        {
+          "condition": "Insert Key and other; check exact key bytes and values.",
+          "assertion": "text-primary-key-insert"
+        },
+        {
+          "condition": "Change Key to KEY and value to 3; check exact key bytes and the unaffected row.",
+          "assertion": "text-primary-key-update-case"
+        },
+        {
+          "condition": "DELETE with lowercase key matches stored KEY under utf8mb4_unicode_ci; only other remains.",
+          "assertion": "text-primary-key-delete-case-insensitive"
+        }
+      ]
     }
   ]
 }

@@ -244,9 +244,22 @@ operations run in cases that check specific keys, types and schema changes:
 |---|---|
 | `positive` | Single-row INSERT, UPDATE and DELETE; exact counters, binlog operations and saved checkpoints |
 | `ddl-compat-constraints` | Named `primary-key-single-row-update` and `primary-key-single-row-delete` assertions; separate `primary-key-multirow-*` assertions |
-| `matrix-composite` | Single-row UPDATE of each composite-key component and DELETE using the complete key |
-| `matrix-textkey` | Case-only text primary-key UPDATE and case-insensitive DELETE |
+| `ddl-compat-primary-key-row-matching` | Changes to each composite-key part and DELETE by the complete key; case-only text key UPDATE and case-insensitive DELETE |
 | `ddl-compat-keyless-rows` | Single-row and multirow changes without a usable unique key, including duplicate rows |
+
+`ddl-compat-primary-key-row-matching` replaces `matrix-composite` and
+`matrix-textkey`. It keeps their separate table definitions and source statements.
+Named assertions check exact rows after each operation. They retain equal IDs
+on different dates, separate changes to each part of `PRIMARY KEY(report_date,id)`,
+and unaffected rows. The text table uses a `VARCHAR(20)` PRIMARY KEY with
+`utf8mb4_unicode_ci`. Assertions check exact key bytes after a case-only change
+and a case-insensitive DELETE.
+
+`bootstrap-matrix-composite` and `bootstrap-matrix-textkey` retain existing-schema
+discovery and resume. Prefix-key and UNIQUE-key workflows remain separate. The
+[measured review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md#slice-6--composite-and-text-primary-key-review)
+records preserved coverage and the accepted time increase. Combining compatible
+execution groups to share setup and reduce CI jobs is the next design step.
 
 Here, single-row means one changed row per statement. It does not mean MySQL's
 single-table statement syntax, which can change many rows. Select cases with
