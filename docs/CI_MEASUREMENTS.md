@@ -119,8 +119,8 @@ CI job. Result IDs, SQL traces and coverage remain attached to the group.
 
 `tools/ci_jobs.json` assigns one execution group to each current job. Cases
 inside a correctness group share their fixture. Jobs run in parallel, up to
-16 at a time. DDL and DML use named behavior groups with explicit case lists.
-New cases in those families must be assigned to a group; the planner rejects
+16 at a time. DDL, DML, index and bootstrap tests use named behavior groups
+with explicit case lists. New cases in those families must be assigned to a group; the planner rejects
 omissions and duplicate assignments. The scheduler starts longer estimated jobs
 first. Each job downloads its tools and image once.
 
@@ -139,15 +139,30 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 250 | 250 | 263 |
+| Full | 240 | 240 | 253 |
 | Main production packages | 2 | 2 | 0 |
 
-All 2,095 full-catalog obligations remain. Full CI runs each apply group with
+The full plan has 2,085 applicable obligations. The previous plan had 2,095.
+The ten removed executions belong to `matrix-generated`; their conditions now
+run in `ddl-compat-generated` in the same profile/variant/transport selections.
+Existing-schema generated-column tests remain separate. See the
+[migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for assertion and
+line-coverage evidence. This change does not reduce the number of fixtures.
+Full CI runs each apply group with
 coverage once. It does not add copies for coverage or repeat the PR baseline.
 The [sample comparison](../PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md) records the
 previous consolidation. Its cases now run in their full-catalog groups.
 The planner checks the 256-job limit after grouping. These are local plan counts;
 GitHub runtime measurements are still needed.
+
+Index tests use two groups: column modifications and index changes. Bootstrap
+tests use three groups: encodings/defaults, numeric/temporal values, and structured
+values/row operations/target metadata. Each group retains its selected cases and
+assertions. The change reduces fixture count without removing any catalog
+obligation. Scheduling estimates use run `40170659705`; new group estimates add
+the recorded case times and the median time outside named cases. They include
+20% headroom, rounded up to a minute. They are not measured runtimes for the new
+groups. See [the grouping study](../PLAN/BETA7_INTEGRATION_GROUP_PROPOSAL.md).
 
 ## Normal CI
 

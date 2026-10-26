@@ -17,10 +17,13 @@ enum DMLCompatibilityCases {
         var rowMetadata: String? = nil
         var source84OnlyReason: String? = nil
         var profileExclusions: [LabProfile: String] = [:]
+        // Keep the fixture for existing-schema tests after its replicated case moves.
+        var replicatedReplacement: String? = nil
         func applies(to profile: LabProfile) -> Bool {
             profileExclusions[profile] == nil && (source84OnlyReason == nil || profile.sourceVersion == .mysql84)
         }
     }
+    static var replicatedCases: [Case] { cases.filter { $0.replicatedReplacement == nil } }
     static let cases: [Case] =
         [
             // Distinct ngram tokens avoid engine-specific stopword matches.
@@ -336,7 +339,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_generated WHERE id=1",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_generated WHERE id=2 AND v IS NULL"),
-                ]),
+                ], replicatedReplacement: "ddl-compat-generated"),
             Case(
                 id: "fixed", definition: "id INT PRIMARY KEY,c CHAR(255),b BINARY(8)",
                 phases: [

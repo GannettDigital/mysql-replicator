@@ -51,6 +51,7 @@ public enum SharedCorrectness {
             reporter = QualificationReporter(output: f.output, sqlTrace: f.h.sqlTrace, log: f.stage)
         }
         func execute(build: Bool, slice: String) throws {
+            let needsMainApplier = LabScenario.needsMainApplier(selected: selected, slice: slice)
             if slice == "all"
                 && (selects(DDLCoverageCases.positive.id) || selects("myisam-recovery")
                     || selects(DDLCoverageCases.group.id) || selects(DDLCoverageCases.wildcardFilter.id)
@@ -65,6 +66,8 @@ public enum SharedCorrectness {
             var report: [String: Any] = [
                 "result": "failed", "profile": f.profile.rawValue, "topology": f.profile.topology,
                 "variant": f.variant.rawValue, "slice": slice,
+                "main_applier_required": needsMainApplier,
+                "saved_schema_restart": needsMainApplier ? "not_run" : "not_selected",
                 "scope":
                     "Shared replicated and bootstrapped DML, ordered DDL, collation, failure and discovery fixtures; explicit capture variant. Native reference is profile-specific.",
                 "adaptations": [
@@ -90,45 +93,48 @@ public enum SharedCorrectness {
                         inventory: DDLCoverage.load(directory: f.h.root.appendingPathComponent("tests/DDLCoverage")),
                         inputDigest: DDLCoverageEvidence.digest(catalogInputs))
                 }
-                f.clients.append(applier.name)
-                var source = f.config["source"] as! [String: Any]
-                source.removeValue(forKey: "stopAfterTransactions")
-                f.config["source"] = source
-                try f.installConfig()
-                try applier.ensureIdleContainer()
-                try applier.start(initialize: true)
-                if slice == "all" || slice == "database" { try databases() }
-                if slice == "all" || slice == "ddl" { try ddl() }
-                if slice == "all" || slice == "dml" { try dml() }
-                if slice == "all" || slice == "indexes" { try indexes() }
-                if slice == "all" || slice == "policy" { try policies() }
-                if slice == "all" { try foreignKeys() }
-                try applier.drain()
-                _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
-                let state = f.output.appendingPathComponent("state/state.sqlite").path
-                let saved = try f.runner.run([
-                    "sqlite3", state,
-                    "SELECT lifecycle FROM state; SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'; SELECT COUNT(*) FROM row_intents WHERE status!='DONE'",
-                ]).text
-                try require(saved == "STOPPED\n0\n0", "unclean final checkpoint or unfinished intents: " + saved)
-                if f.profile.sourceVersion == .mysql57 && selects("ddl-compat-temporary")
-                    && (slice == "all" || slice == "ddl")
-                {
-                    let count = try f.runner.run([
+                if needsMainApplier {
+                    f.clients.append(applier.name)
+                    var source = f.config["source"] as! [String: Any]
+                    source.removeValue(forKey: "stopAfterTransactions")
+                    f.config["source"] = source
+                    try f.installConfig()
+                    try applier.ensureIdleContainer()
+                    try applier.start(initialize: true)
+                    if slice == "all" || slice == "database" { try databases() }
+                    if slice == "all" || slice == "ddl" { try ddl() }
+                    if slice == "all" || slice == "dml" { try dml() }
+                    if slice == "all" || slice == "indexes" { try indexes() }
+                    if slice == "all" || slice == "policy" { try policies() }
+                    if slice == "all" { try foreignKeys() }
+                    try applier.drain()
+                    _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                    let state = f.output.appendingPathComponent("state/state.sqlite").path
+                    let saved = try f.runner.run([
                         "sqlite3", state,
-                        "SELECT COUNT(*) FROM ddl_skips WHERE reason='row replication temporary-table cleanup'",
+                        "SELECT lifecycle FROM state; SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'; SELECT COUNT(*) FROM row_intents WHERE status!='DONE'",
                     ]).text
-                    try require((Int(count) ?? 0) > 0, "temporary-table cleanup missing from durable audit")
+                    try require(saved == "STOPPED\n0\n0", "unclean final checkpoint or unfinished intents: " + saved)
+                    if f.profile.sourceVersion == .mysql57 && selects("ddl-compat-temporary")
+                        && (slice == "all" || slice == "ddl")
+                    {
+                        let count = try f.runner.run([
+                            "sqlite3", state,
+                            "SELECT COUNT(*) FROM ddl_skips WHERE reason='row replication temporary-table cleanup'",
+                        ]).text
+                        try require((Int(count) ?? 0) > 0, "temporary-table cleanup missing from durable audit")
+                    }
+                    // Reopen all saved schema history, then apply another transaction.
+                    try applier.start(initialize: false)
+                    try step("INSERT INTO reverse_poc.aux VALUES(99,1)", database: "reverse_poc")
+                    try applier.drain()
+                    _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                    report["saved_schema_restart"] = "passed"
+                    report["summary"] = try applier.latestProgress()
                 }
-                // Reopen all saved schema history, then apply another transaction.
-                try applier.start(initialize: false)
-                try step("INSERT INTO reverse_poc.aux VALUES(99,1)", database: "reverse_poc")
-                try applier.drain()
-                _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
                 report["result"] = "passed"
                 report["versions"] = f.versions
                 report["image"] = f.image
-                report["summary"] = try applier.latestProgress()
                 report["steps"] = observation
                 if slice == "all" || slice == "rejections" { try rejections() }
                 if slice == "all" {
@@ -172,17 +178,21 @@ public enum SharedCorrectness {
                         try? raw.stdout.write(to: f.output.appendingPathComponent("failed-source.binlog"))
                     }
                 }
-                try? applier.drain()
-                _ = try? f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                if needsMainApplier {
+                    try? applier.drain()
+                    _ = try? f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                }
                 report["cases"] = reporter.results
                 try? writeJSON(report, to: f.output.appendingPathComponent("result.json"))
                 failure = error
             }
             var cleanupErrors: [String] = []
-            do {
-                try applier.drain()
-                try applier.archiveLogs()
-            } catch { cleanupErrors.append(String(describing: error)) }
+            if needsMainApplier {
+                do {
+                    try applier.drain()
+                    try applier.archiveLogs()
+                } catch { cleanupErrors.append(String(describing: error)) }
+            }
             if f.codeCoverage {
                 do { try f.collectCoverage() } catch { cleanupErrors.append("coverage: " + String(describing: error)) }
             }
@@ -202,7 +212,9 @@ public enum SharedCorrectness {
                     contracts: catalogContracts, runtime: runtime, results: reporter.results, result: report)
             }
             if let failure { throw failure }
-            f.stage("PASS: shared correctness fixtures and saved-schema restart (\(observation) steps)")
+            f.stage(
+                "PASS: shared correctness fixtures (\(observation) main-applier steps; saved-schema restart "
+                    + (needsMainApplier ? "passed" : "not selected") + ")")
         }
         func wait() throws {
             let end = try f.boundary()
@@ -655,7 +667,13 @@ public enum SharedCorrectness {
                                     "MATCH incorrectly enabled a cascade instead of rejecting the parent DELETE")
                             }
                         }
-                        try step(sql, database: "ddlcompat", checks: item.checks)
+                        if let identifier = item.assertionID {
+                            try assertion(identifier, caseID: test.test.id) {
+                                try step(sql, database: "ddlcompat", checks: item.checks)
+                            }
+                        } else {
+                            try step(sql, database: "ddlcompat", checks: item.checks)
+                        }
                         if test.test.id == "ddl-compat-foreign-key-cross-database" {
                             try writeJSON(
                                 compare("ddlfk"),
@@ -1052,7 +1070,8 @@ public enum SharedCorrectness {
         func dml() throws {
             try resetNativeEngine()
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "poc")
-            for test in DMLCompatibilityCases.cases where selects("matrix-" + test.id) && test.applies(to: f.profile) {
+            for test in DMLCompatibilityCases.replicatedCases
+            where selects("matrix-" + test.id) && test.applies(to: f.profile) {
                 try reporter.run(QualificationCase("matrix-" + test.id, "Shared DML matrix: " + test.id)) {
                     if f.profile.hasOptionalMetadata {
                         _ = try f.sql(

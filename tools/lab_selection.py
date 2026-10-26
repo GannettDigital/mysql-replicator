@@ -32,7 +32,9 @@ def resolve_cases(rows, cases=None, families=None):
     requested = set(strings(cases if cases is not None else [], 'case IDs'))
     families = set(strings(families if families is not None else [], 'families'))
     if requested - by_id.keys():
-        raise ValueError(f'unknown case IDs: {sorted(requested - by_id.keys())}')
+        from lab_migrations import retired_hint
+        raise ValueError(retired_hint(requested - by_id.keys())
+                         or f'unknown case IDs: {sorted(requested - by_id.keys())}')
     available_families = {r.get('family') for r in rows}
     if families - available_families:
         raise ValueError(f'unknown families: {sorted(families - available_families)}')
@@ -170,8 +172,15 @@ def main():
             catalogs.append(json.loads(subprocess.check_output(query, cwd=ROOT, text=True)))
         if args.selection == 'pr':
             generate_smoke(catalogs, pr_selection)
+        from lab_migrations import retired_hint, validate_migrations
+        hint = retired_hint(cases or [])
+        if hint:
+            raise ValueError(hint)
+        validate_migrations(catalogs, complete=args.suite is not None and 'all' in args.suite)
         plan = select_catalog(catalogs, profiles=profiles, variants=variants, suites=suites,
                               cases=cases, families=args.family)
+        from lab_features import with_features
+        plan = with_features(plan, catalogs, complete=args.suite is not None and 'all' in args.suite)
         if args.selection and (plan['excluded'] or not plan['groups']):
             raise ValueError('PR selection contains inapplicable cases or no cases')
         for group in plan['groups']:

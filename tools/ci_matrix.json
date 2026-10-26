@@ -184,7 +184,6 @@
             "matrix-json",
             "matrix-typedjson",
             "matrix-jsonpartial",
-            "matrix-generated",
             "matrix-fixed",
             "matrix-lob",
             "matrix-defaults",
@@ -205,15 +204,113 @@
       "families": [
         "indexes"
       ],
-      "size": 6
+      "groups": [
+        {
+          "name": "column-modifications",
+          "cases": [
+            "ddl-modify-demo-varchar-120",
+            "ddl-modify-narrow-text",
+            "ddl-modify-binary-width",
+            "ddl-modify-binary-narrow",
+            "ddl-modify-integer-signed",
+            "ddl-modify-primary-widen",
+            "ddl-modify-integer-narrow",
+            "ddl-modify-not-null",
+            "ddl-modify-first",
+            "ddl-modify-after"
+          ]
+        },
+        {
+          "name": "index-changes",
+          "cases": [
+            "ddl-index-create",
+            "ddl-index-unique",
+            "ddl-index-prefix",
+            "ddl-index-rename",
+            "ddl-index-drop",
+            "ddl-index-drop-alter",
+            "ddl-index-replace",
+            "ddl-modify-indexed",
+            "ddl-index-like",
+            "ddl-index-table-rename",
+            "ddl-index-truncate",
+            "ddl-index-unique-null"
+          ]
+        }
+      ]
     },
     {
       "name": "bootstrap",
       "families": [
         "bootstrap"
       ],
-      "split_after": [
-        "bootstrap-matrix-upsert"
+      "groups": [
+        {
+          "name": "encodings-defaults",
+          "cases": [
+            "bootstrap-matrix-collations",
+            "bootstrap-matrix-nativeencodings",
+            "bootstrap-matrix-exactchoices",
+            "bootstrap-matrix-choiceboundaries",
+            "bootstrap-matrix-binarychoices",
+            "bootstrap-matrix-legacybinaryset",
+            "bootstrap-matrix-binarydefaults",
+            "bootstrap-matrix-textdefaults",
+            "bootstrap-matrix-zerowidth",
+            "bootstrap-matrix-identifiercase",
+            "bootstrap-matrix-unicodeidentifiers",
+            "bootstrap-matrix-encodings",
+            "bootstrap-matrix-widestrings",
+            "bootstrap-matrix-enumzero",
+            "bootstrap-matrix-choices",
+            "bootstrap-matrix-widechoices"
+          ]
+        },
+        {
+          "name": "numeric-temporal",
+          "cases": [
+            "bootstrap-matrix-decimaldefaults",
+            "bootstrap-matrix-floatbounds",
+            "bootstrap-matrix-zerofill",
+            "bootstrap-matrix-fixedfloating",
+            "bootstrap-matrix-floating",
+            "bootstrap-matrix-bits",
+            "bootstrap-matrix-values",
+            "bootstrap-matrix-integers",
+            "bootstrap-matrix-decimal",
+            "bootstrap-matrix-temporal",
+            "bootstrap-matrix-precision",
+            "bootstrap-matrix-defaults",
+            "bootstrap-matrix-floatingautofloat",
+            "bootstrap-matrix-floatingautodouble",
+            "bootstrap-matrix-floatingautofixedfloat",
+            "bootstrap-matrix-floatingautounsigneddouble"
+          ]
+        },
+        {
+          "name": "structured-rows-metadata",
+          "cases": [
+            "json-target84-schema",
+            "target84-index-spatial-metadata",
+            "expression-target84-dependencies",
+            "alter-rename-target84-refusal",
+            "bootstrap-matrix-fulltext",
+            "bootstrap-matrix-spatial",
+            "bootstrap-matrix-json",
+            "bootstrap-matrix-typedjson",
+            "bootstrap-matrix-jsonpartial",
+            "bootstrap-matrix-generated",
+            "bootstrap-matrix-fixed",
+            "bootstrap-matrix-composite",
+            "bootstrap-matrix-textkey",
+            "bootstrap-matrix-upsert",
+            "bootstrap-matrix-replace",
+            "bootstrap-matrix-ignore",
+            "bootstrap-matrix-select",
+            "bootstrap-matrix-load",
+            "bootstrap-matrix-lob"
+          ]
+        }
       ]
     },
     {

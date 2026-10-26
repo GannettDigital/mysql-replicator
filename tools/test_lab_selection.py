@@ -16,6 +16,11 @@ class SelectionTests(unittest.TestCase):
     def setUp(self):
         self.rows = [row('create'), row('alter', dependencies=['create']),
                      row('index', family='indexes', dependencies=['alter']), row('other', family='rows')]
+        self.features = dict(schema_version=1, features=[dict(
+            id='fixture', title='Fixture', description='Selection test fixture.', kind='project',
+            reference=dict(title='Test lab', location='docs/TEST_LAB.md'),
+            cases=dict(correctness=['create', 'alter', 'index', 'other'], lifecycle=['reconnect'],
+                       native=['native'], demo=['demo'], recovery=['recovery']))])
 
     def test_family_and_case_union_keeps_catalog_order_and_dependency_reasons(self):
         selection = resolve_cases(self.rows, families=['indexes'], cases=['other'])
@@ -106,6 +111,8 @@ class SelectionTests(unittest.TestCase):
             return json.dumps(dict(scenarios=rows))
         with patch('sys.argv', ['lab_selection.py', '--lab', '/tmp/lab', '--suite', 'all']), \
                 patch('lab_selection.subprocess.check_output', side_effect=query), \
+                patch('lab_migrations.load_migrations', return_value=dict(schema_version=1, migrations=[])), \
+                patch('lab_features.load_features', return_value=self.features), \
                 contextlib.redirect_stdout(output):
             main()
         self.assertEqual(json.loads(output.getvalue())['selected_cases'], 5)
@@ -114,11 +121,13 @@ class SelectionTests(unittest.TestCase):
         output = io.StringIO()
         with patch('sys.argv', ['lab_selection.py', '--lab', '/tmp/lab', '--family', 'indexes']), \
                 patch('lab_selection.subprocess.check_output', return_value=json.dumps(dict(scenarios=self.rows))) as query, \
+                patch('lab_features.load_features', return_value=self.features), \
                 contextlib.redirect_stdout(output):
             main()
         self.assertEqual(query.call_count, 1)
         self.assertIn('--list', query.call_args.args[0])
         self.assertEqual(json.loads(output.getvalue())['groups'][0]['cases'], ['create', 'alter', 'index'])
+        self.assertEqual(json.loads(output.getvalue())['groups'][0]['features'], ['fixture'])
 
 
 if __name__ == '__main__':

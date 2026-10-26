@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "migrations": [
+    {
+      "suite": "correctness",
+      "retired": "matrix-generated",
+      "replacement": "ddl-compat-generated",
+      "review": "PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Replicated CREATE with a stored generated expression, then multirow INSERT with a non-NULL input and a NULL input; verify exact generated values and NULL propagation.",
+          "assertion": "generated-insert-values"
+        },
+        {
+          "condition": "UPDATE the non-NULL base column and verify the stored generated value changes.",
+          "assertion": "generated-update-values"
+        },
+        {
+          "condition": "DELETE the updated row while the NULL row remains; verify its generated value is NULL and verify retained rows.",
+          "assertion": "generated-delete-retains-null"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,719 @@
+{
+  "schema_version": 1,
+  "features": [
+    {
+      "id": "database-statements",
+      "title": "CREATE, ALTER and DROP DATABASE",
+      "kind": "mysql",
+      "description": "Database creation, defaults, conditional creation, alteration and removal.",
+      "reference": {
+        "title": "SQL Statements",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/sql-statements.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "database-server-default",
+          "database-explicit",
+          "database-charset-only",
+          "database-collation-only",
+          "database-existing-different",
+          "database-existing-matching",
+          "reverse-database-table-defaults",
+          "ddl-compat-database"
+        ]
+      }
+    },
+    {
+      "id": "table-statements",
+      "title": "CREATE, ALTER, RENAME and DROP TABLE",
+      "kind": "mysql",
+      "description": "Table and column changes, table options, maintenance and ordered schema changes.",
+      "reference": {
+        "title": "SQL Statements",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/sql-statements.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-column-renames",
+          "ddl-compat-column-swaps",
+          "ddl-compat-alter-options",
+          "ddl-compat-alter-table-rename",
+          "ddl-compat-table-options",
+          "ddl-compat-table-maintenance",
+          "ddl-compat-alter-conversions",
+          "ddl-compat-multi-table",
+          "ddl-compat-cross-schema-relationships",
+          "ddl-compat-types",
+          "ddl-compat-alter",
+          "ddl-compat-temporary-create-select",
+          "ddl-compat-temporary",
+          "create-select-contract",
+          "alter-rename-target84-refusal",
+          "ddl",
+          "ddl-modify-demo-varchar-120",
+          "ddl-modify-narrow-text",
+          "ddl-modify-binary-width",
+          "ddl-modify-binary-narrow",
+          "ddl-modify-integer-signed",
+          "ddl-modify-primary-widen",
+          "ddl-modify-integer-narrow",
+          "ddl-modify-not-null",
+          "ddl-modify-first",
+          "ddl-modify-after"
+        ]
+      }
+    },
+    {
+      "id": "indexes",
+      "title": "Indexes",
+      "kind": "mysql",
+      "description": "Primary and unique keys, index changes, row matching without a usable key, and schema drift.",
+      "reference": {
+        "title": "CREATE INDEX Statement",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/create-index.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-unique-row-identity",
+          "ddl-compat-keyless-rows",
+          "ddl-compat-column-index-syntax",
+          "ddl-compat-grouped-constraints",
+          "ddl-compat-primary-key-parts",
+          "ddl-compat-alter-column-keys",
+          "ddl-compat-constraints",
+          "ddl-index-create",
+          "ddl-index-unique",
+          "ddl-index-prefix",
+          "ddl-index-rename",
+          "ddl-index-drop",
+          "ddl-index-drop-alter",
+          "ddl-index-replace",
+          "ddl-modify-indexed",
+          "ddl-index-like",
+          "ddl-index-table-rename",
+          "ddl-index-truncate",
+          "ddl-index-unique-null",
+          "ddl-index-resume",
+          "matrix-composite",
+          "matrix-textkey",
+          "bootstrap-matrix-composite",
+          "bootstrap-matrix-textkey"
+        ]
+      }
+    },
+    {
+      "id": "generated-columns",
+      "title": "Generated Columns",
+      "kind": "mysql",
+      "description": "Stored and virtual values, expression dependencies, schema changes and discovery.",
+      "reference": {
+        "title": "CREATE TABLE and Generated Columns",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/create-table-generated-columns.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-generated",
+          "ddl-compat-generated-expressions",
+          "ddl-compat-generated-dependencies",
+          "bootstrap-matrix-generated",
+          "expression-target84-dependencies",
+          "matrix-reject-generated"
+        ]
+      }
+    },
+    {
+      "id": "check-constraints",
+      "title": "CHECK Constraints",
+      "kind": "mysql",
+      "description": "Version-specific enforcement and refusal before target DDL.",
+      "reference": {
+        "title": "CHECK Constraints",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/create-table-check-constraints.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-ignored-checks",
+          "check-target57-limits"
+        ]
+      }
+    },
+    {
+      "id": "partitioning",
+      "title": "Partitioning",
+      "kind": "mysql",
+      "description": "Partition definitions, bounds, selection, management, row changes and exchange.",
+      "reference": {
+        "title": "Partitioning",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/partitioning.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-partition-expressions",
+          "ddl-compat-partition-column-renames",
+          "ddl-compat-partition-rename-syntax",
+          "ddl-compat-partition-column-bounds",
+          "ddl-compat-partition-exchange-unchecked",
+          "ddl-compat-partition-key-algorithm",
+          "ddl-compat-partition-maintenance",
+          "ddl-compat-subpartitions",
+          "ddl-compat-partition-hash-forms",
+          "ddl-compat-partitions",
+          "ddl-compat-hash-list"
+        ]
+      }
+    },
+    {
+      "id": "full-text-search",
+      "title": "Full-Text Search",
+      "kind": "mysql",
+      "description": "FULLTEXT index definitions, parser selection and search results after row changes.",
+      "reference": {
+        "title": "Full-Text Search Functions",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/fulltext-search.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-fulltext",
+          "matrix-fulltext",
+          "bootstrap-matrix-fulltext"
+        ]
+      }
+    },
+    {
+      "id": "spatial-data-types",
+      "title": "Spatial Data Types",
+      "kind": "mysql",
+      "description": "Geometry values, spatial indexes, SRID metadata and geometry prefix indexes.",
+      "reference": {
+        "title": "Data Types",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/data-types.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-spatial-prefix-indexes",
+          "matrix-spatial",
+          "bootstrap-matrix-spatial",
+          "target84-index-spatial-metadata"
+        ]
+      }
+    },
+    {
+      "id": "json-data-type",
+      "title": "The JSON Data Type",
+      "kind": "mysql",
+      "description": "JSON types, values, partial updates, expression indexes, defaults and version compatibility.",
+      "reference": {
+        "title": "The JSON Data Type",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/json.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-json-indexes",
+          "matrix-json",
+          "matrix-typedjson",
+          "matrix-jsonpartial",
+          "bootstrap-matrix-json",
+          "bootstrap-matrix-typedjson",
+          "bootstrap-matrix-jsonpartial",
+          "json-target57-limits",
+          "json-target84-schema",
+          "json-year-compatibility"
+        ]
+      }
+    },
+    {
+      "id": "numeric-data-types",
+      "title": "Numeric Data Types",
+      "kind": "mysql",
+      "description": "Integer, decimal, floating-point and bit limits, defaults and metadata compatibility.",
+      "reference": {
+        "title": "Data Types",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/data-types.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "matrix-decimaldefaults",
+          "matrix-floatbounds",
+          "matrix-zerofill",
+          "matrix-fixedfloating",
+          "matrix-floating",
+          "matrix-bits",
+          "matrix-integers",
+          "matrix-decimal",
+          "matrix-floatingautofloat",
+          "matrix-floatingautodouble",
+          "matrix-floatingautofixedfloat",
+          "matrix-floatingautounsigneddouble",
+          "bootstrap-matrix-decimaldefaults",
+          "bootstrap-matrix-floatbounds",
+          "bootstrap-matrix-zerofill",
+          "bootstrap-matrix-fixedfloating",
+          "bootstrap-matrix-floating",
+          "bootstrap-matrix-bits",
+          "bootstrap-matrix-integers",
+          "bootstrap-matrix-decimal",
+          "bootstrap-matrix-floatingautofloat",
+          "bootstrap-matrix-floatingautodouble",
+          "bootstrap-matrix-floatingautofixedfloat",
+          "bootstrap-matrix-floatingautounsigneddouble",
+          "matrix-reject-decimal-scale",
+          "matrix-reject-decimal-sign"
+        ]
+      }
+    },
+    {
+      "id": "date-and-time-data-types",
+      "title": "Date and Time Data Types",
+      "kind": "mysql",
+      "description": "Time zones, fractional precision, zero values, limits and metadata compatibility.",
+      "reference": {
+        "title": "Data Types",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/data-types.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "matrix-temporal",
+          "matrix-precision",
+          "bootstrap-matrix-temporal",
+          "bootstrap-matrix-precision",
+          "matrix-reject-time-precision"
+        ]
+      }
+    },
+    {
+      "id": "string-data-types",
+      "title": "String Data Types",
+      "kind": "mysql",
+      "description": "CHAR, VARCHAR, binary, TEXT, BLOB, ENUM and SET values, sizes and metadata.",
+      "reference": {
+        "title": "Data Types",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/data-types.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "matrix-exactchoices",
+          "matrix-choiceboundaries",
+          "matrix-binarychoices",
+          "matrix-legacybinaryset",
+          "matrix-binarydefaults",
+          "matrix-textdefaults",
+          "matrix-zerowidth",
+          "matrix-widestrings",
+          "matrix-fixed",
+          "matrix-enumzero",
+          "matrix-choices",
+          "matrix-widechoices",
+          "matrix-lob",
+          "bootstrap-matrix-exactchoices",
+          "bootstrap-matrix-choiceboundaries",
+          "bootstrap-matrix-binarychoices",
+          "bootstrap-matrix-legacybinaryset",
+          "bootstrap-matrix-binarydefaults",
+          "bootstrap-matrix-textdefaults",
+          "bootstrap-matrix-zerowidth",
+          "bootstrap-matrix-widestrings",
+          "bootstrap-matrix-fixed",
+          "bootstrap-matrix-enumzero",
+          "bootstrap-matrix-choices",
+          "bootstrap-matrix-widechoices",
+          "bootstrap-matrix-lob",
+          "large-values",
+          "matrix-reject-enum-minimal",
+          "matrix-reject-enum-order",
+          "matrix-reject-set-order",
+          "matrix-reject-blob-width"
+        ]
+      }
+    },
+    {
+      "id": "character-sets-and-collations",
+      "title": "Character Sets and Collations",
+      "kind": "mysql",
+      "description": "SQL text encodings, table encodings, conversions and compatibility policies.",
+      "reference": {
+        "title": "Character Sets, Collations, Unicode",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/charset.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-query-encodings",
+          "ddl-compat-table-charset",
+          "ddl-compat-charset-conversion",
+          "ddl-compat-compound-charset",
+          "ddl-compat-charset-defaults",
+          "ddl-compat-collation-cleanup",
+          "ddl-compat-collation-collision",
+          "matrix-collations",
+          "matrix-nativeencodings",
+          "matrix-encodings",
+          "bootstrap-matrix-collations",
+          "bootstrap-matrix-nativeencodings",
+          "bootstrap-matrix-encodings",
+          "matrix-reject-mysql84-collation"
+        ]
+      }
+    },
+    {
+      "id": "schema-object-names",
+      "title": "Schema Object Names",
+      "kind": "mysql",
+      "description": "Identifier case, Unicode names and table-name case settings.",
+      "reference": {
+        "title": "Schema Object Names",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/identifiers.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-unicode-names",
+          "ddl-compat-table-name-case",
+          "matrix-identifiercase",
+          "matrix-unicodeidentifiers",
+          "bootstrap-matrix-identifiercase",
+          "bootstrap-matrix-unicodeidentifiers"
+        ]
+      }
+    },
+    {
+      "id": "data-type-default-values",
+      "title": "Data Type Default Values",
+      "kind": "mysql",
+      "description": "Default values, AUTO_INCREMENT and automatic timestamp updates.",
+      "reference": {
+        "title": "Data Type Default Values",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "matrix-defaults",
+          "bootstrap-matrix-defaults"
+        ]
+      }
+    },
+    {
+      "id": "data-manipulation-statements",
+      "title": "Data Manipulation Statements",
+      "kind": "mysql",
+      "description": "Multirow writes, duplicate-key updates, REPLACE, IGNORE, join writes and LOAD DATA.",
+      "reference": {
+        "title": "SQL Statements",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/sql-statements.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "matrix-values",
+          "matrix-upsert",
+          "matrix-replace",
+          "matrix-ignore",
+          "matrix-select",
+          "matrix-load",
+          "bootstrap-matrix-values",
+          "bootstrap-matrix-upsert",
+          "bootstrap-matrix-replace",
+          "bootstrap-matrix-ignore",
+          "bootstrap-matrix-select",
+          "bootstrap-matrix-load",
+          "positive"
+        ]
+      }
+    },
+    {
+      "id": "stored-objects",
+      "title": "Stored Objects",
+      "kind": "mysql",
+      "description": "Views, routines, definers, triggers and events, including configured refusal or skipping.",
+      "reference": {
+        "title": "Stored Objects",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/stored-objects.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-stored-objects",
+          "ddl-compat-absent-definers",
+          "ddl-compat-view-renames",
+          "ddl-compat-conditional-routines",
+          "ddl-compat-views",
+          "ddl-compat-routines",
+          "ddl-compat-skip-trigger",
+          "reject-event",
+          "reject-trigger"
+        ]
+      }
+    },
+    {
+      "id": "comments",
+      "title": "Comments",
+      "kind": "mysql",
+      "description": "Executable SQL comments and source/target version gates.",
+      "reference": {
+        "title": "Comments",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/comments.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-executable-comments",
+          "ddl-compat-executable-comments-target-gate",
+          "ddl-compat-executable-comments-source-gate"
+        ]
+      }
+    },
+    {
+      "id": "foreign-key-constraints",
+      "title": "FOREIGN KEY Constraints",
+      "kind": "mysql",
+      "description": "Foreign-key definitions, parent rules, row actions, checks and recovery.",
+      "reference": {
+        "title": "FOREIGN KEY Constraints",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-foreign-key-controls",
+          "ddl-compat-foreign-key-ddl",
+          "ddl-compat-foreign-key-missing-parent",
+          "ddl-compat-foreign-key-parent-keys",
+          "ddl-compat-foreign-key-syntax-columns",
+          "ddl-compat-foreign-key-cross-database",
+          "ddl-compat-foreign-key-generated",
+          "ddl-compat-foreign-key-compound-indexes",
+          "ddl-compat-foreign-key-column-swaps",
+          "foreign-key-safety",
+          "foreign-keys",
+          "reject-foreign-key"
+        ]
+      }
+    },
+    {
+      "id": "global-transaction-identifiers",
+      "title": "Replication with Global Transaction Identifiers",
+      "kind": "mysql",
+      "description": "Source GTID preservation, tagged identities, restart and replay.",
+      "reference": {
+        "title": "Replication with Global Transaction Identifiers",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/replication-gtids.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-compat-tagged-gtids",
+          "ddl-compat-source-gtid-preservation"
+        ]
+      }
+    },
+    {
+      "id": "replication-filters",
+      "title": "Replication Filtering",
+      "kind": "mysql",
+      "description": "Table filters, saved-state resume and included-table failures.",
+      "reference": {
+        "title": "How Servers Evaluate Replication Filtering Rules",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/replication-rules.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "wild-ignore",
+          "wild-ignore-resume",
+          "wild-ignore-included-rejection"
+        ]
+      }
+    },
+    {
+      "id": "privileges",
+      "title": "Privileges",
+      "kind": "mysql",
+      "description": "Target session setup with restricted accounts.",
+      "reference": {
+        "title": "Privileges Provided by MySQL",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/privileges-provided.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "ddl-session-permissions"
+        ]
+      }
+    },
+    {
+      "id": "storage-engines",
+      "title": "Storage Engines",
+      "kind": "mysql",
+      "description": "Refuse a target engine that does not meet the selected profile.",
+      "reference": {
+        "title": "Alternative Storage Engines",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/storage-engines.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "reject-engine"
+        ]
+      }
+    },
+    {
+      "id": "archive-replay",
+      "title": "Archive replay",
+      "kind": "project",
+      "description": "Apply local binlogs and resume from saved progress.",
+      "reference": {
+        "title": "Archive replay",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "correctness": [
+          "offline-replay"
+        ]
+      }
+    },
+    {
+      "id": "error-skipping",
+      "title": "Error skipping",
+      "kind": "project",
+      "description": "Live and offline error policies and continued application.",
+      "reference": {
+        "title": "Error skipping",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "correctness": [
+          "offline-skip-errors",
+          "live-skip-errors"
+        ]
+      }
+    },
+    {
+      "id": "runtime-control",
+      "title": "Runtime control",
+      "kind": "project",
+      "description": "Application status, stop and configuration reload.",
+      "reference": {
+        "title": "Runtime control",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "correctness": [
+          "runtime-control"
+        ]
+      }
+    },
+    {
+      "id": "failure-and-recovery",
+      "title": "Failure and recovery",
+      "kind": "project",
+      "description": "Blocked state, partial writes, repair and saved-state recovery.",
+      "reference": {
+        "title": "Failure and recovery",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "correctness": [
+          "forward-failures",
+          "myisam-recovery"
+        ],
+        "recovery": [
+          "recovery"
+        ]
+      }
+    },
+    {
+      "id": "source-reconnection",
+      "title": "Source reconnection",
+      "kind": "project",
+      "description": "Source loss, restart, cancellation and connection settings.",
+      "reference": {
+        "title": "Source reconnection",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "lifecycle": [
+          "source-reconnect",
+          "source-reconnect-batch",
+          "source-reconnect-cancel",
+          "source-reconnect-settings"
+        ]
+      }
+    },
+    {
+      "id": "target-reconnection",
+      "title": "Target reconnection",
+      "kind": "project",
+      "description": "Target loss, drain, uncertain writes, resume and connection settings.",
+      "reference": {
+        "title": "Target reconnection",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "lifecycle": [
+          "target-reconnect",
+          "target-drain",
+          "target-drain-resume",
+          "target-backoff-drain",
+          "target-uncertain",
+          "target-uncertain-resume",
+          "target-reconnect-settings"
+        ]
+      }
+    },
+    {
+      "id": "demo-workflows",
+      "title": "Demo workflows",
+      "kind": "project",
+      "description": "User commands, workbook SQL, failures and resume in the interactive demo.",
+      "reference": {
+        "title": "Demo workflows",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "demo": [
+          "demo-prepared",
+          "demo-start-idle",
+          "demo-success",
+          "demo-container-repair",
+          "demo-fail-stop",
+          "demo-skip-and-resume",
+          "demo-modify-index",
+          "demo-idle-sigint",
+          "demo-resume-baseline-gtid",
+          "demo-applied-sigterm",
+          "demo-resume-applied-position",
+          "demo-resume-applied-gtid",
+          "demo-reverse-workbook",
+          "demo-reverse-recovery"
+        ]
+      }
+    },
+    {
+      "id": "native-observations",
+      "title": "Native MySQL observations",
+      "kind": "project",
+      "description": "The complete native-only adapter and its source/replica assertions.",
+      "reference": {
+        "title": "Native MySQL observations",
+        "location": "docs/TEST_LAB.md"
+      },
+      "cases": {
+        "native": [
+          "native"
+        ]
+      }
+    }
+  ]
+}

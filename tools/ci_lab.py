@@ -78,6 +78,12 @@ def select_plan(query):
 
 def plan(query):
     result = select_plan(query)
+    from lab_features import with_features
+    result = with_features(result, [dict(scenarios=result['inventory'])],
+                           complete=result['scope'] == 'full')
+    from lab_migrations import validate_migrations
+    validate_migrations([dict(scenarios=result['inventory'])], complete=result['scope'] == 'full',
+                        groups=result['include'], selection_only=True)
     result['inputs'] = query('build-inputs').strip()
     destination = ROOT / 'artifacts/ci/matrix.json'
     destination.parent.mkdir(parents=True, exist_ok=True)

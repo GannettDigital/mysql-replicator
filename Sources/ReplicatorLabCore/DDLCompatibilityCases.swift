@@ -31,11 +31,13 @@ enum DDLCompatibilityCases {
         let sqlTransactional: String
         var transactions = 1
         var restartBefore = false
+        var assertionID: String?
         init(
             _ sql: String, _ checks: [Check] = [], sqlTransactional: String? = nil, restartBefore: Bool = false,
-            transactions: Int = 1
+            transactions: Int = 1, assertionID: String? = nil
         ) {
             self.transactions = transactions
+            self.assertionID = assertionID
             self.restartBefore = restartBefore
             self.sql = sql
             self.checks = checks
@@ -246,15 +248,21 @@ enum DDLCompatibilityCases {
                 ),
                 .init(
                     "INSERT INTO ddlcompat.t(id,n) VALUES(1,7),(2,NULL)",
-                    [.init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t7\t14\t8\n2\tNULL\tNULL\tNULL")]),
+                    [.init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t7\t14\t8\n2\tNULL\tNULL\tNULL")],
+                    assertionID: "generated-insert-values"),
                 .init(
                     "UPDATE ddlcompat.t SET n=9 WHERE id=1",
-                    [.init("SELECT * FROM ddlcompat.t WHERE id=1", "1\t9\t18\t10")]),
+                    [.init("SELECT * FROM ddlcompat.t WHERE id=1", "1\t9\t18\t10")],
+                    assertionID: "generated-update-values"),
                 .init("ALTER TABLE ddlcompat.t ADD next_value INT AS (n+2) STORED"),
                 .init(
                     "INSERT INTO ddlcompat.t(id,n) VALUES(3,11)",
                     [.init("SELECT * FROM ddlcompat.t WHERE id=3", "3\t11\t22\t12\t13")]),
-                .init("DELETE FROM ddlcompat.t WHERE id=2", [.init("SELECT COUNT(*) FROM ddlcompat.t", "2")]),
+                .init(
+                    "DELETE FROM ddlcompat.t WHERE id=1",
+                    [.init("SELECT * FROM ddlcompat.t ORDER BY id", "2\tNULL\tNULL\tNULL\tNULL\n3\t11\t22\t12\t13")],
+                    assertionID: "generated-delete-retains-null"),
+                .init("DELETE FROM ddlcompat.t WHERE id=2", [.init("SELECT COUNT(*) FROM ddlcompat.t", "1")]),
             ]),
         .init(
             "partitions", "Partition DDL removes and exchanges data without row-delete events",

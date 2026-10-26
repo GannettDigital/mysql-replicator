@@ -11,6 +11,9 @@ struct LabScenario {
     var requiresMyISAMTarget = false
     var intent: String = "apply"
     var smoke = false
+    // Default to the existing setup until a case's independent prerequisites
+    // have been checked. Bootstrap cases supply their own tables and states.
+    var requiresMainApplier = true
     var id: String { test.id }
     func reason(_ profile: LabProfile, variant: LabVariant = .standard) -> String? {
         if id == "ddl-compat-source-gtid-preservation" && variant != .standard {
@@ -65,6 +68,15 @@ struct LabScenario {
         value["variant"] = variant.rawValue
         value["family"] = family
         value["dependencies"] = dependencies
+        value["requires_main_applier"] = requiresMainApplier
+        if let ddl = DDLCompatibilityCases.cases.first(where: { $0.test.id == id }) {
+            let assertions = ddl.steps.compactMap(\.assertionID)
+            if !assertions.isEmpty { value["assertions"] = assertions }
+            let replaces = DMLCompatibilityCases.cases.filter { $0.replicatedReplacement == id }.map {
+                "matrix-" + $0.id
+            }
+            if !replaces.isEmpty { value["replaces"] = replaces }
+        }
         value["intent"] = intent
         value["expected"] = ["source": "accept", "native": "apply", "applier": intent]
         if id == "create-select-contract" {
@@ -134,7 +146,7 @@ struct LabScenario {
                 test: .init(
                     "create-select-contract", "Native permanent CTAS restrictions and unchanged target progress"),
                 family: "rejections", intent: "source or target restriction; no partial apply"))
-        cases += DMLCompatibilityCases.cases.map {
+        cases += DMLCompatibilityCases.replicatedCases.map {
             .init(
                 test: .init("matrix-" + $0.id, "Shared DML matrix: " + $0.id), family: "dml",
                 source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions,
@@ -162,7 +174,7 @@ struct LabScenario {
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
-                ]))
+                ], requiresMainApplier: false))
         cases.append(
             .init(
                 test: .init(
@@ -172,7 +184,7 @@ struct LabScenario {
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
-                ]))
+                ], requiresMainApplier: false))
         cases.append(
             .init(
                 test: .init(
@@ -182,7 +194,7 @@ struct LabScenario {
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
-                ]))
+                ], requiresMainApplier: false))
         cases.append(
             .init(
                 test: .init(
@@ -191,7 +203,7 @@ struct LabScenario {
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
-                ]))
+                ], requiresMainApplier: false))
         cases.append(
             .init(
                 test: .init(
@@ -282,7 +294,8 @@ struct LabScenario {
         cases += DMLCompatibilityCases.cases.map {
             .init(
                 test: .init("bootstrap-matrix-" + $0.id, "Discover bootstrapped DML schema: " + $0.id),
-                family: "bootstrap", source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions)
+                family: "bootstrap", source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions,
+                requiresMainApplier: false)
         }
         cases += DMLCompatibilityCases.rejections.map {
             .init(
@@ -308,9 +321,20 @@ struct LabScenario {
                 family: "recovery", requiresMyISAMTarget: true, intent: "per-case apply or fail-stop"))
         return cases
     }
+    static func needsMainApplier(selected: Set<String>?, slice: String) -> Bool {
+        // Legacy slices, unknown cases and an unfiltered run keep their setup.
+        guard slice == "all", let selected, !selected.isEmpty else { return true }
+        let independent = Set(correctness.filter { !$0.requiresMainApplier }.map(\.id))
+        return !selected.isSubset(of: independent)
+    }
     static func select(tier: String, family: String?, ids: Set<String>) throws -> [LabScenario] {
         let all = correctness
         let known = Set(all.map(\.id))
+        let replacements = DMLCompatibilityCases.cases.compactMap { test -> String? in
+            guard ids.contains("matrix-" + test.id), let replacement = test.replicatedReplacement else { return nil }
+            return "matrix-\(test.id) was replaced by \(replacement)"
+        }
+        try require(replacements.isEmpty, replacements.joined(separator: "; "))
         try require(
             ids.isSubset(of: known), "unknown cases: " + ids.subtracting(known).sorted().joined(separator: ", "))
         if let family { try require(Set(all.map(\.family)).contains(family), "unknown correctness family: " + family) }

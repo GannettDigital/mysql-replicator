@@ -3,6 +3,45 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testGeneratedColumnMigrationRetainsBootstrapAndNamesReplacementAssertions() throws {
+        let cases = LabScenario.correctness
+        XCTAssertFalse(cases.contains { $0.id == "matrix-generated" })
+        XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-generated" })
+        let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-generated" })
+        for profile in LabProfile.allCases {
+            XCTAssertNil(replacement.reason(profile))
+            XCTAssertEqual(replacement.fields(profile)["replaces"] as? [String], ["matrix-generated"])
+            XCTAssertEqual(
+                replacement.fields(profile)["assertions"] as? [String],
+                ["generated-insert-values", "generated-update-values", "generated-delete-retains-null"])
+        }
+        XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-generated"])) { error in
+            XCTAssertTrue(String(describing: error).contains("was replaced by ddl-compat-generated"))
+        }
+        let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "generated" })
+        XCTAssertEqual(fixture.phases.count, 3)
+        XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == "generated" })
+    }
+    func testBootstrapSelectionsKeepTheirOwnStateAndMixedSelectionsKeepTheMainApplier() throws {
+        for profile in LabProfile.allCases {
+            let bootstrap = LabScenario.correctness.filter { $0.family == "bootstrap" && $0.reason(profile) == nil }
+            XCTAssertFalse(bootstrap.isEmpty)
+            let selected = Set(bootstrap.map(\.id))
+            XCTAssertFalse(LabScenario.needsMainApplier(selected: selected, slice: "all"))
+            for test in bootstrap {
+                XCTAssertEqual(test.fields(profile)["requires_main_applier"] as? Bool, false)
+            }
+            for shared in ["database-explicit", "matrix-composite", "ddl-index-create", "ddl-compat-types"] {
+                XCTAssertTrue(LabScenario.needsMainApplier(selected: selected.union([shared]), slice: "all"))
+            }
+        }
+        XCTAssertTrue(LabScenario.needsMainApplier(selected: nil, slice: "all"))
+        XCTAssertTrue(LabScenario.needsMainApplier(selected: [], slice: "all"))
+        XCTAssertTrue(LabScenario.needsMainApplier(selected: ["future-case"], slice: "all"))
+        XCTAssertTrue(LabScenario.needsMainApplier(selected: ["bootstrap-matrix-composite"], slice: "dml"))
+        // Other separate-state workflows retain their baseline until reviewed.
+        XCTAssertTrue(LabScenario.needsMainApplier(selected: ["offline-replay"], slice: "all"))
+    }
     func testFixturePreparationUsesTheSameComposeFilesAndServicesAsTheRunner() {
         for profile in LabProfile.allCases {
             XCTAssertEqual(

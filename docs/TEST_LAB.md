@@ -55,6 +55,19 @@ labels, defaults and ordinal writes. The corresponding `bootstrap-matrix-*` case
 check discovery from an existing schema. These replace the old non-BMP DDL refusal
 cases. They cover latin1, UTF16, UTF16LE, UTF32, GB18030 and supplementary UTF-8.
 
+Bootstrap-only selections use their own applier states. They omit the unrelated
+main-applier database setup and general saved-schema restart. Each bootstrap
+phase still starts with fresh state and checks its own rows and checkpoint.
+Target-specific bootstrap cases retain their explicit restart and replay checks.
+A selection that also contains a case that needs the main applier keeps the
+general setup and restart. The catalog records this requirement as
+`requires_main_applier`. Other selections keep their current setup.
+
+Full CI uses two named index/MODIFY groups and three named bootstrap groups.
+Cases in each group share MySQL containers. The groups retain all selected SQL,
+per-case assertions and state boundaries. See [CI measurements](CI_MEASUREMENTS.md)
+for group counts, timing scope and coverage comparison rules.
+
 The `binarychoices` live and bootstrap cases check raw binary ENUM labels, binary
 SET labels, hex/bit literals and defaults. The `legacybinaryset` cases add non-UTF-8
 SET bytes on the two 5.7-to-5.7 profiles. MySQL 8.4.8 rejects that SET definition
@@ -464,6 +477,43 @@ The plan lists `requested_cases`, `dependency_cases` and the final ordered
 `cases`. `required_by` identifies the cases that need each dependency. Excluded
 cases retain their profile-specific reasons. Unknown selections fail instead of
 silently selecting a larger or smaller test set.
+
+Plans also include `feature_catalog`. It assigns each suite/case identity to one
+primary feature. Each execution group lists its `features`. The feature catalog
+covers the queried catalog, including excluded cases; the group's `cases` list
+shows what will run. Cases that contain several operations keep one primary
+feature and retain their original descriptions and assertions.
+
+`tools/test_features.json` holds the assignments and documentation references.
+MySQL feature names follow the Reference Manual. Application behavior, such as
+archive replay and runtime control, uses `kind: project` and a project guide.
+The reference version documents terminology; it does not claim that all cases
+apply to that server version. Existing profile exclusions still control selection.
+
+```sh
+make lab-plan ARGS="--suite all --variant all" | jq '.feature_catalog.definitions[] | {id, title, reference}'
+```
+
+Local and CI plans use the same ownership check. Missing or duplicate assignments
+fail before a test starts. A full CI plan also rejects assignments for cases
+absent from the complete catalog. These fields currently describe features;
+existing families and group names remain in use during consolidation.
+
+`tools/test_case_migrations.json` records each retired case, its replacement,
+its original profile/variant/transport selections, and the assertions that keep
+its test conditions. Planning rejects missing replacement assertions. Full CI
+planning also checks that each replacement runs in the original selections.
+These checks do not prove that two tests have the same behavior. Each migration
+also needs a review of its SQL, expected results and measured code coverage.
+
+`ddl-compat-generated` replaces the replicated `matrix-generated` case. It checks
+multirow INSERT, NULL propagation, UPDATE and DELETE with stored generated
+columns. It retains its virtual-column and ALTER checks. Three named assertions
+save SQL, expected values and observed values from the source, native replica
+and target. `bootstrap-matrix-generated` retains all three original phases for
+an existing table. A selection of the retired ID fails and names its replacement.
+See [the consolidation plan](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for the
+comparison results and coverage review.
 
 Each `groups` entry is one lab invocation, not one CI job. It includes a command
 that runs its cases. Add `--commands` to print shell commands instead of JSON.
