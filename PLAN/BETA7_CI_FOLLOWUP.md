@@ -1,7 +1,13 @@
 # Beta.7 CI fixes and test-suite feedback
 
-Status: failure fixes are prepared locally. Naming and test reorganization wait
-for a passing full CI run. No test has been removed by this plan.
+Status: full CI run `40454033524` passed at `efb3458`. All 2,039 selected catalog
+obligations passed; all 186 integration coverage collections are present.
+The first reorganization review is recorded in
+[Smaller table metadata test group](BETA7_METADATA_GROUP_REVIEW.md).
+The metadata slice replaces 47 repeated DML cases with three focused cases.
+Their DML workloads remain in the feature groups. Focused local checks passed.
+Use the [per-step validation scope](BETA7_TEST_SUITE_CONSOLIDATION.md#validation-scope-for-each-step)
+for subsequent work. Do not repeat the completed local profile checks.
 
 ## Agreed order
 
@@ -14,7 +20,8 @@ for a passing full CI run. No test has been removed by this plan.
    Fix any remaining failures before test reorganization. Read failure bundles
    before retrying affected cases.
 5. Save a passing run's results, coverage, SQL and timings as the comparison
-   baseline. Then implement the feedback below in small changes.
+   baseline. Then implement the feedback below in small changes. The baseline
+   and first assertion map are now saved under `artifacts/ci-review/40454033524/`.
 
 ## Acceptance after the full CI run passes
 
@@ -134,7 +141,7 @@ In this runner, "bootstrap" means that CREATE TABLE is outside the captured
 binlog range. It is not MySQL server bootstrap. After the applier reads the table
 metadata, row application uses the same path as the normal DML cases.
 
-The current `bootstrapDML()` runner repeats every fixture phase with a new
+The baseline `bootstrapDML()` runner repeats every fixture phase with a new
 applier state. Thus it repeatedly reads table metadata before INSERT, UPDATE and
 DELETE. A separate run is useful only if it checks a distinct metadata behavior.
 Repeating all value and statement tests is not justified by cache initialization.
@@ -168,3 +175,11 @@ Do this reduction before deciding whether the two longest groups need to be
 split. Merge compatible small selections without adding a second fixture setup.
 Keep benchmarks separate to avoid contamination from preceding test workloads.
 Do not select the final short PR suite from this incomplete CI run.
+
+## Metadata slice implemented
+
+The replacement cases, DML-owner checks and selection updates are implemented.
+See [the metadata review](BETA7_METADATA_GROUP_REVIEW.md#implementation-of-this-slice).
+Focused local checks passed on both target engines. The next step is a full CI
+comparison of assertions, SQL, exact line sets and time. Group balancing and short PR selection
+remain later steps in this plan.

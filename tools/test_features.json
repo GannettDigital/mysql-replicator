@@ -98,13 +98,7 @@
           "ddl-index-unique-null",
           "ddl-index-resume",
           "ddl-compat-primary-key-row-matching",
-          "bootstrap-matrix-composite",
-          "bootstrap-matrix-textkey",
-          "bootstrap-matrix-values",
-          "ddl-compat-key-conflicts",
-          "bootstrap-matrix-upsert",
-          "bootstrap-matrix-replace",
-          "bootstrap-matrix-ignore"
+          "ddl-compat-key-conflicts"
         ]
       }
     },
@@ -123,7 +117,6 @@
           "ddl-compat-generated",
           "ddl-compat-generated-expressions",
           "ddl-compat-generated-dependencies",
-          "bootstrap-matrix-generated",
           "expression-target84-dependencies",
           "matrix-reject-generated"
         ]
@@ -184,8 +177,7 @@
       },
       "cases": {
         "correctness": [
-          "ddl-compat-fulltext",
-          "bootstrap-matrix-fulltext"
+          "ddl-compat-fulltext"
         ]
       }
     },
@@ -203,7 +195,6 @@
         "correctness": [
           "ddl-compat-spatial-prefix-indexes",
           "matrix-spatial",
-          "bootstrap-matrix-spatial",
           "target84-index-spatial-metadata"
         ]
       }
@@ -224,9 +215,6 @@
           "matrix-json",
           "matrix-typedjson",
           "matrix-jsonpartial",
-          "bootstrap-matrix-json",
-          "bootstrap-matrix-typedjson",
-          "bootstrap-matrix-jsonpartial",
           "json-target57-limits",
           "json-target84-schema",
           "json-year-compatibility"
@@ -257,18 +245,6 @@
           "matrix-floatingautodouble",
           "matrix-floatingautofixedfloat",
           "matrix-floatingautounsigneddouble",
-          "bootstrap-matrix-decimaldefaults",
-          "bootstrap-matrix-floatbounds",
-          "bootstrap-matrix-zerofill",
-          "bootstrap-matrix-fixedfloating",
-          "bootstrap-matrix-floating",
-          "bootstrap-matrix-bits",
-          "bootstrap-matrix-integers",
-          "bootstrap-matrix-decimal",
-          "bootstrap-matrix-floatingautofloat",
-          "bootstrap-matrix-floatingautodouble",
-          "bootstrap-matrix-floatingautofixedfloat",
-          "bootstrap-matrix-floatingautounsigneddouble",
           "matrix-reject-decimal-scale",
           "matrix-reject-decimal-sign"
         ]
@@ -288,8 +264,6 @@
         "correctness": [
           "matrix-temporal",
           "matrix-precision",
-          "bootstrap-matrix-temporal",
-          "bootstrap-matrix-precision",
           "matrix-reject-time-precision"
         ]
       }
@@ -319,19 +293,6 @@
           "matrix-choices",
           "matrix-widechoices",
           "matrix-lob",
-          "bootstrap-matrix-exactchoices",
-          "bootstrap-matrix-choiceboundaries",
-          "bootstrap-matrix-binarychoices",
-          "bootstrap-matrix-legacybinaryset",
-          "bootstrap-matrix-binarydefaults",
-          "bootstrap-matrix-textdefaults",
-          "bootstrap-matrix-zerowidth",
-          "bootstrap-matrix-widestrings",
-          "bootstrap-matrix-fixed",
-          "bootstrap-matrix-enumzero",
-          "bootstrap-matrix-choices",
-          "bootstrap-matrix-widechoices",
-          "bootstrap-matrix-lob",
           "large-values",
           "matrix-reject-enum-minimal",
           "matrix-reject-enum-order",
@@ -362,9 +323,6 @@
           "matrix-collations",
           "matrix-nativeencodings",
           "matrix-encodings",
-          "bootstrap-matrix-collations",
-          "bootstrap-matrix-nativeencodings",
-          "bootstrap-matrix-encodings",
           "matrix-reject-mysql84-collation"
         ]
       }
@@ -384,9 +342,7 @@
           "ddl-compat-unicode-names",
           "ddl-compat-table-name-case",
           "matrix-identifiercase",
-          "matrix-unicodeidentifiers",
-          "bootstrap-matrix-identifiercase",
-          "bootstrap-matrix-unicodeidentifiers"
+          "matrix-unicodeidentifiers"
         ]
       }
     },
@@ -402,8 +358,7 @@
       },
       "cases": {
         "correctness": [
-          "matrix-defaults",
-          "bootstrap-matrix-defaults"
+          "matrix-defaults"
         ]
       }
     },
@@ -421,8 +376,6 @@
         "correctness": [
           "matrix-select",
           "matrix-load",
-          "bootstrap-matrix-select",
-          "bootstrap-matrix-load",
           "positive"
         ]
       }
@@ -722,6 +675,24 @@
       "cases": {
         "performance": [
           "backlog-10k"
+        ]
+      }
+    },
+    {
+      "id": "table-metadata",
+      "title": "Table metadata reads and cache invalidation",
+      "kind": "mysql",
+      "description": "Read existing columns and indexes, retain encoded defaults, reuse cached definitions, and refresh them after DDL.",
+      "reference": {
+        "title": "INFORMATION_SCHEMA COLUMNS Table",
+        "location": "https://dev.mysql.com/doc/refman/8.4/en/information-schema-columns-table.html",
+        "version": "8.4"
+      },
+      "cases": {
+        "correctness": [
+          "metadata-columns-indexes",
+          "metadata-labels-defaults",
+          "metadata-cache-ddl"
         ]
       }
     }

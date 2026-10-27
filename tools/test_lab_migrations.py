@@ -32,6 +32,21 @@ class MigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'no migration'):
             validate_migrations([dict(scenarios=self.rows)], dict(schema_version=1, migrations=[]))
 
+    def test_separate_dml_owner_must_remain_applicable_and_planned(self):
+        self.item['retained_cases'] = ['dml']
+        with self.assertRaisesRegex(ValueError, 'missing retained case'):
+            validate_migrations([dict(scenarios=self.rows)], self.document, complete=True)
+        rows = self.rows + [dict(self.rows[0], id='dml', replaces=[], assertions=[])]
+        with self.assertRaisesRegex(ValueError, 'missing retained execution'):
+            validate_migrations([dict(scenarios=rows)], self.document, complete=True, groups=self.groups)
+        groups = self.groups + [dict(self.groups[0], cases=['dml'])]
+        validate_migrations([dict(scenarios=rows)], self.document, complete=True, groups=groups)
+        rows[-1]['status'] = 'not_applicable'
+        with self.assertRaisesRegex(ValueError, 'missing retained case'):
+            validate_migrations([dict(scenarios=rows)], self.document, complete=True, groups=groups)
+        # A manual run of only the metadata case need not execute the DML owner.
+        validate_migrations([dict(scenarios=self.rows)], self.document, selection_only=True)
+
     def test_partial_catalog_skips_only_contexts_not_queried(self):
         validate_migrations([dict(scenarios=[dict(self.rows[0], profile='other', replaces=[])])], self.document)
         with self.assertRaisesRegex(ValueError, 'applicable replacement'):

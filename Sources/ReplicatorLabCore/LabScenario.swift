@@ -100,15 +100,14 @@ struct LabScenario {
         if id == "myisam-recovery" { value["ordered_steps"] = SharedWorkflowCases.recovery.map { $0.fields } }
         if id == "forward-failures" { value["ordered_steps"] = SharedWorkflowCases.failures.map { $0.fields } }
         if id == DDLCoverageCases.group.id { value["ordered_steps"] = DDLCoverageCases.changes.map { $0.test.fields } }
-        if family == "bootstrap",
-            let fixture = DMLCompatibilityCases.cases.first(where: { id == "bootstrap-matrix-" + $0.id })
-        {
-            value["phase_count"] = fixture.phases.count
+        if MetadataDiscoveryCases.tests.contains(where: { $0.id == id }) {
+            value["assertions"] = MetadataDiscoveryCases.assertions(id, profile: profile)
+            value["replaces"] = MetadataDiscoveryCases.replaces(id)
         }
         value["status"] = reason(profile, variant: variant) == nil ? "not_run" : "not_applicable"
         if let reason = reason(profile, variant: variant) { value["reason"] = reason }
         value["setup"] =
-            ["bootstrap", "dml-refusals", "discovery", "failures", "recovery", "ordered", "collation", "filters"]
+            ["metadata", "dml-refusals", "discovery", "failures", "recovery", "ordered", "collation", "filters"]
                 .contains(family) || id == "positive"
             ? "equivalent unlogged table snapshots; isolated state and saved-state resume"
             : "replicated DDL; baseline reverse_poc tables are bootstrapped"
@@ -170,7 +169,7 @@ struct LabScenario {
                 test: .init(
                     "json-target84-schema",
                     "Existing 8.4 JSON defaults and functional indexes survive DML, restart and replay"),
-                family: "bootstrap",
+                family: "metadata",
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
@@ -180,7 +179,7 @@ struct LabScenario {
                 test: .init(
                     "target84-index-spatial-metadata",
                     "8.4 invisible indexes and SRID constraints survive DML, ALTER, restart and replay"),
-                family: "bootstrap",
+                family: "metadata",
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
@@ -190,7 +189,7 @@ struct LabScenario {
                 test: .init(
                     "expression-target84-dependencies",
                     "8.4 target expression dependencies, compound ALTER, refusal, restart and replay"),
-                family: "bootstrap",
+                family: "metadata",
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
@@ -199,7 +198,7 @@ struct LabScenario {
             .init(
                 test: .init(
                     "alter-rename-target84-refusal", "Refuse a native 8.4 parent rename defect before target SQL"),
-                family: "bootstrap",
+                family: "metadata",
                 profileExclusions: [
                     .forward: "Requires an 8.4 target.", .mysql57MyISAM: "Requires an 8.4 target.",
                     .mysql57InnoDB: "Requires an 8.4 target.",
@@ -291,11 +290,8 @@ struct LabScenario {
             )
         }
         cases.append(.init(test: DDLCoverageCases.positive, family: "dml", smoke: true))
-        cases += DMLCompatibilityCases.cases.map {
-            .init(
-                test: .init("bootstrap-matrix-" + $0.id, "Discover bootstrapped DML schema: " + $0.id),
-                family: "bootstrap", source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions,
-                requiresMainApplier: false)
+        cases += MetadataDiscoveryCases.tests.map {
+            .init(test: $0, family: "metadata", requiresMainApplier: false)
         }
         cases += DMLCompatibilityCases.rejections.map {
             .init(
@@ -331,6 +327,10 @@ struct LabScenario {
         let all = correctness
         let known = Set(all.map(\.id))
         let replacements = DMLCompatibilityCases.cases.compactMap { test -> String? in
+            if ids.contains("bootstrap-matrix-" + test.id) {
+                return
+                    "bootstrap-matrix-\(test.id) was replaced by \(MetadataDiscoveryCases.owner(test.id)); DML remains in \(test.replicatedReplacement ?? "matrix-" + test.id)"
+            }
             guard ids.contains("matrix-" + test.id), let replacement = test.replicatedReplacement else { return nil }
             return "matrix-\(test.id) was replaced by \(replacement)"
         }

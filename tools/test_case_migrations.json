@@ -604,6 +604,3398 @@
           "condition": "INSERT IGNORE (1,99) changes no rows; check both original rows remain unchanged."
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-binarychoices",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-binarychoices",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: binarychoices. Full DML phases remain in matrix-binarychoices.",
+          "assertion": "metadata-binarychoices"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-binarydefaults",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-binarydefaults",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: binarydefaults. Full DML phases remain in matrix-binarydefaults.",
+          "assertion": "metadata-binarydefaults"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-bits",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-bits",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: bits. Full DML phases remain in matrix-bits.",
+          "assertion": "metadata-bits"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-choiceboundaries",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-choiceboundaries",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: choiceboundaries. Full DML phases remain in matrix-choiceboundaries.",
+          "assertion": "metadata-choiceboundaries"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-choices",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-choices",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: choices. Full DML phases remain in matrix-choices.",
+          "assertion": "metadata-choices"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-collations",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-collations",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: collations. Full DML phases remain in matrix-collations.",
+          "assertion": "metadata-collations"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-composite",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-primary-key-row-matching",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: composite. Full DML phases remain in ddl-compat-primary-key-row-matching.",
+          "assertion": "metadata-composite"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-decimal",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-decimal",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: decimal. Full DML phases remain in matrix-decimal.",
+          "assertion": "metadata-decimal"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-decimaldefaults",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-decimaldefaults",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: decimaldefaults. Full DML phases remain in matrix-decimaldefaults.",
+          "assertion": "metadata-decimaldefaults"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-defaults",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-defaults",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: defaults. Full DML phases remain in matrix-defaults.",
+          "assertion": "metadata-defaults"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-encodings",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-encodings",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: encodings. Full DML phases remain in matrix-encodings.",
+          "assertion": "metadata-encodings"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-enumzero",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-enumzero",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: exactchoices. Full DML phases remain in matrix-enumzero.",
+          "assertion": "metadata-exactchoices"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-exactchoices",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-exactchoices",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: exactchoices. Full DML phases remain in matrix-exactchoices.",
+          "assertion": "metadata-exactchoices"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-fixed",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-fixed",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: fixed. Full DML phases remain in matrix-fixed.",
+          "assertion": "metadata-fixed"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-fixedfloating",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-fixedfloating",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: fixedfloating. Full DML phases remain in matrix-fixedfloating.",
+          "assertion": "metadata-fixedfloating"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-floatbounds",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-floatbounds",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: floatbounds. Full DML phases remain in matrix-floatbounds.",
+          "assertion": "metadata-floatbounds"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-floating",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-floating",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: floating. Full DML phases remain in matrix-floating.",
+          "assertion": "metadata-floating"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-floatingautodouble",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-floatingautodouble",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: floatingautodouble. Full DML phases remain in matrix-floatingautodouble.",
+          "assertion": "metadata-floatingautodouble"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-floatingautofixedfloat",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-floatingautofixedfloat",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: floatingautofixedfloat. Full DML phases remain in matrix-floatingautofixedfloat.",
+          "assertion": "metadata-floatingautofixedfloat"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-floatingautofloat",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-floatingautofloat",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: floatingautofloat. Full DML phases remain in matrix-floatingautofloat.",
+          "assertion": "metadata-floatingautofloat"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-floatingautounsigneddouble",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-floatingautounsigneddouble",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: floatingautounsigneddouble. Full DML phases remain in matrix-floatingautounsigneddouble.",
+          "assertion": "metadata-floatingautounsigneddouble"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-fulltext",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-fulltext",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: fulltext. Full DML phases remain in ddl-compat-fulltext.",
+          "assertion": "metadata-fulltext"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-generated",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-generated",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: generated. Full DML phases remain in ddl-compat-generated.",
+          "assertion": "metadata-generated"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-identifiercase",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-identifiercase",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: identifiercase. Full DML phases remain in matrix-identifiercase.",
+          "assertion": "metadata-identifiercase"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-ignore",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-key-conflicts",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in ddl-compat-key-conflicts.",
+          "assertion": "metadata-upsert"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-integers",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-integers",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: integers. Full DML phases remain in matrix-integers.",
+          "assertion": "metadata-integers"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-json",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-json",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: json. Full DML phases remain in matrix-json.",
+          "assertion": "metadata-json"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-jsonpartial",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-jsonpartial",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: json. Full DML phases remain in matrix-jsonpartial.",
+          "assertion": "metadata-json"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-legacybinaryset",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-legacybinaryset",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: legacybinaryset. Full DML phases remain in matrix-legacybinaryset.",
+          "assertion": "metadata-legacybinaryset"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-load",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-load",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in matrix-load.",
+          "assertion": "metadata-upsert"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-lob",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-lob",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: lob. Full DML phases remain in matrix-lob.",
+          "assertion": "metadata-lob"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-nativeencodings",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-nativeencodings",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: nativeencodings. Full DML phases remain in matrix-nativeencodings.",
+          "assertion": "metadata-nativeencodings"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-precision",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-precision",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: precision. Full DML phases remain in matrix-precision.",
+          "assertion": "metadata-precision"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-replace",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-key-conflicts",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in ddl-compat-key-conflicts.",
+          "assertion": "metadata-upsert"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-select",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-select",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in matrix-select.",
+          "assertion": "metadata-upsert"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-spatial",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-spatial",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: spatial. Full DML phases remain in matrix-spatial.",
+          "assertion": "metadata-spatial"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-temporal",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-temporal",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: temporal. Full DML phases remain in matrix-temporal.",
+          "assertion": "metadata-temporal"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-textdefaults",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-textdefaults",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: textdefaults. Full DML phases remain in matrix-textdefaults.",
+          "assertion": "metadata-textdefaults"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-textkey",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-primary-key-row-matching",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: textkey. Full DML phases remain in ddl-compat-primary-key-row-matching.",
+          "assertion": "metadata-textkey"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-typedjson",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-typedjson",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: json. Full DML phases remain in matrix-typedjson.",
+          "assertion": "metadata-json"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-unicodeidentifiers",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-unicodeidentifiers",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: unicodeidentifiers. Full DML phases remain in matrix-unicodeidentifiers.",
+          "assertion": "metadata-unicodeidentifiers"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-upsert",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-key-conflicts",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in ddl-compat-key-conflicts.",
+          "assertion": "metadata-upsert"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-values",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-constraints",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in ddl-compat-constraints.",
+          "assertion": "metadata-upsert"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-widechoices",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-widechoices",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: widechoices. Full DML phases remain in matrix-widechoices.",
+          "assertion": "metadata-widechoices"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-widestrings",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-widestrings",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: widestrings. Full DML phases remain in matrix-widestrings.",
+          "assertion": "metadata-widestrings"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-zerofill",
+      "replacement": "metadata-columns-indexes",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-zerofill",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: zerofill. Full DML phases remain in matrix-zerofill.",
+          "assertion": "metadata-zerofill"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "bootstrap-matrix-zerowidth",
+      "replacement": "metadata-labels-defaults",
+      "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
+      "retained_cases": [
+        "matrix-zerowidth",
+        "metadata-cache-ddl"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: zerowidth. Full DML phases remain in matrix-zerowidth.",
+          "assertion": "metadata-zerowidth"
+        },
+        {
+          "condition": "Discover each existing table once within one applier session.",
+          "assertion": "cold-reads-once"
+        },
+        {
+          "condition": "Save the applied GTIDs and source position.",
+          "assertion": "saved-checkpoint"
+        }
+      ]
     }
   ]
 }

@@ -126,15 +126,15 @@ class FeatureTests(unittest.TestCase):
 
     def test_repository_registry_has_documented_owners_for_first_migrations(self):
         definitions, owners = feature_index(load_features())
-        for case in ('ddl-compat-generated', 'bootstrap-matrix-generated'):
+        for case in ('ddl-compat-generated',):
             self.assertEqual(owners[('correctness', case)], 'generated-columns')
-        for case in ('ddl-compat-fulltext', 'bootstrap-matrix-fulltext'):
+        for case in ('ddl-compat-fulltext',):
             self.assertEqual(owners[('correctness', case)], 'full-text-search')
-        for case in ('ddl-compat-constraints', 'bootstrap-matrix-values',
-                     'ddl-compat-primary-key-row-matching', 'bootstrap-matrix-composite',
-                     'bootstrap-matrix-textkey', 'ddl-compat-key-conflicts',
-                     'bootstrap-matrix-upsert', 'bootstrap-matrix-replace', 'bootstrap-matrix-ignore'):
+        for case in ('ddl-compat-constraints', 'ddl-compat-primary-key-row-matching', 'ddl-compat-key-conflicts'):
             self.assertEqual(owners[('correctness', case)], 'indexes')
+        for case in ('metadata-columns-indexes', 'metadata-labels-defaults', 'metadata-cache-ddl'):
+            self.assertEqual(owners[('correctness', case)], 'table-metadata')
+        self.assertFalse(any(case.startswith('bootstrap-matrix-') for _, case in owners))
         self.assertEqual(definitions['runtime-control']['kind'], 'project')
 
 

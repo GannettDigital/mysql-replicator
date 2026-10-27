@@ -51,26 +51,57 @@ Test SQL uses file-backed standard input. This preserves UTF-8 bytes on macOS,
 where process arguments can change composed Unicode characters. The mysql client
 uses one delimiter for each request, including stored routine bodies.
 
-The `matrix-exactchoices` and `matrix-choiceboundaries` cases check exact ENUM/SET
-labels, defaults and ordinal writes. The corresponding `bootstrap-matrix-*` cases
-check discovery from an existing schema. These replace the old non-BMP DDL refusal
-cases. They cover latin1, UTF16, UTF16LE, UTF32, GB18030 and supplementary UTF-8.
+The `matrix-exactchoices` and `matrix-choiceboundaries` cases check ENUM/SET
+labels, defaults and ordinal writes. `metadata-labels-defaults` reads the same
+metadata from existing tables. These cases include latin1, UTF16, UTF16LE,
+UTF32, GB18030 and supplementary UTF-8.
 
-Bootstrap-only selections use their own applier states. They omit the unrelated
-main-applier database setup and general saved-schema restart. Each bootstrap
-phase still starts with fresh state and checks its own rows and checkpoint.
-Target-specific bootstrap cases retain their explicit restart and replay checks.
-A selection that also contains a case that needs the main applier keeps the
-general setup and restart. The catalog records this requirement as
-`requires_main_applier`. Other selections keep their current setup.
+The `metadata` family contains three focused cases:
+
+| Case | Checks |
+|---|---|
+| `metadata-columns-indexes` | Read existing columns and indexes. Compare saved types, nullability, names, key order, index parts and generated expressions with MySQL metadata. Check numeric defaults and AUTO_INCREMENT. |
+| `metadata-labels-defaults` | Read character sets, collations, ENUM/SET labels and stored defaults. Check exact label bytes, label order, default ordinals, binary padding, NUL and text defaults. |
+| `metadata-cache-ddl` | Read a table once. Reuse its cache entry for a second write without more metadata queries. Refresh it after ALTER. Check RENAME, DROP, recreation under the old name, and saved-state resume. |
+
+A cold read is the first metadata read for a table in a new applier session.
+The first two cases share table definitions with the DML fixtures. Each uses
+only the initial INSERT to trigger discovery. Each case keeps one applier
+session for all its tables. It saves one assertion per distinct metadata
+definition and checks the final GTID and source-position checkpoint.
+The complete DML phases remain in the related feature groups. The cache case
+uses INFO schema-read records and the target general query log to count reads.
+It allows the first write after ALTER to validate a new DML plan. The next
+write must reuse the plan and schema. It restores the log settings after the case.
+
+The family also retains four target-specific workflows:
+`json-target84-schema`, `target84-index-spatial-metadata`,
+`expression-target84-dependencies` and `alter-rename-target84-refusal`.
+They retain their own restart, replay or refusal checks.
+All cases in the group share the same MySQL containers. A metadata-only
+selection omits the general correctness applier setup.
+
+Run one case, the family on one profile, or the family on all profiles:
+
+```sh
+make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case metadata-cache-ddl"
+make lab-test ARGS="--profile mysql84-to-mysql57-myisam --suite correctness --family metadata"
+make lab-test ARGS="--profile all --suite correctness --family metadata"
+```
+
+Use `make lab-plan ARGS="--profile all --suite correctness --family metadata"`
+to inspect the selected groups without starting containers. Add `--coverage`
+to a test run to collect code coverage. After the first build, add `--skip-build`
+if the build inputs have not changed. See the
+[metadata migration review](../PLAN/BETA7_METADATA_GROUP_REVIEW.md).
 
 Full CI assigns related cases to named groups such as
-`table-column-index-changes` and `bootstrap-schema-discovery`.
+`table-column-index-changes` and `table-metadata-discovery`.
 Cases in each group share MySQL containers. The groups retain all selected SQL,
 per-case assertions and state boundaries. See [CI measurements](CI_MEASUREMENTS.md)
 for group counts, timing scope and coverage comparison rules.
 
-The `binarychoices` live and bootstrap cases check raw binary ENUM labels, binary
+The `matrix-binarychoices` and metadata cases check raw binary ENUM labels, binary
 SET labels, hex/bit literals and defaults. The `legacybinaryset` cases add non-UTF-8
 SET bytes on the two 5.7-to-5.7 profiles. MySQL 8.4.8 rejects that SET definition
 with native error 3507. Binary choice schema comparisons read raw SHOW CREATE
@@ -150,33 +181,31 @@ The full `dml` family includes `large-values` on all four profiles. This case
 checks large TEXT/BLOB values, packet limits, restart, offline replay, and
 recovery inspection. It requires GTID mode. See [large-value limits and tests](LARGE_VALUES.md).
 
-`matrix-bits` and `bootstrap-matrix-bits` use the same BIT workload for replicated
-CREATE and existing-table discovery. They check widths through 64 bits, defaults,
+`matrix-bits` checks widths through 64 bits, defaults,
 primary-key changes, ADD/MODIFY, and DML. Full CI includes these cases; inspect
 the results for the exact commit. See [BIT support](../PLAN/BIT_SUPPORT.md).
 
-`matrix-floating` and `bootstrap-matrix-floating` add FLOAT/DOUBLE DML and DDL
-cases for all four profiles. `matrix-fixedfloating` and
-`bootstrap-matrix-fixedfloating` check fixed-scale forms, defaults, rounding and
+`matrix-floating` adds FLOAT/DOUBLE DML and DDL
+cases for all four profiles. `matrix-fixedfloating` checks fixed-scale forms, defaults, rounding and
 ALTER. They replace the fixed-scale refusal cases. Full CI includes these cases; inspect the results for the exact commit. See
 [FLOAT/DOUBLE support](../PLAN/FLOATING_POINT_SUPPORT.md).
 
-`matrix-decimaldefaults` and `bootstrap-matrix-decimaldefaults` check native
+`matrix-decimaldefaults` checks native
 DECIMAL default rounding, scientific notation, quoted constants, unsigned and
-ZEROFILL forms. They include CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
+ZEROFILL forms. It includes CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
 
-`matrix-binarydefaults` and `bootstrap-matrix-binarydefaults` check exact binary
+`matrix-binarydefaults` checks exact binary
 default bytes, NUL, empty values, BINARY padding, CREATE and ALTER. The lab reads
 stored native defaults because displayed metadata can omit bytes.
 
-`matrix-textdefaults` and `bootstrap-matrix-textdefaults` check CHAR/VARCHAR
+`matrix-textdefaults` checks CHAR/VARCHAR
 defaults with supplementary characters, NUL, byte literals, numeric constants,
 legacy/wide encodings and CHAR padding modes. Metadata comparisons use stored
 defaults and preserve exact Unicode bytes.
 
-`matrix-zerowidth` and `bootstrap-matrix-zerowidth` check zero-width CHAR,
-VARCHAR, BINARY and VARBINARY columns. They distinguish empty values from NULL
-and exercise width changes before and after DML.
+`matrix-zerowidth` checks zero-width CHAR,
+VARCHAR, BINARY and VARBINARY columns. It distinguishes empty values from NULL
+and exercises width changes before and after DML.
 
 `json-year-compatibility` checks the optional 5.7 to 8.4 YEAR conversion inside
 JSON. It includes default refusal, native type checks, restart, UPDATE/DELETE,
@@ -212,18 +241,17 @@ Run it with `--profile mysql57-to-mysql84-innodb --suite correctness --case expr
 make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-json-indexes --case json-target84-schema"
 ```
 
-`matrix-json` and `bootstrap-matrix-json` check ordinary JSON values.
-`matrix-typedjson` and `bootstrap-matrix-typedjson` check DECIMAL, temporal and
-binary JSON types. All four profiles select these cases. `matrix-jsonpartial`
-and `bootstrap-matrix-jsonpartial` check partial updates on an 8.4 source.
-They inspect mysqlbinlog output to confirm that the source emitted a change
+`matrix-json` checks ordinary JSON values.
+`matrix-typedjson` checks DECIMAL, temporal and
+binary JSON types. All four profiles select these cases. `matrix-jsonpartial` checks partial updates on an 8.4 source.
+It inspects mysqlbinlog output to confirm that the source emitted a change
 record. These cases passed on the applicable profiles. The old `matrix-reject-json-opaque` case
 is removed. See [JSON support and limits](JSON_SUPPORT.md).
 
-`matrix-spatial` and `bootstrap-matrix-spatial` check all eight spatial types,
+`matrix-spatial` checks all eight spatial types,
 SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key
-changes, added columns, and SPATIAL index changes. They compare stored bytes
-and SRIDs with the native replica. They do not compare WKT output across server
+changes, added columns, and SPATIAL index changes. It compares stored bytes
+and SRIDs with the native replica. It does not compare WKT output across server
 versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
 The former `reject-geometry` and `reject-fulltext` refusal cases have positive
 coverage. The refusal selection now uses `reject-engine`.
@@ -231,9 +259,8 @@ coverage. The refusal selection now uses `reject-engine`.
 `ddl-compat-fulltext` checks index creation, changes, parser metadata, search
 results, CREATE TABLE LIKE and restart. It also checks explicit ngram index
 creation and searches after multirow INSERT, UPDATE and DELETE. These named
-assertions replace `matrix-fulltext`. `bootstrap-matrix-fulltext` retains all
-three original row-change phases with initial discovery of an existing ngram
-index. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md) and the
+assertions replace `matrix-fulltext`. `metadata-columns-indexes` checks initial
+discovery of an existing ngram index and saves its parser metadata. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md) and the
 [migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md).
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
@@ -242,14 +269,14 @@ after the changes on all profiles. Named assertions distinguish single-row
 UPDATE/DELETE from multirow INSERT/UPDATE/DELETE. The multirow phases replace
 `matrix-values`; they retain its separate integer-primary-key table and non-NULL
 value column. Each phase checks exact rows, including unaffected rows.
-`bootstrap-matrix-values` retains the original existing-schema workload.
+`metadata-columns-indexes` checks initial discovery of integer and unique keys.
 
 `ddl-compat-key-conflicts` combines the former `matrix-upsert`, `matrix-replace`
 and `matrix-ignore` cases. It keeps separate tables and the original SQL for each
 starting state. Named assertions check mixed insert/update effects, REPLACE
 conflicts with two different rows, skipped duplicate rows, and no-op statements.
-Each check compares exact rows on source, native and target. The three
-`bootstrap-matrix-*` cases retain their existing-schema and resume checks.
+Each check compares exact rows on source, native and target. The metadata group
+checks discovery once for the shared primary-key and unique-key definition.
 
 The `keys-rows-gtids` group contains the `positive` single-row case and related
 key, row and GTID cases. The SQL `without-source-gtids` variant runs `positive`
@@ -272,8 +299,8 @@ and unaffected rows. The text table uses a `VARCHAR(20)` PRIMARY KEY with
 `utf8mb4_unicode_ci`. Assertions check exact key bytes after a case-only change
 and a case-insensitive DELETE.
 
-`bootstrap-matrix-composite` and `bootstrap-matrix-textkey` retain existing-schema
-discovery and resume. Prefix-key and UNIQUE-key workflows remain separate. The
+`metadata-columns-indexes` retains cold reads of the composite and text key
+definitions. Prefix-key and UNIQUE-key workflows remain separate. The
 [measured review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md#slice-6--composite-and-text-primary-key-review)
 records preserved coverage and the accepted time increase. These cases now share
 the `keys-rows-gtids` fixture with related key and row tests.
@@ -353,7 +380,7 @@ specific refusals are not silently reused with different expectations.
 | --- | --- |
 | `ordered` | `ddl`: 70 dependent table-lifecycle steps, conditional no-ops, LIKE, cross-schema moves, defaults, schema history and independent binlog comparisons |
 | `collation` | Forward 0900 translation, cleanup/table swap, policy-change resume refusal and PAD collision |
-| `bootstrap` | `bootstrap-matrix-*`: the DML matrix against preexisting table snapshots, with isolated checkpoints for each phase |
+| `metadata` | Read existing columns, indexes, labels and defaults; reuse and invalidate the metadata cache; retain target-only schema workflows |
 | `dml-refusals` | Forward `matrix-reject-*`: incompatible metadata, generated values and decoder refusals, with target effects and unchanged checkpoint checks |
 | `discovery` | `ddl-index-resume`: saved indexed schema, resumed DML and external index-drift refusal |
 | `offline` | `offline-replay`: finite fetch, external raw files, replay/resume without source credentials, native comparison, and support-bundle extraction |
@@ -420,7 +447,7 @@ Recovery qualification omits the old embedded benchmark. MyISAM `recovery` selec
 the same `myisam-recovery` group included in full correctness; `--suite all` runs
 that group once. Its ordered child cases are listed in the offline inventory.
 The `dml-suite`, `ddl-suite`, `legacy-dml` and `legacy-ddl` commands are removed.
-Use shared `correctness`, its `bootstrap` family and capture variants instead.
+Use shared `correctness`, its `metadata` family and capture variants instead.
 The old `reverse-suite` and `reverse-correctness` CLI aliases remain, but their
 Make targets are removed. Use the shared suite and an explicit profile.
 The former `demo-*` and `reverse-demo-*` commands are replaced by `demo ACTION
@@ -663,6 +690,9 @@ existing families and group names remain in use during consolidation.
 its original profile/variant/transport selections, and the assertions that keep
 its test conditions. Planning rejects missing replacement assertions. Full CI
 planning also checks that each replacement runs in the original selections.
+For metadata migrations, `retained_cases` also requires the separate DML owner
+and cache workflow in each original selection. A manual selection can run only
+the metadata case.
 These checks do not prove that two tests have the same behavior. Each migration
 also needs a review of its SQL, expected results and measured code coverage.
 
@@ -670,8 +700,8 @@ also needs a review of its SQL, expected results and measured code coverage.
 multirow INSERT, NULL propagation, UPDATE and DELETE with stored generated
 columns. It retains its virtual-column and ALTER checks. Three named assertions
 save SQL, expected values and observed values from the source, native replica
-and target. `bootstrap-matrix-generated` retains all three original phases for
-an existing table. A selection of the retired ID fails and names its replacement.
+and target. `metadata-columns-indexes` checks the saved generated expression
+for an existing table. A selection of a retired ID fails and names its replacement.
 See [the consolidation plan](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for the
 comparison results and coverage review.
 
@@ -1061,29 +1091,29 @@ status and exact-build qualification are separate. See
 [status definitions](SUPPORT.md#support-status).
 See [the catalog guide](../tests/DDLCoverage/README.md#beta6-support-audit).
 
-`matrix-enumzero` and `bootstrap-matrix-enumzero` distinguish ENUM ordinal zero
-from a declared empty-string label. They check multi-row INSERT, ordinal changes,
+`matrix-enumzero` distinguishes ENUM ordinal zero
+from a declared empty-string label. It checks multirow INSERT, ordinal changes,
 NULL, primary-key changes, DELETE and schema restart on all four profiles. The
 former `matrix-reject-enum-error-value` case is removed. Ordered-label and
 missing-label refusal cases remain.
 
-`matrix-zerofill` and `bootstrap-matrix-zerofill` check integer display widths,
+`matrix-zerofill` checks integer display widths,
 implicit UNSIGNED, padded defaults, numeric boundaries, ALTER and DML. The
 included-DDL refusal case uses an explicit engine outside the selected profile.
 This keeps a real policy failure after ZEROFILL becomes supported.
 
-The `matrix-collations` and `bootstrap-matrix-collations` cases test all 63 native
-5.7 collations for utf8mb4, utf8mb3, latin1 and ASCII. They compare schema metadata
+The `matrix-collations` case tests all 63 native
+5.7 collations for utf8mb4, utf8mb3, latin1 and ASCII. It compares schema metadata
 and bytes after each phase. The case includes a collated key, defaults, NULL,
 INSERT, UPDATE, ALTER and DELETE. It does not test every language-specific sort rule.
 
-The `matrix-nativeencodings` and `bootstrap-matrix-nativeencodings` cases add the
-remaining 36 native 5.7 text encodings. They check raw CHAR/VARCHAR/TEXT bytes,
+The `matrix-nativeencodings` case adds the
+remaining 36 native 5.7 text encodings. It checks raw CHAR/VARCHAR/TEXT bytes,
 encoding-specific CHAR padding, NUL, defaults, NULL and DML/DDL phases. A UTF16
 primary key checks binary parameter conversion in key predicates.
 
 The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
-The live and bootstrap cases run on both 5.7-to-5.7 profiles. The inventory gives
+The DML cases and their metadata definitions run on both 5.7-to-5.7 profiles. The inventory gives
 native error 1063 as the exclusion reason for a profile with an 8.4 source or target.
 The common selection code and both execution paths use these profile exclusions.
 

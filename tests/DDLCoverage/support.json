@@ -36,12 +36,10 @@
       ],
       "candidate_cases": [
         "matrix-encodings",
-        "bootstrap-matrix-encodings",
+        "metadata-labels-defaults",
         "ddl-compat-primary-key-row-matching",
         "matrix-collations",
-        "bootstrap-matrix-collations",
         "matrix-nativeencodings",
-        "bootstrap-matrix-nativeencodings",
         "ddl-compat-query-encodings"
       ],
       "code_references": [
@@ -85,10 +83,10 @@
       ],
       "candidate_cases": [
         "matrix-widestrings",
-        "bootstrap-matrix-widestrings",
+        "metadata-columns-indexes",
         "large-values",
         "matrix-zerowidth",
-        "bootstrap-matrix-zerowidth"
+        "metadata-labels-defaults"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DMLColumnType.swift"
@@ -128,11 +126,9 @@
       ],
       "candidate_cases": [
         "matrix-fixedfloating",
-        "bootstrap-matrix-fixedfloating",
+        "metadata-columns-indexes",
         "matrix-floatbounds",
-        "bootstrap-matrix-floatbounds",
-        "matrix-zerofill",
-        "bootstrap-matrix-zerofill"
+        "matrix-zerofill"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DMLColumnType.swift",
@@ -173,7 +169,7 @@
       ],
       "candidate_cases": [
         "matrix-decimaldefaults",
-        "bootstrap-matrix-decimaldefaults"
+        "metadata-columns-indexes"
       ],
       "code_references": [
         "Sources/ReplicatorApply/NativeDefaultMetadata.swift",
@@ -225,7 +221,7 @@
       ],
       "candidate_cases": [
         "matrix-binarydefaults",
-        "bootstrap-matrix-binarydefaults"
+        "metadata-labels-defaults"
       ],
       "code_references": [
         "Sources/ReplicatorApply/BinaryDefaultMetadata.swift",
@@ -283,7 +279,7 @@
       ],
       "candidate_cases": [
         "matrix-textdefaults",
-        "bootstrap-matrix-textdefaults"
+        "metadata-labels-defaults"
       ],
       "code_references": [
         "Sources/ReplicatorApply/TextDefaultMetadata.swift",
@@ -341,7 +337,7 @@
       ],
       "candidate_cases": [
         "matrix-enumzero",
-        "bootstrap-matrix-enumzero"
+        "metadata-labels-defaults"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DMLColumnType.swift"
@@ -382,13 +378,10 @@
       ],
       "candidate_cases": [
         "matrix-exactchoices",
-        "bootstrap-matrix-exactchoices",
+        "metadata-labels-defaults",
         "matrix-choiceboundaries",
-        "bootstrap-matrix-choiceboundaries",
         "matrix-binarychoices",
-        "bootstrap-matrix-binarychoices",
-        "matrix-legacybinaryset",
-        "bootstrap-matrix-legacybinaryset"
+        "matrix-legacybinaryset"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DMLColumnType.swift",
@@ -432,9 +425,8 @@
       ],
       "candidate_cases": [
         "matrix-identifiercase",
-        "bootstrap-matrix-identifiercase",
+        "metadata-columns-indexes",
         "matrix-unicodeidentifiers",
-        "bootstrap-matrix-unicodeidentifiers",
         "ddl-compat-unicode-names",
         "ddl-compat-query-encodings",
         "ddl-compat-table-name-case"
@@ -574,7 +566,7 @@
       ],
       "candidate_cases": [
         "ddl-compat-fulltext",
-        "bootstrap-matrix-fulltext"
+        "metadata-columns-indexes"
       ],
       "code_references": [
         "Sources/ReplicatorApply/DDLParser.swift",
@@ -2151,10 +2143,7 @@
         "matrix-floatingautodouble",
         "matrix-floatingautofixedfloat",
         "matrix-floatingautounsigneddouble",
-        "bootstrap-matrix-floatingautofloat",
-        "bootstrap-matrix-floatingautodouble",
-        "bootstrap-matrix-floatingautofixedfloat",
-        "bootstrap-matrix-floatingautounsigneddouble"
+        "metadata-columns-indexes"
       ],
       "code_references": [
         "Sources/ReplicatorApply/Configuration.swift",

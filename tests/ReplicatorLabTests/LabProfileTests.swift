@@ -3,7 +3,7 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
-    func testKeyConflictMigrationKeepsSourceStatementsAndBootstrapStates() throws {
+    func testKeyConflictMigrationKeepsSourceStatements() throws {
         let cases = LabScenario.correctness
         let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-key-conflicts" })
         let steps = DDLCompatibilityCases.keyConflicts.steps
@@ -20,7 +20,7 @@ final class LabProfileTests: XCTestCase {
         ] {
             let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == id })
             XCTAssertEqual(fixture.phases.count, count)
-            XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-" + id })
+            XCTAssertFalse(cases.contains { $0.id == "bootstrap-matrix-" + id })
             XCTAssertFalse(cases.contains { $0.id == "matrix-" + id })
             let actual = steps.filter { $0.sql.contains("ddlcompat." + table) }
             XCTAssertEqual(actual.count, count + 1)
@@ -63,7 +63,7 @@ final class LabProfileTests: XCTestCase {
         // Keep the original CREATE and write statements, including one transaction per statement.
         for (id, table, count) in [("composite", "composite_key", 4), ("textkey", "text_key", 3)] {
             XCTAssertFalse(cases.contains { $0.id == "matrix-" + id })
-            XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-" + id })
+            XCTAssertFalse(cases.contains { $0.id == "bootstrap-matrix-" + id })
             XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == id })
             let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == id })
             XCTAssertEqual(fixture.phases.count, count)
@@ -85,10 +85,10 @@ final class LabProfileTests: XCTestCase {
         }
     }
 
-    func testPrimaryKeyRowMigrationRetainsBootstrapAndSingleRowAssertions() throws {
+    func testPrimaryKeyRowMigrationRetainsSingleRowAssertions() throws {
         let cases = LabScenario.correctness
         XCTAssertFalse(cases.contains { $0.id == "matrix-values" })
-        XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-values" })
+        XCTAssertFalse(cases.contains { $0.id == "bootstrap-matrix-values" })
         let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-constraints" })
         for profile in LabProfile.allCases {
             XCTAssertNil(replacement.reason(profile))
@@ -110,7 +110,7 @@ final class LabProfileTests: XCTestCase {
     func testFulltextMigrationRetainsBootstrapAndNamesReplacementAssertions() throws {
         let cases = LabScenario.correctness
         XCTAssertFalse(cases.contains { $0.id == "matrix-fulltext" })
-        XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-fulltext" })
+        XCTAssertFalse(cases.contains { $0.id == "bootstrap-matrix-fulltext" })
         let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-fulltext" })
         for profile in LabProfile.allCases {
             XCTAssertNil(replacement.reason(profile))
@@ -130,7 +130,7 @@ final class LabProfileTests: XCTestCase {
     func testGeneratedColumnMigrationRetainsBootstrapAndNamesReplacementAssertions() throws {
         let cases = LabScenario.correctness
         XCTAssertFalse(cases.contains { $0.id == "matrix-generated" })
-        XCTAssertTrue(cases.contains { $0.id == "bootstrap-matrix-generated" })
+        XCTAssertFalse(cases.contains { $0.id == "bootstrap-matrix-generated" })
         let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-generated" })
         for profile in LabProfile.allCases {
             XCTAssertNil(replacement.reason(profile))
@@ -146,9 +146,9 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(fixture.phases.count, 3)
         XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == "generated" })
     }
-    func testBootstrapSelectionsKeepTheirOwnStateAndMixedSelectionsKeepTheMainApplier() throws {
+    func testMetadataSelectionsKeepTheirOwnStateAndMixedSelectionsKeepTheMainApplier() throws {
         for profile in LabProfile.allCases {
-            let bootstrap = LabScenario.correctness.filter { $0.family == "bootstrap" && $0.reason(profile) == nil }
+            let bootstrap = LabScenario.correctness.filter { $0.family == "metadata" && $0.reason(profile) == nil }
             XCTAssertFalse(bootstrap.isEmpty)
             let selected = Set(bootstrap.map(\.id))
             XCTAssertFalse(LabScenario.needsMainApplier(selected: selected, slice: "all"))
@@ -220,7 +220,7 @@ final class LabProfileTests: XCTestCase {
     }
     func testLegacyFloatingAutoIncrementHasNativeVersionExclusions() throws {
         for fixture in DMLCompatibilityCases.legacyFloatingAutoIncrement {
-            for prefix in ["matrix-", "bootstrap-matrix-"] {
+            for prefix in ["matrix-"] {
                 let scenario = try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix + fixture.id })
                 for profile in LabProfile.allCases {
                     let eligible = profile == .mysql57InnoDB || profile == .mysql57MyISAM
@@ -349,8 +349,8 @@ final class LabProfileTests: XCTestCase {
             XCTAssertTrue(DDLCoverageCases.registry.contains { $0.test.id == phase.id })
             XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: [phase.id]))
         }
-        let matrix = try LabScenario.select(tier: "full", family: "bootstrap", ids: ["bootstrap-matrix-decimal"])
-        XCTAssertEqual(matrix.map(\.id), ["bootstrap-matrix-decimal"])
+        let matrix = try LabScenario.select(tier: "full", family: "metadata", ids: ["metadata-columns-indexes"])
+        XCTAssertEqual(matrix.map(\.id), ["metadata-columns-indexes"])
         XCTAssertEqual(try DMLCompatibilityCases.transactionCount("a:1-3:5,b:9-10"), 6)
         XCTAssertEqual(try DMLCompatibilityCases.transactionCount(""), 0)
         for suite in ["legacy-dml", "legacy-ddl"] { XCTAssertThrowsError(try LabTestOptions(["--suite", suite])) }
@@ -560,7 +560,7 @@ final class LabProfileTests: XCTestCase {
 
 extension LabProfileTests {
     func testJSONCasesShareProfilesAndGateOnlyPartialEvents() throws {
-        for prefix in ["matrix-", "bootstrap-matrix-"] {
+        for prefix in ["matrix-"] {
             for profile in LabProfile.allCases {
                 for name in ["json", "typedjson"] {
                     let test = try XCTUnwrap(LabScenario.correctness.first { $0.id == prefix + name })

@@ -44,6 +44,69 @@ Use the existing shared catalog, planner, runners and measurement tools. Do not
 build a second test framework. Finish the full-suite organization before choosing
 the short PR selection.
 
+## Validation scope for each step
+
+Use this section for all remaining slices. Earlier validation records describe
+completed work; they do not require those runs again. Full matrix coverage is a
+CI requirement. It is not a local test list for each edit.
+
+Before implementation, record the following in the slice:
+
+- **Changed behavior:** the assertion, selection rule or fixture boundary.
+- **Local checks:** exact test names or commands, profile, variant and transport.
+- **Build:** the required product or image, or `none`.
+- **CI checks:** combinations deferred to CI and the reason they are needed.
+- **Stop condition:** the results that complete local verification.
+
+Choose one profile that exercises the changed behavior. For a shared SQL path,
+use `mysql84-to-mysql57-myisam`, default variant, SQL transport. For an
+InnoDB-only or 8.4-target behavior, use `mysql57-to-mysql84-innodb`, default
+variant, SQL transport. Add another profile only when the changed code or
+assertion has a distinct engine or version branch. Name that branch in the
+slice before starting the extra run. A source metadata change can require both
+source versions; a generic cache assertion does not require all four profiles.
+Use a non-default variant or BINLOG transport only when that path changed.
+
+| Plan step | Local verification | Build required | Checks left to CI |
+|---|---|---|---|
+| 0 — Save baseline | Read saved results, SQL, timing and coverage. Check that required artifacts are present. | None. | Obtain a new baseline only if the saved run is incomplete or no longer applies. |
+| 1 — Feature ownership and selection | Run affected catalog, migration and selector unit tests. Generate the full plan without containers; check applicability and owners. | Build the host lab only if its source or catalog code changed. | Existing profile matrix; no extra local database run for catalog-only edits. |
+| 2–4 — Combine feature cases | Review old/new assertions and SQL. Run affected catalog/migration tests, then the changed case or combined sequence on one representative profile. Use a second profile only for a changed engine/version branch. | Host lab for Swift harness edits. Reuse a valid application image; build one if required by its inputs. | Remaining profiles, variants and transports; exact coverage comparison. |
+| 5 — Share fixtures | Run the changed combined order once in one fixture. Check setup count, settings and state at case boundaries. Use the variant affected by the change. | Same build rule as Steps 2–4. | Other combinations and full-suite interaction checks. |
+| 6 — Compare coverage and balance groups | Analyze saved reports. Run planner, assignment, fixture-count and growth tests after assignment changes. A pure job-label or assignment change needs no database run. A changed case order uses Step 5. | None for report or Python planner edits. | One full instrumented run after the reviewed changes are pushed. Rerun affected jobs for fixes; do not repeat successful jobs without a reason. |
+| 7 — Select PR cases | Check explicit case lists, dependencies and profile applicability with planner tests. Do not rerun unchanged case bodies locally. | None unless selection code in the lab changed. | Measure the selected MyISAM and InnoDB jobs in parallel, with the shared build. |
+| 8 — Docs and obsolete code | For docs, check links, command names and the diff. For code removal, run affected unit tests and compile affected targets. | None for docs. Build affected targets for code removal. | Periphery and the regular selected checks. Packaging checks only if packaging changed. |
+
+### Build and retry limits
+
+- Do not build for documentation, report analysis or Python-only planner edits.
+- Build the host lab once after a batch of Swift harness edits. Run focused unit
+  tests in the same build directory so they reuse compiler output.
+- Check the application image inputs before integration. Reuse a valid image
+  with `--skip-build`. Do not change its input label to bypass validation. If
+  the image is invalid, record why and build the required image once. Reuse it
+  for subsequent runs while its inputs remain valid.
+- Do not build Debian packages, static release binaries or unrelated products
+  for test-group changes. Do not run the syntax suite unless syntax code or its
+  test/build setup changed.
+- After a failure, read its saved evidence first. Fix and rerun that case on the
+  same profile. Do not rerun successful cases or add profiles to debug a shared
+  assertion. Expand only for a concrete unresolved difference.
+- Stop when the listed local checks pass. Leave unchanged restart, recovery and
+  replay checks to their existing cases in CI. Do not add them to a local run
+  merely because the changed case uses the same applier.
+
+### Current metadata slice: local checks complete
+
+The metadata-read cases already passed locally. The cache case passed on
+`mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`, with the default
+variant and SQL transport. These checks cover both target engines. No further
+local profile, restart, file-position/MINIMAL or full-group run is required for
+this slice. No further build is required while build inputs are unchanged.
+See [the metadata results](BETA7_METADATA_GROUP_REVIEW.md#local-integration-checks).
+Next, compare the next full CI run with the saved baseline. A failure can reopen
+only the affected local check; it does not restart the whole validation list.
+
 ## Growth and acceptance criteria
 
 Design the suite so that a new case normally extends an existing feature group.
@@ -368,6 +431,7 @@ model; this work does not add a second qualification suite.
 
 ## Working method
 
+Record the [validation scope](#validation-scope-for-each-step) before each slice.
 Make each numbered step reviewable. Split Steps 2 and 3 into separate commits per
 feature when useful. After each step, record changes, focused tests, measurement
 paths and remaining work here. Do not request a full local run. Do not re-run the
@@ -1087,9 +1151,14 @@ All eight data/checkpoint checks and coverage collections passed. All eight
 ratios exceeded 2× and were accepted only by report-only mode.
 
 
-## Next work after the failed full CI run
+## Next work after the passing full CI run
 
 See [the CI fixes and test-suite feedback plan](BETA7_CI_FOLLOWUP.md).
-First fix the failures, check the affected cases locally, and obtain a passing
-full CI run. Then use that run to change names, remove repeated discovery/DML
-checks, and balance groups. Do not mix those changes with the failure fixes.
+Run `40454033524` passed at `efb3458`. The failure fixes are complete.
+The [metadata group review](BETA7_METADATA_GROUP_REVIEW.md) maps 47 repeated
+DML fixtures to existing owners and identifies four target-only workflows to
+retain. Keep a small metadata group for reads, cache reuse and DDL invalidation.
+The focused replacements and retirement map are now implemented. Focused local
+checks passed on both target engines. Compare the next full CI run with the passing baseline before
+combining more definitions. Then measure and balance groups. Select the short
+PR suite last.

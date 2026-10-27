@@ -24,6 +24,11 @@ def entries(document):
         if key in seen or item['retired'] == item['replacement']:
             raise ValueError('duplicate or self-referencing case migration')
         seen.add(key)
+        retained = item.get('retained_cases', [])
+        if not isinstance(retained, list) or any(not isinstance(case, str) or not case.strip()
+                or case in (item['retired'], item['replacement']) for case in retained) \
+                or len(retained) != len(set(retained)):
+            raise ValueError('invalid retained cases in migration')
         conditions = item.get('conditions')
         if not isinstance(conditions, list) or not conditions:
             raise ValueError('migration needs retained conditions')
@@ -87,6 +92,17 @@ def validate_migrations(catalogs, document=None, *, complete=False, groups=None,
                 raise ValueError(f'missing replacement assertions: {key}')
             if complete and planned is not None and (*context, scope['transport'], item['replacement']) not in planned:
                 raise ValueError(f'missing replacement execution: {key}/{scope["transport"]}')
+            # A discovery case can lose duplicate DML phases only while their
+            # separate owners still run in every original scope. These owners
+            # need not share the metadata fixture or its result file.
+            if complete or not selection_only:
+                for identifier in item.get('retained_cases', []):
+                    retained_key = (*context, identifier)
+                    retained = rows.get(retained_key)
+                    if retained is None or retained['status'] != 'not_run':
+                        raise ValueError(f'missing retained case: {retained_key}')
+                    if complete and planned is not None and (*context, scope['transport'], identifier) not in planned:
+                        raise ValueError(f'missing retained execution: {retained_key}/{scope["transport"]}')
 
 
 def validate_results(cases, item):

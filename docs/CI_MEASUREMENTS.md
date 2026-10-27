@@ -195,8 +195,9 @@ The shared groups include:
   definitions and column modifications.
 - `character-sets-collations`: character-set DDL and encoded row values.
 - `data-types-values`: numeric, temporal, structured and default values.
-- `bootstrap-schema-discovery`: existing-schema discovery with the retained
-  isolated state and resume phases. These phases reuse the same containers.
+- `table-metadata-discovery`: focused metadata reads, cache reuse and DDL
+  invalidation, plus the retained target-specific schema workflows. The cases
+  reuse the same MySQL containers.
 
 Each job runs exactly one group. The configuration keeps `max_groups: 1`, and a
 unit test enforces that policy. Required restart/replay checks remain test steps;

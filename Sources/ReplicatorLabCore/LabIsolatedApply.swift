@@ -25,14 +25,16 @@ final class LabIsolatedApply {
         config["stateDirectory"] = "/evidence/" + label
         return config
     }
-    func start(_ label: String, config: [String: Any], initialize: Bool = true) throws -> String {
+    func start(_ label: String, config: [String: Any], initialize: Bool = true, verbose: Bool = false) throws -> String
+    {
         let original = f.config
         defer { f.config = original }
         f.config = config
         try f.installConfig(label)
         return try f.startClient(
             label,
-            arguments: ["run", "--config", "/evidence/" + label + ".yaml"] + (initialize ? ["--initialize"] : []))
+            arguments: ["run", "--config", "/evidence/" + label + ".yaml"] + (initialize ? ["--initialize"] : [])
+                + (verbose ? ["--verbose"] : []))
     }
     func waitForReader(_ client: String) throws {
         // The native reference and previous experiments share capture_fixture.

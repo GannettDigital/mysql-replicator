@@ -24,7 +24,7 @@
     "table-column-index-changes": 1440,
     "character-sets-collations": 780,
     "data-types-values": 600,
-    "bootstrap-schema-discovery": 1800,
+    "table-metadata-discovery": 1800,
     "keys-rows-gtids": 1380,
     "demo-workbook": 420,
     "demo-container-repair": 420,

@@ -140,7 +140,7 @@ public enum SharedCorrectness {
                 if slice == "all" {
                     try foreignKeySafety()
                     try basicDML()
-                    try bootstrapDML()
+                    try tableMetadataDiscovery()
                     try dmlRefusals()
                     try orderedDDL()
                     try collationWorkflows()

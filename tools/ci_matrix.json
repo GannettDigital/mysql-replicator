@@ -98,9 +98,9 @@
       ]
     },
     {
-      "name": "bootstrap-schema-discovery",
+      "name": "table-metadata-discovery",
       "families": [
-        "bootstrap"
+        "metadata"
       ]
     },
     {
