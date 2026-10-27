@@ -1085,3 +1085,11 @@ ownership, dependency, coverage-count, fixture-count and growth checks. Local
 10K results are recorded in [the benchmark report](BETA7_10K_BENCHMARK.md).
 All eight data/checkpoint checks and coverage collections passed. All eight
 ratios exceeded 2× and were accepted only by report-only mode.
+
+
+## Next work after the failed full CI run
+
+See [the CI fixes and test-suite feedback plan](BETA7_CI_FOLLOWUP.md).
+First fix the failures, check the affected cases locally, and obtain a passing
+full CI run. Then use that run to change names, remove repeated discovery/DML
+checks, and balance groups. Do not mix those changes with the failure fixes.
