@@ -26,6 +26,30 @@ class MatrixTests(unittest.TestCase):
     def generate(self):
         return generate([dict(scenarios=self.rows)], self.policy)
 
+    def test_performance_matrix_covers_both_transports_and_propagates_policy(self):
+        from ci_lab import command
+        self.policy['performance'] = dict(max_native_ratio=2.0, report_only=True)
+        self.policy['binlog_selections'] = [dict(area='replication-backlog-10k', suite='performance',
+                                               profiles=['forward', 'reverse'], cases=['backlog-10k'])]
+        self.rows += [row('backlog-10k', suite='performance', profile=p) for p in ['forward', 'reverse']]
+        result = self.generate()
+        performance = [g for g in result['include'] if g['suite'] == 'performance']
+        self.assertEqual(len(performance), 4)
+        self.assertEqual(sum(g['owns_obligations'] for g in performance), 2)
+        for group in performance:
+            self.assertEqual(group['reports'], 1)
+            args = command(group)
+            self.assertIn('--coverage', args)
+            self.assertIn('--report-only', args)
+            self.assertIn('backlog-10k', args)
+            self.assertEqual(args[args.index('--max-native-ratio') + 1], '2.0')
+            if group.get('dml_transport') == 'binlog':
+                self.assertIn('binlog', args)
+        for ratio in (0, -1, float('nan'), float('inf'), True):
+            self.policy['performance']['max_native_ratio'] = ratio
+            with self.assertRaises(ValueError):
+                self.generate()
+
     def test_full_inventory_dependency_closure_and_coverage_collections(self):
         result = self.generate()
         covered = set()

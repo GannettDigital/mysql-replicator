@@ -100,6 +100,7 @@ class SelectionTests(unittest.TestCase):
                 select_catalog([catalog], **filters)
 
     def test_all_uses_canonical_catalog_instead_of_adding_recovery_aliases(self):
+        self.features["features"][0]["cases"]["performance"] = ["performance"]
         output = io.StringIO()
         def query(args, **kwargs):
             suite = args[args.index('--suite') + 1]
@@ -107,7 +108,7 @@ class SelectionTests(unittest.TestCase):
                 self.fail('standalone recovery catalog would add aliases')
             rows = self.rows if suite in ('all', 'correctness') else [row('reconnect', suite='lifecycle')]
             if suite == 'all':
-                rows = rows + [row(s, suite=s, status='not_applicable') for s in ('native', 'demo', 'recovery')]
+                rows = rows + [row(s, suite=s, status='not_applicable') for s in ('native', 'demo', 'recovery', 'performance')]
             return json.dumps(dict(scenarios=rows))
         with patch('sys.argv', ['lab_selection.py', '--lab', '/tmp/lab', '--suite', 'all']), \
                 patch('lab_selection.subprocess.check_output', side_effect=query), \

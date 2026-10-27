@@ -96,7 +96,7 @@ reverse-correctness:
 # Canonical profile-driven lab commands. Specialized targets above retain their scope.
 PROFILE ?= all
 TIER ?= full
-.PHONY: correctness lab-test lab-list lab-plan lab-demo lab-benchmark
+.PHONY: correctness lab-test lab-list lab-plan lab-demo lab-benchmark lab-performance
 correctness:
 	swift run replicator-lab test --profile $(PROFILE) --suite correctness --tier $(TIER) $(ARGS)
 lab-test:
@@ -107,6 +107,8 @@ lab-list:
 	@swift run replicator-lab test --profile $(PROFILE) --suite all --list $(ARGS)
 lab-demo:
 	swift run replicator-lab demo $(ACTION) --profile $(PROFILE) $(ARGS)
+lab-performance:
+	swift run replicator-lab test --profile $(PROFILE) --suite performance $(ARGS)
 lab-benchmark:
 	swift run replicator-lab benchmark --profile $(PROFILE) $(ARGS)
 

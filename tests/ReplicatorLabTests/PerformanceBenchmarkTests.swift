@@ -3,6 +3,55 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class PerformanceBenchmarkTests: XCTestCase {
+    func testNativeRatioLimitAndReportOnly() throws {
+        let exact = try BenchmarkLimit(nativeSeconds: 10, applierSeconds: 20, maximum: 2, reportOnly: false)
+        XCTAssertTrue(exact.accepts)
+        for reportOnly in [false, true] {
+            let over = try BenchmarkLimit(nativeSeconds: 10, applierSeconds: 21, maximum: 2, reportOnly: reportOnly)
+            XCTAssertFalse(over.withinLimit)
+            XCTAssertEqual(over.accepts, reportOnly)
+            XCTAssertEqual(over.json["status"] as? String, "over_limit")
+            for invalid in [0, -1, Double.infinity, Double.nan] {
+                XCTAssertThrowsError(
+                    try BenchmarkLimit(nativeSeconds: invalid, applierSeconds: 1, maximum: 2, reportOnly: reportOnly))
+                XCTAssertThrowsError(
+                    try BenchmarkLimit(nativeSeconds: 1, applierSeconds: invalid, maximum: 2, reportOnly: reportOnly))
+                XCTAssertThrowsError(
+                    try BenchmarkLimit(nativeSeconds: 1, applierSeconds: 1, maximum: invalid, reportOnly: reportOnly))
+            }
+        }
+    }
+
+    func testPerformanceSelectionAndPolicyValidation() throws {
+        for profile in LabProfile.allCases {
+            for transport in ["sql", "binlog"] {
+                let options = try LabTestOptions([
+                    "--suite", "performance", "--profile", profile.rawValue,
+                    "--case", "backlog-10k", "--coverage", "--report-only", "--dml-transport", transport,
+                ])
+                XCTAssertEqual(options.maximumNativeRatio, 2)
+                XCTAssertTrue(options.reportOnly)
+                XCTAssertEqual(LabTests.adapter(profile: profile, suite: "performance")["id"] as? String, "backlog-10k")
+            }
+        }
+        XCTAssertFalse(try LabTestOptions(["--suite", "performance"]).reportOnly)
+        for arguments in [
+            ["--report-only"], ["--max-native-ratio", "2"],
+            ["--suite", "performance", "--case", "positive"],
+            ["--suite", "performance", "--variant", "all"],
+            ["--suite", "performance", "--max-native-ratio", "nan"],
+            ["--suite", "performance", "--max-native-ratio", "0"],
+        ] {
+            XCTAssertThrowsError(try LabTestOptions(arguments))
+        }
+        let benchmark = ["--profile", LabProfile.forward.rawValue]
+        XCTAssertThrowsError(try LabBenchmark.Options(benchmark + ["--report-only"]))
+        let options = try LabBenchmark.Options(
+            benchmark + ["--max-native-ratio", "1.5", "--report-only", "--coverage"])
+        XCTAssertEqual(options.maximumNativeRatio, 1.5)
+        XCTAssertTrue(options.coverage)
+    }
+
     func testDecoderReportSortsBySelfTimeAndComputesMeanFromCalls() throws {
         let report = try PerformanceBenchmark.decoderProfile([
             "decode.parent": [

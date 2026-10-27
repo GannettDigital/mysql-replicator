@@ -330,6 +330,19 @@
         "target-uncertain",
         "target-uncertain-resume"
       ]
+    },
+    {
+      "area": "replication-backlog-10k",
+      "suite": "performance",
+      "profiles": [
+        "mysql84-to-mysql57-myisam",
+        "mysql57-to-mysql84-innodb",
+        "mysql57-to-mysql57-myisam",
+        "mysql57-to-mysql57-innodb"
+      ],
+      "cases": [
+        "backlog-10k"
+      ]
     }
   ],
   "demo_groups": [
@@ -372,5 +385,9 @@
         "demo-reverse-recovery"
       ]
     }
-  ]
+  ],
+  "performance": {
+    "max_native_ratio": 2.0,
+    "report_only": true
+  }
 }

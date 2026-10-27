@@ -7,6 +7,41 @@ from ci_measurements import job_timings, line_sets, markdown, record_shard, summ
 
 
 class MeasurementsTests(unittest.TestCase):
+    def test_report_only_benchmark_does_not_hide_runner_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with self.assertRaisesRegex(RuntimeError, 'row mismatch'):
+                with record_shard(root, 'performance'):
+                    path = root / 'artifacts/lab/new/result.json'
+                    path.parent.mkdir(parents=True)
+                    path.write_text(json.dumps(dict(result='failed', scenarios=[dict(
+                        profile='forward', suite='performance', id='backlog-10k', status='failed')])))
+                    raise RuntimeError('row mismatch')
+            record = json.loads((root / 'artifacts/ci/measurements/performance.json').read_text())
+            self.assertEqual(record['status'], 'failed')
+            self.assertEqual(record['scenarios'][0]['status'], 'failed')
+            self.assertEqual(record['benchmarks'], [])
+
+    def test_benchmark_ratio_is_recorded_even_when_report_only_passes(self):
+        from ci_measurements import benchmark_table
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            result = dict(profile='forward', dml_transport='binlog', events=10000, code_coverage=True,
+                          native_seconds=10, applier_seconds=30, mode='backlog', result='passed',
+                          performance=dict(applier_to_native_ratio=3, maximum_ratio=2,
+                                           policy='report-only', status='over_limit', accepted=True))
+            with record_shard(root, 'performance'):
+                path = root / 'artifacts/lab/run/fixture/result.json'
+                path.parent.mkdir(parents=True)
+                path.write_text(json.dumps(result))
+            record = json.loads((root / 'artifacts/ci/measurements/performance.json').read_text())
+            self.assertEqual(record['status'], 'passed')
+            self.assertEqual(record['benchmarks'][0]['performance']['status'], 'over_limit')
+            table = '\n'.join(benchmark_table(record['benchmarks']))
+            self.assertIn('3.000 / 2.000', table)
+            self.assertIn('report-only', table)
+            self.assertIn('over_limit', table)
+
     def test_phase_times_exclude_nested_cases_and_fixture_work(self):
         def span(start, end):
             return dict(started_monotonic_seconds=start, finished_monotonic_seconds=end)

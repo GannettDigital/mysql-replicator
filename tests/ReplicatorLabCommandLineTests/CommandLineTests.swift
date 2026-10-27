@@ -4,6 +4,22 @@ import XCTest
 
 final class LabCommandLineTests: XCTestCase {
     let profile = "mysql84-to-mysql57-myisam"
+    func testPerformanceOptionsReachTheRunner() throws {
+        for command in ["test", "benchmark"] {
+            let args =
+                [
+                    command, "--profile", profile, "--dml-transport", "binlog", "--coverage",
+                    "--max-native-ratio", "2.5", "--report-only",
+                ] + (command == "test" ? ["--suite", "performance"] : [])
+            guard case .run(_, let forwarded) = try ReplicatorLabCommandLine.parse(args) else {
+                return XCTFail("Missing performance request")
+            }
+            for value in ["--coverage", "--report-only", "--max-native-ratio", "2.5", "binlog"] {
+                XCTAssertTrue(forwarded.contains(value))
+            }
+        }
+    }
+
     func testDiscoveryBenchmarkOptionsUseSharedProfile() throws {
         guard
             case .run(let command, let arguments) = try ReplicatorLabCommandLine.parse([

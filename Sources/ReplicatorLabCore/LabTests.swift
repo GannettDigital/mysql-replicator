@@ -7,7 +7,8 @@ public enum LabTests {
     public static func run(root: URL, arguments: [String]) throws {
         let options = try LabTestOptions(arguments)
         let suites =
-            options.suite == "all" ? ["correctness", "lifecycle", "recovery", "demo", "native"] : [options.suite]
+            options.suite == "all"
+            ? ["correctness", "lifecycle", "recovery", "demo", "native", "performance"] : [options.suite]
         var rows: [[String: Any]] = []
         for profile in options.profiles {
             for suite in suites where !(options.suite == "all" && !profile.transactionalTarget && suite == "recovery") {
@@ -166,7 +167,8 @@ public enum LabTests {
                             defer { rows[i]["evidence"] = evidence }
                             try runAdapter(
                                 root: root, profile: profile, suite: suite, build: options.build,
-                                coverage: options.coverage,
+                                coverage: options.coverage, dmlTransport: options.dmlTransport,
+                                maximumNativeRatio: options.maximumNativeRatio, reportOnly: options.reportOnly,
                                 category: "lab/" + directory.lastPathComponent + "/" + profile.rawValue + "/" + suite,
                                 onEvidence: { evidence.append($0.path) })
                             rows[i]["status"] = "passed"
@@ -218,6 +220,10 @@ public enum LabTests {
             row["inventory_granularity"] = "suite; specialized runner owns individual assertions"
         }
         switch suite {
+        case "performance":
+            row["id"] = "backlog-10k"
+            row["family"] = "performance"
+            row["intent"] = "10,000 INSERT transactions; native time ratio, row comparison and saved checkpoint"
         case "native":
             row["intent"] = "preserve existing assertions and evidence; includes bootstrap/version-specific experiments"
             if profile.sourceVersion == .mysql57 {
@@ -233,10 +239,20 @@ public enum LabTests {
         return row
     }
     static func runAdapter(
-        root: URL, profile: LabProfile, suite: String, build: Bool, coverage: Bool, category: String,
+        root: URL, profile: LabProfile, suite: String, build: Bool, coverage: Bool,
+        dmlTransport: String = "sql", maximumNativeRatio: Double = 2, reportOnly: Bool = false, category: String,
         onEvidence: @escaping (URL) -> Void
     ) throws {
         switch suite {
+        case "performance":
+            var arguments = [
+                "--profile", profile.rawValue, "--events", "10000",
+                "--dml-transport", dmlTransport, "--max-native-ratio", String(maximumNativeRatio),
+            ]
+            if !build { arguments.append("--skip-build") }
+            if coverage { arguments.append("--coverage") }
+            if reportOnly { arguments.append("--report-only") }
+            try LabBenchmark.run(root: root, arguments: arguments, category: category, onEvidence: onEvidence)
         case "recovery":
             try require(profile.transactionalTarget, "forward recovery must use the shared runner")
             try ReverseQualification.run(

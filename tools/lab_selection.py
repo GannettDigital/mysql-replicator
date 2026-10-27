@@ -8,8 +8,8 @@ import shlex
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITES = ('correctness', 'lifecycle', 'recovery', 'native', 'demo')
-SELECTABLE_SUITES = ('correctness', 'lifecycle', 'demo')
+SUITES = ('correctness', 'lifecycle', 'recovery', 'native', 'demo', 'performance')
+SELECTABLE_SUITES = ('correctness', 'lifecycle', 'demo', 'performance')
 
 
 def strings(values, name):

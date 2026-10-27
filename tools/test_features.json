@@ -709,6 +709,21 @@
           "native"
         ]
       }
+    },
+    {
+      "id": "replication-performance",
+      "title": "Native replication time comparison",
+      "kind": "project",
+      "description": "10,000 INSERT transactions with row, checkpoint and elapsed time checks. SQL and BINLOG transport.",
+      "reference": {
+        "title": "Test lab benchmarks",
+        "location": "docs/TEST_LAB.md#comparable-benchmarks"
+      },
+      "cases": {
+        "performance": [
+          "backlog-10k"
+        ]
+      }
     }
   ]
 }

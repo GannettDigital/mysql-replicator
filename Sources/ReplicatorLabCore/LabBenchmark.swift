@@ -9,6 +9,8 @@ public enum LabBenchmark {
         var build = true, events = 1000
         var decoderProfiling = false, applierProfiling = true, batchTransactions = 8
         var preparedBatches = 8, serverProfiling = false
+        var coverage = false, reportOnly = false
+        var maximumNativeRatio: Double?
         var forwardedArguments: [String] = []
         init(_ arguments: [String]) throws {
             var args = arguments
@@ -38,6 +40,14 @@ public enum LabBenchmark {
                     build = false
                     continue
                 }
+                if flag == "--coverage" {
+                    coverage = true
+                    continue
+                }
+                if flag == "--report-only" {
+                    reportOnly = true
+                    continue
+                }
                 try require(!args.isEmpty, "missing benchmark option value")
                 let value = args.removeFirst()
                 if flag == "--events", let n = Int(value) {
@@ -46,6 +56,8 @@ public enum LabBenchmark {
                     workload = value
                 } else if flag == "--dml-transport" {
                     dmlTransport = value
+                } else if flag == "--max-native-ratio", let ratio = Double(value) {
+                    maximumNativeRatio = ratio
                 } else if flag == "--batch-transactions", let n = Int(value) {
                     batchTransactions = n
                 } else if flag == "--prepared-batches", let n = Int(value) {
@@ -64,6 +76,8 @@ public enum LabBenchmark {
                 }
             }
             try require((1...100000).contains(events), "events must be 1...100000")
+            if let maximumNativeRatio { try BenchmarkLimit.validate(maximumNativeRatio) }
+            try require(!reportOnly || maximumNativeRatio != nil, "--report-only requires --max-native-ratio")
             try require(["sql", "binlog"].contains(dmlTransport), "DML transport must be sql or binlog")
             try require((1...256).contains(batchTransactions), "batch-transactions must be 1...256")
             try require((1...16).contains(preparedBatches), "prepared-batches must be 1...16")
@@ -81,7 +95,9 @@ public enum LabBenchmark {
         if options.mode == "capture" { _ = try CaptureBenchmark.options(options.forwardedArguments) }
     }
 
-    public static func run(root: URL, arguments: [String]) throws {
+    public static func run(
+        root: URL, arguments: [String], category: String? = nil, onEvidence: ((URL) -> Void)? = nil
+    ) throws {
         let options = try Options(arguments)
         let profile = options.profile
         if options.mode == "discovery" {
@@ -100,10 +116,12 @@ public enum LabBenchmark {
         let workload = options.workload
         let events = options.events
         let build = options.build
-        let image = try LabBuild.prepare(root: root, build: build, coverage: false)
+        let image = try LabBuild.prepare(root: root, build: build, coverage: options.coverage)
         let f = LabFixture(
-            root: root, category: "lab-benchmark/" + profile.rawValue, image: image, profile: profile,
+            root: root, category: category ?? "lab-benchmark/" + profile.rawValue, image: image, profile: profile,
+            codeCoverage: options.coverage,
             dmlTransport: options.dmlTransport)
+        onEvidence?(f.output)
         var result: [String: Any] = [
             "result": "failed", "profile": profile.rawValue, "topology": profile.topology, "mode": mode,
             "workload": workload, "events": events,
@@ -111,12 +129,15 @@ public enum LabBenchmark {
             "server_profiling": options.serverProfiling, "decoder_profiling": options.decoderProfiling,
             "applier_profiling": options.applierProfiling, "batch_transactions": options.batchTransactions,
             "prepared_batches": options.preparedBatches,
+            "code_coverage": options.coverage, "image": image,
             "timing":
                 "Sequential backlog replay; monotonic host wall time includes startup/control overhead. Different target versions and engines are recorded, not normalized.",
         ]
         var failure: Error?
+        var testStart: Double?
         do {
             try f.prepare(build: false)
+            testStart = Double(DispatchTime.now().uptimeNanoseconds) / 1e9
             try f.recordRuntime()
             _ = try f.sql(.native, profile.nativeVersion.stopReplica)
             let statements = (0..<events).map { i -> String in
@@ -173,7 +194,8 @@ public enum LabBenchmark {
             let exit = try f.runner.run(["docker", "wait", client], timeout: 1800).text
             let seconds = ProcessInfo.processInfo.systemUptime - applyStart
             let logs = try f.docker(["logs", client])
-            try (logs.stdout + logs.stderr).write(to: f.output.appendingPathComponent("applier.ndjson"))
+            try logs.stdout.write(to: f.output.appendingPathComponent("applier.ndjson"))
+            try logs.stderr.write(to: f.output.appendingPathComponent("applier.stderr"))
             try require(exit == "0", "benchmark applier failed; inspect applier.ndjson")
             if options.serverProfiling {
                 try ServerSQLProfile.save(
@@ -181,8 +203,7 @@ public enum LabBenchmark {
             }
             let targetAfter = try f.counters(profile.service(.target))
             let targetEnd = try f.boundary(.target)
-            guard let last = logs.stderr.split(separator: 10).last,
-                let summary = try JSONSerialization.jsonObject(with: Data(last)) as? [String: Any],
+            guard let summary = try LabProgress.latest(in: logs.stderr),
                 let gtids = summary["appliedGTIDSet"] as? String
             else { throw LabError("missing final benchmark summary") }
             try require(
@@ -227,10 +248,41 @@ public enum LabBenchmark {
                     to: f.output.appendingPathComponent("applier-profile.tsv"), atomically: true, encoding: .utf8)
             }
             _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+            if let maximum = options.maximumNativeRatio {
+                let limit = try BenchmarkLimit(
+                    nativeSeconds: nativeSeconds, applierSeconds: seconds,
+                    maximum: maximum, reportOnly: options.reportOnly)
+                result["performance"] = limit.json
+                print(
+                    String(
+                        format: "Native %.3fs; replicator %.3fs; ratio %.3fx; limit %.3fx; %@ (%@)",
+                        nativeSeconds, seconds, limit.ratio, maximum,
+                        limit.withinLimit ? "within limit" : "OVER LIMIT",
+                        options.reportOnly ? "report-only" : "enforce"))
+                try require(limit.accepts, "benchmark exceeds native time ratio limit")
+            }
             result["result"] = "passed"
         } catch {
             failure = error
             result["error"] = String(describing: error)
+        }
+        if let testStart {
+            let end = Double(DispatchTime.now().uptimeNanoseconds) / 1e9
+            try writeJSON(
+                [
+                    [
+                        "id": "backlog", "status": failure == nil ? "passed" : "failed",
+                        "seconds": end - testStart, "started_monotonic_seconds": testStart,
+                        "finished_monotonic_seconds": end,
+                    ]
+                ], to: f.output.appendingPathComponent("cases.json"))
+        }
+        if options.coverage {
+            do { try f.collectCoverage() } catch {
+                result["coverage_error"] = String(describing: error)
+                result["result"] = "failed"
+                if failure == nil { failure = error }
+            }
         }
         do { try f.cleanup() } catch {
             result["cleanup_error"] = String(describing: error)

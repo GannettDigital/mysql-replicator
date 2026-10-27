@@ -1051,3 +1051,37 @@ remains part of Step 6. Next: after the user pushes, run one full instrumented
 CI selection. Check case completeness and failures first, then coverage,
 setup/test time and the longest groups. Rerun only affected jobs for fixes.
 Select the final short PR case list after those measurements.
+
+
+## Slice 10 — 10K replication time comparison
+
+The user requested this group before the next push. It adds one named case,
+`performance/backlog-10k`, for each of the four profiles. SQL owns the catalog
+obligation. Four additional BINLOG jobs test the other transport. Each job uses
+one fixture, with native replication followed by the external applier.
+
+The case checks 10,000 INSERT transactions, all target rows and the saved GTID
+checkpoint. It compares external elapsed time with native elapsed time. The
+limit is configurable. CI starts with a 2× limit and report-only mode. A ratio
+above the limit remains visible as `over_limit`. Report-only mode cannot accept
+data differences, checkpoint failures, timeouts, or fixture errors.
+
+Full CI now has 187 jobs, 2,039 catalog obligations, and 186 coverage collections.
+The PR case list is unchanged. The current job budget changes from 185 to 190
+to include the eight requested runs. The projected budget changes from 250 to
+255. The largest extra-profile model now reaches 255 jobs. One extra source
+variant reaches 250. This leaves too little room for more large additions.
+Before adding such a profile, split execution into separate matrices or reduce
+the existing groups. Do not raise the budget above GitHub's 256-job limit.
+
+The benchmark uses the existing backlog workload and native reference. CI uses
+the coverage application build. Instrumented times must not be presented as
+production binary times. The job and combined reports retain both elapsed times,
+the ratio, transport, build instrumentation, limit, and policy.
+
+Focused validation: 55 Swift tests, 120 CI-tool tests, 43 lab-tool tests, and
+24 component/selection tests passed. The full catalog plan passes feature
+ownership, dependency, coverage-count, fixture-count and growth checks. Local
+10K results are recorded in [the benchmark report](BETA7_10K_BENCHMARK.md).
+All eight data/checkpoint checks and coverage collections passed. All eight
+ratios exceeded 2× and were accepted only by report-only mode.

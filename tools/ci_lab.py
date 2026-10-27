@@ -29,9 +29,13 @@ def command(shard):
         args += ['--dml-transport', shard['dml_transport']]
     if shard['suite'] == 'correctness':
         args += ['--tier', shard['tier']]
-    if shard['suite'] in ('correctness', 'lifecycle', 'demo'):
+    if shard['suite'] in ('correctness', 'lifecycle', 'demo', 'performance'):
         for case in shard['cases']:
             args += ['--case', case]
+    if shard['suite'] == 'performance':
+        args += ['--max-native-ratio', str(shard['max_native_ratio'])]
+        if shard['report_only']:
+            args += ['--report-only']
     return args
 
 

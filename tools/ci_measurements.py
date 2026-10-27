@@ -91,6 +91,7 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
     previous_fixtures = set(directory.rglob('fixture-lifecycle.json'))
     previous_traces = set(directory.rglob('sql-trace.jsonl'))
     previous_cases = set(directory.rglob('cases.json'))
+    previous_results = set(directory.rglob('result.json'))
     record = dict(version=1, id=identifier, **provenance(), status='failed', scenarios=[])
     if job_id is not None:
         record['job_id'] = job_id
@@ -111,6 +112,13 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
                 record['scenarios'].extend({k: row[k] for k in
                     ('profile', 'variant', 'suite', 'id', 'family', 'status', 'seconds') if k in row}
                     for row in report.get('scenarios', []))
+            record['benchmarks'] = []
+            for path in sorted(set(directory.rglob('result.json')) - previous_results):
+                result = json.loads(path.read_text())
+                if 'performance' in result and result.get('mode') == 'backlog':
+                    record['benchmarks'].append({k: result[k] for k in
+                        ('profile', 'dml_transport', 'events', 'code_coverage', 'native_seconds',
+                         'applier_seconds', 'performance', 'result')})
             fixture_paths = sorted(p for p in set(directory.rglob('fixture-lifecycle.json')) - previous_fixtures
                                    if 'evidence' not in p.relative_to(directory).parts)
             if fixture_paths:
@@ -146,6 +154,12 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
             raise
         finally:
             write(root / 'artifacts/ci/measurements' / (identifier + '.json'), record)
+            benchmark_summary = '\n'.join(benchmark_table(record.get('benchmarks', [])))
+            if benchmark_summary:
+                print(benchmark_summary, flush=True)
+                if os.environ.get('GITHUB_STEP_SUMMARY'):
+                    with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                        output.write(benchmark_summary + '\n')
             if 'phase_seconds' in record:
                 summary = '\n'.join(['', '### Execution group times (seconds)', '', *PHASE_TABLE_HEADER,
                                      phase_table(identifier, record['phase_seconds']), '',
@@ -155,6 +169,23 @@ def record_shard(root, identifier, build_inputs=False, job_id=None):
                 if os.environ.get('GITHUB_STEP_SUMMARY'):
                     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
                         output.write(summary)
+
+
+def benchmark_table(benchmarks):
+    if not benchmarks:
+        return []
+    lines = ['', '## 10K replication time comparison', '',
+             'Ratio = replicator elapsed time / native elapsed time. Includes startup and control calls. '
+             'Coverage builds include instrumentation overhead. These are not production binary timings.', '',
+             '| Profile | Transport | Coverage | Native s | Replicator s | Ratio / limit | Policy | Limit result | Test result |',
+             '|---|---|---|---:|---:|---:|---|---|---|']
+    for b in benchmarks:
+        p = b['performance']
+        lines.append(f"| {b['profile']} | {b['dml_transport']} | {b['code_coverage']} | "
+                     f"{b['native_seconds']:.3f} | {b['applier_seconds']:.3f} | "
+                     f"{p['applier_to_native_ratio']:.3f} / {p['maximum_ratio']:.3f} | "
+                     f"{p['policy']} | {p['status']} | {b['result']} |")
+    return lines + ['']
 
 
 def seconds(start, end):
@@ -264,6 +295,7 @@ def summarize(manifest, records, jobs=None, context=None, builds=None, matrix_di
         shard_attempts={r['id']: r.get('attempt') for r in records},
         missing_shards=missing, failed_shards=failed, missing_coverage=missing_coverage,
         profiles=profiles, jobs=timings, failed_jobs=job_failures,
+        benchmarks=[b for r in records for b in r.get("benchmarks", [])],
         execution_groups=len(planned), planned_jobs=len(manifest.get('jobs', manifest['include'])),
         instrumentation=dict(plan_scope(manifest), integration_reports=sum(r.get("coverage", {}).get("collections", 0) for r in records)),
         completed_job_seconds=sum(j['seconds'] or 0 for j in timings) if jobs else None,
@@ -285,6 +317,7 @@ def markdown(report):
     for name, p in report['profiles'].items():
         duration = p['shard_seconds']
         lines.append(f"| {name} | {p['catalog_passed']} / {p['catalog_expected']} | {p['covered_lines']} / {p['mapped_lines']} | {p['unique_covered_lines']} | {duration.get('release', 0)/60:.1f} / {duration.get('coverage', 0)/60:.1f} |")
+    lines += benchmark_table(report.get("benchmarks", []))
     timing = (f"Completed jobs: {report['completed_job_seconds']/60:.1f} runner-minutes."
               if report['completed_job_seconds'] is not None else
               'GitHub job and step timing unavailable. Test results, shard times and coverage are retained.')

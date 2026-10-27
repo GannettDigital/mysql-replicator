@@ -4,13 +4,14 @@ Use `swift run replicator-lab --help` to list commands. Each command and demo
 action has its own `--help`. Help does not start containers. See
 [command help](COMMAND_LINE.md#test-lab-commands).
 
-Use `--dml-transport binlog` to run selected shared correctness or lifecycle
+Use `--dml-transport binlog` to run selected correctness, lifecycle, or performance
 cases through the opt-in BINLOG path. The default is `sql`. Profiles and case
 selection stay the same. The report records `dml_transport`. Read the
 [BINLOG transport limits](BINLOG_TRANSPORT.md) before selecting cases.
 
 Full CI adds selected BINLOG jobs for each profile. Their names include
-`binlog-rows-json-replay`, `binlog-gtids-disabled`, or `binlog-reconnect`.
+`binlog-rows-json-replay`, `binlog-gtids-disabled`, `binlog-reconnect`, or
+`binlog-replication-backlog-10k`.
 The exact case lists are in `tools/ci_matrix.json` under `binlog_selections`.
 These jobs use the coverage binary and supplement the SQL transport checks.
 PR selection stays unchanged. The full plan fits the GitHub matrix limit.
@@ -606,16 +607,16 @@ runs separate.
 The native adapter lists registered cases; reverse recovery and other specialized
 adapters explicitly report suite-level inventory.
 
-For shared correctness and lifecycle, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
+For shared correctness, lifecycle and performance, `--skip-build` reuses `mysql-replicator-packaging:lab` only if its input fingerprint
 matches the checkout. All profiles use the same pinned image in a combined run. Changing fixture or
 implementation inputs during qualification fails the aggregate.
-For `correctness`, `lifecycle`, and MyISAM `recovery`, `--coverage` builds the instrumented image and exports each profile's coverage
+For `correctness`, `lifecycle`, `performance`, and MyISAM `recovery`, `--coverage` builds the instrumented image and exports each profile's coverage
 separately. Merge explicitly selected reports with the existing `make coverage-report`
 command. Its published runtime views exclude `ReplicatorLab*`; a separate harness
 view uses only unit-test coverage. Raw per-fixture collections remain available
 for provenance and migration comparisons. A combined line-coverage number does
 not replace per-profile scenario results.
-Instrumented runs are not performance measurements. Specialized adapters retain
+Instrumented timings include coverage overhead. Do not compare them with production binary timings. Specialized adapters retain
 their original image tags and build controls; build those suites before reusing
 their images with `--skip-build`.
 
@@ -745,6 +746,42 @@ migration to obtain the SQLite-equipped demo image; retained sessions never rebu
 or switch their image implicitly.
 
 ## Comparable benchmarks
+
+The `performance` suite has one case: `backlog-10k`. It applies 10,000 single-row
+INSERT transactions. It compares all target rows with the native replica and
+checks the saved GTID checkpoint. It then checks the ratio of replicator elapsed
+time to native elapsed time. The default limit is **2.0**. A ratio equal to the
+limit passes.
+
+```sh
+# All four profiles, SQL transport, enforce the limit.
+make lab-performance ARGS="--max-native-ratio 2"
+# All four profiles, BINLOG transport, allow a result above the limit.
+make lab-performance ARGS="--dml-transport binlog --report-only"
+```
+
+Use `PROFILE=<profile>` for one topology. Use `--case backlog-10k` to select the
+case by name. `--report-only` changes only the time limit check. Row differences,
+checkpoint errors, timeouts, and setup or cleanup errors still fail the test.
+The evidence retains `over_limit` even when report-only mode accepts the run.
+
+Full CI runs eight jobs: four profiles × SQL and BINLOG transport. Each job uses
+one fixture. It runs native replication first, then the replicator. Image download,
+fixture setup, workload generation, final comparison, and coverage export are
+outside the measured replay intervals. Startup and polling are inside them.
+The native replica uses the source MySQL version and the profile's target engine.
+Thus, a cross-version comparison is not a comparison of identical server versions.
+
+CI starts with a provisional 2× limit and report-only mode. Change
+`performance` in `tools/ci_matrix.json` to set the limit and policy. CI uses the
+coverage binary, as do other integration tests. These times include instrumentation
+overhead. Use a separate non-coverage run to assess production performance.
+Run local comparisons sequentially. Do not run other database tests at the same time.
+
+Results appear in `artifacts/lab/<run>/`, each CI job summary, and the combined
+CI measurement report. They include both elapsed times, the ratio, the limit,
+the policy, transport, and coverage status. Add `--coverage --skip-build` to
+reuse a coverage image that matches the current build inputs.
 
 Backlog benchmarks accept `--dml-transport sql|binlog`. SQL is the default.
 The workload, native reference, and timing method are the same for both modes.

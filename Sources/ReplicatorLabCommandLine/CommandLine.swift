@@ -72,10 +72,11 @@ private struct Test: LabRequestCommand {
     static let configuration = CommandConfiguration(
         commandName: "test", abstract: "Run selected tests or print their inventory.")
     @Option(help: "One profile or all. Default: all.") var profile: String?
-    @Option(help: "correctness, lifecycle, recovery, demo, native, or all. Default: correctness.") var suite: String?
+    @Option(help: "correctness, lifecycle, recovery, demo, native, performance, or all. Default: correctness.")
+    var suite: String?
     @Option(help: "full or smoke. Prefer --case to select named cases. Default: full.") var tier: String?
-    @Option(help: "DML transport: sql (default) or binlog. Applies to correctness and lifecycle.") var dmlTransport:
-        String?
+    @Option(help: "DML transport: sql (default) or binlog. Applies to correctness, lifecycle and performance.")
+    var dmlTransport: String?
     @Option(help: "Select one test family. Use --list to inspect the inventory.") var family: String?
     @Option(name: .customLong("case"), help: "Select a case ID. Repeat this option to select more cases.") var cases:
         [String] = []
@@ -84,6 +85,9 @@ private struct Test: LabRequestCommand {
     @Flag(name: .customLong("list"), help: "Print the JSON inventory without running tests.") var list = false
     @Flag(name: .customLong("skip-build"), help: "Reuse the existing lab image.") var skipBuild = false
     @Flag(name: .customLong("coverage"), help: "Collect runtime code coverage.") var coverage = false
+    @Option(help: "Maximum replicator/native elapsed time ratio. Performance suite default: 2.") var maxNativeRatio:
+        Double?
+    @Flag(help: "Report a ratio above the limit without failing. Other errors still fail.") var reportOnly = false
     var request: LabCLIRequest {
         var arguments: [String] = []
         arguments += option("profile", profile)
@@ -96,6 +100,8 @@ private struct Test: LabRequestCommand {
         arguments += flag("list", list)
         arguments += flag("skip-build", skipBuild)
         arguments += flag("coverage", coverage)
+        arguments += option("max-native-ratio", maxNativeRatio)
+        arguments += flag("report-only", reportOnly)
         return .run(command: "test", arguments: arguments)
     }
 }
@@ -305,6 +311,10 @@ private struct Benchmark: LabRequestCommand {
     @Option(name: .customLong("explicit-table-locks"), help: "Streaming: use explicit target table locks (on/off).")
     var explicitTableLocks: Toggle?
     @Flag(name: .customLong("skip-build"), help: "Reuse the existing images.") var skipBuild = false
+    @Option(help: "Maximum replicator/native elapsed time ratio. Performance suite default: 2.") var maxNativeRatio:
+        Double?
+    @Flag(help: "Report a ratio above the limit without failing. Other errors still fail.") var reportOnly = false
+    @Flag(help: "Backlog: collect runtime code coverage.") var coverage = false
     var request: LabCLIRequest {
         var arguments: [String] = []
         arguments += profile.arguments
@@ -336,6 +346,9 @@ private struct Benchmark: LabRequestCommand {
         arguments += option("flush-on-table-change", flushOnTableChange?.rawValue)
         arguments += option("explicit-table-locks", explicitTableLocks?.rawValue)
         arguments += flag("skip-build", skipBuild)
+        arguments += option("max-native-ratio", maxNativeRatio)
+        arguments += flag("report-only", reportOnly)
+        arguments += flag("coverage", coverage)
         return .run(command: "benchmark", arguments: arguments)
     }
 }

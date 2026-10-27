@@ -1,5 +1,6 @@
 """Plan CI from the lab's complete catalog; policy controls grouping, not inventory."""
 from collections import Counter, defaultdict
+import math
 
 from lab_selection import resolve_cases
 
@@ -165,6 +166,14 @@ def generate(catalogs, policy, expanded_coverage=False):
         shards.append(dict(id=identifier, profile=profile, variant=variant, suite=suite,
                            area=area, image=image, reports=reports, tier=tier, cases=cases,
                            owns_obligations=count))
+        if suite == 'performance':
+            settings = policy['performance']
+            ratio = settings['max_native_ratio']
+            if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not math.isfinite(ratio) or ratio <= 0:
+                raise ValueError('performance max_native_ratio must be finite and positive')
+            if not isinstance(settings['report_only'], bool):
+                raise ValueError('performance report_only must be boolean')
+            shards[-1].update(max_native_ratio=ratio, report_only=settings['report_only'])
         if count:
             owners.update((profile, variant, suite, case) for case in cases)
 
@@ -202,6 +211,8 @@ def generate(catalogs, policy, expanded_coverage=False):
                 if set(resolved['cases']) != set(cases):
                     raise ValueError('demo dependencies cross fixture groups: ' + area)
                 add(profile, variant, suite, area, cases)
+        elif suite == 'performance':
+            add(profile, variant, suite, 'replication-backlog-10k', [r['id'] for r in rows])
         elif suite in ('lifecycle', 'recovery', 'native'):
             reports = 0 if suite == 'native' else 1
             area = {'native': 'native-source-restrictions', 'lifecycle': 'connection-restarts-uncertain-writes',

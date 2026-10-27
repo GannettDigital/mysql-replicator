@@ -47,11 +47,16 @@ struct LabTestOptions {
     var family: String?
     var variants: [LabVariant] = [.standard]
     var ids: Set<String> = []
-    var list = false, build = true, coverage = false
+    var list = false, build = true, coverage = false, reportOnly = false
+    var maximumNativeRatio = 2.0
     init(_ arguments: [String]) throws {
         var args = arguments
         while !args.isEmpty {
             let flag = args.removeFirst()
+            if flag == "--report-only" {
+                reportOnly = true
+                continue
+            }
             if flag == "--list" {
                 list = true
                 continue
@@ -74,6 +79,9 @@ struct LabTestOptions {
                     guard let variant = LabVariant(rawValue: value) else { throw LabError("unknown variant: " + value) }
                     variants = [variant]
                 }
+            case "--max-native-ratio":
+                guard let ratio = Double(value) else { throw LabError("invalid native time ratio") }
+                maximumNativeRatio = ratio
             case "--dml-transport": dmlTransport = value
             case "--profile":
                 if value == "all" {
@@ -90,27 +98,36 @@ struct LabTestOptions {
             }
         }
         try require(
-            ["correctness", "lifecycle", "recovery", "demo", "native", "all"].contains(suite), "unknown suite: " + suite
+            ["correctness", "lifecycle", "recovery", "demo", "native", "performance", "all"].contains(suite),
+            "unknown suite: " + suite
         )
         try require(["smoke", "full"].contains(tier), "tier must be smoke or full")
         try require(
             tier == "full" || suite == "correctness",
             "--tier smoke selects shared correctness only; adapter suites retain their full scope")
         try require(
-            ["correctness", "demo", "lifecycle"].contains(suite) || (family == nil && ids.isEmpty),
-            "--case and --family select correctness, demo, or lifecycle scenarios")
+            ["correctness", "demo", "lifecycle", "performance"].contains(suite) || (family == nil && ids.isEmpty),
+            "--case and --family select correctness, demo, lifecycle, or performance scenarios")
         try require(["sql", "binlog"].contains(dmlTransport), "DML transport must be sql or binlog")
         try require(
-            dmlTransport == "sql" || ["correctness", "lifecycle"].contains(suite),
-            "--dml-transport binlog selects the shared correctness or lifecycle suite")
+            dmlTransport == "sql" || ["correctness", "lifecycle", "performance"].contains(suite),
+            "--dml-transport binlog selects correctness, lifecycle, or performance")
         let sharedRecovery = suite == "recovery" && profiles.allSatisfy { !$0.transactionalTarget }
         try require(
-            !coverage || sharedRecovery || ["correctness", "lifecycle", "demo", "recovery"].contains(suite),
-            "--coverage collects shared correctness, lifecycle, demo and recovery runs")
+            !coverage || sharedRecovery
+                || ["correctness", "lifecycle", "demo", "recovery", "performance"].contains(suite),
+            "--coverage collects correctness, lifecycle, demo, recovery and performance runs")
         try require(
             variants == [.standard] || sharedRecovery || ["correctness", "lifecycle"].contains(suite),
             "--variant selects shared correctness or lifecycle; adapters retain their own variants")
-        if suite == "demo" {
+        try BenchmarkLimit.validate(maximumNativeRatio)
+        try require(
+            suite == "performance" || (!reportOnly && !arguments.contains("--max-native-ratio")),
+            "--max-native-ratio and --report-only require --suite performance")
+        if suite == "performance" {
+            try require(ids.isSubset(of: ["backlog-10k"]), "unknown performance case")
+            try require(family == nil || family == "performance", "unknown performance family")
+        } else if suite == "demo" {
             _ = try LabDemoQualification.select(family: family, ids: ids)
         } else if suite == "lifecycle" {
             _ = try LabLifecycle.select(family: family, ids: ids)

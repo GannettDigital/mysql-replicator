@@ -13,6 +13,24 @@ every SQL statement or direct client calls outside that helper. Client time
 includes process startup and MySQL execution. It is not applier SQL time.
 Missing measurements are not zero.
 
+## Replication time comparison
+
+Full CI includes eight `replication-backlog-10k` jobs: four profiles with SQL
+transport and four with BINLOG transport. Each job creates one fixture and
+compares the same 10,000 INSERT transactions with native replication.
+See [the benchmark commands and timing scope](TEST_LAB.md#comparable-benchmarks).
+
+Each job summary and the combined `summary.md` show native seconds, replicator
+seconds, their ratio, the limit, the policy, and the test result. `report.json`
+stores these values in `benchmarks`. A report-only result can be `over_limit`
+while its test result is `passed`. Data or checkpoint failures still fail the
+job. A failed run can have no ratio if it failed before the comparison.
+
+The initial limit is 2× native time with report-only mode. CI uses the coverage
+binary. This comparison detects changes under the CI build conditions. It does
+not establish production binary throughput. Keep instrumented and production
+results separate. Fixture setup and coverage export are outside replay timing.
+
 ## SQL records for each test case
 
 The harness writes `sql-trace.jsonl` in each fixture directory. CI includes this
@@ -139,11 +157,13 @@ The beta.7 catalog currently produces these plans:
 | Scope | Execution groups | CI jobs | Coverage collections |
 |---|---:|---:|---:|
 | PR | 2 | 2 | 2 |
-| Full | 179 | 179 | 178 |
+| Full | 187 | 187 | 186 |
 | Main production packages | 2 | 2 | 0 |
 
-The full plan has 2,035 applicable obligations. Before the case migrations,
-it had 2,095. Ten executions each belonged to `matrix-generated`, `matrix-fulltext`
+The full plan has 2,039 applicable obligations: 2,035 correctness and operation
+obligations plus four benchmark obligations. Four additional BINLOG benchmark
+jobs check the other transport. Before the case migrations, the non-benchmark
+catalog had 2,095 obligations. Ten executions each belonged to `matrix-generated`, `matrix-fulltext`
 and `matrix-values`. Their conditions now run in `ddl-compat-generated`,
 `ddl-compat-fulltext` and `ddl-compat-constraints`, respectively, in the same
 profile/variant/transport selections. The 20 `matrix-composite` and `matrix-textkey`
@@ -158,7 +178,8 @@ line-coverage evidence. Shared feature groups reduce the number of fixture
 invocations from 254 to 179. Case migrations and fixture grouping are separate
 changes; a lower case count alone does not reduce setup.
 The previous 240 jobs included four demo jobs that started 18 fixtures. Each
-demo session now has a separate job. Thus 61 fewer jobs remove 75 fixture setups.
+demo session now has a separate job. Thus the earlier consolidation removed 61 jobs and 75 fixture setups.
+The eight new benchmark jobs each add one fixture.
 Full CI runs each apply group with
 coverage once. It does not add copies for coverage or repeat the PR baseline.
 The [sample comparison](../PLAN/BETA7_COVERAGE_SAMPLE_COMPARISON.md) records the
@@ -190,12 +211,15 @@ Each group retains all assertions for its session. The planner rejects dependenc
 that cross session groups. CI passes the exact case selection to the demo command
 and expects one combined coverage report from each job.
 
-Full planning enforces a 185-job current budget and a 250-job growth budget.
+Full planning enforces a 190-job current budget and a 255-job growth budget.
 `matrix.json` includes `growth_check`. It models an extra profile by copying each
 existing profile in turn, then reports every result. A separate check adds one
 source variant to the default correctness/lifecycle selections across all current
 profiles. These are separate scenarios, not a simultaneous expansion. Neither
-adds jobs to the actual run. Both require at most 245 jobs with the current plan.
+adds jobs to the actual run. The largest extra-profile model requires 255 jobs;
+one extra source variant requires 250. The eight benchmark jobs consume much
+of the previous growth allowance. Split the matrix or reduce existing groups
+before adding another large profile. Do not exceed GitHub's 256-job limit.
 The checks do not establish support for a new MySQL topology. They test matrix
 capacity with the existing selections and isolation rules.
 

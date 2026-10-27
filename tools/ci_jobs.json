@@ -30,11 +30,13 @@
     "demo-container-repair": 420,
     "demo-baseline-gtid-resume": 420,
     "demo-applied-checkpoint-resume": 420,
-    "demo-reverse-workbook-recovery": 420
+    "demo-reverse-workbook-recovery": 420,
+    "replication-backlog-10k": 600,
+    "binlog-replication-backlog-10k": 600
   },
   "growth_budget": {
-    "max_jobs": 185,
-    "max_growth_jobs": 250
+    "max_jobs": 190,
+    "max_growth_jobs": 255
   },
   "estimate_notes": "New feature estimates sum prior area estimates; they are conservative scheduling inputs, not measured shared-fixture times. Demo session estimates retain the former whole-demo estimate until CI measures each session."
 }
