@@ -367,7 +367,7 @@ and zero fully verified combinations (previously 48/690, 24 and zero). See the
 ## Selected execution
 
 Use `make lab-list`, `--family indexes`, or a named
-`--case ddl-modify-demo-varchar-120` to select shared scenarios. Add
+`--case ddl-modify-columns` to select shared scenarios. Add
 `--variant gtid-full` for one historical forward profile. See the
 [profile test lab](../../docs/TEST_LAB.md) for dependencies, prerequisites and build reuse.
 Selected runs retain checksummed evidence and explicit requested cases/family;

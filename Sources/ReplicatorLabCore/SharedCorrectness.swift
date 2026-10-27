@@ -32,11 +32,13 @@ public enum SharedCorrectness {
         let applier: LabApplier
         let reporter: QualificationReporter
         var observation = 0
+        var sourcePhaseCount = 0
         var currentDatabase = "reverse_poc"
         var session: String { f.profile.session }
         let selected: Set<String>?
         var nativeInnoDB = false
         var referenceDecoderVersion = ""
+        var savedSchemaRestartChecked = false
         func selects(_ id: String) -> Bool { selected?.contains(id) ?? true }
         init(
             root: URL, profile: LabProfile = .reverse, selected: Set<String>? = nil,
@@ -55,7 +57,7 @@ public enum SharedCorrectness {
             if slice == "all"
                 && (selects(DDLCoverageCases.positive.id) || selects("myisam-recovery")
                     || selects(DDLCoverageCases.group.id) || selects(DDLCoverageCases.wildcardFilter.id)
-                    || ModifyIndexCases.cases.contains(where: { selects($0.test.id) }))
+                    || ModifyIndexCases.sharedTests.contains(where: { selects($0.id) }))
                 || slice == "indexes"
             {
                 referenceDecoderVersion = try f.runner.run([f.h.decoder, "--no-defaults", "--version"]).text
@@ -124,11 +126,14 @@ public enum SharedCorrectness {
                         ]).text
                         try require((Int(count) ?? 0) > 0, "temporary-table cleanup missing from durable audit")
                     }
-                    // Reopen all saved schema history, then apply another transaction.
-                    try applier.start(initialize: false)
-                    try step("INSERT INTO reverse_poc.aux VALUES(99,1)", database: "reverse_poc")
-                    try applier.drain()
-                    _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                    // The MODIFY-only pilot already verifies its saved schemas and
+                    // a following write. Mixed selections retain the outer check.
+                    if !(savedSchemaRestartChecked && selected == [ModifyIndexCases.columns.id]) {
+                        try applier.start(initialize: false)
+                        try step("INSERT INTO reverse_poc.aux VALUES(99,1)", database: "reverse_poc")
+                        try applier.drain()
+                        _ = try f.docker(["cp", f.helper + ":/evidence/state", f.output.path])
+                    }
                     report["saved_schema_restart"] = "passed"
                     report["summary"] = try applier.latestProgress()
                 }
@@ -136,6 +141,7 @@ public enum SharedCorrectness {
                 report["versions"] = f.versions
                 report["image"] = f.image
                 report["steps"] = observation
+                report["source_phases"] = sourcePhaseCount
                 if slice == "all" || slice == "rejections" { try rejections() }
                 if slice == "all" {
                     try foreignKeySafety()
@@ -165,7 +171,10 @@ public enum SharedCorrectness {
                 }
             } catch {
                 report["result"] = "failed"
-                report["error"] = String(describing: reporter.fail(error))
+                let identified = reporter.fail(error)
+                report["error"] = String(describing: identified)
+                let evidence = f.captureFailure(identified, cases: reporter.results, applier: applier)
+                report["supportBundle"] = evidence["supportBundle"]
                 _ = try? compare(currentDatabase)
                 if let logs = try? f.h.compose(["logs", "--no-color"]) {
                     try? (logs.stdout + logs.stderr).write(to: f.output.appendingPathComponent("containers.log"))
@@ -184,7 +193,9 @@ public enum SharedCorrectness {
                 }
                 report["cases"] = reporter.results
                 try? writeJSON(report, to: f.output.appendingPathComponent("result.json"))
-                failure = error
+                failure = LabError(
+                    "\(identified); artifacts: \(f.output.path); support bundle: \(evidence["supportBundle"] ?? "unavailable")"
+                )
             }
             var cleanupErrors: [String] = []
             if needsMainApplier {
@@ -213,11 +224,11 @@ public enum SharedCorrectness {
             }
             if let failure { throw failure }
             f.stage(
-                "PASS: shared correctness fixtures (\(observation) main-applier steps; saved-schema restart "
+                "PASS: shared correctness fixtures (\(observation) step comparisons; \(sourcePhaseCount) source phases; saved-schema restart "
                     + (needsMainApplier ? "passed" : "not selected") + ")")
         }
-        func wait() throws {
-            let end = try f.boundary()
+        func wait(until boundary: Boundary? = nil) throws {
+            let end = try boundary ?? f.boundary()
             let deadline = Date().addingTimeInterval(60)
             try writeJSON(end.json, to: f.output.appendingPathComponent("awaited-source-boundary.json"))
             while true {
@@ -231,7 +242,7 @@ public enum SharedCorrectness {
                 try require(Date() < deadline, "applier failed to reach source GTID; inspect logs")
                 Thread.sleep(forTimeInterval: 0.1)
             }
-            try f.awaitNative()
+            try f.awaitNative(end)
         }
         @discardableResult
         func step(
@@ -1094,7 +1105,8 @@ public enum SharedCorrectness {
                 _ = try f.sql(.source, "SET GLOBAL binlog_row_metadata=" + f.variant.metadata)
             }
             try resetNativeEngine()
-            for test in ModifyIndexCases.cases where selects(test.test.id) {
+            if selects(ModifyIndexCases.columns.id) { try modifyColumns() }
+            for test in ModifyIndexCases.standaloneCases where selects(test.test.id) {
                 try reporter.run(test.test) {
                     try step(
                         "CREATE DATABASE IF NOT EXISTS demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",

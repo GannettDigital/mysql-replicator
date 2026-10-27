@@ -100,6 +100,11 @@ struct LabScenario {
         if id == "myisam-recovery" { value["ordered_steps"] = SharedWorkflowCases.recovery.map { $0.fields } }
         if id == "forward-failures" { value["ordered_steps"] = SharedWorkflowCases.failures.map { $0.fields } }
         if id == DDLCoverageCases.group.id { value["ordered_steps"] = DDLCoverageCases.changes.map { $0.test.fields } }
+        if id == ModifyIndexCases.columns.id {
+            value["assertions"] = ModifyIndexCases.columnAssertions
+            value["replaces"] = ModifyIndexCases.columnIDs
+            value["ordered_steps"] = ModifyIndexCases.columnCases.map { $0.test.fields }
+        }
         if MetadataDiscoveryCases.tests.contains(where: { $0.id == id }) {
             value["assertions"] = MetadataDiscoveryCases.assertions(id, profile: profile)
             value["replaces"] = MetadataDiscoveryCases.replaces(id)
@@ -227,8 +232,8 @@ struct LabScenario {
                     .reverse: "Tests the 5.7 session variable privilege check.",
                     .mysql57MyISAM: "Tests the 5.7 InnoDB target account contract.",
                 ]))
-        cases += ModifyIndexCases.cases.map {
-            .init(test: $0.test, family: "indexes", smoke: $0.test.id == "ddl-index-create")
+        cases += ModifyIndexCases.sharedTests.map {
+            .init(test: $0, family: "indexes", smoke: $0.id == "ddl-index-create")
         }
         cases.append(
             .init(
@@ -326,13 +331,16 @@ struct LabScenario {
     static func select(tier: String, family: String?, ids: Set<String>) throws -> [LabScenario] {
         let all = correctness
         let known = Set(all.map(\.id))
-        let replacements = DMLCompatibilityCases.cases.compactMap { test -> String? in
+        var replacements = DMLCompatibilityCases.cases.compactMap { test -> String? in
             if ids.contains("bootstrap-matrix-" + test.id) {
                 return
                     "bootstrap-matrix-\(test.id) was replaced by \(MetadataDiscoveryCases.owner(test.id)); DML remains in \(test.replicatedReplacement ?? "matrix-" + test.id)"
             }
             guard ids.contains("matrix-" + test.id), let replacement = test.replicatedReplacement else { return nil }
             return "matrix-\(test.id) was replaced by \(replacement)"
+        }
+        replacements += ModifyIndexCases.columnIDs.filter(ids.contains).map {
+            "\($0) was replaced by \(ModifyIndexCases.columns.id)"
         }
         try require(replacements.isEmpty, replacements.joined(separator: "; "))
         try require(

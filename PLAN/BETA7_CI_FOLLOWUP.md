@@ -180,6 +180,82 @@ Do not select the final short PR suite from this incomplete CI run.
 
 The replacement cases, DML-owner checks and selection updates are implemented.
 See [the metadata review](BETA7_METADATA_GROUP_REVIEW.md#implementation-of-this-slice).
-Focused local checks passed on both target engines. The next step is a full CI
-comparison of assertions, SQL, exact line sets and time. Group balancing and short PR selection
-remain later steps in this plan.
+Focused local checks passed on both target engines. Continue the remaining
+reviews with the saved passing run. A new full CI run is not a prerequisite.
+Group balancing and short PR selection remain later steps in this plan.
+
+## Continue with saved measurements
+
+Use run `40454033524` at `efb3458` for groups whose case bodies, selected cases,
+settings and fixture order have not changed. It contains passing results, SQL
+cost records, per-case times and exact runtime line sets. Check those inputs
+against the current source before carrying a group's evidence forward.
+
+The former `bootstrap-schema-discovery` group is the exception. Its replacement
+has local assertion results, but no new full-matrix timing or coverage result.
+Do not assign the old group's time or line set to the replacement. When checking
+whether another group supplies a removed assertion or line, exclude the old
+bootstrap executions. Keep any dependency on the new metadata coverage pending.
+Coverage is measured per group, not per case. Use source SQL and named assertions
+to decide whether individual cases repeat the same checks.
+
+Proceed in this order without another push or full run between reviews:
+
+1. Review `table-column-index-changes` against the related type/value and key
+   cases. Map each proposed removal to retained SQL and assertions. Inspect
+   whole-group line overlap within the same profile and variant. Reduce repeated
+   work before splitting this large group.
+2. Review the small `without-source-gtids` SQL selections for one shared fixture.
+   Keep `positive`, `ddl-compat-generated` and the applicable tagged-GTID case.
+   Their assertions differ; this is a setup-sharing change, not case removal.
+3. Continue group balancing from the saved times. Mark changed groups as needing
+   new measurement. Do not treat estimates as measured savings.
+4. After a useful batch of changes, push and run one full instrumented CI suite.
+   Check changed groups and full-suite behavior, including the metadata group.
+   Then select the short PR suite from the reviewed cases and measured times.
+
+Initial evidence from the saved run:
+
+| Candidate | Observed cost | Review target |
+|---|---|---|
+| Forward default `table-column-index-changes` | 1,200.3 lab seconds; 5,647 harness SQL calls. | Repeated column, index and key setup/assertions. The slowest case bodies include ALTER column keys (82.8 s), generated-column dependencies (80.1 s) and column/index syntax (67.7 s). |
+| Three 5.7-source `without-source-gtids` SQL selections | `positive` takes 8.3–9.3 s; generated columns take 15.9–19.5 s. Each currently has a separate fixture. | Combine their order while retaining both case results. |
+| Forward `without-source-gtids` SQL selections | Tagged GTIDs plus `positive` take 42.5 s; generated columns take 19.9 s in another fixture. | Keep the source-specific tagged-GTID check in the combined selection. |
+
+Lab seconds include setup, test work, cleanup and coverage export. Case-body
+seconds exclude those surrounding phases. Harness SQL calls are not applier
+statement counts. These figures identify review candidates; they do not prove
+that assertions are redundant or predict the final elapsed time.
+
+Validation for the next review: no build, containers or test execution. Read the
+saved artifacts and current case source, then record an assertion map and a
+proposed combined order. Before implementation, select the focused checks under
+the [per-step validation scope](BETA7_TEST_SUITE_CONSOLIDATION.md#validation-scope-for-each-step).
+No new full run is needed to complete that review.
+
+
+## Table/column/index review complete
+
+See [the detailed review](BETA7_TABLE_COLUMN_INDEX_REVIEW.md). The group has
+substantial distinct coverage after the old metadata group is excluded.
+Do not remove its ALTER behavior or merge it wholesale with type/value tests.
+The first implementation slice combines the ten MODIFY cases as
+`ddl-modify-columns`. It preserves per-ALTER assertions and shares setup, state
+export and binlog file reads. The review records its one-profile local validation
+results and the original case-to-assertion map. No new full CI run is needed
+between these slices. The follow-up review confirms that per-step observation
+and control calls dominate the combined MODIFY run. Next: pilot source execution
+phases with batched result queries and explicit observation boundaries. Use one
+running applier for ordinary correctness cases. Keep named restart/replay checks.
+See the detailed review for measured call costs and the one-profile pilot scope.
+Database-case ownership and the remaining restart boundaries follow that pilot.
+
+
+The MODIFY phase pilot now passes all 56 assertions in 21.6 local case seconds,
+with 63 SQL client calls instead of 918. It keeps one running writer across setup,
+ALTER and DML phases and one explicit saved-state restart. Shared correctness
+failures now request a support bundle and print its path. The detailed review
+records timing, coverage differences and the passing deliberate failure check.
+The bundle contains a valid stopped-state SQLite snapshot and the original
+assertion failure. Extend this model to another ordinary DDL workflow;
+retain explicit lifecycle assertions and profile-specific session behavior.

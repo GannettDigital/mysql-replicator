@@ -5,7 +5,7 @@ import Foundation
 enum SharedCatalogSupport {
     static var caseIDs: Set<String> {
         Set(
-            DatabaseCreationCases.cases.map { $0.test.id } + ModifyIndexCases.cases.map { $0.test.id }
+            DatabaseCreationCases.cases.map { $0.test.id } + ModifyIndexCases.sharedTests.map { $0.id }
                 + DDLCoverageCases.changes.map { $0.test.id } + [DDLCoverageCases.group.id, "matrix-encodings"])
     }
     static func export(
@@ -61,20 +61,24 @@ extension SharedCorrectness.Run {
     func state(_ file: URL, _ sql: String) throws -> String {
         try f.runner.run(["sqlite3", file.path, sql]).text
     }
+    func copyBinlog(_ role: LabProfile.Role, file: String, label: String) throws -> URL {
+        let path = f.output.appendingPathComponent(role.rawValue + "-" + label + "-" + file)
+        try f.h.compose(["exec", "-T", f.profile.service(role), "cat", "/var/lib/mysql/" + file]).stdout.write(to: path)
+        return path
+    }
     func binlogAssertion(_ test: ModifyIndexCases.Case, starts: [LabProfile.Role: Boundary]) throws -> Any {
         var observed: [String: [String]] = [:]
         for role in LabProfile.Role.allCases {
             let from = starts[role]!
             let to = try f.boundary(role)
             try require(from.file == to.file, "unexpected rotation in MODIFY/index comparison")
-            let path = f.output.appendingPathComponent(role.rawValue + "-" + test.test.id + ".binlog")
-            try f.h.compose(["exec", "-T", f.profile.service(role), "cat", "/var/lib/mysql/" + from.file]).stdout.write(
-                to: path)
+            let evidence = f.output.appendingPathComponent(role.rawValue + "-" + test.test.id + ".binlog.txt")
+            let path = try copyBinlog(role, file: from.file, label: test.test.id)
             let decoded = try f.runner.run([
                 f.h.decoder, "--no-defaults", "--verify-binlog-checksum", "--base64-output=DECODE-ROWS", "-vv",
                 "--start-position=\(from.position)", "--stop-position=\(to.position)", path.path,
             ])
-            try decoded.stdout.write(to: path.appendingPathExtension("txt"))
+            try decoded.stdout.write(to: evidence)
             let prefixes = [
                 "ALTER TABLE ", "CREATE INDEX ", "CREATE UNIQUE INDEX ", "DROP INDEX ", "CREATE TABLE ",
                 "RENAME TABLE ", "TRUNCATE TABLE ",

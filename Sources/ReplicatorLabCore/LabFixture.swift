@@ -225,8 +225,8 @@ final class LabFixture {
             profile.service(role),
             statusCommand: profile.version(role) == "5.7" ? "SHOW MASTER STATUS" : "SHOW BINARY LOG STATUS")
     }
-    func awaitNative() throws {
-        let end = try boundary()
+    func awaitNative(_ boundary: Boundary? = nil) throws {
+        let end = try boundary ?? self.boundary()
         let waited = try h.sql("native", "SELECT WAIT_FOR_EXECUTED_GTID_SET('\(end.gtids)',90)")
         try h.sql("native", profile.nativeVersion.replicaStatus + "\\G", headers: true).write(
             to: output.appendingPathComponent("native-status.txt"), atomically: true, encoding: .utf8)

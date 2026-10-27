@@ -52,16 +52,7 @@
           "create-select-contract",
           "alter-rename-target84-refusal",
           "ddl",
-          "ddl-modify-demo-varchar-120",
-          "ddl-modify-narrow-text",
-          "ddl-modify-binary-width",
-          "ddl-modify-binary-narrow",
-          "ddl-modify-integer-signed",
-          "ddl-modify-primary-widen",
-          "ddl-modify-integer-narrow",
-          "ddl-modify-not-null",
-          "ddl-modify-first",
-          "ddl-modify-after"
+          "ddl-modify-columns"
         ]
       }
     },

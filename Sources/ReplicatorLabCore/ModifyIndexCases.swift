@@ -29,6 +29,27 @@ enum ModifyIndexCases {
             self.workload = workload
         }
     }
+    static let columns = QualificationCase(
+        "ddl-modify-columns", "ALTER TABLE: change column definitions and positions")
+    static let columnIDs = [
+        "ddl-modify-demo-varchar-120", "ddl-modify-narrow-text", "ddl-modify-binary-width",
+        "ddl-modify-binary-narrow", "ddl-modify-integer-signed", "ddl-modify-primary-widen",
+        "ddl-modify-integer-narrow", "ddl-modify-not-null", "ddl-modify-first", "ddl-modify-after",
+    ]
+    static var columnCases: [Case] { cases.filter { columnIDs.contains($0.test.id) } }
+    static var standaloneCases: [Case] { cases.filter { !columnIDs.contains($0.test.id) } }
+    static var sharedTests: [QualificationCase] { [columns] + standaloneCases.map(\.test) }
+    static let columnChecks = [
+        "schema-effects", "following-dml", "source-boundary", "schema-history", "normalized-binlog",
+    ]
+    static func columnAssertion(_ test: Case, _ check: String) -> String {
+        String(test.test.id.dropFirst("ddl-".count)) + "-" + check
+    }
+    static var columnAssertions: [String] {
+        columnChecks + columnCases.flatMap { test in columnChecks.map { columnAssertion(test, $0) } }
+            + ["saved-state-resume"]
+    }
+
     static let cases: [Case] = [
         .init(
             "modify-demo-varchar-120",
@@ -434,21 +455,34 @@ enum ModifyIndexCases {
     static func metadata(_ h: NativeHarness, _ service: String, _ test: Case, expectedEngine: String? = nil) throws
         -> [String: String]
     {
+        var values: [String: String] = [:]
+        for query in metadataQueries(test) { values[query.name] = try h.sql(service, query.sql) }
+        return try checkMetadata(
+            test, values: values, engine: expectedEngine ?? (service == "source" ? "InnoDB" : "MyISAM"))
+    }
+    static func metadataQueries(_ test: Case) -> [LabSQLBatch.Query] {
         let condition = "TABLE_SCHEMA='demo' AND TABLE_NAME='\(test.table)'"
-        let columns = try h.sql(
-            service,
-            "SELECT CONCAT(COLUMN_NAME,':',IF(DATA_TYPE IN ('int','bigint'),CONCAT(DATA_TYPE,IF(COLUMN_TYPE LIKE '%unsigned%',' unsigned','')),COLUMN_TYPE),':',IS_NULLABLE,':',IFNULL(CHARACTER_SET_NAME,''),':',IFNULL(COLLATION_NAME,''),':',IFNULL(COLUMN_DEFAULT,'<NULL>')) FROM information_schema.COLUMNS WHERE \(condition) ORDER BY ORDINAL_POSITION"
-        )
-        let indexes = try h.sql(
-            service,
-            "SELECT CONCAT(INDEX_NAME,':',NON_UNIQUE,':',SEQ_IN_INDEX,':',COLUMN_NAME,':',IFNULL(CAST(SUB_PART AS CHAR),'FULL'),':',INDEX_TYPE,':',COLLATION) FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX"
-        )
-        let engine = try h.sql(service, "SELECT ENGINE FROM information_schema.TABLES WHERE \(condition)")
-        try require(columns == test.columns, "\(test.test.id) \(service) columns differ: \(columns)")
-        try require(indexes == test.indexes, "\(test.test.id) \(service) indexes differ: \(indexes)")
+        return [
+            .init(
+                name: "columns",
+                sql:
+                    "SELECT CONCAT(COLUMN_NAME,':',IF(DATA_TYPE IN ('int','bigint'),CONCAT(DATA_TYPE,IF(COLUMN_TYPE LIKE '%unsigned%',' unsigned','')),COLUMN_TYPE),':',IS_NULLABLE,':',IFNULL(CHARACTER_SET_NAME,''),':',IFNULL(COLLATION_NAME,''),':',IFNULL(COLUMN_DEFAULT,'<NULL>')) FROM information_schema.COLUMNS WHERE \(condition) ORDER BY ORDINAL_POSITION"
+            ),
+            .init(
+                name: "indexes",
+                sql:
+                    "SELECT CONCAT(INDEX_NAME,':',NON_UNIQUE,':',SEQ_IN_INDEX,':',COLUMN_NAME,':',IFNULL(CAST(SUB_PART AS CHAR),'FULL'),':',INDEX_TYPE,':',COLLATION) FROM information_schema.STATISTICS WHERE \(condition) ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX"
+            ),
+            .init(name: "engine", sql: "SELECT ENGINE FROM information_schema.TABLES WHERE \(condition)"),
+        ]
+    }
+    static func checkMetadata(_ test: Case, values: [String: String], engine: String) throws -> [String: String] {
         try require(
-            engine == (expectedEngine ?? (service == "source" ? "InnoDB" : "MyISAM")), "index DDL changed local engine")
-        return ["columns": columns, "indexes": indexes, "engine": engine]
+            values["columns"] == test.columns, "\(test.test.id) columns differ: \(values["columns"] ?? "missing")")
+        try require(
+            values["indexes"] == test.indexes, "\(test.test.id) indexes differ: \(values["indexes"] ?? "missing")")
+        try require(values["engine"] == engine, "\(test.test.id) changed local engine")
+        return values
     }
     static func rows(_ h: NativeHarness, _ service: String, _ table: String) throws -> String {
         try h.sql(

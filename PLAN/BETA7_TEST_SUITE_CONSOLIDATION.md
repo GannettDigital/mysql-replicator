@@ -104,8 +104,11 @@ variant and SQL transport. These checks cover both target engines. No further
 local profile, restart, file-position/MINIMAL or full-group run is required for
 this slice. No further build is required while build inputs are unchanged.
 See [the metadata results](BETA7_METADATA_GROUP_REVIEW.md#local-integration-checks).
-Next, compare the next full CI run with the saved baseline. A failure can reopen
-only the affected local check; it does not restart the whole validation list.
+Next, review unchanged groups with the saved passing baseline. Exclude the old
+bootstrap group when assessing coverage supplied by retained groups. New metadata
+coverage and timing remain pending. Batch further reviewed changes before the
+next full CI run. A failure can reopen only the affected local check; it does not
+restart the whole validation list.
 
 ## Growth and acceptance criteria
 
@@ -375,8 +378,11 @@ producing results. An unsafe fixture must stop with a clear reason.
 
 ## Step 6 — Measure the full suite and balance groups
 
-- Run one full instrumented CI selection after the local migrations pass and
-  the user has pushed the changes. Use the existing reusable build.
+- Start with saved passing measurements for unchanged groups. Check case bodies,
+  selections, settings and fixture order before reusing their evidence. Do not
+  wait for a new full run to review other groups after one group changes.
+- Batch reviewed changes, then run one full instrumented CI selection after
+  local checks pass and the user has pushed. Use the existing reusable build.
 - Check all four profiles and all retained variants/transports. Confirm result,
   SQL, coverage and support-bundle collection completeness.
 - Compare original and new runtime line sets. Explain each lost line. Keep unit
@@ -1080,7 +1086,7 @@ profile, suite and variant. The runner prepares its fixture once.
 | Continuous and isolated writers | The main writer drains and checks saved state before isolated cases start. `LabIsolatedApply` assigns state directories and starting positions by case. Resume retains that case's state. |
 | DDL tables and native engine | Each DDL compatibility case recreates `ddlcompat`. The runner sets the declared native engine and restarts the SQL thread after catch-up. DML and index families reset the engine before their cases. |
 | Row metadata | DDL cases set the variant metadata or their FULL override. Matrix and bootstrap cases set their own metadata. Index cases reset to the variant setting. |
-| Index fixtures | Each MODIFY/index case drops its known table names and seeds them through replication. Following DML, binlog, schema-history and checkpoint checks remain. |
+| Index fixtures | The combined column MODIFY workflow resets each starting definition through replication. It keeps per-ALTER rows, counters, binlogs and schema history, with one final saved-state restart. Standalone index cases retain their state boundaries. |
 | Bootstrap discovery | Tables are seeded without binlogging. Cases retain separate schema definitions, state and resume phases. Shared containers do not turn first discovery into a warm-cache lookup. |
 | Replay | Replay uses its own archive and state directory. Fresh replay restores target data and GTIDs to the baseline. Resume retains state. DDL replay restores the live configuration file before restarting the main writer. |
 | Native filters | `SharedFilters` clears native filters and starts replication before its included-table rejection check. Its saved-state dependency chain remains together. |
@@ -1159,6 +1165,14 @@ The [metadata group review](BETA7_METADATA_GROUP_REVIEW.md) maps 47 repeated
 DML fixtures to existing owners and identifies four target-only workflows to
 retain. Keep a small metadata group for reads, cache reuse and DDL invalidation.
 The focused replacements and retirement map are now implemented. Focused local
-checks passed on both target engines. Compare the next full CI run with the passing baseline before
-combining more definitions. Then measure and balance groups. Select the short
-PR suite last.
+checks passed on both target engines. Continue reviews of unchanged groups with
+the saved assertions, SQL, coverage and timings. Metadata measurements remain
+pending. Batch further changes before the next full CI run, then verify the new
+measurements and balance groups. Select the short PR suite last.
+
+
+The [table/column/index review](BETA7_TABLE_COLUMN_INDEX_REVIEW.md) is complete.
+The combined `ddl-modify-columns` workflow is implemented with named per-ALTER
+checks. Its focused validation is recorded in that review. Next: review repeated
+observation calls while keeping each intermediate result. Keep other group
+measurements from the saved passing run until the batched CI check.

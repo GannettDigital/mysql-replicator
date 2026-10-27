@@ -94,7 +94,7 @@ final class QualificationReporter {
             assertions.append(["id": id, "status": "failed", "error": String(describing: error)])
             results[current.index]["assertions"] = assertions
             try save()
-            throw error
+            throw LabError("assertion \(id): \(error)")
         }
     }
 

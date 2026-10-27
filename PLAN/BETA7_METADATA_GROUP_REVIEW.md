@@ -194,9 +194,12 @@ order and does not require another local run.
 3. Remove the repeated existing-table DML phases. Check the changed sequence on
    the representative profile selected in the validation scope. Cases share one
    fixture. Leave the remaining profile/variant combinations to CI.
-4. Compare full CI line sets, SQL and setup/test/coverage times with this run.
-   Inspect any lost lines and retain every required assertion.
-5. Balance the remaining groups. Select the short PR suite last.
+4. Continue reviews of other groups with the saved passing run. Exclude the old
+   bootstrap group when comparing coverage supplied by retained groups. New
+   metadata timing and coverage remain pending; this does not block other reviews.
+5. Batch reviewed changes, then compare full CI line sets, SQL and setup/test/
+   coverage times with this run. Inspect lost lines and retain required assertions.
+   Verify group balance and select the short PR suite last.
 
 Evidence is under `artifacts/ci-review/40454033524/`: `measurements/`, `jobs/`,
 `correctness-catalog.json`, `metadata-dml-map.json` and

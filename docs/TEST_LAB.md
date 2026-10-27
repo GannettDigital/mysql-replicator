@@ -98,8 +98,38 @@ if the build inputs have not changed. See the
 Full CI assigns related cases to named groups such as
 `table-column-index-changes` and `table-metadata-discovery`.
 Cases in each group share MySQL containers. The groups retain all selected SQL,
-per-case assertions and state boundaries. See [CI measurements](CI_MEASUREMENTS.md)
+named assertions and explicit saved-state boundaries. See [CI measurements](CI_MEASUREMENTS.md)
 for group counts, timing scope and coverage comparison rules.
+
+`ddl-modify-columns` is one ordered test in `table-column-index-changes`.
+It tests VARCHAR and VARBINARY width changes, integer type changes, primary-key
+width changes, NOT NULL, and FIRST/AFTER column positions. Each ALTER retains its
+starting table definition, warning checks, metadata checks and following DML.
+Each condition uses its own table. Source statements run in setup, ALTER and
+DML phases. Each phase waits once, then batches its result queries on all three
+servers. INSERT/UPDATE/DELETE retain their intermediate row checks. Named
+assertions check each statement's GTID and file offset, saved schema and normalized
+source/native/target binlogs. The test exports state once and checks one saved-state
+restart followed by an UPDATE. A MODIFY-only run omits the outer runner's duplicate
+restart. It replaces the ten separate column MODIFY cases;
+`ddl-modify-indexed` remains separate.
+
+Run this case on one profile, or select `all` to run it across profiles:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-modify-columns"
+make lab-plan ARGS="--profile all --suite correctness --case ddl-modify-columns"
+```
+
+A shared correctness failure prints the case and assertion or source phase, the
+original error, and a local support-bundle path. The harness stops the applier
+before it calls `support-bundle`. This also collects a bundle for an assertion
+failure when the applier did not enter `BLOCKED`. Automatic `BLOCKED` bundles
+remain available. Read `harness-failure.json`, the failed assertion or phase file,
+and the printed bundle. Its logs include the harness failure and applier logs.
+If state is not available or collection fails, output reports the collection
+error and keeps the original test error. Setup failures cannot always produce a
+state bundle.
 
 The `matrix-binarychoices` and metadata cases check raw binary ENUM labels, binary
 SET labels, hex/bit literals and defaults. The `legacybinaryset` cases add non-UTF-8

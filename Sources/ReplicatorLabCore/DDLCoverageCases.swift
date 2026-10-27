@@ -369,7 +369,7 @@ enum DDLCoverageCases {
         "ddl.column.modify.supported": Dictionary(
             uniqueKeysWithValues: [
                 "schema-effects", "following-dml", "source-boundary", "schema-history", "normalized-binlog",
-            ].map { ($0, ModifyIndexCases.cases.filter { $0.test.id.hasPrefix("ddl-modify-") }.map { $0.test.id }) }),
+            ].map { ($0, ModifyIndexCases.sharedTests.filter { $0.id.hasPrefix("ddl-modify-") }.map { $0.id }) }),
         "ddl.index.secondary.supported": Dictionary(
             uniqueKeysWithValues: [
                 "schema-effects", "following-dml", "source-boundary", "schema-history", "normalized-binlog",
@@ -481,7 +481,7 @@ enum DDLCoverageCases {
                 positive, group, unsupported, denied, missingTemplate, DatabaseCreationCases.unsupported,
                 DatabaseCreationCases.unsupportedDefault, DatabaseCreationCases.denied,
             ] + rejections.map { $0.0 } + DatabaseCreationCases.cases.map { $0.test }
-            + ModifyIndexCases.cases.map { $0.test } + ModifyIndexCases.failures.map { $0.test } + [
+            + ModifyIndexCases.sharedTests + ModifyIndexCases.failures.map { $0.test } + [
                 ModifyIndexCases.timeout, ModifyIndexCases.resume, wildcardFilter, wildcardResume, wildcardRejection,
             ]
         top += DDLCompatibilityCases.declarations

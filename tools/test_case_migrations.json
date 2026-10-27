@@ -3996,6 +3996,846 @@
           "assertion": "saved-checkpoint"
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-demo-varchar-120",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Widen VARCHAR; verify omitted nullability and collation attributes, a long value, and following INSERT/UPDATE/DELETE. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-demo-varchar-120-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-demo-varchar-120-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-demo-varchar-120-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-demo-varchar-120-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-demo-varchar-120-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-narrow-text",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Narrow VARCHAR with NOT NULL and explicit collation; verify exact multibyte, NUL and trailing-space bytes. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-narrow-text-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-narrow-text-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-narrow-text-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-narrow-text-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-narrow-text-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-binary-width",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Widen VARBINARY; verify retained bytes and a value larger than the old width. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-binary-width-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-binary-width-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-binary-width-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-binary-width-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-binary-width-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-binary-narrow",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Narrow VARBINARY; verify fitting bytes and a following INSERT. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-binary-narrow-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-binary-narrow-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-binary-narrow-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-binary-narrow-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-binary-narrow-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-integer-signed",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Change unsigned INT to signed BIGINT; write 4294967296. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-integer-signed-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-integer-signed-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-integer-signed-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-integer-signed-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-integer-signed-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-primary-widen",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Widen the primary key to unsigned BIGINT; insert, update and delete keys above the INT range. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-primary-widen-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-primary-widen-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-primary-widen-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-primary-widen-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-primary-widen-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-integer-narrow",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Narrow an existing BIGINT primary key to INT; verify retained and inserted rows. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-integer-narrow-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-integer-narrow-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-integer-narrow-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-integer-narrow-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-integer-narrow-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-not-null",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Change nullable VARCHAR to NOT NULL; retain its explicit collation and row values. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-not-null-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-not-null-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-not-null-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-not-null-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-not-null-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-first",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Move the text column FIRST; verify column/value alignment through INSERT/UPDATE/DELETE. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-first-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-first-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-first-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-first-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-first-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-modify-after",
+      "replacement": "ddl-modify-columns",
+      "review": "PLAN/BETA7_TABLE_COLUMN_INDEX_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Widen and move the numeric column AFTER the binary column; verify order and following values. Retain the original starting definition and native metadata/warning checks. The phase pilot gives this condition its own table name; definitions and values remain unchanged.",
+          "assertion": "modify-after-schema-effects"
+        },
+        {
+          "condition": "Retain every original following-DML statement and exact intermediate row expectation.",
+          "assertion": "modify-after-following-dml"
+        },
+        {
+          "condition": "Check exact source GTIDs and file/end offsets for this case in the applied journal. Check transaction/DDL/row counter deltas for each combined workload.",
+          "assertion": "modify-after-source-boundary"
+        },
+        {
+          "condition": "Check completed DDL, immutable schema after-image and following row schema references for this case's exact GTIDs from the final saved state.",
+          "assertion": "modify-after-schema-history"
+        },
+        {
+          "condition": "Compare this table's complete normalized source/native/target row blocks and ALTER from the shared workload interval. Require one ALTER, the exact row count and no unexpected rotation.",
+          "assertion": "modify-after-normalized-binlog"
+        },
+        {
+          "condition": "Replace ten per-case STOPPED checks with one final STOPPED checkpoint and one saved-state restart followed by a verified UPDATE.",
+          "assertion": "saved-state-resume"
+        }
+      ]
     }
   ]
 }
