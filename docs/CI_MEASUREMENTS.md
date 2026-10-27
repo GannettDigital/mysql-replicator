@@ -170,7 +170,7 @@ The shared groups include:
 
 - `keys-rows-gtids`: PRIMARY/UNIQUE keys, row matching, conflicts, index changes,
   row statements and the existing GTID cases.
-- `table-column-changes`: table/column changes, generated columns, special index
+- `table-column-index-changes`: table/column changes, generated columns, special index
   definitions and column modifications.
 - `character-sets-collations`: character-set DDL and encoded row values.
 - `data-types-values`: numeric, temporal, structured and default values.
@@ -198,6 +198,29 @@ profiles. These are separate scenarios, not a simultaneous expansion. Neither
 adds jobs to the actual run. Both require at most 245 jobs with the current plan.
 The checks do not establish support for a new MySQL topology. They test matrix
 capacity with the existing selections and isolation rules.
+
+The remaining group names describe their selected behavior:
+
+| Group | Main checks |
+|---|---|
+| `database-defaults-transactions` | Database defaults, existing databases and the applicable transaction/default workflow |
+| `ddl-partition-management` | Partition definitions, routing, bounds, maintenance, exchange and rename |
+| `ddl-views-routines-temporary-tables` | Views, routines, definers, temporary tables and executable comments |
+| `foreign-key-definitions-actions-recovery` | Foreign-key definitions, parent rules, row actions and recovery |
+| `compatibility-policies-error-skipping` | Expected rejections, trigger policy, live error skipping and native restrictions |
+| `ordered-schema-changes-resume` | Ordered DDL and row changes through saved-state resume |
+| `collation-translation-collisions` | Collation translation, table-copy cleanup and conflicting keys |
+| `table-filters-index-resume` | Table filters, included-table failures, saved schema and index changes after resume |
+| `write-failures-recovery-replay-control` | Applicable permission/failure cases, recovery, archive replay, error skipping and runtime control |
+| `connection-restarts-uncertain-writes` | Source/target disconnects, restart, drain and unresolved writes |
+| `innodb-rollback-recovery` | InnoDB rollback, inspection and audited retry |
+| `native-source-restrictions` | Native MySQL behavior used as a reference |
+
+Names identify execution groups. They do not replace catalog families or case
+IDs. The result lists the exact cases, dependencies, profile, variant and
+transport. The [group review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md#slice-9--group-names-and-state-isolation-review)
+records the renamed groups and shared-state checks. Not every condition applies
+to every profile.
 
 ## Normal CI
 

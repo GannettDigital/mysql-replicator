@@ -21,8 +21,10 @@ Current progress:
   and `positive` cases: they have different assertions and already share setup.
   No test or selected execution was removed. Full CI is still required.
 - Feature ownership is explicit. Slice 7 implements the first shared feature
-  groups from Steps 4–5. Full-CI timing and coverage checks, remaining feature
-  organization and final PR selection are still required. Cleanup is Step 8.
+  groups from Steps 4–5. Slice 9 completes the source review of group names and
+  state isolation. The larger combined groups still require full-CI validation.
+  Timing and coverage checks are Step 6. Final PR selection remains Step 7;
+  cleanup is Step 8.
 
 ## Goal
 
@@ -964,3 +966,88 @@ Step 3 is complete for this reorganization. Next: finish Steps 4–5 by reviewin
 the remaining group names and state isolation. Then use full CI for Step 6.
 Keep the final PR selection last. Do not start another case migration unless the
 review identifies a concrete duplicate or a missing assertion.
+
+## Slice 9 — Group names and state isolation review
+
+This slice changes execution-group names only. It preserves group membership,
+case order, dependencies, assertions, profiles, variants and transports. It does
+not add fixture setup, change replication code or change SQL workloads.
+
+### Names
+
+Consulted the MySQL 8.4 Reference Manual sections on
+[Partitioning](https://dev.mysql.com/doc/refman/8.4/en/partitioning.html),
+[Stored Objects](https://dev.mysql.com/doc/refman/8.4/en/stored-objects.html),
+[FOREIGN KEY Constraints](https://dev.mysql.com/doc/refman/8.4/en/create-table-foreign-keys.html)
+and [Character Sets, Collations, Unicode](https://dev.mysql.com/doc/refman/8.4/en/charset.html).
+Names combine these feature names with plain descriptions of the tests. The
+view/routine group also contains temporary tables; its name must not imply that
+these are stored objects. Case IDs and catalog families remain unchanged.
+
+| Previous area | Current area |
+|---|---|
+| `database` | `database-defaults-transactions` |
+| `ddl-partitions` | `ddl-partition-management` |
+| `ddl-stored-objects` | `ddl-views-routines-temporary-tables` |
+| `foreign-keys` | `foreign-key-definitions-actions-recovery` |
+| `refusals` | `compatibility-policies-error-skipping` |
+| `ordered-ddl` | `ordered-schema-changes-resume` |
+| `collation` | `collation-translation-collisions` |
+| `filters-discovery` | `table-filters-index-resume` |
+| `failure-recovery-offline` | `write-failures-recovery-replay-control` |
+| `table-column-changes` | `table-column-index-changes` |
+| `reconnect` | `connection-restarts-uncertain-writes` |
+| `recovery` | `innodb-rollback-recovery` |
+| `native-ddl` | `native-source-restrictions` |
+
+Other descriptive group names stay unchanged. The explicit BINLOG and PR
+selections stay unchanged. Scheduling estimates follow the renamed areas with
+the same values. Historical reports retain their old names; use this table when
+comparing them with the next CI run.
+
+### State isolation
+
+The review followed the call order in `SharedCorrectness.Run.execute`, not the
+order of areas in the policy. `LabTests` creates one runner for a selected
+profile, suite and variant. The runner prepares its fixture once.
+
+| Boundary | Existing handling |
+|---|---|
+| Continuous and isolated writers | The main writer drains and checks saved state before isolated cases start. `LabIsolatedApply` assigns state directories and starting positions by case. Resume retains that case's state. |
+| DDL tables and native engine | Each DDL compatibility case recreates `ddlcompat`. The runner sets the declared native engine and restarts the SQL thread after catch-up. DML and index families reset the engine before their cases. |
+| Row metadata | DDL cases set the variant metadata or their FULL override. Matrix and bootstrap cases set their own metadata. Index cases reset to the variant setting. |
+| Index fixtures | Each MODIFY/index case drops its known table names and seeds them through replication. Following DML, binlog, schema-history and checkpoint checks remain. |
+| Bootstrap discovery | Tables are seeded without binlogging. Cases retain separate schema definitions, state and resume phases. Shared containers do not turn first discovery into a warm-cache lookup. |
+| Replay | Replay uses its own archive and state directory. Fresh replay restores target data and GTIDs to the baseline. Resume retains state. DDL replay restores the live configuration file before restarting the main writer. |
+| Native filters | `SharedFilters` clears native filters and starts replication before its included-table rejection check. Its saved-state dependency chain remains together. |
+| Expected MyISAM failures | Forward failures restore applier grants. Forward-failure and MyISAM recovery cases save native failure output, reset the rejected range and check that the SQL thread runs before returning. |
+| Special settings | Permission cleanup attempts to restore the timestamp default and drop its account. Large-value tests establish and restore a known packet limit; this case remains last in its data-type group. |
+| Unexpected failure | The runner stops the group, saves diagnostics and cleans up. It does not continue on possibly invalid state. Later cases remain not run; other jobs remain independent. |
+
+No new reset was needed from this source review. This is not proof that all
+combined groups pass. Permission cleanup uses best-effort cleanup, and some
+tests establish a known setting instead of restoring its initial value. Review
+these conditions again before moving cases across those boundaries. A generic
+reset could remove saved state or a cold-discovery condition under test.
+
+The runner still performs some common SQL preparation when no case from that
+family is selected. This is not a second container setup. Measure its cost in
+Step 6 before changing it; the change can affect saved schema history.
+
+### Validation and next step
+
+The full-plan audit confirms identical case lists and order in all 179 groups.
+Inventory, dependencies, coverage counts, growth checks and job estimates are
+unchanged. Every current area has an explicit estimate. The PR plan matches
+Slice 7 exactly. All 117 CI-tool tests and 24 component/selection tests passed.
+No MySQL integration test was rerun for these label changes.
+
+Evidence is under `artifacts/test-suite-consolidation/group-review/`:
+`area-renames.json`, `full-after.json`, `plan-review.json`, `planner-tests.log`
+and `selection-tests.log`.
+
+Steps 4–5 now have reviewed names and fixture boundaries. Runtime acceptance
+remains part of Step 6. Next: after the user pushes, run one full instrumented
+CI selection. Check case completeness and failures first, then coverage,
+setup/test time and the longest groups. Rerun only affected jobs for fixes.
+Select the final short PR case list after those measurements.

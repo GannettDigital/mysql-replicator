@@ -17,7 +17,7 @@
   },
   "areas": [
     {
-      "name": "database",
+      "name": "database-defaults-transactions",
       "families": [
         "database"
       ]
@@ -58,7 +58,7 @@
       ],
       "groups": [
         {
-          "name": "partitions",
+          "name": "partition-management",
           "cases": [
             "ddl-compat-partition-expressions",
             "ddl-compat-partition-column-renames",
@@ -74,7 +74,7 @@
           ]
         },
         {
-          "name": "stored-objects",
+          "name": "views-routines-temporary-tables",
           "cases": [
             "ddl-compat-executable-comments",
             "ddl-compat-executable-comments-target-gate",
@@ -92,7 +92,7 @@
       ]
     },
     {
-      "name": "foreign-keys",
+      "name": "foreign-key-definitions-actions-recovery",
       "families": [
         "foreign-keys"
       ]
@@ -104,7 +104,7 @@
       ]
     },
     {
-      "name": "refusals",
+      "name": "compatibility-policies-error-skipping",
       "families": [
         "policy",
         "rejections",
@@ -112,26 +112,26 @@
       ]
     },
     {
-      "name": "ordered-ddl",
+      "name": "ordered-schema-changes-resume",
       "families": [
         "ordered"
       ]
     },
     {
-      "name": "collation",
+      "name": "collation-translation-collisions",
       "families": [
         "collation"
       ]
     },
     {
-      "name": "filters-discovery",
+      "name": "table-filters-index-resume",
       "families": [
         "filters",
         "discovery"
       ]
     },
     {
-      "name": "failure-recovery-offline",
+      "name": "write-failures-recovery-replay-control",
       "families": [
         "failures",
         "recovery",
@@ -139,7 +139,7 @@
       ]
     },
     {
-      "name": "table-column-changes",
+      "name": "table-column-index-changes",
       "cases": [
         "ddl-compat-generated-expressions",
         "ddl-compat-generated-dependencies",

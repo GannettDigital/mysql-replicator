@@ -276,6 +276,13 @@ discovery and resume. Prefix-key and UNIQUE-key workflows remain separate. The
 records preserved coverage and the accepted time increase. These cases now share
 the `keys-rows-gtids` fixture with related key and row tests.
 
+Cases in a group share MySQL containers. They do not all share an applier state
+directory. Bootstrap, failure and replay cases keep their own state and starting
+positions. A required resume reuses that case's saved state. The continuous
+writer stops before isolated cases start. An unexpected failure stops the group;
+remaining cases are reported as not run. Other CI jobs can continue. The runner
+does not reuse an uncertain fixture after an unexpected failure.
+
 Here, single-row means one changed row per statement. It does not mean MySQL's
 single-table statement syntax, which can change many rows. Select cases with
 `--case`; named assertions describe the recorded checks within each case and

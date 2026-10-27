@@ -204,7 +204,8 @@ def generate(catalogs, policy, expanded_coverage=False):
                 add(profile, variant, suite, area, cases)
         elif suite in ('lifecycle', 'recovery', 'native'):
             reports = 0 if suite == 'native' else 1
-            area = {'native': 'native-ddl', 'lifecycle': 'reconnect'}.get(suite, suite)
+            area = {'native': 'native-source-restrictions', 'lifecycle': 'connection-restarts-uncertain-writes',
+                    'recovery': 'innodb-rollback-recovery'}[suite]
             add(profile, variant, suite, area, [r['id'] for r in rows],
                 reports=reports)
         else:
@@ -233,7 +234,8 @@ def generate(catalogs, policy, expanded_coverage=False):
     # instrumentation once. Native-only observations do not run our binary.
     # Start the longest stateful suites early to avoid a serial tail after the
     # shorter case chunks finish. GitHub may further limit runner concurrency.
-    priority = {'failure-recovery-offline': 0, 'native-ddl': 1, 'demo': 2, 'reconnect': 3}
+    priority = {'write-failures-recovery-replay-control': 0, 'native-source-restrictions': 1,
+                'demo': 2, 'connection-restarts-uncertain-writes': 3}
     shards.sort(key=lambda s: priority.get(s['area'], 4))
     if len({s['id'] for s in shards}) != len(shards):
         raise ValueError('duplicate shard identifiers')
