@@ -9803,6 +9803,16 @@
       "suite": "ddl-suite",
       "case_id": "ddl-compat-source-gtid-preservation",
       "reason": "Preserve source GTIDs across multi-row and keyless writes, restart and offline replay."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-primary-key-row-matching",
+      "reason": "Composite and text primary keys, key updates, multi-row writes, exact row matching, restart and offline replay. Replaces the replicated composite and text-key cases."
+    },
+    {
+      "suite": "ddl-suite",
+      "case_id": "ddl-compat-key-conflicts",
+      "reason": "REPLACE, INSERT IGNORE and INSERT ON DUPLICATE KEY UPDATE with primary and secondary unique keys, exact row effects, restart and offline replay. Replaces separate conflict cases."
     }
   ]
 }

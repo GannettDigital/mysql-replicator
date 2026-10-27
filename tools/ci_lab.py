@@ -83,6 +83,8 @@ def select_plan(query, scope=None, change_plan=None):
 
 
 def validated_plan(query, scope=None, change_plan=None):
+    # Reject stale support/catalog references before any integration job starts.
+    query("ddl-catalog", "check")
     result = select_plan(query, scope=scope, change_plan=change_plan)
     from lab_features import with_features
     result = with_features(result, [dict(scenarios=result['inventory'])],

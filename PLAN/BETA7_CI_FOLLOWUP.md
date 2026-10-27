@@ -64,7 +64,33 @@ Both failing variants load this catalog before their selected cases execute.
 
 Local fixes update the three catalog entries and run `ddl-catalog check` before
 CI matrix generation. All 27 affected catalog unit tests pass. The 92 focused
-CI/selector tests pass. No full suite or database test was rerun.
+CI/selector tests pass. The focused database checks are recorded below.
+
+### Local validation after the fixes
+
+- `ddl-catalog check` passes: 63 scenarios, 244 registered cases and 56 support
+  requirements.
+- The full generated plan matches the previous plan: 187 groups, 2,039 scenario
+  obligations and 186 coverage collections. Names and selections are unchanged.
+- The `positive` case passes for `mysql84-to-mysql57-myisam` with both
+  `gtid-full` and `position-minimal`. Each checks INSERT, UPDATE and DELETE,
+  compares rows, binlogs and SQLite checkpoints, and restarts from saved state.
+- Both local cases collected coverage. The second reused the first image with
+  `--skip-build`. No full integration suite was run locally.
+
+Local results:
+
+- `artifacts/lab/20261027T042733Z-6bb81a6d/result.json` (`gtid-full`).
+- `artifacts/lab/20261027T045025Z-87fd74e1/result.json` (`position-minimal`).
+
+The first check required a local coverage-image rebuild. Rust, Swift dependencies
+and MySQLSyntax used cached layers. The application stage built all Swift test
+executables as well as the applier. It used release optimization, coverage and
+indexing, with two build jobs. The image targets x86_64, but this Mac is arm64.
+Swift compilation took 1,229 seconds; the first test case took 13 seconds,
+excluding fixture setup and coverage collection. Keep this build cost separate
+from test execution when comparing group times. Consider a smaller local
+integration build separately from this CI failure fix.
 
 ### Group size and names
 

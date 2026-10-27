@@ -10,6 +10,13 @@ import ci_lab
 
 
 class CIShardsTests(unittest.TestCase):
+    def test_invalid_catalog_blocks_matrix_generation(self):
+        query = Mock(side_effect=subprocess.CalledProcessError(1, ['lab', 'ddl-catalog', 'check']))
+        with patch.object(ci_lab, 'select_plan') as select, self.assertRaises(subprocess.CalledProcessError):
+            ci_lab.validated_plan(query, scope='full')
+        query.assert_called_once_with('ddl-catalog', 'check')
+        select.assert_not_called()
+
     def test_image_preparation_uses_profile_definition_and_builds_shared_image_once(self):
         from ci_jobs import assign_jobs
         group = dict(id='one', profile='reverse', variant='default', image='coverage', area='dml')

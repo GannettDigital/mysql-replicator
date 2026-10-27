@@ -37,7 +37,7 @@
       "candidate_cases": [
         "matrix-encodings",
         "bootstrap-matrix-encodings",
-        "matrix-composite",
+        "ddl-compat-primary-key-row-matching",
         "matrix-collations",
         "bootstrap-matrix-collations",
         "matrix-nativeencodings",
