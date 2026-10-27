@@ -10,6 +10,24 @@ from ci_registry import plan
 
 
 class SharedBuildTests(unittest.TestCase):
+    def test_shared_image_requires_support_catalog_files_including_documents(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            catalog = root / 'tests/DDLCoverage/support.json'
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(json.dumps(dict(requirements=[dict(
+                id='json', code_references=['Sources/JSON.swift', 'PLAN/JSON.md'])])))
+            source = root / 'Sources/JSON.swift'
+            source.parent.mkdir()
+            source.touch()
+            with patch.object(build, 'ROOT', root):
+                with self.assertRaisesRegex(ValueError, 'json: PLAN/JSON.md'):
+                    build.check_test_inputs()
+                document = root / 'PLAN/JSON.md'
+                document.parent.mkdir()
+                document.touch()
+                build.check_test_inputs()
+
     def test_rust_manifest_selects_only_test_executables(self):
         rows = [dict(reason='compiler-artifact', executable='/test', profile=dict(test=True)),
                 dict(reason='compiler-artifact', executable='/app', profile=dict(test=False)),

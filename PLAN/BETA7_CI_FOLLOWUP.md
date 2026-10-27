@@ -92,6 +92,23 @@ excluding fixture setup and coverage collection. Keep this build cost separate
 from test execution when comparing group times. Consider a smaller local
 integration build separately from this CI failure fix.
 
+### Follow-up: files required by the shared test image
+
+Run `40452455015` passed the stale-catalog checks but failed one Swift assertion:
+`SupportCatalogTests.testRequirementsReferenceExistingImplementationFiles`.
+The shared CI image did not contain `PLAN/JSON_TRANSPORT_INVESTIGATION.md`, which
+the support catalog references. The host checkout contains it, so local host
+tests did not detect the omission. The run was cancelled before another retry.
+
+The CI image now copies that document after compilation. An image preparation
+check verifies all support-catalog file references before the image is published.
+The exact assertion failed in the cached Linux build without the document.
+With the document present, all four `SupportCatalogTests` passed in the same
+prebuilt Linux test binary. No Swift compilation was needed for this check.
+
+The syntax-coverage upload error was secondary. The unit-test script stopped at
+the Swift failure before it could run the isolated syntax tests.
+
 ### Group size and names
 
 There are genuine small selections as well as the early failures. With source

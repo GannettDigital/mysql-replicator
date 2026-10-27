@@ -15,6 +15,16 @@ from ci_registry import TAGS, load_receipt
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def check_test_inputs():
+    catalog = json.loads((ROOT / 'tests/DDLCoverage/support.json').read_text())
+    missing = [f"{requirement['id']}: {path}"
+               for requirement in catalog['requirements']
+               for path in requirement['code_references']
+               if not (ROOT / path).is_file()]
+    if missing:
+        raise ValueError('Shared test image is missing support catalog files:\n' + '\n'.join(missing))
+
+
 def rust_executables(messages):
     executables = []
     for line in messages.splitlines():
@@ -86,13 +96,14 @@ def check_runtime():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['record-rust-tests', 'rust-test', 'export-lab', 'load', 'check-runtime'])
+    parser.add_argument('action', choices=['check-test-inputs', 'record-rust-tests', 'rust-test', 'export-lab', 'load', 'check-runtime'])
     parser.add_argument('--directory', type=Path, default=Path('artifacts/ci/test-build'))
     args = parser.parse_args()
     if args.action == 'load':
         load(args.directory)
     else:
-        {'record-rust-tests': record_rust_tests, 'rust-test': rust_test, 'export-lab': export_lab, 'check-runtime': check_runtime}[args.action]()
+        {'check-test-inputs': check_test_inputs, 'record-rust-tests': record_rust_tests,
+         'rust-test': rust_test, 'export-lab': export_lab, 'check-runtime': check_runtime}[args.action]()
 
 
 if __name__ == '__main__':

@@ -69,7 +69,11 @@ COPY examples examples
 COPY packaging packaging
 COPY docker docker
 COPY compose.yaml Makefile .dockerignore .periphery.yml VERSION ./
-RUN python3 tools/ci_test_build.py record-rust-tests \
+# The support catalog also references this investigation. Keep test-only documents
+# after compilation so document changes do not invalidate compiled objects.
+COPY PLAN/JSON_TRANSPORT_INVESTIGATION.md PLAN/
+RUN python3 tools/ci_test_build.py check-test-inputs \
+    && python3 tools/ci_test_build.py record-rust-tests \
     && test -d .build/release/index/store \
     && periphery version \
     && GITHUB_OUTPUT=/out/ci-inputs python3 tools/ci_test_build.py export-lab
