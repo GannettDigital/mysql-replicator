@@ -12,21 +12,23 @@ Build production packages after merge. Do not repeat the full suite on main.
 | Draft release | Push a matching release tag after main passes | Verify and copy the saved packages; no rebuild |
 
 All selected replicator tests use the coverage binary. Native-only observations
-run MySQL and do not produce replicator coverage. Performance benchmarks use an
-uninstrumented binary. The old `ci-expanded-coverage` label and dispatch input
+run MySQL and do not produce replicator coverage. The CI 10K benchmarks also use
+the coverage binary. They report elapsed-time ratios without enforcing the ratio
+limit. Manual benchmarks use an uninstrumented binary unless coverage is selected.
+The old `ci-expanded-coverage` label and dispatch input
 remain aliases for full coverage. They do not add duplicate runs.
 
-The full plan has 2,095 catalog obligations, 250 execution groups, 250 jobs and
-263 integration coverage collections. An obligation is one case for a profile,
+The full plan has 2,039 catalog obligations, 187 execution groups, 187 jobs and
+186 integration coverage collections. An obligation is one case for a profile,
 suite and capture variant. These counts measure our catalog, not all MySQL
 features. The generated `ci-lab/matrix.json` is the authority when counts change.
 
 | Profile | Applicable catalog obligations |
 | --- | ---: |
-| `mysql84-to-mysql57-myisam` | 825 |
-| `mysql57-to-mysql84-innodb` | 422 |
-| `mysql57-to-mysql57-myisam` | 412 |
-| `mysql57-to-mysql57-innodb` | 436 |
+| `mysql84-to-mysql57-myisam` | 802 |
+| `mysql57-to-mysql84-innodb` | 411 |
+| `mysql57-to-mysql57-myisam` | 401 |
+| `mysql57-to-mysql57-innodb` | 425 |
 
 The workflow first builds common Linux test artifacts. This build includes the
 application, lab, test executables, coverage maps and compiler index. Unit tests

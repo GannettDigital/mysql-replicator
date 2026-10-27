@@ -64,7 +64,8 @@ A selection that also contains a case that needs the main applier keeps the
 general setup and restart. The catalog records this requirement as
 `requires_main_applier`. Other selections keep their current setup.
 
-Full CI uses two named index/MODIFY groups and three named bootstrap groups.
+Full CI assigns related cases to named groups such as
+`table-column-index-changes` and `bootstrap-schema-discovery`.
 Cases in each group share MySQL containers. The groups retain all selected SQL,
 per-case assertions and state boundaries. See [CI measurements](CI_MEASUREMENTS.md)
 for group counts, timing scope and coverage comparison rules.
@@ -411,6 +412,7 @@ runners/assertions and are labeled adapters in the inventory.
 | `recovery` | Shared MyISAM workflow; retained InnoDB rollback/inspection/audited retry runner |
 | `demo` | Shared workbook, manual start, heartbeats, signals/resume, shell repair; profile-specific failure/skip and recovery |
 | `native` | Original 8.4-source native DDL observation suite |
+| `performance` | 10K backlog benchmark against native replication, with a configurable elapsed-time ratio limit |
 | `all` | All of the above; any missing required case makes the run incomplete |
 
 For example: `make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite recovery"`.
@@ -419,7 +421,8 @@ the same `myisam-recovery` group included in full correctness; `--suite all` run
 that group once. Its ordered child cases are listed in the offline inventory.
 The `dml-suite`, `ddl-suite`, `legacy-dml` and `legacy-ddl` commands are removed.
 Use shared `correctness`, its `bootstrap` family and capture variants instead.
-`reverse-suite` and the `reverse-correctness` compatibility alias remain.
+The old `reverse-suite` and `reverse-correctness` CLI aliases remain, but their
+Make targets are removed. Use the shared suite and an explicit profile.
 The former `demo-*` and `reverse-demo-*` commands are replaced by `demo ACTION
 --profile PROFILE`; their rehearsals are now named cases in `test --suite demo`.
 Existing legacy sessions are never adopted or overwritten. To archive and remove
@@ -522,6 +525,56 @@ DDL catalog report command; do not combine passing subsets of different runs.
 The logical catalog suite IDs and all 730 required obligations remain intact;
 those identifiers do not retain old runner entry points.
 
+## Local test commands
+
+Use `PROFILE=all` to select all applicable profiles. Use one profile ID to limit
+that selection. `ARGS` supplies options to the runner. Catalog and plan commands
+write JSON to stdout, so you can pipe their output to `jq`.
+
+```sh
+# List cases for one profile. This does not start containers.
+make lab-list PROFILE=mysql57-to-mysql84-innodb | jq '.scenarios'
+
+# Inspect an index-family selection across the four profiles.
+make lab-plan PROFILE=all ARGS="--family indexes" | jq
+
+# Run that selection across the four profiles, or on one profile.
+make lab-test PROFILE=all ARGS="--suite correctness --family indexes"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --family indexes"
+
+# Select a case, capture variant and BINLOG transport.
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--case positive --variant gtid-full --dml-transport binlog"
+
+# Run the 10K benchmark. Report a ratio above the limit without failing for it.
+make lab-performance PROFILE=all ARGS="--dml-transport binlog --max-native-ratio 2 --report-only"
+
+# Create a demo, then start its applier. A demo requires one profile.
+make lab-demo PROFILE=mysql57-to-mysql84-innodb ACTION=up
+make lab-demo PROFILE=mysql57-to-mysql84-innodb ACTION=start
+```
+
+A suite selects a runner, such as `correctness` or `lifecycle`. A family selects
+related catalog cases. A CI group is a reviewed list of cases that share a
+fixture for one profile, variant and transport. A family can span several CI
+groups. `--variant all` expands capture variants; `PROFILE=all` expands profiles.
+Neither option adds BINLOG transport automatically.
+
+The local CLI does not yet accept a CI group name such as `keys-rows-gtids`.
+`lab-plan` selects catalog cases; it does not reproduce CI group boundaries or
+transport policy. To reproduce an exact CI group, use its case list, profile,
+variant and transport from `matrix.json`. See
+[generated CI commands](PR_TEST_SELECTION.md#change-or-inspect-the-selection).
+Local matrix commands run in sequence. CI runs groups in parallel.
+
+The Makefile no longer exposes `integration-smoke`, `reverse-correctness`,
+`reverse-suite`, `native-ddl-suite`, `native-smoke`, `native-suite` or `live-suite`.
+Use `lab-test` with a suite and profile for current integration checks. Use
+`lab-plan ARGS="--selection pr --commands"` to inspect the explicit PR baseline.
+The native-only and live-capture CLI reference runners remain available for
+separate investigations; this Makefile cleanup does not remove their assertions.
+`ubuntu-smoke` and `upstream-tests` remain separate installation and upstream
+source checks. Build, package, unit, coverage and parser targets also remain.
+
 ## Plan a selection before running it
 
 `make lab-plan` reads the case catalog and prints JSON. It does not start
@@ -529,7 +582,7 @@ containers. It uses a built lab binary when you provide `--lab`; otherwise it
 uses `swift run replicator-lab` to read the catalog.
 
 ```sh
-make lab-plan ARGS="--profile mysql57-to-mysql57-innodb --family indexes --case database-existing-different"
+make lab-plan PROFILE=mysql57-to-mysql57-innodb ARGS="--family indexes --case database-existing-different"
 make lab-plan ARGS="--selection pr"
 ```
 
@@ -623,8 +676,9 @@ their images with `--skip-build`.
 The PR baseline runs unit tests, Periphery and two explicit correctness selections. The
 profiles are `mysql84-to-mysql57-myisam` and `mysql57-to-mysql84-innodb`.
 Both use the default variant and run in parallel after one shared image build.
-Unit tests and Periphery do not wait for this build. Coverage and timing reports
-remain enabled. This scope does not build release packages or run the full catalog.
+Unit tests and Periphery reuse the common build and run in parallel with
+integration tests. Coverage and timing reports remain enabled. This scope does
+not build release packages or run the full catalog.
 Each integration job runs 11 named cases in the `ddl-dml-policy-replay` area.
 See [PR test selection](PR_TEST_SELECTION.md) for case IDs, assertions, timing
 estimates, limits, and commands to reproduce the selection.
@@ -636,7 +690,8 @@ Shared runtime code, dependency/package builds, shared fixtures, other workflows
 and unknown paths select full CI. The same changed-file
 rules are available locally through `make test-selection` and `make test-selected`.
 
-Main, PRs with the `ci-full` label, and default manual runs use the full catalog.
+PRs with the `ci-full` label and manual runs with `suite=full` use the full catalog.
+Main builds production packages and runs short production-binary checks.
 See [release testing](RELEASE_TESTING.md) for the stack workflow and evidence.
 Correctness and
 source/target reconnect run for all default profiles, plus the forward
@@ -648,8 +703,9 @@ The lab catalog generates both matrices. PR planning resolves the explicit
 `pr_smoke` case IDs in `tools/ci_matrix.json` against the full catalog and adds
 prerequisites. New cases do not enter the baseline automatically. They enter component checks
 when they belong to a selected family or complete execution group.
-Full CI uses the same selection for its two cross-version coverage supplements.
-Local `--tier smoke` keeps its existing convenience selection.
+Full CI collects coverage from each apply group. It does not add separate
+coverage copies of the PR baseline. Local `--tier smoke` is a separate convenience
+selection; it does not select the same cases as PR CI.
 `tools/ci_matrix.json` assigns full CI cases to shared-fixture feature groups.
 An area with an explicit `cases` list can select related cases across DDL, DML
 and index families. Those cases have one explicit owner. Remaining cases keep

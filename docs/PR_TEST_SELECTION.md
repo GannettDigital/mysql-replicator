@@ -103,19 +103,18 @@ Current local catalog checks produce these counts, including the baseline:
 
 | Component | Execution groups | CI jobs | Case/profile/variant obligations |
 |---|---:|---:|---:|
-| Indexes | 53 | 22 | 279 |
-| JSON YEAR | 5 | 4 | 32 |
+| Indexes | 32 | 32 | 563 |
+| JSON YEAR | 5 | 5 | 63 |
 | Offline | 15 | 15 | 79 |
 | Reconnect | 16 | 16 | 132 |
 
-The index component retains the full forward coverage extension because it
-contains the column-change case. This also runs the conditional-database case.
-Other components do not select that extra fixture merely because it contains
-shared PR cases. The two PR baseline groups remain unchanged.
+Component selection keeps complete CI groups. Thus, an index change can also
+select column changes and schema discovery that share those fixtures. The two
+PR baseline groups remain unchanged.
 
 These are plan counts, not measured durations. They do not establish a five-minute
-PR target. The full plan has 244 groups and 2,095 obligations. We will use
-later timing and coverage results to review group sizes and repeated work.
+PR target. The full plan has 187 groups and 2,039 obligations. Use timing and
+coverage results to review group sizes and repeated work.
 
 ## Use the selector locally
 
@@ -148,8 +147,12 @@ from `tools/ci_matrix.json`. Component plans also show exact cases and variants
 in `integration_plan`. They run in sequence and use normal lab binaries.
 They do not publish CI coverage or release evidence. CI runs selected groups in parallel with coverage. Main builds packages and
 runs the short production-binary checks.
-The full local selection runs all catalog suites and variants. Use CI to certify
-the release packages.
+The full local selection still uses suite-wide SQL commands. It omits the
+performance suite and supplemental BINLOG groups. It also repeats the MyISAM
+recovery alias. Do not use that selection as proof that the full CI matrix passed.
+Use the generated CI plan below to inspect exact group commands. A shared local
+group selector is planned in
+[the entry-point review](../PLAN/BETA7_TEST_ENTRYPOINT_REVIEW.md).
 
 ## Selected cases
 
@@ -200,7 +203,7 @@ source/target reconnect, MyISAM crash recovery, operator demos, or same-version
 profiles. Component selections can add some of these checks. Full CI retains all
 of them. Unit coverage does not replace their database behavior checks.
 
-Full CI keeps all 2,095 current catalog obligations. Each selected apply group
+Full CI keeps all 2,039 current catalog obligations. Each selected apply group
 uses the coverage binary once. It does not repeat PR baseline fixtures solely
 for coverage. Main builds production packages and checks two short selections.
 See [release testing](RELEASE_TESTING.md).

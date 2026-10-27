@@ -1,4 +1,4 @@
-.PHONY: codec build test native-smoke native-suite upstream-tests
+.PHONY: codec build test upstream-tests
 codec:
 	cargo build --manifest-path rust/Cargo.toml --locked
 	# SwiftPM does not track changes to externally linked Rust archives.
@@ -27,10 +27,6 @@ coverage-report:
 periphery:
 	cargo build --manifest-path rust/Cargo.toml --locked
 	periphery scan --strict
-native-smoke:
-	swift run replicator-lab native-smoke $(ARGS)
-native-suite:
-	swift run replicator-lab native-suite $(ARGS)
 upstream-tests:
 	swift run replicator-lab upstream-tests
 
@@ -45,22 +41,6 @@ deb:
 .PHONY: test-asan
 test-asan: codec
 	REPLICATOR_TEST_BINARY_DIR="$(CURDIR)/.build-asan/debug" swift test --scratch-path .build-asan --sanitize=address
-
-.PHONY: live-suite
-live-suite:
-	swift run replicator-lab live-suite $(ARGS)
-
-.PHONY: reverse-suite
-reverse-suite:
-	swift run replicator-lab reverse-suite $(ARGS)
-
-.PHONY: integration-smoke
-integration-smoke:
-	swift run replicator-lab test --profile mysql84-to-mysql57-myisam --case positive --case ddl-modify-demo-varchar-120 --case ddl-index-create $(ARGS)
-
-.PHONY: native-ddl-suite
-native-ddl-suite:
-	swift run replicator-lab native-ddl-suite
 
 .PHONY: ddl-catalog-check ddl-catalog-report
 ddl-catalog-check:
@@ -89,11 +69,8 @@ release-artifacts: release-check
 release-image:
 	python3 tools/release_image.py
 
-.PHONY: reverse-correctness
-reverse-correctness:
-	swift run replicator-lab reverse-correctness $(ARGS)
-
-# Canonical profile-driven lab commands. Specialized targets above retain their scope.
+# Shared test commands. Use PROFILE=all for the profile matrix.
+# ARGS selects suites, families, cases, variants and transport.
 PROFILE ?= all
 TIER ?= full
 .PHONY: correctness lab-test lab-list lab-plan lab-demo lab-benchmark lab-performance
@@ -102,7 +79,7 @@ correctness:
 lab-test:
 	swift run replicator-lab test --profile $(PROFILE) $(ARGS)
 lab-plan:
-	@python3 tools/lab_selection.py $(ARGS)
+	@python3 tools/lab_selection.py $(if $(filter all,$(PROFILE)),,--profile $(PROFILE)) $(ARGS)
 lab-list:
 	@swift run replicator-lab test --profile $(PROFILE) --suite all --list $(ARGS)
 lab-demo:

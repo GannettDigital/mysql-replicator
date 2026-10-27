@@ -1,9 +1,9 @@
 # Contributing to mysql-replicator
 
-Use the [profile-driven test lab](docs/TEST_LAB.md) for comparable correctness,
-interactive demos and benchmarks across both supported topologies. Start with
-`make lab-list` and `make correctness TIER=smoke`. Historical commands below remain
-available for specialized qualification and existing scripts.
+Use the [profile-driven test lab](docs/TEST_LAB.md) for correctness tests,
+interactive demos and benchmarks across the four supported profiles. Start with
+`make lab-list`. Use `make lab-plan` to inspect a selection before you run it.
+See [local test commands](docs/TEST_LAB.md#local-test-commands) for examples.
 
 Thank you for your interest in contributing to `mysql-replicator`!
 
@@ -108,7 +108,6 @@ tools on macOS). Coverage is opt-in and uses separate build directories/images:
 ```sh
 make coverage-unit
 make correctness TIER=smoke ARGS="--coverage"
-make integration-smoke ARGS="--coverage"
 # Select shared fixtures or a family:
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--coverage --case positive"
 make correctness PROFILE=mysql84-to-mysql57-myisam ARGS="--coverage --family ddl --variant gtid-full"
@@ -211,9 +210,9 @@ The integration image contains the application and LLVM exporters, without the
 compiler or test index. Unit tests and Periphery use the larger test image.
 Both images come from the same application build.
 Main builds the production image and packages.
-It generates the test
-matrix from the lab catalog, grouping correctness families by area and splitting
-larger areas into case chunks. Jobs name the profile, area, variant and image;
+PR and manual test runs generate their matrix from the lab catalog and the
+reviewed group policy. Each integration job runs one group with a shared fixture.
+Jobs name the profile, area, variant and image;
 up to 16 run concurrently with `--skip-build`. Dependent operations within a
 scenario remain sequential, including the failure/recovery/offline transition.
 `tools/ci_matrix.json` defines grouping and coverage expectations;
@@ -331,8 +330,8 @@ Periphery analyzes Swift; it does not identify unused Rust code.
 Run incremental integration checks against local container fixtures:
 
 ```sh
-# Small DML/DDL sample used by CI:
-make integration-smoke
+# Inspect the two-profile PR baseline without starting containers:
+make lab-plan ARGS="--selection pr --commands"
 
 # Basic DML qualification:
 make correctness ARGS="--case positive"
