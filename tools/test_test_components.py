@@ -129,7 +129,7 @@ class ComponentTests(unittest.TestCase):
         output = io.StringIO()
         with patch('sys.argv', ['test_selection.py', '--lab', '/tmp/lab']), \
                 patch.object(test_selection, 'from_git', return_value=self.change), \
-                patch.object(ci_lab, 'component_plan', return_value=plan) as build, \
+                patch.object(ci_lab, 'validated_plan', return_value=plan) as build, \
                 contextlib.redirect_stdout(output):
             test_selection.main()
         result = json.loads(output.getvalue())

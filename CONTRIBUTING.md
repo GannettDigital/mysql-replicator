@@ -333,6 +333,14 @@ Run incremental integration checks against local container fixtures:
 # Inspect the two-profile PR baseline without starting containers:
 make lab-plan ARGS="--selection pr --commands"
 
+# Inspect the same named groups that CI uses:
+make lab-list GROUP=all | jq '[.groups[].area] | unique'
+make lab-plan GROUP=keys-rows-gtids PROFILE=all
+
+# Run one complete group on one profile and capture variant:
+make lab-test GROUP=keys-rows-gtids PROFILE=mysql57-to-mysql84-innodb ARGS="--variant default"
+
+
 # Basic DML qualification:
 make correctness ARGS="--case positive"
 

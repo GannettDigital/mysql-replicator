@@ -57,9 +57,9 @@ def component_plan(query, change_plan):
     return assign_jobs(selected, json.loads((ROOT / 'tools/ci_jobs.json').read_text()))
 
 
-def select_plan(query):
+def select_plan(query, scope=None, change_plan=None):
     from ci_matrix import SMOKE_PROFILES, generate, generate_smoke, generate_production
-    scope = os.environ.get('CI_SUITE', 'full')
+    scope = scope if scope is not None else os.environ.get('CI_SUITE', 'full')
     policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())
     from ci_jobs import assign_jobs
     job_policy = json.loads((ROOT / 'tools/ci_jobs.json').read_text())
@@ -71,8 +71,10 @@ def select_plan(query):
                                                '--variant', 'default', '--tier', 'full', '--list'))
                                for profile in SMOKE_PROFILES], policy['pr_smoke']), job_policy)
     if scope == 'pr-selected':
-        path = Path(os.environ.get('CI_TEST_SELECTION', ROOT / 'artifacts/ci/test-selection.json'))
-        return component_plan(query, json.loads(path.read_text()))
+        if change_plan is None:
+            path = Path(os.environ.get('CI_TEST_SELECTION', ROOT / 'artifacts/ci/test-selection.json'))
+            change_plan = json.loads(path.read_text())
+        return component_plan(query, change_plan)
     if scope != 'full':
         raise ValueError(f'unknown CI_SUITE: {scope}')
     catalogs = full_catalogs(query)
@@ -80,14 +82,19 @@ def select_plan(query):
                       expanded_coverage=os.environ.get('CI_EXPANDED_COVERAGE') == 'true'), job_policy)
 
 
-def plan(query):
-    result = select_plan(query)
+def validated_plan(query, scope=None, change_plan=None):
+    result = select_plan(query, scope=scope, change_plan=change_plan)
     from lab_features import with_features
     result = with_features(result, [dict(scenarios=result['inventory'])],
                            complete=result['scope'] == 'full')
     from lab_migrations import validate_migrations
     validate_migrations([dict(scenarios=result['inventory'])], complete=result['scope'] == 'full',
                         groups=result['include'], selection_only=True)
+    return result
+
+
+def plan(query):
+    result = validated_plan(query)
     result['inputs'] = query('build-inputs').strip()
     destination = ROOT / 'artifacts/ci/matrix.json'
     destination.parent.mkdir(parents=True, exist_ok=True)

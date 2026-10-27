@@ -85,23 +85,47 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(failure.exception.code, expected)
                 run.assert_called_once()
 
-    def test_local_commands_keep_one_case_inventory(self):
-        policy = json.loads((ROOT / 'tools/ci_matrix.json').read_text())['pr_smoke']
-        commands = local_commands('pr-smoke')
-        lab = [c for c in commands if '--profile' in c]
-        self.assertEqual(len(lab), 2)
-        for command in lab:
-            cases = [command[i+1] for i, arg in enumerate(command) if arg == '--case']
-            self.assertEqual(cases, policy['cases'])
+    def test_local_preparation_does_not_keep_a_second_suite_list(self):
         self.assertEqual(local_commands('docs'), local_commands('tools'))
         self.assertEqual(len(local_commands('tools')), 1)
-        full = [c for c in local_commands('full') if '--suite' in c]
-        self.assertEqual(len(full), 5)
-        for command in full:
-            suite = command[command.index('--suite')+1]
-            self.assertEqual('--variant' in command, suite in ('correctness', 'lifecycle'))
+        for scope in ('pr-smoke', 'pr-selected', 'full'):
+            commands = local_commands(scope)
+            self.assertEqual(len(commands), 4)
+            self.assertFalse(any('--suite' in c for c in commands))
         with self.assertRaises(ValueError):
             checks_for('typo')
+
+    def test_all_integration_scopes_use_ci_plan_and_keep_transport_and_benchmark_policy(self):
+        import ci_lab
+        from test_lab_groups import fixture_plan
+        plan = fixture_plan()
+        for scope in ('pr-smoke', 'pr-selected', 'full'):
+            output = io.StringIO()
+            change = dict(scope=scope, checks=checks_for(scope))
+            with patch('sys.argv', ['test_selection.py', '--lab', '/tmp/lab']), \
+                    patch('test_selection.from_git', return_value=change), \
+                    patch.object(ci_lab, 'validated_plan', return_value=plan) as build, \
+                    contextlib.redirect_stdout(output):
+                main()
+            result = json.loads(output.getvalue())
+            self.assertEqual(build.call_args.kwargs['scope'], scope)
+            self.assertEqual(result['integration_plan'], plan)
+            self.assertEqual(len(result['commands']), 4 + len(plan['include']))
+            self.assertIn('--dml-transport binlog', result['commands'][-1])
+            self.assertIn('--report-only', result['commands'][-1])
+            self.assertIn('--max-native-ratio 2', result['commands'][-1])
+            self.assertIn('--coverage', result['commands'][-1])
+            self.assertTrue(all(c.startswith(str(Path('/tmp/lab').resolve()) + ' ') for c in result['commands'][4:]))
+
+    def test_bad_plan_stops_before_execution(self):
+        with patch('sys.argv', ['test_selection.py', '--full', '--run']), \
+                patch('test_selection.from_git', return_value=select_changes(['README.md'])), \
+                patch('ci_lab.validated_plan', side_effect=ValueError('bad catalog')), \
+                patch('test_selection.subprocess.run') as run, \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                main()
+            run.assert_not_called()
 
 
 class GitChangeTests(unittest.TestCase):

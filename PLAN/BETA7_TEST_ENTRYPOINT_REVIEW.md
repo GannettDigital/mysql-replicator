@@ -1,7 +1,8 @@
 # Beta.7 local test entry points and CI selection
 
 Status: reviewed after benchmark commit `a39e23c`. Makefile and documentation
-cleanup is complete. The shared group selector below is proposed work.
+cleanup was committed as `02e53a8`. The shared group selector is implemented.
+The original findings below explain the changes.
 
 ## Current result
 
@@ -32,7 +33,7 @@ separate installation, upstream source, parser, unit, coverage and package check
 all profiles. The `--selection pr` preset selects its own profiles and cannot be
 combined with another profile filter.
 
-## Gaps
+## Findings before implementation
 
 1. CI has named groups such as `keys-rows-gtids`. Local commands accept suites,
    families and cases, but cannot select a CI group by name.
@@ -52,7 +53,7 @@ combined with another profile filter.
 The dependency resolver, applicability checks and complete-group component
 selection are useful and should remain. Do not replace them with new case lists.
 
-## Proposed implementation order
+## Implementation order
 
 1. Use one plan builder for CI and local named-group selection. Keep
    `tools/ci_matrix.json` as the group policy. Add group-name, profile, variant
@@ -71,17 +72,33 @@ selection are useful and should remain. Do not replace them with new case lists.
    transport and benchmark options. Use one focused local group only if runner
    execution changes. Leave the full matrix to GitHub Actions.
 
-## Current commands
+## Implemented result
 
-See [local test commands](../docs/TEST_LAB.md#local-test-commands). Today, use
-families or explicit cases for local selection. Use `ci_lab.command()` with the
-generated matrix to reproduce a CI group exactly. The CI `--run` path expects a
-prepared Linux build bundle; it is not a general local launcher.
+- `ci_lab.validated_plan()` is shared by CI, local groups and changed-file
+  selection. Feature ownership and migration checks apply to all three paths.
+- `make lab-list GROUP=all` lists the CI groups. `lab-plan GROUP=NAME` plans
+  complete groups; `lab-test GROUP=NAME` runs them. All three support profile,
+  variant and transport filters. Unknown names and empty selections fail.
+- The CI command renderer supplies each local command. Coverage is the default.
+  `--no-coverage` selects normal binaries. Benchmark limit and report-only policy
+  remain in the plan, with explicit local overrides available.
+- The changed-file selector no longer has its own full-suite or baseline case
+  list. All integration scopes use the shared plan. `--lab` applies to all scopes.
+- Existing case/family commands remain available without `GROUP`. They do not
+  claim to reproduce a CI group. Local runs are sequential; CI remains parallel.
 
-Do not treat `make test-selected ARGS="--full"` as the full CI matrix until
-step 3 is complete.
+See [local test commands](../docs/TEST_LAB.md#select-the-same-groups-as-ci).
 
-## Validation
+The generated local full plan matches the CI plan: 187 groups, 2,039 obligations,
+186 coverage collections and the same command options. The only default command
+difference is that local commands allow image builds; CI uses `--skip-build`.
+The eight benchmark groups retain the ratio limit and report-only setting.
+No fixture runner, application code or CI group policy changed.
+
+Evidence is saved under
+`artifacts/test-suite-consolidation/shared-group-selection/`.
+
+## Makefile cleanup validation
 
 - All 30 remaining Make targets pass a command-generation check with `make -n`.
   This checks recipes, not the execution of their commands.
@@ -90,3 +107,13 @@ step 3 is complete.
 - The 11 lab-selection tests and 14 changed-file selection tests pass.
 - Current full and component plans were generated without database containers.
 - `git diff --check` passes. No integration or full CI run was started.
+
+## Shared selector validation
+
+Offline checks compare the current built catalog with both local selection paths.
+They confirm full-plan equality and named-group filtering for one profile, the
+profile matrix and BINLOG benchmarks. All 111 focused Python tests pass. They check dependencies, command options,
+invalid selections, benchmark overrides and failure handling. The built lab
+accepts generated key/row and BINLOG benchmark commands in offline `--list` mode.
+The returned case sets match their groups.
+No database container or full CI run is needed for these planner changes.

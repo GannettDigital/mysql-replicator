@@ -128,7 +128,7 @@ For a stacked branch, replace `origin/main` with the preceding branch. To select
 checks for local edits only, use `--base HEAD`. Local selection includes staged,
 unstaged, and untracked files. Add `--head HEAD` to inspect committed changes only.
 The command does not fetch refs. Fetch the base first if it is not present.
-Component plans read the lab catalog. Add `--lab .build/debug/replicator-lab` to
+Integration plans read the lab catalog. Add `--lab .build/debug/replicator-lab` to
 use a built runner. Otherwise, the command uses `swift run replicator-lab`.
 Catalog queries can build the runner, but they do not start MySQL containers.
 
@@ -142,17 +142,22 @@ Use `--commands` with `test-selection` to print copyable commands. Use `--full`
 to force the full scope. JSON stays on stdout. Test output goes to stderr.
 Execution stops at the first failure.
 
-Local checks use the same component planner as CI. The baseline case IDs come
-from `tools/ci_matrix.json`. Component plans also show exact cases and variants
-in `integration_plan`. They run in sequence and use normal lab binaries.
-They do not publish CI coverage or release evidence. CI runs selected groups in parallel with coverage. Main builds packages and
-runs the short production-binary checks.
-The full local selection still uses suite-wide SQL commands. It omits the
-performance suite and supplemental BINLOG groups. It also repeats the MyISAM
-recovery alias. Do not use that selection as proof that the full CI matrix passed.
-Use the generated CI plan below to inspect exact group commands. A shared local
-group selector is planned in
-[the entry-point review](../PLAN/BETA7_TEST_ENTRYPOINT_REVIEW.md).
+Local checks use the same validated plan and command renderer as CI. This applies
+to the two-profile baseline, component selections and full selection. The JSON
+contains the exact cases, profiles, variants and transport choices in
+`integration_plan`. Full selection includes all performance and supplemental
+BINLOG groups. It does not add the MyISAM recovery alias already in correctness.
+
+Integration commands use coverage binaries by default. Add `--no-coverage` for
+normal binaries or `--skip-build` to reuse matching images. `--lab` selects the
+runner for every integration scope. The full benchmark plan retains CI's ratio
+limit and report-only policy. Local runs execute groups in sequence. CI runs
+them in parallel. Local commands do not publish CI release evidence.
+Main builds packages and runs the short production-binary checks.
+
+To inspect or run one named group without a changed-file selection, use
+`make lab-plan GROUP=...` or `make lab-test GROUP=...`. See
+[local group selection](TEST_LAB.md#select-the-same-groups-as-ci).
 
 ## Selected cases
 

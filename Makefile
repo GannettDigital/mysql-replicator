@@ -72,16 +72,25 @@ release-image:
 # Shared test commands. Use PROFILE=all for the profile matrix.
 # ARGS selects suites, families, cases, variants and transport.
 PROFILE ?= all
+GROUP ?=
 TIER ?= full
 .PHONY: correctness lab-test lab-list lab-plan lab-demo lab-benchmark lab-performance
 correctness:
 	swift run replicator-lab test --profile $(PROFILE) --suite correctness --tier $(TIER) $(ARGS)
+# GROUP selects complete CI fixture groups. Without GROUP, select catalog cases.
+ifneq ($(strip $(GROUP)),)
+lab-test:
+	@python3 tools/lab_groups.py --run --group $(GROUP) --profile $(PROFILE) $(ARGS)
+lab-plan lab-list:
+	@python3 tools/lab_groups.py --group $(GROUP) --profile $(PROFILE) $(ARGS)
+else
 lab-test:
 	swift run replicator-lab test --profile $(PROFILE) $(ARGS)
 lab-plan:
 	@python3 tools/lab_selection.py $(if $(filter all,$(PROFILE)),,--profile $(PROFILE)) $(ARGS)
 lab-list:
 	@swift run replicator-lab test --profile $(PROFILE) --suite all --list $(ARGS)
+endif
 lab-demo:
 	swift run replicator-lab demo $(ACTION) --profile $(PROFILE) $(ARGS)
 lab-performance:

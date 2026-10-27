@@ -556,15 +556,58 @@ make lab-demo PROFILE=mysql57-to-mysql84-innodb ACTION=start
 A suite selects a runner, such as `correctness` or `lifecycle`. A family selects
 related catalog cases. A CI group is a reviewed list of cases that share a
 fixture for one profile, variant and transport. A family can span several CI
-groups. `--variant all` expands capture variants; `PROFILE=all` expands profiles.
-Neither option adds BINLOG transport automatically.
+groups. Without `GROUP`, `--variant all` expands capture variants and
+`PROFILE=all` expands profiles. Neither option adds BINLOG transport automatically.
 
-The local CLI does not yet accept a CI group name such as `keys-rows-gtids`.
-`lab-plan` selects catalog cases; it does not reproduce CI group boundaries or
-transport policy. To reproduce an exact CI group, use its case list, profile,
-variant and transport from `matrix.json`. See
-[generated CI commands](PR_TEST_SELECTION.md#change-or-inspect-the-selection).
-Local matrix commands run in sequence. CI runs groups in parallel.
+### Select the same groups as CI
+
+Set `GROUP` to use the shared CI plan. `GROUP=all` lists or selects all existing
+CI groups. A named group retains its full case list, prerequisites and fixture
+boundary. No containers start when you list or plan groups.
+
+```sh
+# List group names, then inspect one group across all profiles and CI variants.
+make lab-list GROUP=all | jq '[.groups[].area] | unique'
+make lab-plan GROUP=keys-rows-gtids PROFILE=all | jq
+
+# Inspect one profile and one variant. Add --commands for copyable commands.
+make lab-plan GROUP=keys-rows-gtids PROFILE=mysql57-to-mysql84-innodb ARGS="--variant default --commands"
+
+# Run that group. This runs one fixture, with the same cases as CI.
+make lab-test GROUP=keys-rows-gtids PROFILE=mysql57-to-mysql84-innodb ARGS="--variant default"
+
+# Plan both existing 10K transport groups on the four profiles.
+make lab-plan GROUP=replication-backlog-10k ARGS="--group binlog-replication-backlog-10k"
+
+# Run a BINLOG benchmark and report a ratio above the chosen limit.
+make lab-test GROUP=binlog-replication-backlog-10k PROFILE=mysql57-to-mysql84-innodb ARGS="--max-native-ratio 2 --report-only"
+```
+
+Group mode uses coverage binaries by default, as CI does. Add `--no-coverage`
+for normal binaries. Add `--skip-build` only when the required images already
+exist. Use `--lab .build/debug/replicator-lab` to use a built runner for planning
+and execution. Without this option, commands use `swift run replicator-lab`.
+
+Repeat `--group`, `--profile` or `--variant` in `ARGS` for several values.
+The default is all profiles and all variants in the CI plan. The
+`--dml-transport sql|binlog` option filters existing groups; it does not create
+new transport combinations. BINLOG group names start with `binlog-`. These
+supplemental groups can have different case lists from the SQL groups.
+For example, selecting a SQL-only group with `--dml-transport binlog` fails.
+Unknown names and filter combinations with no matching groups fail before setup.
+
+Group mode does not accept `--case` or `--family`: use the catalog commands above
+for those selections. Benchmark options apply only when a performance group is
+selected. The CI benchmark policy is report-only. Use `--enforce-ratio` to fail
+when the ratio exceeds the limit. Data and checkpoint failures still fail in
+report-only mode.
+
+Plans contain exact commands, selected groups, dependency case IDs and reasons
+for excluded groups. `catalog_not_applicable` retains the full catalog's
+inapplicable cases and reasons; group filters do not narrow this reference list.
+Local runs execute groups in sequence and stop at the first failure. Test output
+goes to stderr; the JSON plan stays on stdout. CI runs its groups in parallel.
+The `GROUP` interface is in Make and `tools/lab_groups.py`, not the Swift CLI.
 
 The Makefile no longer exposes `integration-smoke`, `reverse-correctness`,
 `reverse-suite`, `native-ddl-suite`, `native-smoke`, `native-suite` or `live-suite`.

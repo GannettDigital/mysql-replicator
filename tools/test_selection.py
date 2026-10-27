@@ -105,24 +105,10 @@ def from_git(base, head='HEAD', include_worktree=False, root=ROOT):
 
 
 def local_commands(scope):
-    if scope == 'pr-selected':
-        raise ValueError('component commands require a resolved catalog')
+    """Non-integration checks. Integration commands come from the CI plan."""
     commands = [['python3', '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py']]
     if checks_for(scope)['unit']:
         commands += [['make', 'test'], ['swift', 'run', 'replicator-lab', 'ddl-catalog', 'check'], ['make', 'periphery']]
-        if scope == 'full':
-            for suite in ('correctness', 'lifecycle', 'recovery', 'native', 'demo'):
-                command = ['swift', 'run', 'replicator-lab', 'test', '--profile', 'all', '--suite', suite]
-                if suite in ('correctness', 'lifecycle'):
-                    command += ['--variant', 'all']
-                commands.append(command)
-        else:
-            from ci_matrix import SMOKE_PROFILES
-            cases = json.loads((ROOT / 'tools/ci_matrix.json').read_text())['pr_smoke']['cases']
-            for profile in SMOKE_PROFILES:
-                commands.append(['swift', 'run', 'replicator-lab', 'test', '--profile', profile,
-                                 '--suite', 'correctness', '--tier', 'full',
-                                 *[arg for case in cases for arg in ('--case', case)]])
     return commands
 
 
@@ -130,8 +116,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', default='origin/main', help='compare with this merge base (default: origin/main)')
     parser.add_argument('--head', help='compare a committed revision; omit to include staged, unstaged, and untracked files')
-    parser.add_argument('--lab', type=Path, help='built lab binary for component plans; default: swift run replicator-lab')
+    parser.add_argument('--lab', type=Path, help='built lab binary for integration plans; default: swift run replicator-lab')
     parser.add_argument('--full', action='store_true', help='force the full test scope')
+    parser.add_argument('--no-coverage', action='store_true', help='Use normal binaries for local integration checks')
+    parser.add_argument('--skip-build', action='store_true', help='Require matching lab images already built locally')
     output = parser.add_mutually_exclusive_group()
     output.add_argument('--commands', action='store_true', help='print local commands instead of JSON')
     output.add_argument('--run', action='store_true', help='run the local commands; stop at the first failure')
@@ -139,20 +127,19 @@ def main():
     result = from_git(args.base, args.head or 'HEAD', include_worktree=args.head is None)
     if args.full:
         result.update(scope='full', checks=checks_for('full'), selected_by=[], reason='explicit full selection')
-    if result['scope'] == 'pr-selected':
-        from ci_lab import component_plan, command
+    commands = local_commands(result['scope'])
+    if result['checks']['integration']:
+        from ci_lab import validated_plan
+        from lab_groups import local_command
         prefix = [str(args.lab.resolve())] if args.lab else ['swift', 'run', 'replicator-lab']
-        plan = component_plan(lambda *a: subprocess.check_output(prefix + list(a), cwd=ROOT, text=True), result)
+        try:
+            plan = validated_plan(lambda *a: subprocess.check_output(prefix + list(a), cwd=ROOT, text=True),
+                                  scope=result['scope'], change_plan=result)
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            parser.exit(1, f'Test selection failed: {error}\n')
         result['integration_plan'] = plan
-        commands = local_commands('tools') + local_commands('pr-smoke')[1:4]
-        for group in plan['include']:
-            # Local execution uses the normal image. CI measures coverage and
-            # verifies the release binary separately. Keep transport and cases.
-            arguments = command(dict(group, image='release'))
-            arguments.remove('--skip-build')
-            commands.append(prefix + arguments)
-    else:
-        commands = local_commands(result['scope'])
+        commands += [local_command(g, prefix, coverage=not args.no_coverage, skip_build=args.skip_build)
+                     for g in plan['include']]
     result['commands'] = [shlex.join(c) for c in commands]
     if args.commands:
         print('\n'.join(result['commands']))
