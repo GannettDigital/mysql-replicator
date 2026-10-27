@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import ci_lab
 from lab_features import describe_features, feature_index, load_features, with_features
@@ -111,14 +111,18 @@ class FeatureTests(unittest.TestCase):
                 patch('lab_migrations.load_migrations', return_value=dict(schema_version=1, migrations=[])), \
                 patch('lab_features.load_features', return_value=self.registry):
             result = ci_lab.plan(query)
-            saved = json.loads((Path(directory) / 'artifacts/ci/matrix.json').read_text())
+            destination = Path(directory) / 'artifacts/ci/matrix.json'
+            saved_text = destination.read_text()
+            saved = json.loads(saved_text)
             self.assertEqual(saved, result)
             self.assertEqual(saved['include'][0]['features'], ['generated-columns'])
+            self.assertEqual(query.call_args_list, [call('ddl-catalog', 'check'), call('build-inputs')])
             plan['inventory'] = self.rows[:1]
             query.reset_mock()
             with self.assertRaisesRegex(ValueError, 'absent from catalog'):
                 ci_lab.plan(query)
-            query.assert_not_called()
+            query.assert_called_once_with('ddl-catalog', 'check')
+            self.assertEqual(destination.read_text(), saved_text)
 
     def test_repository_registry_has_documented_owners_for_first_migrations(self):
         definitions, owners = feature_index(load_features())
