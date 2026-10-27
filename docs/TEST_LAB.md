@@ -80,12 +80,20 @@ DDL/DML results with the native reference, then checks rotation, process restart
 archive replay and a tagged stop limit. It checks source GTIDs in SQLite
 separately from the target server's GTIDs.
 
-The `gtids` family contains these two cases. The `without-source-gtids` variant
-selects only the tagged case; it does not repeat the full correctness suite.
+The `gtids` family contains these two cases. Within that family,
+`without-source-gtids` selects only the tagged case. Without the family filter,
+the variant also selects `positive` and `ddl-compat-generated`, where applicable.
+It does not repeat the full correctness suite.
 
 The `ddl-compat-source-gtid-preservation` case uses the default setting
 `target.preserveSourceGTIDs: true`. It checks the target GTID set after DDL,
 multi-row INSERT/UPDATE/DELETE, keyless duplicate rows, restart, and archive replay.
+It retains a 40-row source transaction. The `positive` case separately checks
+exact source/target GTID delta equality, or the absence of source GTIDs on the
+target when preservation is disabled. CI keeps these cases in `keys-rows-gtids`
+so that they share container setup. The dedicated preservation and tagged cases
+use SQL transport; `positive` also runs in the selected BINLOG groups. See the
+[GTID test review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md#slice-8--gtid-review).
 Run it for all four profiles:
 
 ```sh

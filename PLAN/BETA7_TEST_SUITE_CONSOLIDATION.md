@@ -16,7 +16,10 @@ Current progress:
   InnoDB and MyISAM targets. Committed as `c3c8c3d`.
 - Slice 7 combines conflict statements, adds cross-family shared fixtures and
   growth checks. Focused local checks passed. The plan has 179 jobs, each
-  with one fixture group. GTID assertion consolidation remains in Step 3.
+  with one fixture group. Committed as `a273f44`.
+- Slice 8 completes the Step 3 GTID review. Keep the preservation, tagged-GTID
+  and `positive` cases: they have different assertions and already share setup.
+  No test or selected execution was removed. Full CI is still required.
 - Feature ownership is explicit. Slice 7 implements the first shared feature
   groups from Steps 4–5. Full-CI timing and coverage checks, remaining feature
   organization and final PR selection are still required. Cleanup is Step 8.
@@ -56,7 +59,7 @@ Assess each change in this order:
    or a clearer structure for future additions. Do not reject a merge on elapsed
    time alone. Check total runner time and the longest job too.
 
-Before Step 6, add planner checks for a fifth profile and an additional source
+Slice 7 added planner checks for a fifth profile and an additional source
 variant. These are planning checks, not extra test combinations to run now.
 Use them to choose a job budget below the planner's 256-job limit. Do not aim for
 255 jobs or require an emergency redesign each time a profile is added.
@@ -79,7 +82,7 @@ keep separate jobs and include that cost in the growth budget.
   expected integration coverage collections and 2,095 catalog obligations.
   Unit coverage is missing because the unit job was cancelled. This run is not
   a complete passing CI result.
-- The current local grouping changes produce 240 groups and 253 coverage
+- The starting local grouping changes produced 240 groups and 253 coverage
   collections. They retain the same obligations and selected case executions.
   They combine index cases, balance bootstrap groups, and omit unrelated main
   applier setup from reviewed bootstrap-only selections.
@@ -906,3 +909,58 @@ Leave the full merged groups and complete profile/variant matrix to GitHub Actio
 Next: finish the Step 3 GTID review, then review the remaining Step 4 feature
 boundaries. Use full CI for Step 6 timing and coverage checks. Select the final
 short PR test set last.
+
+## Slice 8 — GTID review
+
+Decision: retain both GTID cases and `positive`. Step 3 allows a case to remain
+when a replacement would lose a distinct condition or obscure the workflow.
+These cases already use the `keys-rows-gtids` fixture. A case merge would not
+remove another MySQL setup or CI job.
+
+### Conditions and overlap
+
+| Case | Required conditions | Why another retained case does not replace it |
+|---|---|---|
+| `ddl-compat-source-gtid-preservation` | One INSERT with 40 rows and JSON values; restart before a 40-row UPDATE; multirow DELETE; duplicate NULL rows in a table without keys; target source-GTID membership after live apply and replay | `positive` has small row statements. The keyless case tests more row types and failure/recovery behavior, but does not check target GTID membership for this 40-row sequence. |
+| `ddl-compat-tagged-gtids` | Interleaved `blue`, `green` and untagged transactions; binlog rotation; two live restarts; six tagged APPLIED groups; two tagged DDL intents; independent tag ranges; replay stopped at a tagged GTID | Ordinary GTID preservation cannot test tags on a 5.7 target. This case uses SQLite tracking with target preservation disabled. |
+| `positive` | Exact source/target GTID delta equality when preservation is enabled; no source GTIDs on target when disabled; exact counters, normalized binlog operations, saved offset, row intents, credentials and transport checks | The preservation case checks source-GTID membership, not exact delta equality or the absence of source GTIDs when preservation is disabled. Its replay checks do not replace these other assertions. |
+
+The shared DDL runner checks transaction counts, the final applied GTID set and
+completed DDL intents. These checks support the dedicated GTID conditions; they
+do not replace them. `offline-replay` checks fetched and external archives,
+saved-state resume, unreachable source credentials and support-bundle contents.
+It does not replace the 40-row preservation sequence or tagged identities.
+
+The preservation replay check is meaningful after live apply: `replayDDLWorkflow`
+clears target binlog/GTID history and restores the starting GTID set before it
+replays the case. Source GTIDs left by the live run cannot make the final replay
+membership check pass. The helper also stops after two transactions, resumes
+without source credentials and compares the final schema and rows.
+
+The review used `TaggedGTIDCases.swift`, `SharedCorrectness.swift`,
+`DDLReplayWorkflow.swift`, `SharedBootstrapDML.swift`, `SharedOffline.swift`,
+`KeylessCases.swift` and `LabScenario.swift`. No SQL statement, assertion,
+restart, replay step or source/target setting changed.
+
+### Selection and validation
+
+- Source-GTID preservation runs once on each of the four profiles, with the
+  default variant and SQL transport. Each execution shares its fixture with
+  21 or 22 other cases.
+- Tagged GTIDs run once on 8.4 → 5.7 MyISAM, with `without-source-gtids` and SQL
+  transport. This execution shares its fixture with `positive`.
+- The dedicated GTID cases are not selected for BINLOG transport. `positive`
+  provides the existing BINLOG transport GTID checks. This review does not claim
+  that the full dedicated GTID sequences were tested with BINLOG transport.
+
+The generated full plan matches the saved Slice 7 plan exactly: 179 jobs,
+2,035 applicable obligations and 178 application coverage collections. The
+selection report is `artifacts/test-suite-consolidation/gtid-review/selection-review.json`.
+This was a source and plan review. No integration test was rerun, because test
+execution did not change. Earlier coverage is supporting evidence, not a new
+passing result for the larger merged groups.
+
+Step 3 is complete for this reorganization. Next: finish Steps 4–5 by reviewing
+the remaining group names and state isolation. Then use full CI for Step 6.
+Keep the final PR selection last. Do not start another case migration unless the
+review identifies a concrete duplicate or a missing assertion.
