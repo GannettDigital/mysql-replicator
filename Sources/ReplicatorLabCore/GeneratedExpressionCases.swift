@@ -15,26 +15,28 @@ extension DDLCompatibilityCases {
                         "SELECT id,c,chosen,bits,head,clean,yr,great,member,missing FROM ddlcompat.t ORDER BY id",
                         "1\t3\t40\t6\txxa\tabc\t2026\t10\t1\t0\n2\t0\t0\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\t1"),
                     .init("SELECT id,bucket FROM ddlcompat.t ORDER BY id", "1\t1\n2\t-1"),
-                ]),
+                ], phaseEnd: "generated-expression-seed"),
             .init(
                 "UPDATE ddlcompat.t SET n=12,v='xyzx',d='2025-01-02' WHERE id=1",
                 [
                     .init(
                         "SELECT c,chosen,bits,head,clean,yr,great,member FROM ddlcompat.t WHERE id=1",
                         "0\t0\t8\txyz\tyz\t2025\t12\t0")
-                ], restartBefore: true),
+                ], restartBefore: true, phaseEnd: "expression-update-after-resume"),
             .init(
-                "ALTER TABLE ddlcompat.t ADD absent INT AS (n IS NOT NULL) STORED,ADD bounded INT AS (n NOT BETWEEN 1 AND 10) STORED"
-            ),
+                "ALTER TABLE ddlcompat.t ADD absent INT AS (n IS NOT NULL) STORED,ADD bounded INT AS (n NOT BETWEEN 1 AND 10) STORED",
+                phaseEnd: "added-generated-predicates"),
             .init(
                 "UPDATE ddlcompat.t SET n=1 WHERE id=2",
                 [
                     .init(
                         "SELECT id,c,chosen,bits,great,member,missing,absent,bounded FROM ddlcompat.t ORDER BY id",
                         "1\t0\t0\t8\t12\t0\t0\t1\t1\n2\t1\t20\t2\t10\t1\t0\t1\t0")
-                ]),
-            .init("CREATE TABLE ddlcompat.copy LIKE ddlcompat.t"),
-            .init("INSERT INTO ddlcompat.copy(id,n,v,d) VALUES(3,1,'xxone','2024-01-01')", restartBefore: true),
-            .init("DELETE FROM ddlcompat.t WHERE id=1"),
+                ], phaseEnd: "predicate-input-update"),
+            .init("CREATE TABLE ddlcompat.copy LIKE ddlcompat.t", phaseEnd: "copy-generated-definitions"),
+            .init(
+                "INSERT INTO ddlcompat.copy(id,n,v,d) VALUES(3,1,'xxone','2024-01-01')", restartBefore: true,
+                phaseEnd: "copy-insert-after-resume"),
+            .init("DELETE FROM ddlcompat.t WHERE id=1", phaseEnd: "delete-original-row"),
         ])
 }

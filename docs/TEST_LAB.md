@@ -139,6 +139,18 @@ column renames and conversions between stored generated and ordinary columns.
 It compares intermediate results before later ALTER statements replace or drop
 them. Four saved-state restarts and offline stop/resume replay remain.
 
+`ddl-compat-generated-expressions` and `ddl-compat-column-swaps` also use named
+phases. They keep comparisons before later updates replace NULL inputs or before
+ALTER statements replace column names, positions and expressions. CREATE TABLE
+and its seed INSERT share a phase. The six live restarts and offline replay
+checks remain.
+
+Run both cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-generated-expressions --case ddl-compat-column-swaps"
+```
+
 The `database` family includes `ddl-compat-database`. CI runs it in
 `database-defaults-transactions` with the database creation cases. All cases in
 that group use one MySQL fixture. The six creation cases share one running

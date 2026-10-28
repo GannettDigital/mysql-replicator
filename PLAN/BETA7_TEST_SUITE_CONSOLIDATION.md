@@ -67,8 +67,14 @@ and one snapshot/restart across its six cases. All seven database cases passed
 locally. Creation time fell from 109.5 to 40.5 seconds and SQL calls from 416 to
 205. The full database group's executed runtime line set is unchanged.
 
-Next, review generated expressions and simultaneous column renames. See the
-[next slice and validation scope](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#next-slice-generated-expressions-and-simultaneous-column-renames).
+The phase and database work is committed as `f62a9a4`. The next slice,
+generated expressions and simultaneous column renames, passed all 26 named
+assertions and both offline replay sequences on forward MyISAM. It retains
+all six live restarts. SQL calls fell from 415 in the saved CI run to 336 locally.
+This slice is not yet committed.
+
+Next, review small SQL selections with source GTID preservation disabled under
+Slice 4 below. See the [review scope](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#next-review-small-selections-with-source-gtid-preservation-disabled).
 The remaining feature groups still need review and conversion.
 
 This direction retains Steps 4–5, but strengthens their execution rule. Sharing

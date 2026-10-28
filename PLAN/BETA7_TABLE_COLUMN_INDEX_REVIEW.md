@@ -19,8 +19,10 @@ ALTER column keys use it. Their results are recorded at the end of this document
 Generated dependencies now use the same approach. Database lifecycle now runs
 with the database creation cases. Required dependency, rename and restart
 observations remain explicit. Database creation now shares one running applier
-and one snapshot/restart across six cases. Next, review the remaining generated
-expression and simultaneous column-rename workflows for named phase boundaries.
+and one snapshot/restart across six cases. Generated expressions and simultaneous
+column renames also use named phases and pass focused checks. Next, review the
+small SQL selections with source GTID preservation disabled for one shared
+fixture per profile.
 
 The new workflow uses the ID `ddl-modify-columns` and the title
 "ALTER TABLE: change column definitions and positions". This ID is now available
@@ -755,3 +757,94 @@ MyISAM/default/SQL fixture with coverage. Add another profile only if the change
 alters an engine/version-specific path. Do not rerun the completed database,
 MODIFY, column-key or generated-dependency cases. Leave full-suite balancing and
 short PR selection until the combined CI measurement.
+
+## Generated expressions and simultaneous column rename slice
+
+The preceding phase and database changes are committed as `f62a9a4`.
+
+| Case | Source operations | Observation phases | Retained live restarts |
+|---|---:|---:|---:|
+| `ddl-compat-generated-expressions` | 8 | 7 | 2 |
+| `ddl-compat-column-swaps` | 15 | 13 | 4 |
+
+Keep all SQL, explicit expected values and their order. Combine each CREATE TABLE
+with its initial INSERT. Keep the comparison after adding generated predicates:
+the following UPDATE replaces a NULL input, so a final comparison would miss
+that intermediate result. Compare the LIKE table before its saved-schema restart,
+then compare the inserted row before deleting a row from the original table.
+
+For simultaneous renames, retain each name/position/index comparison before the
+next ALTER. Keep the three-way rename, added-column default, dropped-column name
+reuse and changed primary-key lookup checks. Compare the generated-column seed
+before its restart, then the rewritten expression and following UPDATE separately.
+Keep final DELETE and DROP observations. Keep all six live restarts and both
+offline stop/resume sequences. Do not change the adjacent foreign-key column swap
+case; it has its own engine-specific checks.
+
+The phase names use the existing MySQL terms for generated columns, CHANGE,
+column position and CREATE TABLE LIKE. The relevant manual sections are
+[ALTER TABLE](https://dev.mysql.com/doc/refman/8.4/en/alter-table.html) and
+[generated columns](https://dev.mysql.com/doc/refman/8.4/en/create-table-generated-columns.html).
+This slice changes execution boundaries, not public case IDs or feature names.
+
+Validation: phase unit tests and both cases together on forward MyISAM/default/SQL
+with coverage. Check source SQL and expected-value definitions against the
+committed version. The saved CI data has only whole-group line sets, so do not
+claim exact per-case before/after coverage. Leave other profiles and the full
+matrix to CI. Expected call savings are smaller than for database creation,
+because these intermediate schema and row observations remain necessary.
+
+
+### Generated expression and column rename results
+
+The two cases passed in one forward MyISAM/default/SQL fixture:
+`artifacts/lab/20261028T154101Z-5e4e4c5c/result.json`.
+All 26 named assertions passed: 20 observation phases and six live restarts.
+Both offline stop/resume replay sequences passed. Source transaction counts,
+applied GTIDs, completed DDL intents and the final saved-schema restart also
+passed. Coverage export and cleanup passed.
+
+| Case | Saved CI SQL calls | New local SQL calls | Local case seconds |
+|---|---:|---:|---:|
+| `ddl-compat-generated-expressions` | 153 | 121 | 47.0 |
+| `ddl-compat-column-swaps` | 262 | 215 | 77.5 |
+| Total | 415 | 336 | 124.5 |
+
+Calls are harness client calls, not applier statement counts. The saved CI case
+times were 34.6 and 57.5 seconds. The hosts differ, so these times do not establish
+a measured speedup. The local times exclude image build, container setup,
+coverage export and cleanup.
+
+The combined coverage report contains 9,681 executed runtime Swift lines out of
+20,880 mapped lines. The saved baseline covers the larger table/column/index
+group, not these two cases alone. Do not claim an exact before/after line-set
+comparison. The next full CI run must compare the complete changed group.
+
+All ten focused phase unit tests passed. Source comparison confirms unchanged
+SQL, explicit expected values, restart flags and adjacent foreign-key swap code.
+See `artifacts/generated-rename-phase-review/source-comparison.json` and
+`results.json`. Case IDs, catalog obligations and matrix selections did not
+change. No other profile or full suite was run. The preceding work is committed
+as `f62a9a4`; this slice is not yet committed.
+
+### Next review: small selections with source GTID preservation disabled
+
+Return to the small-selection review in the overall plan. The current full plan
+has two SQL jobs per profile for `without-source-gtids`: one for `positive` and
+applicable tagged-GTID checks, and one for generated columns. Review combining
+these eight jobs into four fixtures. Source GTIDs still exist in this variant;
+only target preservation is disabled. Use that distinction in the group name.
+
+Retain all selected cases and their current applicability. `positive` uses an
+isolated applier to check a four-transaction stop, persisted counters, row intents,
+target identity, target GTIDs and normalized binlog operations. Do not remove
+those assertions to make the job use one process. Review which ordinary work can
+share an applier and identify any required stop/restart boundary. A combined job
+must prepare its containers once and must not concatenate separate fixture runs.
+Keep BINLOG transport selections separate from this SQL grouping change.
+
+First map the assertions, setup/settings and case order from source and saved
+measurements. This review needs no build or container run. Define the focused
+validation scope before implementation. Other table/column conversions remain
+in the overall plan; this review follows its instruction to combine small
+compatible selections during the feature work.

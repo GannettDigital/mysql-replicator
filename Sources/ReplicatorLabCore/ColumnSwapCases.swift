@@ -6,7 +6,7 @@ extension DDLCompatibilityCases {
         "Simultaneous CHANGE names, key identities, column positions, generated expressions, restart and replay",
         [
             .init("CREATE TABLE ddlcompat.t(a INT,b INT,c INT,PRIMARY KEY(a,b),UNIQUE ka(a),KEY kb(b))"),
-            .init("INSERT INTO ddlcompat.t VALUES(1,10,100),(2,20,200)"),
+            .init("INSERT INTO ddlcompat.t VALUES(1,10,100),(2,20,200)", phaseEnd: "column-swap-seed"),
             .init(
                 "ALTER TABLE ddlcompat.t CHANGE a b INT,CHANGE b a INT",
                 [
@@ -14,35 +14,44 @@ extension DDLCompatibilityCases {
                     .init(
                         "SELECT INDEX_NAME,COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",
                         "PRIMARY\tb\nPRIMARY\ta\nka\tb\nkb\ta"),
-                ]),
+                ], phaseEnd: "swap-key-column-names"),
             .init(
                 "UPDATE ddlcompat.t SET a=11,c=101 WHERE b=1",
-                [.init("SELECT b,a,c FROM ddlcompat.t WHERE b=1", "1\t11\t101")], restartBefore: true),
+                [.init("SELECT b,a,c FROM ddlcompat.t WHERE b=1", "1\t11\t101")], restartBefore: true,
+                phaseEnd: "swapped-key-update-after-resume"),
             .init(
                 "ALTER TABLE ddlcompat.t CHANGE b a INT AFTER c,CHANGE a b INT FIRST",
-                [.init("SELECT * FROM ddlcompat.t ORDER BY a", "11\t101\t1\n20\t200\t2")]),
+                [.init("SELECT * FROM ddlcompat.t ORDER BY a", "11\t101\t1\n20\t200\t2")],
+                phaseEnd: "swap-column-positions"),
             .init(
                 "ALTER TABLE ddlcompat.t CHANGE c d INT,CHANGE b c INT,CHANGE a b INT",
-                [.init("SELECT * FROM ddlcompat.t ORDER BY b", "11\t101\t1\n20\t200\t2")], restartBefore: true),
+                [.init("SELECT * FROM ddlcompat.t ORDER BY b", "11\t101\t1\n20\t200\t2")], restartBefore: true,
+                phaseEnd: "three-column-rename-after-resume"),
             .init(
                 "ALTER TABLE ddlcompat.t ADD n INT DEFAULT 7 AFTER b,CHANGE b c INT,CHANGE c b INT",
-                [.init("SELECT * FROM ddlcompat.t ORDER BY c", "11\t7\t101\t1\n20\t7\t200\t2")]),
+                [.init("SELECT * FROM ddlcompat.t ORDER BY c", "11\t7\t101\t1\n20\t7\t200\t2")],
+                phaseEnd: "swap-and-add-column"),
             .init(
                 "UPDATE ddlcompat.t SET b=12,d=102 WHERE c=1",
                 [.init("SELECT b,n,d,c FROM ddlcompat.t ORDER BY c", "12\t7\t102\t1\n20\t7\t200\t2")],
-                restartBefore: true),
+                restartBefore: true, phaseEnd: "added-column-update-after-resume"),
             .init(
                 "ALTER TABLE ddlcompat.t DROP INDEX kb,DROP b,CHANGE n b INT",
-                [.init("SELECT * FROM ddlcompat.t ORDER BY c", "7\t102\t1\n7\t200\t2")]),
-            .init("DELETE FROM ddlcompat.t WHERE c=2", [.init("SELECT * FROM ddlcompat.t", "7\t102\t1")]),
+                [.init("SELECT * FROM ddlcompat.t ORDER BY c", "7\t102\t1\n7\t200\t2")],
+                phaseEnd: "drop-and-reuse-column-name"),
+            .init(
+                "DELETE FROM ddlcompat.t WHERE c=2", [.init("SELECT * FROM ddlcompat.t", "7\t102\t1")],
+                phaseEnd: "delete-renamed-key-row"),
             .init("CREATE TABLE ddlcompat.g(id INT PRIMARY KEY,a INT,b INT,g INT GENERATED ALWAYS AS(a+1) STORED)"),
-            .init("INSERT INTO ddlcompat.g(id,a,b) VALUES(1,10,20)"),
+            .init("INSERT INTO ddlcompat.g(id,a,b) VALUES(1,10,20)", phaseEnd: "generated-swap-seed"),
             .init(
                 "ALTER TABLE ddlcompat.g CHANGE a b INT,CHANGE b a INT,MODIFY g INT GENERATED ALWAYS AS(b+1) STORED",
-                [.init("SELECT id,b,a,g FROM ddlcompat.g", "1\t10\t20\t11")], restartBefore: true),
+                [.init("SELECT id,b,a,g FROM ddlcompat.g", "1\t10\t20\t11")], restartBefore: true,
+                phaseEnd: "swap-generated-input-after-resume"),
             .init(
-                "UPDATE ddlcompat.g SET b=12 WHERE id=1", [.init("SELECT id,b,a,g FROM ddlcompat.g", "1\t12\t20\t13")]),
-            .init("DROP TABLE ddlcompat.g,ddlcompat.t"),
+                "UPDATE ddlcompat.g SET b=12 WHERE id=1", [.init("SELECT id,b,a,g FROM ddlcompat.g", "1\t12\t20\t13")],
+                phaseEnd: "generated-input-update"),
+            .init("DROP TABLE ddlcompat.g,ddlcompat.t", phaseEnd: "drop-swapped-tables"),
         ])
     static let foreignKeyColumnSwaps = Case(
         "foreign-key-column-swaps",
