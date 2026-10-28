@@ -9,6 +9,26 @@ Their DML workloads remain in the feature groups. Focused local checks passed.
 Use the [per-step validation scope](BETA7_TEST_SUITE_CONSOLIDATION.md#validation-scope-for-each-step)
 for subsequent work. Do not repeat the completed local profile checks.
 
+## Current grouping direction
+
+The MODIFY pilot and failure diagnostics are committed as `30f3a16`.
+Follow the [revised execution plan](BETA7_TEST_SUITE_CONSOLIDATION.md#current-execution-plan-after-the-modify-pilot)
+for remaining work. It takes priority over the earlier next-step notes below.
+
+Group cases by MySQL feature. Prepare schemas together, keep one applier running,
+execute source changes in batches, and compare at the end. Preserve transaction
+boundaries. Keep explicit checkpoints where final results cannot prove a required
+condition. Combine small related groups that can share the fixture and settings.
+A combined job must not repeat container setup or restart the applier for each
+ordinary correctness case.
+
+Next, finish the case-to-feature and checkpoint map for
+`table-column-index-changes`. Start with column/index syntax and ALTER column
+keys, then resolve database-case ownership. This review requires no build or
+integration run. Implement and verify the resulting sequences in focused slices.
+Continue through other feature groups before the full CI measurement and final
+short PR selection.
+
 ## Agreed order
 
 1. Record the feedback in this document.
@@ -257,5 +277,5 @@ ALTER and DML phases and one explicit saved-state restart. Shared correctness
 failures now request a support bundle and print its path. The detailed review
 records timing, coverage differences and the passing deliberate failure check.
 The bundle contains a valid stopped-state SQLite snapshot and the original
-assertion failure. Extend this model to another ordinary DDL workflow;
-retain explicit lifecycle assertions and profile-specific session behavior.
+assertion failure. Apply this model in the order in the revised execution plan
+above. Retain explicit lifecycle assertions and profile-specific session behavior.

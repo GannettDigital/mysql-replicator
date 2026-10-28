@@ -3,6 +3,10 @@
 Status: implementation proceeds in slices. Keep changes local until the user
 requests a push.
 
+The [current execution plan](#current-execution-plan-after-the-modify-pilot)
+sets the order for remaining work. Earlier slice records describe completed
+work; their next-step notes are historical.
+
 Current progress:
 
 - Baseline, feature ownership, migration checks and generated-column changes:
@@ -43,6 +47,67 @@ replication code as part of this work.
 Use the existing shared catalog, planner, runners and measurement tools. Do not
 build a second test framework. Finish the full-suite organization before choosing
 the short PR selection.
+
+## Current execution plan after the MODIFY pilot
+
+The pilot and failure diagnostics are committed as `30f3a16`. On the forward
+MyISAM profile, `ddl-modify-columns` passed all 56 assertions. Local case time
+fell from 158.7 to 21.6 seconds. Harness SQL client calls fell from 918 to 63.
+It used two applier starts: one for the workflow and one for its restart check.
+These are case measurements, not full-job or full-matrix results.
+
+This direction retains Steps 4–5, but strengthens their execution rule. Sharing
+containers alone is not sufficient. Ordinary correctness tests must also share
+the running applier and batch source operations and result queries. Combine
+small related groups when they can use the same fixture and settings.
+
+### Default correctness workflow
+
+1. Prepare the required schemas and seed rows together. Give independent cases
+   separate tables or row keys. Preserve cold metadata reads where required.
+2. Start one applier for the ordinary correctness sequence. Do not drain and
+   restart it between cases solely to obtain a result or state snapshot.
+3. Execute the source changes in batches. A batch reduces client invocations;
+   it does not combine source transactions. Preserve session settings,
+   transaction boundaries, statement order and expected errors.
+4. Wait for the final source position once, then compare expected results,
+   source, native replica and target as applicable. Batch the result queries.
+   Export state and read binlog files once where the assertions permit it.
+5. Report each named assertion, source operation and GTID/offset. On failure,
+   show the failed operation and reason. Collect a support bundle and print its
+   path. If collection fails, report that failure without hiding the test error.
+
+Use an intermediate checkpoint only when the final observations cannot prove
+an assertion. For example, an INSERT followed by DELETE can leave an empty
+result even if both operations were omitted. Keep distinct rows, binlog checks
+or an explicit comparison at that boundary. The MODIFY pilot retains such
+phase comparisons. Do not remove an assertion merely to compare only once.
+
+Restart, replay, rejected writes, recovery and metadata invalidation can need
+specific state boundaries. Keep those boundaries named and justified. Separate
+an unsafe fixture from later work. Keep performance tests separate from other
+workloads. These exceptions do not justify restarting ordinary DDL/DML cases.
+
+### Remaining slices, in order
+
+| Slice | Work and result |
+|---|---|
+| 1 — Finish the table and column map | Use the saved SQL, assertions and coverage for `table-column-index-changes`. Record the final feature owner, required checkpoints and settings for each case. Start with column/index syntax and ALTER column keys beside the MODIFY workflow. Review database CREATE/ALTER/DROP ownership with `database-defaults-transactions`. Consult the MySQL manuals before assigning final names. No build or database run for this review. |
+| 2 — Apply the workflow to table and column changes | Convert compatible cases to shared preparation, one running applier, batched changes and final comparisons. Keep generated-column, index and key assertions visible. Implement in small slices; verify each changed sequence on one representative profile. Do not merge the whole group with data-type tests solely because coverage overlaps. |
+| 3 — Apply the workflow to remaining feature areas | Review partition management, stored objects, character sets/collations, data types and row-key/index operations. Keep each feature's DDL and DML together. Move or retire repeated DML only after mapping its assertions to the retained workflow. Retain engine/version-specific checks and the small metadata group. |
+| 4 — Combine small compatible selections | Review small groups during each preceding slice. Include the `without-source-gtids` SQL selections: keep `positive`, generated-column and applicable tagged-GTID assertions. A merge must share fixture setup and ordinary applier execution, not concatenate separate runners. Preserve required lifecycle steps. Record any settings that prevent a merge. |
+| 5 — Check the full suite and balance jobs | After the local slices pass, use one full instrumented CI run. Compare assertion results, SQL, coverage, setup time, applier starts, test time and runner time. Balance logical groups using the new measurements. Select the short PR case list last. |
+
+Before changing a group, record its old cases, replacement assertions, required
+settings, phase boundaries and proposed name. Use saved run `40454033524` for
+unchanged groups. Exclude the retired bootstrap group when assigning retained
+coverage. Mark changed groups as pending new measurements. Case counts and
+coverage overlap alone do not establish redundant behavior.
+
+Use the validation scope below for each implementation slice. Run only affected
+unit/planner checks and one changed integration sequence locally. Add another
+profile only for a changed engine/version path. Do not build or rerun tests for
+this plan revision. Do not run full CI between individual slices.
 
 ## Validation scope for each step
 
@@ -132,9 +197,9 @@ variant. These are planning checks, not extra test combinations to run now.
 Use them to choose a job budget below the planner's 256-job limit. Do not aim for
 255 jobs or require an emergency redesign each time a profile is added.
 
-The current four-profile plan has 179 execution groups and 179 jobs. Each job
-runs one fixture group. The policy rejects current plans above 185 jobs. It also
-checks two separate growth scenarios against a 250-job budget: one additional
+At Slice 7, the four-profile plan had 179 execution groups and 179 jobs. Each job
+ran one fixture group. That policy rejected plans above 185 jobs. It also
+checked two separate growth scenarios against a 250-job budget: one additional
 profile, or one additional source variant across current profiles. Both need at
 most 245 jobs. These checks run during full planning and do not schedule the
 hypothetical tests. They are capacity estimates, not proof that a new topology
@@ -359,6 +424,9 @@ to a feature must not create another execution group unless its setup requires i
 
 - Combine compatible cases within the same profile, variant, transport and
   server settings. Each execution group starts its MySQL containers once.
+  Use the default correctness workflow above: prepare schemas together, keep
+  one ordinary applier running, batch source changes and compare at the end.
+  Record required intermediate observations and deliberate lifecycle steps.
 - Review key-related DDL, row-key and conflict workflows as a shared feature
   group. Preserve individual case results. Combining their assertions in one
   catalog entry is optional; reducing separate setup and job count is the aim.
@@ -1137,7 +1205,7 @@ above the limit remains visible as `over_limit`. Report-only mode cannot accept
 data differences, checkpoint failures, timeouts, or fixture errors.
 
 Full CI now has 187 jobs, 2,039 catalog obligations, and 186 coverage collections.
-The PR case list is unchanged. The current job budget changes from 185 to 190
+The PR case list is unchanged. The job budget changes from 185 to 190
 to include the eight requested runs. The projected budget changes from 250 to
 255. The largest extra-profile model now reaches 255 jobs. One extra source
 variant reaches 250. This leaves too little room for more large additions.
@@ -1173,6 +1241,8 @@ measurements and balance groups. Select the short PR suite last.
 
 The [table/column/index review](BETA7_TABLE_COLUMN_INDEX_REVIEW.md) is complete.
 The combined `ddl-modify-columns` workflow is implemented with named per-ALTER
-checks. Its focused validation is recorded in that review. Next: review repeated
-observation calls while keeping each intermediate result. Keep other group
-measurements from the saved passing run until the batched CI check.
+checks. The phase pilot and failure diagnostics are committed as `30f3a16`.
+Its focused validation is recorded in that review. Follow the
+[current execution plan](#current-execution-plan-after-the-modify-pilot) for the
+remaining groups. Keep unchanged group measurements from the saved passing run
+until the next full CI check.
