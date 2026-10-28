@@ -2,7 +2,7 @@
 
 ## Decision and scope
 
-Review complete. Implementation is next.
+Implementation is complete. Focused validation results follow below.
 
 Combine the two SQL selections for `without-source-gtids` into one group per
 profile. Name the group `source-gtid-preservation-disabled`. Keep the variant ID
@@ -140,3 +140,70 @@ unchanged. Final PR selection remains a later step in the overall plan.
 This review required no build or container run. The implementation must not
 change source SQL, expected rows or stop/restart assertions to obtain a lower
 job count.
+
+## Implementation results
+
+The review plan is committed as `408c044`. The implementation adds
+`correctness_variant_groups` to the CI policy. It replaces the Python condition
+that kept this variant together only within each feature area. No Swift case,
+source SQL, expected result or runtime code changed in this slice.
+
+All 80 focused Python checks passed: 30 matrix, 12 group-selection, 11 case-selection,
+9 job-planning and 18 CI-runner tests. The full catalog plan passed ownership,
+dependency, feature, migration and growth checks without starting containers.
+It has 183 jobs, 1,545 obligations and 182 coverage collections. Comparing old
+and new planners against the same catalog confirms that the other 179 execution
+groups are unchanged, including BINLOG selections. The PR case list is unchanged.
+The largest one-extra-profile model now has 250 jobs. The one-extra-source-variant
+model has 246 jobs. These are separate planning scenarios, not additional runs.
+
+The two combined SQL selections passed with existing coverage images:
+
+| Profile | Cases | Fixture setups / cleanups | Saved CI SQL calls | Local SQL calls | Old union of executed lines | New executed lines | Old lines absent |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 8.4 → 5.7 MyISAM | 3 | 1 / 1 | 434 | 346 | 8,528 | 8,540 | 0 |
+| 5.7 → 8.4 InnoDB | 2 | 1 / 1 | 263 | 201 | 7,788 | 7,788 | 0 |
+
+The full source digests differ because the harness changed since the saved run.
+The comparison reconstructed source hashes from `efb3458` and verified them
+against the saved measurement digest. All runtime Swift source hashes match the
+local coverage report after excluding `Sources/ReplicatorLab*`. The line-set
+comparison therefore uses unchanged runtime source. All 20,880 mapped runtime
+lines remain. The local InnoDB set equals its old union. The forward set contains
+its old union plus 12 lines. No old covered runtime line was lost.
+
+All selected case assertions passed. Both runs checked the saved-schema restart,
+final row comparisons and clean state. Both isolated basic DML runs stopped at
+four transactions and four row operations. Their binlog, target-GTID and SQLite
+checks passed. The forward run also passed tagged rotation, live restarts and
+offline stop/resume. Coverage export and fixture cleanup passed in both runs.
+
+| Profile | Setup seconds | Case seconds | Coverage export seconds | Cleanup seconds |
+|---|---:|---:|---:|---:|
+| 8.4 → 5.7 MyISAM | 23.5 | 83.4 | 25.3 | 13.1 |
+| 5.7 → 8.4 InnoDB | 28.4 | 45.1 | 10.3 | 11.9 |
+
+Case seconds sum the selected case bodies. They exclude other runner work.
+The old timings came from GitHub Actions; these came from a local host. Do not
+claim an elapsed-time saving from this comparison. SQL call differences also
+include the intervening harness improvements. This slice proves one shared
+fixture, retained assertions and retained executed runtime lines.
+
+Evidence:
+
+- `artifacts/lab/20261028T210905Z-2b8108d8/result.json` — forward MyISAM.
+- `artifacts/lab/20261028T211408Z-76264cc7/result.json` — InnoDB target.
+- `artifacts/gtid-preservation-group-review/results.json` and `summarize.py` —
+  SQL counts, phase times, source-hash verification and exact line differences.
+- `artifacts/ci/matrix.json` — updated full plan.
+
+The test guide now gives the group name and commands for one profile or the
+matrix. No application or image build was needed. No other local integration
+selection or full suite ran. Leave the other two profiles and full-suite
+interaction checks to the next planned CI run.
+
+Next: return to the remaining table/column work. Review column renames, compound
+ALTER TABLE renames, multi-table RENAME and cross-schema relationships for shared
+execution phases. Retain distinct engine/version rules and intermediate checks.
+Use the saved run for that review; do not start containers until its next
+implementation slice and validation scope are defined.

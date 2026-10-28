@@ -64,7 +64,7 @@ def case_groups(members, area):
     return [members[offset:offset + size] for offset in range(0, len(members), size)]
 
 
-def named_case_groups(members, area):
+def named_case_groups(members, area, *, prefix=True):
     """Reviewed behavior groups. Preserve catalog order, including dependencies."""
     selections = area['groups']
     if 'size' in area or 'split_after' in area or not isinstance(selections, list) or not selections:
@@ -84,7 +84,7 @@ def named_case_groups(members, area):
         assigned.update(cases)
         selected = [c for c in members if c in cases]
         if selected:
-            result.append((area['name'] + '-' + name, selected))
+            result.append((area['name'] + '-' + name if prefix else name, selected))
     missing = set(members) - assigned
     if missing:
         raise ValueError(f'unassigned cases in {area["name"]}: {sorted(missing)}')
@@ -155,6 +155,22 @@ def generate(catalogs, policy, expanded_coverage=False):
             requested = {c for group in area['groups'] for c in group['cases']}
             if requested - known:
                 raise ValueError(f'unknown cases in {area["name"]}: {sorted(requested - known)}')
+    # A complete variant selection can cross feature areas without another
+    # fixture. Validate it against applicable cases across all profiles.
+    variant_groups = policy.get('correctness_variant_groups', {})
+    if not isinstance(variant_groups, dict):
+        raise ValueError('correctness_variant_groups must be an object')
+    for variant, selections in variant_groups.items():
+        variant_rows = [r for r in inventory.values()
+                        if r['suite'] == 'correctness' and r['variant'] == variant]
+        if not variant_rows:
+            raise ValueError('unknown correctness variant: ' + variant)
+        known = {r['id'] for r in variant_rows}
+        members = sorted({r['id'] for r in variant_rows if r['status'] == 'not_run'})
+        named_case_groups(members, dict(name=variant, groups=selections), prefix=False)
+        requested = {c for group in selections for c in group['cases']}
+        if requested - known:
+            raise ValueError(f'unknown cases in variant {variant}: {sorted(requested - known)}')
     groups = defaultdict(list)
     for row in applicable.values():
         groups[key(row)[:3]].append(row)
@@ -182,27 +198,30 @@ def generate(catalogs, policy, expanded_coverage=False):
             # Validate dependencies even when a family is never split. Missing/NA
             # prerequisites must not be hidden by the lab's selection expansion.
             resolve_cases(rows)
-            for area in policy['areas']:
-                members = [r['id'] for r in rows if belongs(r, area)]
-                if not members:
-                    continue
-                # This variant selects a few focused cases, not the full family.
-                # Full-family timing boundaries need not exist in that subset.
-                if 'groups' in area:
-                    named = named_case_groups(members, area)
-                else:
-                    chunks = [members] if variant == 'without-source-gtids' else case_groups(members, area)
-                    named = [(area['name'] + (f'-{i}' if len(chunks) > 1 else ''), roots)
-                             for i, roots in enumerate(chunks, 1)]
-                for name, roots in named:
-                    resolved = resolve_cases(rows, cases=roots)
-                    selected = set(resolved['cases'])
-                    # Dependencies may be repeated, but each primary obligation
-                    # must have exactly one owning shard.
-                    cases = [r['id'] for r in rows if r['id'] in selected]
-                    add(profile, variant, suite, name, cases, count=False)
-                    shards[-1].update(owns_obligations=True, requested_cases=roots, dependency_cases=resolved['dependency_cases'])
-                    owners.update((profile, variant, suite, case) for case in roots)
+            if variant in variant_groups:
+                named = named_case_groups([r['id'] for r in rows],
+                                          dict(name=variant, groups=variant_groups[variant]), prefix=False)
+            else:
+                named = []
+                for area in policy['areas']:
+                    members = [r['id'] for r in rows if belongs(r, area)]
+                    if not members:
+                        continue
+                    if 'groups' in area:
+                        named.extend(named_case_groups(members, area))
+                    else:
+                        chunks = case_groups(members, area)
+                        named.extend((area['name'] + (f'-{i}' if len(chunks) > 1 else ''), roots)
+                                     for i, roots in enumerate(chunks, 1))
+            for name, roots in named:
+                resolved = resolve_cases(rows, cases=roots)
+                selected = set(resolved['cases'])
+                # Dependencies may be repeated, but each primary obligation
+                # must have exactly one owning shard.
+                cases = [r['id'] for r in rows if r['id'] in selected]
+                add(profile, variant, suite, name, cases, count=False)
+                shards[-1].update(owns_obligations=True, requested_cases=roots, dependency_cases=resolved['dependency_cases'])
+                owners.update((profile, variant, suite, case) for case in roots)
         elif suite == 'demo':
             # Each demo session creates its own clean fixture. Keep all assertions
             # for a session together, but never start another session in its job.

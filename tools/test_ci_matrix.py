@@ -206,10 +206,63 @@ class MatrixTests(unittest.TestCase):
         policy = copy.deepcopy(self.policy)
         policy['areas'][0].pop('size')
         policy['areas'][0]['split_after'] = ['create']
+        policy['correctness_variant_groups'] = {'without-source-gtids': [dict(name='compact', cases=['create'])]}
         result = generate([dict(scenarios=rows)], policy)
         self.assertEqual(result['obligations'], len(rows))
         shard = next(s for s in result['include'] if s['variant'] == 'without-source-gtids')
         self.assertEqual(shard['cases'], ['create'])
+
+    def test_variant_groups_cross_areas_keep_profile_rules_and_binlog_jobs(self):
+        rows = [row('create'), row('alter')]
+        for profile in ('a', 'b', 'c', 'd'):
+            rows += [row('create', profile=profile, variant='no-preserve'),
+                     row('write', family='offline', profile=profile, variant='no-preserve'),
+                     dict(row('tagged', profile=profile, variant='no-preserve'),
+                          status='not_run' if profile == 'd' else 'not_applicable')]
+        policy = copy.deepcopy(self.policy)
+        policy['binlog_selections'] = [dict(area='rows', suite='correctness', variant='no-preserve',
+                                           profiles=['a', 'b', 'c', 'd'], cases=['create', 'write'])]
+        before = generate([dict(scenarios=rows)], policy)
+        policy['correctness_variant_groups'] = {'no-preserve': [
+            dict(name='source-gtid-preservation-disabled', cases=['tagged', 'write', 'create'])]}
+        after = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(after['obligations'], before['obligations'])
+        self.assertEqual(len(after['include']), len(before['include']) - 4)
+        self.assertEqual(after['coverage_reports'], before['coverage_reports'] - 4)
+        unchanged = lambda plan: [s for s in plan['include']
+                                  if s.get('dml_transport') == 'binlog' or s['variant'] == 'default']
+        self.assertEqual(unchanged(before), unchanged(after))
+        combined = [s for s in after['include'] if s['area'] == 'source-gtid-preservation-disabled']
+        self.assertEqual(len(combined), 4)
+        for shard in combined:
+            self.assertEqual(shard['cases'], ['create', 'write'] + (['tagged'] if shard['profile'] == 'd' else []))
+            self.assertTrue(shard['owns_obligations'])
+
+    def test_variant_groups_reject_unknown_missing_and_duplicate_assignments(self):
+        for groups, reason in [([], 'nonempty'),
+                               ([dict(name='all', cases=['create'])], 'unassigned'),
+                               ([dict(name='all', cases=['create', 'alter', 'typo'])], 'unknown cases'),
+                               ([dict(name='all', cases=['create', 'alter']),
+                                 dict(name='again', cases=['alter'])], 'multiple named groups')]:
+            with self.subTest(groups=groups):
+                policy = dict(self.policy, correctness_variant_groups={'default': groups})
+                with self.assertRaisesRegex(ValueError, reason):
+                    generate([dict(scenarios=[row('create'), row('alter')])], policy)
+        with self.assertRaisesRegex(ValueError, 'unknown correctness variant'):
+            generate([dict(scenarios=[row('create')])],
+                     dict(self.policy, correctness_variant_groups={'typo': [dict(name='all', cases=['create'])]}))
+
+    def test_variant_groups_keep_dependencies_and_reject_unavailable_prerequisites(self):
+        rows = [row('create'), dict(row('write', family='offline'), dependencies=['create'])]
+        policy = dict(self.policy, correctness_variant_groups={'default': [
+            dict(name='definitions', cases=['create']), dict(name='writes', cases=['write'])]})
+        result = generate([dict(scenarios=rows)], policy)
+        self.assertEqual(result['obligations'], 2)
+        self.assertEqual(result['include'][1]['cases'], ['create', 'write'])
+        self.assertEqual(result['include'][1]['dependency_cases'], ['create'])
+        rows[0]['status'] = 'not_applicable'
+        with self.assertRaisesRegex(ValueError, 'missing applicable dependency'):
+            generate([dict(scenarios=rows)], policy)
 
     def test_unknown_family_or_suite_fails_instead_of_omitting_coverage(self):
         for extra, reason in [(row('new', family='new-family'), 'unassigned correctness families'),

@@ -358,9 +358,10 @@ Each check compares exact rows on source, native and target. The metadata group
 checks discovery once for the shared primary-key and unique-key definition.
 
 The `keys-rows-gtids` group contains the `positive` single-row case and related
-key, row and GTID cases. The SQL `without-source-gtids` variant runs `positive`
-and any applicable tagged-GTID case in this group. That case also tests INSERT, counters,
-binlogs and saved state; it is not an UPDATE/DELETE-only test. Other single-row
+key, row and GTID cases. The SQL `without-source-gtids` variant instead uses
+`source-gtid-preservation-disabled`. That group combines `positive`,
+`ddl-compat-generated` and the applicable tagged-GTID case in one fixture.
+The `positive` case also tests INSERT, counters, binlogs and saved state; it is not an UPDATE/DELETE-only test. Other single-row
 operations run in cases that check specific keys, types and schema changes:
 
 | Case | Row-write conditions |
@@ -688,6 +689,24 @@ make lab-plan GROUP=replication-backlog-10k ARGS="--group binlog-replication-bac
 # Run a BINLOG benchmark and report a ratio above the chosen limit.
 make lab-test GROUP=binlog-replication-backlog-10k PROFILE=mysql57-to-mysql84-innodb ARGS="--max-native-ratio 2 --report-only"
 ```
+
+The `source-gtid-preservation-disabled` SQL group uses one fixture per profile.
+The variant is still named `without-source-gtids`. It disables target preservation,
+not source GTIDs. SQLite still tracks source GTIDs. Generated-column checks use
+the main applier. Basic DML uses separate state and stops after four transactions.
+The 8.4-source profile also checks tagged GTIDs, live restart and offline replay.
+These required process boundaries do not start another database fixture.
+
+```sh
+make lab-plan GROUP=source-gtid-preservation-disabled PROFILE=all
+make lab-test GROUP=source-gtid-preservation-disabled PROFILE=mysql84-to-mysql57-myisam ARGS="--skip-build"
+```
+
+The planner reads `correctness_variant_groups` in `tools/ci_matrix.json` for
+complete SQL selections that span feature areas. Each applicable case must have
+one owner. Profile exclusions and prerequisites still come from the catalog.
+BINLOG selections remain separate. Adding a case to this variant requires an
+explicit group assignment; planning fails if the assignment is missing.
 
 Group mode uses coverage binaries by default, as CI does. Add `--no-coverage`
 for normal binaries. Add `--skip-build` only when the required images already

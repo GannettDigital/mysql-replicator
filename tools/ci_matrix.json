@@ -15,6 +15,14 @@
       "live-skip-errors"
     ]
   },
+  "correctness_variant_groups": {
+    "without-source-gtids": [
+      {
+        "name": "source-gtid-preservation-disabled",
+        "cases": ["positive", "ddl-compat-generated", "ddl-compat-tagged-gtids"]
+      }
+    ]
+  },
   "areas": [
     {
       "name": "database-defaults-transactions",

@@ -71,11 +71,13 @@ The phase and database work is committed as `f62a9a4`. The next slice,
 generated expressions and simultaneous column renames, passed all 26 named
 assertions and both offline replay sequences on forward MyISAM. It retains
 all six live restarts. SQL calls fell from 415 in the saved CI run to 336 locally.
-This slice is not yet committed.
+This slice is committed as `99fb9d6`.
 
-Next, review small SQL selections with source GTID preservation disabled under
-Slice 4 below. See the [review scope](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#next-review-small-selections-with-source-gtid-preservation-disabled).
-The remaining feature groups still need review and conversion.
+The small SQL selections with source GTID preservation disabled now share one
+fixture per profile. See the [implementation results](BETA7_GTID_PRESERVATION_GROUP_REVIEW.md#implementation-results).
+Next, return to Slice 2: review the remaining table rename and cross-schema
+workflows before changing their execution phases. The remaining feature groups
+still need review and conversion.
 
 This direction retains Steps 4–5, but strengthens their execution rule. Sharing
 containers alone is not sufficient. Ordinary correctness tests must also share
@@ -1275,6 +1277,6 @@ See [SQL tests with source GTID preservation disabled](BETA7_GTID_PRESERVATION_G
 Combine eight SQL jobs into four, with one fixture per profile. Keep basic DML,
 generated columns and the applicable tagged-GTID case. Retain the count-limited
 applier and named restart/replay checks. The review maps assertions, saved
-coverage and timings, execution order and validation scope. Next: implement the
-policy selection and run the two specified local selections. No new full CI run
+coverage and timings, execution order and validation scope. The policy selection is now implemented. Its focused results are recorded
+in that review. No new full CI run
 is needed before that change. Select the short PR suite after the later full run.

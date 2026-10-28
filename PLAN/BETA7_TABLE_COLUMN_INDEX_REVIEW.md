@@ -20,9 +20,9 @@ Generated dependencies now use the same approach. Database lifecycle now runs
 with the database creation cases. Required dependency, rename and restart
 observations remain explicit. Database creation now shares one running applier
 and one snapshot/restart across six cases. Generated expressions and simultaneous
-column renames also use named phases and pass focused checks. Next, review the
-small SQL selections with source GTID preservation disabled for one shared
-fixture per profile.
+column renames also use named phases and pass focused checks. The small SQL selections with source GTID preservation disabled now share one
+fixture per profile. See the linked implementation results at the end of this
+document. Next, review the remaining table rename and cross-schema workflows.
 
 The new workflow uses the ID `ddl-modify-columns` and the title
 "ALTER TABLE: change column definitions and positions". This ID is now available
@@ -851,5 +851,9 @@ compatible selections during the feature work.
 
 The small-selection review is now complete. See
 [SQL tests with source GTID preservation disabled](BETA7_GTID_PRESERVATION_GROUP_REVIEW.md).
-Next: implement its policy-defined combined selection. Keep all assertions and
-one fixture per profile. The review defines the two focused local runs.
+The policy-defined combined selection is implemented. Its results are in the
+review. It retains all assertions and one fixture per profile. Next: review
+`column-renames`, `alter-table-rename`, `multi-table` and
+`cross-schema-relationships` for shared source phases. Map their intermediate
+checks and engine-specific branches before changing code. Use saved CI data;
+this next review requires no build or container run.
