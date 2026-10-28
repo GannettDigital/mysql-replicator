@@ -825,7 +825,7 @@ SQL, explicit expected values, restart flags and adjacent foreign-key swap code.
 See `artifacts/generated-rename-phase-review/source-comparison.json` and
 `results.json`. Case IDs, catalog obligations and matrix selections did not
 change. No other profile or full suite was run. The preceding work is committed
-as `f62a9a4`; this slice is not yet committed.
+as `f62a9a4`; this slice is committed as `99fb9d6`.
 
 ### Next review: small selections with source GTID preservation disabled
 
@@ -848,3 +848,8 @@ measurements. This review needs no build or container run. Define the focused
 validation scope before implementation. Other table/column conversions remain
 in the overall plan; this review follows its instruction to combine small
 compatible selections during the feature work.
+
+The small-selection review is now complete. See
+[SQL tests with source GTID preservation disabled](BETA7_GTID_PRESERVATION_GROUP_REVIEW.md).
+Next: implement its policy-defined combined selection. Keep all assertions and
+one fixture per profile. The review defines the two focused local runs.

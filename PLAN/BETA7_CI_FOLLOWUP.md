@@ -297,3 +297,14 @@ records timing, coverage differences and the passing deliberate failure check.
 The bundle contains a valid stopped-state SQLite snapshot and the original
 assertion failure. Apply this model in the order in the revised execution plan
 above. Retain explicit lifecycle assertions and profile-specific session behavior.
+
+
+## Small SQL selections: review complete
+
+See [SQL tests with source GTID preservation disabled](BETA7_GTID_PRESERVATION_GROUP_REVIEW.md).
+Combine eight SQL jobs into four, with one fixture per profile. Keep basic DML,
+generated columns and the applicable tagged-GTID case. Retain the count-limited
+applier and named restart/replay checks. The review maps assertions, saved
+coverage and timings, execution order and validation scope. Next: implement the
+policy selection and run the two specified local selections. No new full CI run
+is needed before that change. Select the short PR suite after the later full run.
