@@ -1,6 +1,8 @@
 # Review of table, column and index tests
 
-Status: the combined MODIFY workflow is implemented. Focused validation passed.
+Status: the MODIFY pilot, column/key phases and generated dependency phases are
+implemented. Database lifecycle now belongs to the database group. Focused
+validation passed. The remaining group conversions are still planned.
 Use this as the next slice of [the CI follow-up plan](BETA7_CI_FOLLOWUP.md).
 
 ## Recommendation
@@ -12,10 +14,13 @@ Keep the original starting definitions, ALTER statements and following row check
 Do not merge this whole group with the type/value or key groups, or split it
 into more CI jobs before reducing the repeated work.
 
-Next, reduce duplicate observation work in the DDL runner while retaining each
-intermediate comparison. Move the database lifecycle case to the existing
-database group. Keep the more complex dependency, rename, index and table-option
-workflows until a specific assertion map supports further combination.
+The shared DDL runner now supports named SQL phases. Column/index syntax and
+ALTER column keys use it. Their results are recorded at the end of this document.
+Generated dependencies now use the same approach. Database lifecycle now runs
+with the database creation cases. Required dependency, rename and restart
+observations remain explicit. Database creation now shares one running applier
+and one snapshot/restart across six cases. Next, review the remaining generated
+expression and simultaneous column-rename workflows for named phase boundaries.
 
 The new workflow uses the ID `ddl-modify-columns` and the title
 "ALTER TABLE: change column definitions and positions". This ID is now available
@@ -467,3 +472,286 @@ assertions. Formatting and diff checks passed. No additional profile or full
 suite was run. Next: apply the shared phase/observation design to another ordinary
 DDL workflow, with a condition map for any required intermediate observation or
 restart.
+
+## Next slice: column keys and index syntax
+
+The plan is committed as `ac922b1`. Keep the two existing case IDs and all source
+statements, transaction counts, explicit expected values and offline replay
+checks. Use named SQL phases in the shared DDL runner. A phase ends before a
+required observation or deliberate restart. Batch the expected-value queries
+on each server and compare the schema and rows once at each phase boundary.
+
+- `column-index-syntax`: retain observations for initial keys, duplicate implicit
+  key names, created/dropped indexes, changed columns, SERIAL rows and row DELETE.
+  Keep restart before CHANGE and before the SERIAL UPDATE. Remove three repeated
+  restarts; the retained restarts check saved column/key and SERIAL metadata.
+- `alter-column-keys`: retain implicit rebuild values and each explicit value
+  check. Observe MODIFY and CHANGE separately so one cannot hide the other.
+  Keep restart before writes using the renamed key, added AUTO_INCREMENT key and
+  promoted primary key. Remove restarts before INSERT into the two empty-table
+  AUTO_INCREMENT fixtures and the initial id UPDATE. Their value checks remain.
+- Both cases retain a final multi-table DROP comparison, completed DDL journal
+  check, transaction/GTID checkpoint and offline stop/resume replay.
+- Case setup uses one source phase for database DROP/CREATE. The existing shared
+  fixture remains. Replay retains its required state reset; it is not ordinary
+  per-statement setup. No catalog obligation or profile selection is removed.
+
+These are dependency-heavy sequences. Intermediate comparisons remain where
+later changes replace the observed schema or rows. This slice does not claim
+that a final empty database proves the preceding operations.
+
+Validation scope:
+
+- Build: host lab and focused lab unit tests. Reuse the coverage application image
+  if its inputs remain valid. No runtime application code changes are planned.
+- Unit checks: phase partitioning, observation/restart boundaries, original SQL
+  order, expected-value queries, session resets and transaction boundaries.
+- Local integration: both cases in one invocation on
+  `mysql84-to-mysql57-myisam`, default variant, SQL transport, with coverage.
+- Stop when both cases, their replay checks and the focused unit tests pass.
+  Other profiles, variants and transports remain for full CI. The batching code
+  has no new engine/version branch; existing assertions still select engine
+  expectations. Do not run MODIFY again unless its shared SQL construction, waiting or
+  observation behavior changes. The source-phase helper now accepts a database
+  name for diagnostics; its default and MODIFY execution remain unchanged.
+
+### Phase and assertion map
+
+The case IDs and feature owners remain unchanged. Both cases belong to **Indexes**
+in `tools/test_features.json`, which links the MySQL CREATE INDEX documentation.
+The cases also exercise ALTER TABLE column operations. No new CI group or
+renamed MySQL feature is introduced in this slice.
+
+| Case | Observation boundaries | Deliberate restart boundaries |
+|---|---|---|
+| `column-index-syntax` | Initial inline keys; grouped columns and duplicate implicit key names; renamed column and CREATE INDEX options; DROP INDEX and COPY; dropped columns and UPDATE; SERIAL seed rows; SERIAL default and grouped UNIQUE key; DELETE; final DROP. | Before CHANGE of a saved keyed column; before UPDATE of saved SERIAL rows. |
+| `alter-column-keys` | Implicit PRIMARY KEY value; implicit NOT NULL values; MODIFY key; CHANGE key; renamed-key UPDATE; AUTO_INCREMENT rebuild settings; following INSERT; UPDATE/DELETE; empty-table AUTO_INCREMENT rows; secondary AUTO_INCREMENT key; promoted PRIMARY KEY; UPDATE/DELETE; grouped column/key creation; final DROP. | Before renamed-key UPDATE; before added AUTO_INCREMENT-key UPDATE; before promoted-key UPDATE. |
+
+`DDLExecutionPhase` partitions the existing step definitions at named ends.
+It rejects a hidden expected-value check, restart inside a phase, missing final
+boundary, duplicate phase name or unhandled per-statement assertion. Unchanged
+cases retain the existing statement-by-statement runner. Each source operation
+resets the AUTO_INCREMENT session values to the global defaults, as a new client
+did before batching. An operation can then set its own values. This preserves
+the rebuild with increment 3/offset 2 and the following default-session INSERT.
+
+All 45 source operations and 11 explicit expected-value queries remain in their
+original order. The comparison with commit `ac922b1` is saved in
+`artifacts/ddl-phase-review/statement-comparison.json`. The number of live
+observation boundaries falls from 45 to 23. Database setup uses two source phases
+instead of four fully compared steps. Ordinary phases keep the applier running;
+five named restarts and the two offline replay sequences remain.
+
+The phase tests passed: 18 focused unit tests, including the shared SQL batch,
+source phase, failure report and assertion reporter tests. The full planner still
+selects 187 jobs, 1,545 catalog obligations and 186 coverage collections. No
+selection or catalog count changed.
+
+### Focused integration results
+
+Both cases passed in one forward MyISAM fixture with SQL transport and coverage:
+`artifacts/lab/20261028T015314Z-65ad6c79/result.json`.
+The run retained both offline stop/resume replay checks. All 28 named live phase
+and restart assertions passed. The source transaction counts, applied GTIDs,
+completed DDL intents and logged AUTO_INCREMENT settings also passed. Coverage
+export and fixture cleanup passed. The combined coverage report contains 9,178
+executed Swift lines out of 20,880 in its runtime source set.
+
+| Case | Saved CI SQL client calls | New local SQL client calls | New local case seconds |
+|---|---:|---:|---:|
+| `ddl-compat-column-index-syntax` | 300 | 136 | 50.6 |
+| `ddl-compat-alter-column-keys` | 386 | 215 | 74.5 |
+| Total | 686 | 351 | 125.1 |
+
+Calls include case setup, observations and replay controls. They are not applier
+statement counts. The older CI case times were 67.7 and 82.8 seconds. The hosts
+differ, so those times do not establish a measured speedup. Local build, fixture
+setup, coverage export and cleanup are outside the case times above.
+
+The result summary is `artifacts/ddl-phase-review/results.json`. No case ID,
+profile, source variant or transport selection changed. A full CI run must check
+the remaining combinations and group-level runtime coverage. The saved baseline
+has group-level coverage for the larger selection; it cannot provide exact
+before/after coverage for these two cases alone.
+
+## Generated-column dependencies and database ownership
+
+Keep all 23 generated-dependency source operations and their explicit expected
+values. Batch only operations whose observations remain available at the phase
+end. Keep separate comparisons before an expression is replaced or dropped,
+including the temporary recreation of `q.g` before its DROP. Keep four restarts
+for changed dependency expressions and stored/base conversions. Remove the two
+extra restarts for a plain renamed-column UPDATE and literal-row DELETE; retain
+both row comparisons. Keep offline stop/resume replay at transaction four.
+
+Move `ddl-compat-database` from `table-column-index-changes` into
+`database-defaults-transactions`. Its feature owner is already Databases. Change
+its catalog family to `database` so local family selection and CI agree. The
+shared runner already runs database creation before DDL cases in one fixture.
+The creation cases use `created_*` databases; the lifecycle case uses `ddlcompat`.
+Keep the existing DROP/recreate statements and the saved-schema inspection before
+DROP. Do not add a second fixture or change its execution logic.
+
+Validation scope:
+
+- Build: host lab and focused phase/catalog tests. Build the updated coverage
+  image once if its input check requires it; reuse it for both local groups.
+- Local integration: generated dependencies alone, then the full database-family
+  selection in one fixture, both on forward MyISAM/default/SQL with coverage.
+  The database selection tests the changed combined order, not the whole suite.
+- Planner: confirm identical obligations and job counts; only database lifecycle
+  ownership moves. Check all supported profiles and variants without containers.
+- Stop after those checks pass. Other profiles and transports remain for CI.
+  Do not rerun the two column-key cases or MODIFY; their execution is unchanged.
+
+### Generated dependency boundaries and selection checks
+
+The phase map preserves the original SQL order and all ten explicit expected
+values. It also keeps schema/row comparisons for initial generated chains,
+renamed generated columns, recreated expressions before DROP, and the quoted
+identifier inside a string literal. These intermediate results cannot all be
+replaced by a final comparison of the empty database.
+
+The four retained restarts precede writes that use replaced expressions, renamed
+generated columns, stored-to-ordinary conversion and ordinary-to-stored conversion.
+The original replay stop remains at transaction four. The shared phase runner
+and the two previously migrated key workflows did not change in this slice.
+
+The database lifecycle case now has catalog family `database`. Its ID, feature
+owner, source SQL, assertions and runner are unchanged. It follows the six database
+creation cases in the forward group. InnoDB groups also retain their existing
+transaction/default workflow. No container setup is added inside the group.
+
+All 40 focused Swift tests and 27 matrix unit tests passed. Full planning retains
+187 jobs, 1,545 obligations and 186 coverage collections. An execution-count
+comparison found no added or removed selection. The lifecycle case moves from
+the table/column/index group to the database group in ten existing combinations.
+See `artifacts/generated-phase-review/plan-comparison.json` and
+`statement-comparison.json`. Integration results follow.
+
+
+### Generated dependency and database integration results
+
+Both focused runs passed on forward MyISAM/default/SQL with coverage. The second
+run reused the image from the first. Coverage export and cleanup passed in both.
+
+- Generated dependencies: `artifacts/lab/20261028T031608Z-e3c98172/result.json`.
+  All 22 named assertions passed: 18 phase observations and four live restarts.
+  Offline replay stopped at transaction four and resumed successfully. The case
+  took 85.6 local seconds and used 273 harness SQL client calls, compared with
+  365 calls in the saved CI run. The older CI time was 80.1 seconds. The hosts
+  differ; these times do not establish a speedup. Combined Swift line coverage
+  was 9,226/20,880. The saved baseline has group-level coverage, so it cannot
+  establish an exact before/after line comparison for this case alone.
+- Database family: `artifacts/lab/20261028T042932Z-8dd9efb7/result.json`.
+  All seven applicable cases passed in one fixture. The run retained 41 step
+  comparisons and the saved-schema restart check. The lifecycle case passed
+  after all six creation cases. Combined Swift line coverage was 7,317/20,880.
+  The reverse multi-table InnoDB workflow remains not applicable to this profile.
+  This change moves ownership; it does not yet batch database case execution.
+
+The local measurement summary is `artifacts/generated-phase-review/results.json`.
+No full suite or other profile was run. The next full CI run must check the
+remaining profile/variant selections and combined group coverage.
+
+### Database creation batching scope
+
+Review the six creation cases and their per-case drain, state export and restart.
+Keep one applier running through ordinary database creation. Preserve different
+session defaults, conditional CREATE behavior, existing rows and saved-schema
+assertions. Keep the lifecycle case's pre-DROP state inspection and explicit
+resume check. Use intermediate observations where later changes would hide the
+result. Do not treat shared container setup as completed execution batching.
+
+Before implementation, record the assertion map and session boundaries from the
+current source. Reuse the database run above as the local baseline. Validate the
+changed helpers with focused unit tests and the database family on forward
+MyISAM/default/SQL only. Add a second profile only if an InnoDB-specific path
+changes. Do not rerun generated dependencies or the other DDL phase cases.
+
+## Database creation execution slice
+
+Assertion map before implementation:
+
+| Existing check | Retained observation |
+|---|---|
+| Server defaults differ from the USE database | Keep `collation_server=utf8mb4_bin; USE otherdb` on the CREATE operation. Reset server collation before later writes, as separate clients did. All table names remain qualified. |
+| Explicit, charset-only and collation-only CREATE | Keep source-version-specific prefixes and all source SQL. Check database charset/collation and inherited probe columns/engine on all three servers. |
+| Conditional CREATE against existing defaults | Keep the dependency on `database-explicit`. Require source warning 1007. Compare unchanged defaults and the seed row before and after following DML. |
+| INSERT, changed primary key/UTF-8 UPDATE, DELETE | Observe rows after INSERT, after UPDATE and after DELETE. Do not replace these with only the final seed-row comparison. |
+| DDL journal, counters, GTID and file offset | Keep per-case counters and applied GTIDs. Export once after the selected creation cases. Check each statement's saved group GTID/file/offset and each CREATE DATABASE intent in that snapshot. Check the final stopped checkpoint. |
+| Resume from saved schemas | Resume once after the creation sequence. Keep the separate lifecycle runner's pre-DROP snapshot/restart and the outer saved-schema write unchanged. |
+
+Keep the six catalog IDs and their named `schema-effects` and `following-dml`
+assertions. Keep one running applier through those cases. Each case uses three
+source phases: CREATE/table/INSERT, UPDATE, DELETE. Compare full schema/rows once
+at the case end. The last selected creation case owns a shared journal assertion
+that names every checked case and source operation. A failed shared check fails
+the fixture, so earlier case results do not make that run pass.
+
+Validation: focused workflow/phase/catalog unit tests, then the database family
+on forward MyISAM/default/SQL with coverage. The InnoDB-only transaction runner
+and database lifecycle runner are unchanged. No new profile or full-suite run.
+
+Implementation notes:
+
+- `DatabaseCreationWorkflow` defines the three observation phases and checks
+  database defaults, source warnings and saved transaction boundaries.
+- `databaseCreation()` keeps one applier through all selected creation cases.
+  It retains `otherdb` setup even when none are selected: standalone ALTER
+  rename tests also depend on that database.
+- The existing InnoDB transaction/default runner and database lifecycle runner
+  did not change. Each remains after the creation sequence.
+- All 42 focused workflow, source-phase and profile-selection unit tests passed.
+  The initial unit attempt exposed a MySQL literal used in a SQLite query. The
+  corrected query uses SQLite string literals. A build started before the
+  `otherdb` setup review was canceled before database tests began.
+- The database-family integration run passed. Results follow.
+
+
+### Database creation integration results
+
+Run `artifacts/lab/20261028T051344Z-bb3f4a1d/result.json` passed on forward
+MyISAM/default/SQL with coverage. All seven applicable cases passed in one
+fixture. The six creation cases retain 12 named schema/DML assertions and add
+one shared journal/checkpoint assertion. All 28 source operation boundaries,
+six database intents and the final stopped checkpoint passed. The unchanged
+database lifecycle and outer saved-schema restart checks also passed.
+Coverage export and cleanup passed.
+
+Compare with local baseline `artifacts/lab/20261028T042932Z-8dd9efb7/result.json`:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Six creation cases, seconds | 109.5 | 40.5 |
+| Six creation cases, harness SQL client calls | 416 | 205 |
+| Full database group, applier processes with coverage | 10 | 5 |
+| Full database group, executed runtime Swift lines | 7,317 | 7,317 |
+
+The creation case time includes the shared checkpoint and restart. Build,
+container setup, coverage export and cleanup are outside these case times.
+The last selected creation case includes the shared checkpoint cost. The lifecycle
+case still uses 122 SQL calls; its execution did not change.
+
+Runtime source hashes and mapped lines match. The executed line sets are
+identical: no lines gained or lost. This is a local comparison of two rebuilt
+images with unchanged runtime sources, not the full-suite CI coverage check.
+Both reports map 20,880 runtime Swift lines. See
+`artifacts/database-workflow-review/results.json` for per-case measurements and
+source/image comparison details. The catalog, matrix and selected case IDs did
+not change in this slice. No other profile or full suite was run.
+
+### Next slice: generated expressions and simultaneous column renames
+
+Review `ddl-compat-generated-expressions` and `ddl-compat-column-swaps` together.
+Use the existing named-phase runner. Preserve expected values before later
+UPDATE or ALTER statements replace them, and preserve writes after saved-schema
+resume. Keep the offline stop/resume checks. Keep the two case IDs and their
+existing group; do not add jobs.
+
+Map their source statements, expected values and restart boundaries before an
+edit. Run the affected phase/catalog unit tests, then both cases in one forward
+MyISAM/default/SQL fixture with coverage. Add another profile only if the change
+alters an engine/version-specific path. Do not rerun the completed database,
+MODIFY, column-key or generated-dependency cases. Leave full-suite balancing and
+short PR selection until the combined CI measurement.

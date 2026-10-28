@@ -22,12 +22,25 @@ condition. Combine small related groups that can share the fixture and settings.
 A combined job must not repeat container setup or restart the applier for each
 ordinary correctness case.
 
-Next, finish the case-to-feature and checkpoint map for
-`table-column-index-changes`. Start with column/index syntax and ALTER column
-keys, then resolve database-case ownership. This review requires no build or
-integration run. Implement and verify the resulting sequences in focused slices.
-Continue through other feature groups before the full CI measurement and final
-short PR selection.
+The next slice is implemented: column/index syntax and ALTER column keys use
+named SQL phases. Both passed in one forward MyISAM fixture, including restart
+and offline replay. Harness SQL calls fell from 686 in the saved CI run to 351
+in the local run. See [the results](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#focused-integration-results).
+
+Generated dependencies now use 18 named observation phases and four retained
+live restarts. All 22 assertions and offline replay passed locally. Calls fell
+from 365 in the saved CI run to 273. Database lifecycle now belongs to the
+database family; all seven applicable cases passed in one shared fixture.
+The planner retains 187 jobs and all 1,545 current obligations.
+
+Database creation batching also passed. Six cases now share one running applier
+and one snapshot/restart. Local creation time fell from 109.5 to 40.5 seconds;
+SQL calls fell from 416 to 205. The full database group passed with five applier
+processes instead of ten. Its executed runtime line set is identical: 7,317 lines.
+
+Next, review generated expressions and simultaneous column renames. See the
+[next slice and validation scope](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#next-slice-generated-expressions-and-simultaneous-column-renames).
+Continue through other feature groups before full CI and final PR selection.
 
 ## Agreed order
 

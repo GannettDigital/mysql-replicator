@@ -134,15 +134,17 @@ struct LabScenario {
         cases += DDLCompatibilityCases.cases.map {
             .init(
                 test: $0.test,
-                family: ["ddl-compat-tagged-gtids", "ddl-compat-source-gtid-preservation"].contains($0.test.id)
-                    ? "gtids"
-                    : [
-                        "ddl-compat-foreign-key-column-swaps", "ddl-compat-foreign-key-controls",
-                        "ddl-compat-foreign-key-ddl", "ddl-compat-foreign-key-missing-parent",
-                        "ddl-compat-foreign-key-parent-keys", "ddl-compat-foreign-key-syntax-columns",
-                        "ddl-compat-foreign-key-cross-database", "ddl-compat-foreign-key-generated",
-                        "ddl-compat-foreign-key-compound-indexes",
-                    ].contains($0.test.id) ? "foreign-keys" : "ddl", profileExclusions: $0.profileExclusions,
+                family: $0.test.id == "ddl-compat-database"
+                    ? "database"
+                    : ["ddl-compat-tagged-gtids", "ddl-compat-source-gtid-preservation"].contains($0.test.id)
+                        ? "gtids"
+                        : [
+                            "ddl-compat-foreign-key-column-swaps", "ddl-compat-foreign-key-controls",
+                            "ddl-compat-foreign-key-ddl", "ddl-compat-foreign-key-missing-parent",
+                            "ddl-compat-foreign-key-parent-keys", "ddl-compat-foreign-key-syntax-columns",
+                            "ddl-compat-foreign-key-cross-database", "ddl-compat-foreign-key-generated",
+                            "ddl-compat-foreign-key-compound-indexes",
+                        ].contains($0.test.id) ? "foreign-keys" : "ddl", profileExclusions: $0.profileExclusions,
                 smoke: ["ddl-compat-types", "ddl-compat-database"].contains($0.test.id))
         }
         cases.append(

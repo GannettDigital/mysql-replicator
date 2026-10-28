@@ -161,7 +161,6 @@
         "ddl-compat-cross-schema-relationships",
         "ddl-compat-types",
         "ddl-compat-alter",
-        "ddl-compat-database",
         "ddl-modify-columns"
       ]
     },

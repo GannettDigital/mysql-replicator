@@ -1,7 +1,7 @@
 import Foundation
 
-/// Ordered workloads compare MySQL 8.4, its native replica, and the external
-/// applier's MySQL 5.7 MyISAM target after every source statement.
+/// Ordered workloads compare the source, native replica and external target.
+/// Reviewed cases batch statements between named observation boundaries.
 enum DDLCompatibilityCases {
     struct Check {
         let sql: String
@@ -32,10 +32,12 @@ enum DDLCompatibilityCases {
         var transactions = 1
         var restartBefore = false
         var assertionID: String?
+        let phaseEnd: String?
         init(
             _ sql: String, _ checks: [Check] = [], sqlTransactional: String? = nil, restartBefore: Bool = false,
-            transactions: Int = 1, assertionID: String? = nil
+            transactions: Int = 1, assertionID: String? = nil, phaseEnd: String? = nil
         ) {
+            self.phaseEnd = phaseEnd
             self.transactions = transactions
             self.assertionID = assertionID
             self.restartBefore = restartBefore

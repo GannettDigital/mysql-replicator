@@ -55,8 +55,10 @@ enum LabSQLPhase {
 }
 
 extension SharedCorrectness.Run {
-    func sourcePhase(_ id: String, writes: [LabSQLPhase.Write]) throws -> [LabSQLPhase.Result] {
-        currentDatabase = "demo"
+    func sourcePhase(_ id: String, writes: [LabSQLPhase.Write], database: String = "demo") throws -> [LabSQLPhase
+        .Result]
+    {
+        currentDatabase = database
         sourcePhaseCount += 1
         let previousPhase = f.h.sqlTrace.metadata["phase_id"]
         f.h.sqlTrace.metadata["phase_id"] = id

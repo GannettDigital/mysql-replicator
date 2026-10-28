@@ -497,83 +497,7 @@ public enum SharedCorrectness {
             return ["normalized": values, "raw_tables": rawTables]
         }
         func databases() throws {
-            try step("CREATE DATABASE otherdb CHARACTER SET latin1 COLLATE latin1_bin", database: "otherdb")
-            for test in DatabaseCreationCases.cases where selects(test.test.id) {
-                try reporter.run(test.test) {
-                    let prefix = f.profile.sourceVersion == .mysql57 ? test.prefix57 : test.prefix
-                    let before = try applier.latestProgress() ?? [:]
-                    let observation = try step(
-                        prefix + test.sql, database: test.database, checks: [.init(test.metadataSQL, test.expected)],
-                        warning: test.existing ? 1007 : nil, checkWarnings: true)
-                    let table = test.database + ".probe"
-                    if !test.existing {
-                        try step("CREATE TABLE \(table)(id INT PRIMARY KEY,note VARCHAR(20))", database: test.database)
-                    }
-                    try assertion("schema-effects", caseID: test.test.id) {
-                        var values: [String: Any] = ["source_observation": observation]
-                        for role in LabProfile.Role.allCases {
-                            let metadata = try f.sql(role, test.metadataSQL)
-                            let columns = try f.sql(
-                                role,
-                                "SELECT COLUMN_NAME,DATA_TYPE,IS_NULLABLE,COLUMN_KEY,IFNULL(COLLATION_NAME,'') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe' ORDER BY ORDINAL_POSITION"
-                            )
-                            let engine = try f.sql(
-                                role,
-                                "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='\(test.database)' AND TABLE_NAME='probe'"
-                            )
-                            try require(
-                                metadata == test.expected
-                                    && columns == "id\tint\tNO\tPRI\t\nnote\tvarchar\tYES\t\t" + test.collation
-                                    && engine == f.profile.engine(role), "database/table inheritance differs")
-                            values[role.rawValue] = ["database": metadata, "columns": columns, "engine": engine]
-                        }
-                        return values
-                    }
-                    try assertion("following-dml", caseID: test.test.id) {
-                        let insert =
-                            test.existing
-                            ? "INSERT INTO \(table) VALUES(2,NULL)" : "INSERT INTO \(table) VALUES(1,'seed'),(2,NULL)"
-                        try step(insert, database: test.database)
-                        try step(
-                            "UPDATE \(table) SET id=3,note=CONVERT(0xF09F9880 USING utf8mb4) WHERE id=2",
-                            database: test.database)
-                        try step("DELETE FROM \(table) WHERE id=3", database: test.database)
-                        let summary = try applier.latestProgress() ?? [:]
-                        try require(
-                            (summary["rowsApplied"] as? Int ?? 0) - (before["rowsApplied"] as? Int ?? 0)
-                                == (test.existing ? 3 : 4), "database following row count differs")
-                        var rows: [String: String] = [:]
-                        for role in LabProfile.Role.allCases {
-                            rows[role.rawValue] = try f.sql(role, "SELECT id,HEX(note) FROM \(table) ORDER BY id")
-                            try require(
-                                rows[role.rawValue] == "1\t73656564", "database creation lost existing/following rows")
-                        }
-                        return rows
-                    }
-                    try applier.drain()
-                    let saved = try snapshot(test.test.id)
-                    let quoted = test.sql.replacingOccurrences(of: "'", with: "''")
-                    try require(
-                        state(
-                            saved,
-                            "SELECT COUNT(*) FROM ddl_intents WHERE database_json IS NOT NULL AND before_schema_id IS NULL AND after_schema_id IS NULL AND status='DONE' AND target_sql='\(quoted)'"
-                        ) == "1", "database DDL intent differs")
-                    let end = try f.boundary()
-                    let result = try applier.latestProgress() ?? [:]
-                    try require(result["appliedGTIDSet"] as? String == end.gtids, "database GTIDs differ")
-                    try require(
-                        (result["ddlApplied"] as? Int ?? 0) - (before["ddlApplied"] as? Int ?? 0)
-                            == (test.existing ? 1 : 2), "database DDL count differs")
-                    try require(
-                        (result["transactionsApplied"] as? Int ?? 0) - (before["transactionsApplied"] as? Int ?? 0)
-                            == (test.existing ? 4 : 5), "database transaction count differs")
-                    try require(
-                        state(saved, "SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
-                            == "STOPPED|\(end.file)|\(end.position)", "database checkpoint differs")
-                    try applier.start(initialize: false)
-                    try wait()
-                }
-            }
+            try databaseCreation()
             if f.profile.transactionalTarget && selects("reverse-database-table-defaults") {
                 try reporter.run(
                     QualificationCase(
@@ -621,75 +545,93 @@ public enum SharedCorrectness {
                         let metadata = fullMetadataCases.contains(test.test.id) ? "FULL" : f.variant.metadata
                         _ = try f.sql(.source, "SET GLOBAL binlog_row_metadata=" + metadata)
                     }
-                    try step("DROP DATABASE IF EXISTS ddlcompat", database: "ddlcompat")
-                    try step(
-                        "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "ddlcompat")
+                    let phases = try DDLExecutionPhase.plan(test.steps)
+                    if phases != nil {
+                        _ = try sourcePhase(
+                            test.test.id + "-setup",
+                            writes: [
+                                .init(id: "drop-database", sql: "DROP DATABASE IF EXISTS ddlcompat"),
+                                .init(
+                                    id: "create-database",
+                                    sql: "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+                            ], database: "ddlcompat")
+                    } else {
+                        try step("DROP DATABASE IF EXISTS ddlcompat", database: "ddlcompat")
+                        try step(
+                            "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "ddlcompat"
+                        )
+                    }
                     if test.test.id == "ddl-compat-temporary" {
                         try step("CREATE TABLE ddlcompat.tmp(id INT PRIMARY KEY,n INT)", database: "ddlcompat")
                         try step("INSERT INTO ddlcompat.tmp VALUES(99,99)", database: "ddlcompat")
                     }
                     let before = try applier.latestProgress() ?? [:]
                     let begin = try f.boundary()
-                    for item in test.steps {
-                        if item.restartBefore {
-                            try applier.drain()
-                            try applier.start(initialize: false)
-                            try wait()
-                        }
-                        let sql = f.profile.transactionalTarget ? item.sqlTransactional : item.sql
-                        if test.test.id == "ddl-compat-foreign-key-ddl" && sql == "DROP DATABASE ddlcompat" {
-                            // These baseline tables have no captured DDL or row
-                            // events. DROP must discover and journal all three.
-                            let other = f.variant.lowerCaseTableNames == 0 ? "U_child" : "u_other"
-                            for role in LabProfile.Role.allCases {
-                                _ = try f.sql(
-                                    role,
-                                    "SET sql_log_bin=0; CREATE TABLE ddlcompat.u_parent(id INT PRIMARY KEY) ENGINE=InnoDB; CREATE TABLE ddlcompat.u_child(id INT PRIMARY KEY,pid INT,CONSTRAINT unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB; CREATE TABLE ddlcompat."
-                                        + other
-                                        + "(id INT PRIMARY KEY,pid INT,CONSTRAINT other_unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB"
-                                )
+                    if let phases {
+                        try ddlPhases(phases, test: test)
+                    } else {
+                        for item in test.steps {
+                            if item.restartBefore {
+                                try applier.drain()
+                                try applier.start(initialize: false)
+                                try wait()
                             }
-                        }
-                        if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
-                            // Neither table is rediscovered by DML after resume.
-                            // DROP must still retire both durable schema records.
-                            try applier.drain()
-                            let checkpoint = try snapshot("database-before-drop")
-                            try require(
-                                state(
-                                    checkpoint,
-                                    "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'"
-                                ) == "2", "database resume fixture lacks both saved schemas")
-                            try applier.start(initialize: false)
-                            try wait()
-                        }
-                        if test.test.id == "ddl-compat-foreign-key-syntax-columns"
-                            && sql == "DELETE FROM ddlcompat.c WHERE id=1"
-                        {
-                            for role in LabProfile.Role.allCases {
-                                let result = try f.h.compose(
-                                    [
-                                        "exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", f.profile.service(role),
-                                        "mysql", "--no-defaults", "-uroot", "-e", "DELETE FROM ddlcompat.p WHERE id=1",
-                                    ], checked: false)
+                            let sql = f.profile.transactionalTarget ? item.sqlTransactional : item.sql
+                            if test.test.id == "ddl-compat-foreign-key-ddl" && sql == "DROP DATABASE ddlcompat" {
+                                // These baseline tables have no captured DDL or row
+                                // events. DROP must discover and journal all three.
+                                let other = f.variant.lowerCaseTableNames == 0 ? "U_child" : "u_other"
+                                for role in LabProfile.Role.allCases {
+                                    _ = try f.sql(
+                                        role,
+                                        "SET sql_log_bin=0; CREATE TABLE ddlcompat.u_parent(id INT PRIMARY KEY) ENGINE=InnoDB; CREATE TABLE ddlcompat.u_child(id INT PRIMARY KEY,pid INT,CONSTRAINT unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB; CREATE TABLE ddlcompat."
+                                            + other
+                                            + "(id INT PRIMARY KEY,pid INT,CONSTRAINT other_unseen_fk FOREIGN KEY(pid) REFERENCES ddlcompat.u_parent(id)) ENGINE=InnoDB"
+                                    )
+                                }
+                            }
+                            if test.test.id == "ddl-compat-database" && sql == "DROP DATABASE ddlcompat" {
+                                // Neither table is rediscovered by DML after resume.
+                                // DROP must still retire both durable schema records.
+                                try applier.drain()
+                                let checkpoint = try snapshot("database-before-drop")
                                 try require(
-                                    result.status != 0
-                                        && String(decoding: result.stderr, as: UTF8.self).contains("ERROR 1451"),
-                                    "MATCH incorrectly enabled a cascade instead of rejecting the parent DELETE")
+                                    state(
+                                        checkpoint,
+                                        "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat'"
+                                    ) == "2", "database resume fixture lacks both saved schemas")
+                                try applier.start(initialize: false)
+                                try wait()
                             }
-                        }
-                        if let identifier = item.assertionID {
-                            try assertion(identifier, caseID: test.test.id) {
+                            if test.test.id == "ddl-compat-foreign-key-syntax-columns"
+                                && sql == "DELETE FROM ddlcompat.c WHERE id=1"
+                            {
+                                for role in LabProfile.Role.allCases {
+                                    let result = try f.h.compose(
+                                        [
+                                            "exec", "-T", "-e", "MYSQL_PWD=fixture-root-only", f.profile.service(role),
+                                            "mysql", "--no-defaults", "-uroot", "-e",
+                                            "DELETE FROM ddlcompat.p WHERE id=1",
+                                        ], checked: false)
+                                    try require(
+                                        result.status != 0
+                                            && String(decoding: result.stderr, as: UTF8.self).contains("ERROR 1451"),
+                                        "MATCH incorrectly enabled a cascade instead of rejecting the parent DELETE")
+                                }
+                            }
+                            if let identifier = item.assertionID {
+                                try assertion(identifier, caseID: test.test.id) {
+                                    try step(sql, database: "ddlcompat", checks: item.checks)
+                                }
+                            } else {
                                 try step(sql, database: "ddlcompat", checks: item.checks)
                             }
-                        } else {
-                            try step(sql, database: "ddlcompat", checks: item.checks)
-                        }
-                        if test.test.id == "ddl-compat-foreign-key-cross-database" {
-                            try writeJSON(
-                                compare("ddlfk"),
-                                to: f.output.appendingPathComponent(
-                                    String(format: "fk-external-%04d.json", observation)))
+                            if test.test.id == "ddl-compat-foreign-key-cross-database" {
+                                try writeJSON(
+                                    compare("ddlfk"),
+                                    to: f.output.appendingPathComponent(
+                                        String(format: "fk-external-%04d.json", observation)))
+                            }
                         }
                     }
                     try applier.drain()

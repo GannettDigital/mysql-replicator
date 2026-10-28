@@ -56,6 +56,21 @@ fell from 158.7 to 21.6 seconds. Harness SQL client calls fell from 918 to 63.
 It used two applier starts: one for the workflow and one for its restart check.
 These are case measurements, not full-job or full-matrix results.
 
+The next slice also passes focused local checks: column/index syntax and ALTER
+column keys use 23 named observation phases and five deliberate live restarts.
+Both retain offline replay. See [the results and remaining work](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#focused-integration-results).
+Generated dependencies also passed: 18 phase observations, four live restarts
+and offline replay. Database lifecycle now belongs to the database group; all
+seven applicable cases passed together on forward MyISAM. The matrix still has
+187 jobs and 1,545 obligations. Database creation now shares one running applier
+and one snapshot/restart across its six cases. All seven database cases passed
+locally. Creation time fell from 109.5 to 40.5 seconds and SQL calls from 416 to
+205. The full database group's executed runtime line set is unchanged.
+
+Next, review generated expressions and simultaneous column renames. See the
+[next slice and validation scope](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#next-slice-generated-expressions-and-simultaneous-column-renames).
+The remaining feature groups still need review and conversion.
+
 This direction retains Steps 4–5, but strengthens their execution rule. Sharing
 containers alone is not sufficient. Ordinary correctness tests must also share
 the running applier and batch source operations and result queries. Combine

@@ -121,6 +121,43 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 make lab-plan ARGS="--profile all --suite correctness --case ddl-modify-columns"
 ```
 
+`ddl-compat-column-index-syntax` and `ddl-compat-alter-column-keys` also use
+named SQL phases. They compare keys, columns and rows before later statements
+replace or delete the result. Their deliberate restart and offline replay checks
+remain. Source operations within a phase keep their original transaction order;
+batching does not make them one transaction. Each phase records SQL, GTIDs, file
+offsets, expected values and the three-server comparison.
+
+Run both cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-column-index-syntax --case ddl-compat-alter-column-keys"
+```
+
+`ddl-compat-generated-dependencies` uses named phases for generated expressions,
+column renames and conversions between stored generated and ordinary columns.
+It compares intermediate results before later ALTER statements replace or drop
+them. Four saved-state restarts and offline stop/resume replay remain.
+
+The `database` family includes `ddl-compat-database`. CI runs it in
+`database-defaults-transactions` with the database creation cases. All cases in
+that group use one MySQL fixture. The six creation cases share one running
+applier and one saved-state export/restart. They check database/table defaults,
+conditional CREATE warnings and rows after each INSERT, UPDATE and DELETE. The
+shared snapshot checks every source operation's GTID/file offset and each
+CREATE DATABASE intent. Each case keeps its named assertions. The final selected
+creation case records the shared `creation-checkpoints` assertion; it contains
+all selected case IDs. A shared-check failure fails the fixture.
+
+The lifecycle case still checks inherited defaults, saved table schemas before
+DROP DATABASE, and writes after recreation. Its explicit restart is separate
+from the creation workflow.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-generated-dependencies"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --family database"
+```
+
 A shared correctness failure prints the case and assertion or source phase, the
 original error, and a local support-bundle path. The harness stops the applier
 before it calls `support-bundle`. This also collects a bundle for an assertion

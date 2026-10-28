@@ -305,7 +305,7 @@ final class LabProfileTests: XCTestCase {
         XCTAssertEqual(
             Set(
                 cases.filter {
-                    $0.family == "ddl" || $0.family == "gtids"
+                    $0.family == "ddl" || $0.family == "gtids" || $0.id == "ddl-compat-database"
                         || [
                             "ddl-compat-foreign-key-column-swaps", "ddl-compat-foreign-key-controls",
                             "ddl-compat-foreign-key-ddl", "ddl-compat-foreign-key-missing-parent",
@@ -327,6 +327,26 @@ final class LabProfileTests: XCTestCase {
                 Set(smoke.map(\.family)), Set(["database", "ddl", "dml", "indexes", "policy", "rejections", "filters"]))
         }
     }
+    func testDatabaseLifecycleSharesDatabaseFamilyWithoutLosingSelections() throws {
+        let database = try LabScenario.select(tier: "full", family: "database", ids: [])
+        XCTAssertEqual(
+            Set(database.map(\.id)),
+            Set(
+                DatabaseCreationCases.cases.map { $0.test.id } + [
+                    "reverse-database-table-defaults", "ddl-compat-database",
+                ]))
+        let lifecycle = try XCTUnwrap(database.first { $0.id == "ddl-compat-database" })
+        XCTAssertTrue(lifecycle.requiresMainApplier)
+        XCTAssertTrue(lifecycle.dependencies.isEmpty)
+        for profile in LabProfile.allCases {
+            for variant in LabVariant.allCases where variant.reason(profile) == nil && variant != .withoutSourceGTIDs {
+                XCTAssertNil(lifecycle.reason(profile, variant: variant))
+            }
+        }
+        XCTAssertFalse(try LabScenario.select(tier: "full", family: "ddl", ids: []).contains { $0.id == lifecycle.id })
+        XCTAssertEqual(try LabScenario.select(tier: "full", family: nil, ids: [lifecycle.id]).map(\.id), [lifecycle.id])
+    }
+
     func testSelectionClosesDependenciesButDoesNotSelectUnrelatedCases() throws {
         let cases = try LabScenario.select(tier: "full", family: nil, ids: ["database-existing-matching"])
         XCTAssertEqual(Set(cases.map(\.id)), ["database-existing-matching", "database-explicit"])
