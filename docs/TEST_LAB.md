@@ -666,6 +666,25 @@ fixture for one profile, variant and transport. A family can span several CI
 groups. Without `GROUP`, `--variant all` expands capture variants and
 `PROFILE=all` expands profiles. Neither option adds BINLOG transport automatically.
 
+### Multi-table rename and DROP workflow
+
+`ddl-compat-multi-table` uses independent tables to retain moved, updated,
+swapped and copied results. It compares their exact rows and both databases'
+metadata at the end. The original DROP and name-reuse sequence remains. The
+case keeps five saved-state restarts and checks the SQLite record for a DROP
+that affects three tables. It removes its retained tables before the next case.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-multi-table --coverage"
+```
+
+The source runs six batches, separated only by those restart checks. Statements
+keep their own source GTIDs and commit boundaries. Each final query has a named
+assertion. Its evidence identifies the query, server role, expected value and
+actual value. The final schema assertions retain separate snapshots for
+`ddlcompat` and `otherdb`. A failed case reports its artifact and support-bundle
+paths through the shared runner.
+
 ### Select the same groups as CI
 
 Set `GROUP` to use the shared CI plan. `GROUP=all` lists or selects all existing

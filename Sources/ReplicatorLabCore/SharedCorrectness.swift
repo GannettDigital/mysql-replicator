@@ -546,6 +546,9 @@ public enum SharedCorrectness {
                         _ = try f.sql(.source, "SET GLOBAL binlog_row_metadata=" + metadata)
                     }
                     let phases = try DDLExecutionPhase.plan(test.steps)
+                    if let final = test.finalObservations {
+                        try final.validate(phases ?? [])
+                    }
                     if phases != nil {
                         _ = try sourcePhase(
                             test.test.id + "-setup",
@@ -1017,6 +1020,16 @@ public enum SharedCorrectness {
                     }
                     try applier.start(initialize: false)
                     try wait()
+                    if let final = test.finalObservations, !final.cleanup.isEmpty {
+                        try assertion("cleanup-retained-tables", caseID: test.test.id) {
+                            let writes = try sourcePhase(
+                                test.test.id + "-cleanup",
+                                writes: final.cleanup.enumerated().map {
+                                    .init(id: "cleanup-\($0.offset + 1)", sql: $0.element)
+                                }, database: "ddlcompat")
+                            return writes.map(\.json)
+                        }
+                    }
                 }
             }
         }

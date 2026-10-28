@@ -22,7 +22,8 @@ observations remain explicit. Database creation now shares one running applier
 and one snapshot/restart across six cases. Generated expressions and simultaneous
 column renames also use named phases and pass focused checks. The small SQL selections with source GTID preservation disabled now share one
 fixture per profile. See the linked implementation results at the end of this
-document. Next, review the remaining table rename and cross-schema workflows.
+document. The rename review is also complete. Next: use independent table sets
+and final batched checks in the `multi-table` pilot; see the linked review below.
 
 The new workflow uses the ID `ddl-modify-columns` and the title
 "ALTER TABLE: change column definitions and positions". This ID is now available
@@ -857,3 +858,22 @@ review. It retains all assertions and one fixture per profile. Next: review
 `cross-schema-relationships` for shared source phases. Map their intermediate
 checks and engine-specific branches before changing code. Use saved CI data;
 this next review requires no build or container run.
+
+
+## Rename workflow review complete
+
+See [the rename workflow review](BETA7_RENAME_WORKFLOW_REVIEW.md). Use independent
+table sets to retain distinct outcomes until one final batch of checks. Distinct
+assertions do not require separate waits. Keep mapped stop/resume and replay
+conditions. The review covers destination metadata, scoped SQLite checks and
+replay cleanup for surviving cross-database tables.
+
+The `ddl-compat-multi-table` pilot passed nine unit tests and one forward
+MyISAM/default/SQL run with coverage. It keeps five restart checks and passes
+25 named assertions. Harness SQL calls fell from 228 to 94. The review records
+the measurements and their limits. The matrix remains unchanged.
+
+Next: convert `alter-table-rename` and `cross-schema-relationships`. Use independent
+table sets, final checks in both databases and explicit cleanup before replay.
+Run those two cases together on forward MyISAM and reverse InnoDB. The InnoDB
+run checks the distinct FK and cascade branch. Leave the full suite to CI.

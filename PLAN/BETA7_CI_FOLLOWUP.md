@@ -308,3 +308,22 @@ applier and named restart/replay checks. The review maps assertions, saved
 coverage and timings, execution order and validation scope. The policy selection is now implemented. Its focused results are recorded
 in that review. No new full CI run
 is needed before that change. Select the short PR suite after the later full run.
+
+
+## Rename workflow review complete
+
+See [the rename workflow review](BETA7_RENAME_WORKFLOW_REVIEW.md). Use independent
+table sets to retain distinct outcomes until one final batch of checks. Distinct
+assertions do not require separate waits. Keep mapped stop/resume and replay
+conditions. The review covers destination metadata, scoped SQLite checks and
+replay cleanup for surviving cross-database tables.
+
+The `ddl-compat-multi-table` pilot passed nine unit tests and one forward
+MyISAM/default/SQL run with coverage. It keeps five restart checks and passes
+25 named assertions. Harness SQL calls fell from 228 to 94. The review records
+the measurements and their limits. The matrix remains unchanged.
+
+Next: convert `alter-table-rename` and `cross-schema-relationships`. Use independent
+table sets, final checks in both databases and explicit cleanup before replay.
+Run those two cases together on forward MyISAM and reverse InnoDB. The InnoDB
+run checks the distinct FK and cascade branch. Leave the full suite to CI.
