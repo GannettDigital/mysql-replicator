@@ -1354,6 +1354,45 @@ Failure output identifies the assertion and the support-bundle path.
 indexes and SRID constraints. `ddl-compat-absent-definers` checks invoker results
 and native error 1449. Both include restart and offline replay.
 
+### Table options, index maintenance and ignored CHECK clauses
+
+These cases stay in the `table-column-index-changes` group. They batch source
+statements between required applier restarts. Each statement keeps its own GTID.
+Separate tables retain results that later statements would change. The harness
+compares rows and schemas at the end, with explicit queries for metadata that
+the shared snapshot does not include.
+
+| Case | Final checks |
+|---|---|
+| `ddl-compat-table-options` | Table and column comments, row format, defaults, source-assigned AUTO_INCREMENT IDs, CREATE TABLE LIKE, UPDATE and DELETE. |
+| `ddl-compat-table-maintenance` | MyISAM nonunique-index state after DISABLE/ENABLE KEYS, writes with disabled keys, forced-index lookup, standalone FORCE and compound FORCE/ADD. |
+| `ddl-compat-alter-options` | Accepted ORDER BY and validation clauses, virtual generated values, following UPDATE and DROP. The InnoDB variant also includes COMPRESSION and ENCRYPTION options. |
+| `ddl-compat-ignored-checks` | Violating rows accepted by a 5.7 source, no target CHECK constraints, CREATE TABLE LIKE, later writes and the saved no-op DDL record. |
+
+The first two cases keep two and three restart points respectively. The last
+two keep two restart points each. Their offline replay stops after transaction
+three, then resumes with an unreachable source. Live and replay checks have
+separate assertion records. The CHECK case uses archive label `checks` and case
+ID `ddl-compat-ignored-checks`.
+
+Run the table-option and maintenance cases together on the forward profile:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-table-options --case ddl-compat-table-maintenance --coverage"
+```
+
+Run the ALTER-options and ignored-CHECK cases together on the reverse profile:
+
+```sh
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case ddl-compat-alter-options --case ddl-compat-ignored-checks --coverage"
+```
+
+The ignored-CHECK case excludes an 8.4 source because that source enforces CHECK
+constraints. Run `ddl-compat-alter-options` separately on the forward profile
+to check its MyISAM SQL branch. These tests do not prove physical row ordering,
+effective compression or encryption, or rejection of invalid generated values.
+See the [assertion map and local validation plan](../PLAN/BETA7_TABLE_OPTIONS_WORKFLOW_REVIEW.md).
+
 ### Simultaneous column renames
 
 Select `ddl-compat-column-swaps` to test CHANGE swaps and rename chains on any

@@ -2,31 +2,40 @@ import Foundation
 
 extension DDLCompatibilityCases {
     static let ignoredChecks = Case(
-        "ignored-checks",
-        "Native 5.7 CHECK clauses create no target constraint; compound DDL, violating rows and restart",
+        "ignored-checks", "CHECK clauses ignored by a MySQL 5.7 source",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(CONSTRAINT first_check CHECK(id>0), id INT PRIMARY KEY, v INT CHECK(v>0), CHECK(id<0), CONSTRAINT last_check CHECK(v<0))"
             ),
             .init("INSERT INTO ddlcompat.t VALUES(-1,-1),(1,1)"),
-            .init("ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check CHECK(v>100), ADD CHECK(v<0)"),
+            .init(
+                "ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check CHECK(v>100), ADD CHECK(v<0)",
+                phaseEnd: "create-and-ignore-checks"),
             .init("INSERT INTO ddlcompat.t VALUES(-2,-2)", restartBefore: true),
             .init("ALTER TABLE ddlcompat.t ADD CHECK(v>0), ADD note INT DEFAULT 7 CHECK(note<0), ADD CHECK(note>100)"),
             .init("INSERT INTO ddlcompat.t(id,v) VALUES(-3,-3)"),
-            .init("ALTER TABLE ddlcompat.t MODIFY v INT, ADD CHECK(v>100)"),
+            .init("ALTER TABLE ddlcompat.t MODIFY v INT, ADD CHECK(v>100)", phaseEnd: "write-and-alter-ignored-checks"),
             .init("UPDATE ddlcompat.t SET v=-999 WHERE id=1", restartBefore: true),
             .init("CREATE TABLE ddlcompat.copy LIKE ddlcompat.t"),
             .init("INSERT INTO ddlcompat.copy SELECT * FROM ddlcompat.t"),
             .init("ALTER TABLE ddlcompat.copy DROP COLUMN note"),
-            .init(
-                "DELETE FROM ddlcompat.t WHERE id=-1",
-                [
-                    .init("SELECT id,v,note FROM ddlcompat.t ORDER BY id", "-3\t-3\t7\n-2\t-2\t7\n1\t-999\t7"),
-                    .init(
+            .init("DELETE FROM ddlcompat.t WHERE id=-1", phaseEnd: "update-copy-and-delete"),
+        ], profileExclusions: [.forward: "8.4 enforces CHECK constraints; 5.7 targets cannot preserve that behavior."],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "violating-rows-after-update-delete",
+                    check: .init("SELECT id,v,note FROM ddlcompat.t ORDER BY id", "-3\t-3\t7\n-2\t-2\t7\n1\t-999\t7")),
+                .init(
+                    id: "like-copy-before-delete",
+                    check: .init("SELECT id,v FROM ddlcompat.copy ORDER BY id", "-3\t-3\n-2\t-2\n-1\t-1\n1\t-999")),
+                .init(
+                    id: "no-check-constraints",
+                    check: .init(
                         "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA='ddlcompat' AND CONSTRAINT_TYPE='CHECK'",
-                        "0"),
-                ]),
-        ], profileExclusions: [.forward: "8.4 enforces CHECK constraints; 5.7 targets cannot preserve that behavior."])
+                        "0")),
+            ], databases: ["ddlcompat"], cleanup: []))
+
 }
 
 extension SharedCorrectness.Run {

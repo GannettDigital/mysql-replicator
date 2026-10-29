@@ -715,12 +715,19 @@ public enum SharedCorrectness {
                         }
                     }
                     if test.test.id == "ddl-compat-ignored-checks" {
-                        try require(
-                            state(
+                        try assertion("ignored-check-no-op-record", caseID: test.test.id) {
+                            let count = try state(
                                 saved,
                                 "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE source_sql LIKE 'ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check%' AND target_sql='' AND before_schema_id=after_schema_id AND status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='source-before-8.0.16-ignores-checks'"
-                            ) == "1", "ignored CHECK lost its durable source/rule record or changed the schema version")
-                        try replayDDLWorkflow("checks", stopAfter: 3, from: begin, to: end)
+                            )
+                            try require(
+                                count == "1",
+                                "ignored CHECK lost its durable source/rule record or changed the schema version")
+                            return ["matching_intents": count, "rule": "source-before-8.0.16-ignores-checks"]
+                        }
+                        try replayDDLWorkflow(
+                            "checks", stopAfter: 3, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                         try require(
                             f.sql(
                                 .target,

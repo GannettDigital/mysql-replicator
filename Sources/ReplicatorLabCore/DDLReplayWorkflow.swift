@@ -5,7 +5,7 @@ extension SharedCorrectness.Run {
     /// transaction boundary, then resume with an unreachable source.
     func replayDDLWorkflow(
         _ label: String, stopAfter: Int, from start: Boundary, to end: Boundary, stopGTIDs: String? = nil,
-        finalObservations: DDLFinalObservations? = nil
+        finalObservations: DDLFinalObservations? = nil, observationCaseID: String? = nil
     ) throws {
         let original = f.config
         defer { f.config = original }
@@ -138,7 +138,7 @@ extension SharedCorrectness.Run {
         let resumed = try invoke(label + "-replay-resume", "replay")
         try require(resumed["appliedGTIDSet"] as? String == end.gtids, "DDL replay checkpoint differs")
         if let finalObservations {
-            let caseID = label.hasPrefix("ddl-compat-") ? label : "ddl-compat-" + label
+            let caseID = observationCaseID ?? (label.hasPrefix("ddl-compat-") ? label : "ddl-compat-" + label)
             try ddlFinalObservations(finalObservations, caseID: caseID, prefix: "replay-")
         } else {
             _ = try compare("ddlcompat")

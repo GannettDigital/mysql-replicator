@@ -455,8 +455,8 @@ Evidence:
 - `artifacts/column-renames-review/source-comparison.json`: original SQL and adjacent-case checks.
 - `artifacts/column-renames-unit.log`: 12 passing unit tests.
 
-The four rename conversions are complete. Next: review `alter-options`,
-`table-options`, `table-maintenance` and `ignored-checks` for shared source batches
-and retained final results. Map their engine/version rules and required error,
-restart and replay boundaries before changing code. Use the saved SQL, timings
-and group-level coverage. That review needs no build or container run.
+The four rename conversions are committed as `44ba25a`.
+The following [table-option conversions](BETA7_TABLE_OPTIONS_WORKFLOW_REVIEW.md)
+are also complete and pass focused checks. Next: review `types`, `alter` and
+`alter-conversions`, then the remaining index-specific cases. The linked document
+records both completed slices, local results and the next validation scope.

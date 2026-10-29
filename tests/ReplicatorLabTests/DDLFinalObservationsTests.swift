@@ -159,6 +159,139 @@ final class DDLFinalObservationsTests: XCTestCase {
         XCTAssertEqual(checks.count, 9)
     }
 
+    func testTableOptionsRetainOriginalIDsAndDefinitions() throws {
+        let test = DDLCompatibilityCases.tableOptions
+        let phases = try XCTUnwrap(DDLExecutionPhase.plan(test.steps))
+        let final = try XCTUnwrap(test.finalObservations)
+        try final.validate(phases)
+        XCTAssertEqual(test.steps.count, 16)
+        XCTAssertEqual(phases.count, 3)
+        XCTAssertEqual(
+            test.steps.filter(\.restartBefore).map(\.sql),
+            [
+                "ALTER TABLE ddlcompat.t COMMENT='changed note' ROW_FORMAT=DYNAMIC, AUTO_INCREMENT=200",
+                "INSERT INTO ddlcompat.copy(id,n) VALUES(1,'copy')",
+            ])
+        let original = test.steps.prefix(9).map(\.sql)
+        XCTAssertEqual(
+            test.steps[9..<11].map(\.sql),
+            original.prefix(2).map {
+                $0.replacingOccurrences(of: "ddlcompat.t", with: "ddlcompat.to_initial")
+            })
+        XCTAssertEqual(
+            test.steps[11..<16].map(\.sql),
+            original.prefix(5).map {
+                $0.replacingOccurrences(of: "ddlcompat.t", with: "ddlcompat.to_changed")
+            })
+        let checks = Dictionary(uniqueKeysWithValues: final.checks.map { ($0.id, $0.check.expected) })
+        XCTAssertEqual(checks["initial-generated-id-and-binary-default"], "100\tfirst\t00FF")
+        XCTAssertEqual(checks["generated-ids-before-update-delete"], "100\tfirst\t00FF\n200\tsecond\t00FF")
+        XCTAssertEqual(checks["changed-column-definition"], "changed column\t40\tYES\t1")
+        XCTAssertEqual(checks["update-and-delete"], "100\tlast\t00FF")
+        XCTAssertEqual(checks.count, 10)
+    }
+
+    func testMaintenanceRetainsDisabledEnabledAndRebuiltTables() throws {
+        let test = DDLCompatibilityCases.tableMaintenance
+        let phases = try XCTUnwrap(DDLExecutionPhase.plan(test.steps))
+        let final = try XCTUnwrap(test.finalObservations)
+        try final.validate(phases)
+        XCTAssertEqual(test.steps.count, 31)
+        XCTAssertEqual(phases.count, 4)
+        XCTAssertEqual(
+            test.steps.filter(\.restartBefore).map(\.sql),
+            [
+                "INSERT INTO ddlcompat.t(id,v) VALUES(3,30)",
+                "ALTER TABLE ddlcompat.t FORCE", "DELETE FROM ddlcompat.t WHERE id=3",
+            ])
+        let original = test.steps.prefix(10).map(\.sql)
+        var start = 10
+        for (name, count) in [("tm_disabled", 6), ("tm_enabled", 7), ("tm_rebuilt", 8)] {
+            XCTAssertEqual(
+                test.steps[start..<start + count].map(\.sql),
+                original.prefix(count).map {
+                    $0.replacingOccurrences(of: "ddlcompat.t", with: "ddlcompat." + name)
+                })
+            start += count
+        }
+        // A rebuild of the enabled table could hide a failed ENABLE KEYS.
+        XCTAssertFalse(test.steps.contains { $0.sql == "ALTER TABLE ddlcompat.tm_enabled FORCE" })
+        let disabled = try XCTUnwrap(final.checks.first { $0.id == "disabled-nonunique-index" })
+        let fields = ["tm_disabled", "1", "by_v", "1", "v", "A", "2", "NULL", "NULL", "YES", "BTREE", "disabled", ""]
+        _ = try disabled.result([disabled.id: fields.joined(separator: "\t")], engine: "MyISAM", role: "target")
+        var innodb = fields
+        innodb[11] = ""
+        _ = try disabled.result([disabled.id: innodb.joined(separator: "\t")], engine: "InnoDB", role: "source")
+        XCTAssertThrowsError(
+            try disabled.result([disabled.id: innodb.joined(separator: "\t")], engine: "MyISAM", role: "target"))
+        XCTAssertEqual(final.checks.count, 6)
+    }
+
+    func testAlterOptionsPreserveEngineBranchesAndReplayStop() throws {
+        let test = DDLCompatibilityCases.remainingAlterOptions
+        let phases = try XCTUnwrap(DDLExecutionPhase.plan(test.steps))
+        let final = try XCTUnwrap(test.finalObservations)
+        try final.validate(phases)
+        XCTAssertEqual(test.steps.count, 17)
+        XCTAssertEqual(phases.count, 3)
+        // Replay transaction three is still the original ORDER BY operation.
+        XCTAssertEqual(test.steps[2].sql, "ALTER TABLE ddlcompat.t COMMENT='ordered',ORDER BY n DESC,id ASC")
+        XCTAssertEqual(test.steps.filter(\.restartBefore).map(\.sql), [test.steps[2].sql, test.steps[4].sql])
+        XCTAssertEqual(test.steps[6].sql, "DROP TABLE ddlcompat.t")
+        let original = Array(test.steps.prefix(7))
+        var start = 7
+        for (table, count) in [("ao_validated", 4), ("ao_updated", 6)] {
+            for (offset, step) in test.steps[start..<start + count].enumerated() {
+                XCTAssertEqual(
+                    step.sql, original[offset].sql.replacingOccurrences(of: "ddlcompat.t", with: "ddlcompat." + table))
+                XCTAssertEqual(
+                    step.sqlTransactional,
+                    original[offset].sqlTransactional.replacingOccurrences(
+                        of: "ddlcompat.t", with: "ddlcompat." + table))
+            }
+            start += count
+        }
+        for step in test.steps where step.sql.hasPrefix("CREATE TABLE") {
+            XCTAssertFalse(step.sql.contains("COMPRESSION="))
+            XCTAssertTrue(step.sqlTransactional.contains("COMPRESSION='none' ENCRYPTION='N'"))
+        }
+        let values = Dictionary(uniqueKeysWithValues: final.checks.map { ($0.id, $0.check.expected) })
+        XCTAssertEqual(values["with-validation-values"], "1\t10\t11\n2\t20\t21")
+        XCTAssertEqual(values["without-validation-and-update"], "1\t30\t32\n2\t20\t22")
+        XCTAssertEqual(values["original-table-dropped"], "0")
+        XCTAssertEqual(final.cleanup, ["DROP TABLE ddlcompat.ao_validated,ddlcompat.ao_updated"])
+        XCTAssertTrue(
+            final.replayResetSQL.hasPrefix(
+                "SET sql_log_bin=0; SET FOREIGN_KEY_CHECKS=0; DROP TABLE ddlcompat.ao_validated"))
+    }
+
+    func testIgnoredChecksRetainViolatingRowsAndReplayBoundary() throws {
+        let test = DDLCompatibilityCases.ignoredChecks
+        let phases = try XCTUnwrap(DDLExecutionPhase.plan(test.steps))
+        let final = try XCTUnwrap(test.finalObservations)
+        try final.validate(phases)
+        XCTAssertEqual(test.steps.count, 12)
+        XCTAssertEqual(phases.count, 3)
+        XCTAssertEqual(
+            test.steps[2].sql, "ALTER TABLE ddlcompat.t ADD CONSTRAINT never_check CHECK(v>100), ADD CHECK(v<0)")
+        XCTAssertEqual(
+            test.steps.filter(\.restartBefore).map(\.sql),
+            [
+                "INSERT INTO ddlcompat.t VALUES(-2,-2)", "UPDATE ddlcompat.t SET v=-999 WHERE id=1",
+            ])
+        XCTAssertEqual(test.steps.last?.sql, "DELETE FROM ddlcompat.t WHERE id=-1")
+        XCTAssertEqual(Set(test.profileExclusions.keys), [.forward])
+        XCTAssertTrue(test.steps.allSatisfy { $0.sql == $0.sqlTransactional })
+        XCTAssertTrue(final.cleanup.isEmpty)
+        let values = Dictionary(uniqueKeysWithValues: final.checks.map { ($0.id, $0.check.expected) })
+        XCTAssertEqual(values["violating-rows-after-update-delete"], "-3\t-3\t7\n-2\t-2\t7\n1\t-999\t7")
+        // The copy retains the row deleted from the original table.
+        XCTAssertEqual(values["like-copy-before-delete"], "-3\t-3\n-2\t-2\n-1\t-1\n1\t-999")
+        XCTAssertEqual(values["no-check-constraints"], "0")
+        let check = try XCTUnwrap(final.checks.first { $0.id == "no-check-constraints" })
+        XCTAssertThrowsError(try check.result([check.id: "1"], engine: "InnoDB", role: "target"))
+    }
+
     func testFinalObservationsCannotHideChecksOrDuplicateNames() throws {
         let check = DDLFinalObservations.Observation(id: "row", check: .init("SELECT v FROM t", "1"))
         let phase = DDLExecutionPhase(id: "write", steps: [.init("INSERT INTO t VALUES(1)")])

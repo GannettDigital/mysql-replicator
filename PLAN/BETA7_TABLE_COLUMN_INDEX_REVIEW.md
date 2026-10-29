@@ -23,8 +23,9 @@ and one snapshot/restart across six cases. Generated expressions and simultaneou
 column renames also use named phases and pass focused checks. The small SQL selections with source GTID preservation disabled now share one
 fixture per profile. See the linked implementation results at the end of this
 document. All four rename workflows now use final batched observations and
-pass focused checks. Next: review the remaining table-option and maintenance
-cases; see the linked review and latest results below.
+pass focused checks. The [table-option conversions](BETA7_TABLE_OPTIONS_WORKFLOW_REVIEW.md)
+also pass focused checks. Next: review `types`, `alter` and `alter-conversions`,
+then the remaining index-specific cases. See the results at the end.
 
 The new workflow uses the ID `ddl-modify-columns` and the title
 "ALTER TABLE: change column definitions and positions". This ID is now available
@@ -885,8 +886,14 @@ The column rename conversion also passed on forward MyISAM in OrbStack:
 third transaction. All 12 focused unit tests passed. Harness SQL calls fell from
 226 to 88. The review records timings, coverage scope and the assertion map.
 
-Next: review `alter-options`, `table-options`, `table-maintenance` and
-`ignored-checks`. Map their engine/version rules, final observations and required
-error/restart/replay boundaries before implementation. Use saved SQL, timings
-and group-level coverage; this review needs no build or container run.
-Leave the full suite to CI.
+The [table-option conversions](BETA7_TABLE_OPTIONS_WORKFLOW_REVIEW.md#completion-and-next-review)
+are complete. Table options and index maintenance passed together on forward
+MyISAM. ALTER options passed on forward MyISAM and with ignored CHECK clauses
+on reverse InnoDB. All 82 named integration assertions and ten focused unit tests
+passed. Harness SQL calls fell from 816 to 302 across these selected runs.
+The original nine restarts, two replay stops, case IDs and matrix remain.
+
+Next: review `types`, `alter` and `alter-conversions`, then remaining index-specific
+cases. Map their assertions and required observations before implementation.
+Use saved SQL, timings and group-level coverage; no build or database run is
+needed for that review. Leave the full suite to CI.

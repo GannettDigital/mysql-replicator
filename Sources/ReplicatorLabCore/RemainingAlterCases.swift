@@ -144,22 +144,65 @@ extension DDLCompatibilityCases {
                 "DROP TABLE ddlcompat.cr_encoding,ddlcompat.cr_generated,ddlcompat.cr_copy,ddlcompat.cr_swap,ddlcompat.cr_updated"
             ]))
     static let remainingAlterOptions = Case(
-        "alter-options", "ORDER BY, validation clauses and native physical options",
+        "alter-options", "ALTER TABLE: ORDER BY and generated-column validation clauses",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT) STATS_SAMPLE_PAGES=DEFAULT PASSWORD='ignored'",
                 sqlTransactional:
                     "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT) COMPRESSION='none' ENCRYPTION='N' STATS_SAMPLE_PAGES=DEFAULT PASSWORD='ignored'"
             ),
-            .init("INSERT INTO ddlcompat.t VALUES(2,20),(1,10)"),
+            .init("INSERT INTO ddlcompat.t VALUES(2,20),(1,10)", phaseEnd: "prepare-original-table"),
             .init("ALTER TABLE ddlcompat.t COMMENT='ordered',ORDER BY n DESC,id ASC", restartBefore: true),
-            .init("ALTER TABLE ddlcompat.t ADD g INT GENERATED ALWAYS AS(n+1) VIRTUAL,WITH VALIDATION"),
+            .init(
+                "ALTER TABLE ddlcompat.t ADD g INT GENERATED ALWAYS AS(n+1) VIRTUAL,WITH VALIDATION",
+                phaseEnd: "order-and-add-generated-column"),
             .init(
                 "ALTER TABLE ddlcompat.t MODIFY g INT GENERATED ALWAYS AS(n+2) VIRTUAL,WITHOUT VALIDATION",
                 restartBefore: true),
-            .init(
-                "UPDATE ddlcompat.t SET n=30 WHERE id=1",
-                [.init("SELECT id,n,g FROM ddlcompat.t ORDER BY id", "1\t30\t32\n2\t20\t22")]),
+            .init("UPDATE ddlcompat.t SET n=30 WHERE id=1"),
             .init("DROP TABLE ddlcompat.t"),
-        ])
+            .init(
+                "CREATE TABLE ddlcompat.ao_validated(id INT PRIMARY KEY,n INT) STATS_SAMPLE_PAGES=DEFAULT PASSWORD='ignored'",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.ao_validated(id INT PRIMARY KEY,n INT) COMPRESSION='none' ENCRYPTION='N' STATS_SAMPLE_PAGES=DEFAULT PASSWORD='ignored'"
+            ),
+            .init("INSERT INTO ddlcompat.ao_validated VALUES(2,20),(1,10)"),
+            .init("ALTER TABLE ddlcompat.ao_validated COMMENT='ordered',ORDER BY n DESC,id ASC"),
+            .init("ALTER TABLE ddlcompat.ao_validated ADD g INT GENERATED ALWAYS AS(n+1) VIRTUAL,WITH VALIDATION"),
+            .init(
+                "CREATE TABLE ddlcompat.ao_updated(id INT PRIMARY KEY,n INT) STATS_SAMPLE_PAGES=DEFAULT PASSWORD='ignored'",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.ao_updated(id INT PRIMARY KEY,n INT) COMPRESSION='none' ENCRYPTION='N' STATS_SAMPLE_PAGES=DEFAULT PASSWORD='ignored'"
+            ),
+            .init("INSERT INTO ddlcompat.ao_updated VALUES(2,20),(1,10)"),
+            .init("ALTER TABLE ddlcompat.ao_updated COMMENT='ordered',ORDER BY n DESC,id ASC"),
+            .init("ALTER TABLE ddlcompat.ao_updated ADD g INT GENERATED ALWAYS AS(n+1) VIRTUAL,WITH VALIDATION"),
+            .init("ALTER TABLE ddlcompat.ao_updated MODIFY g INT GENERATED ALWAYS AS(n+2) VIRTUAL,WITHOUT VALIDATION"),
+            .init("UPDATE ddlcompat.ao_updated SET n=30 WHERE id=1", phaseEnd: "modify-drop-and-retain-values"),
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "with-validation-values",
+                    check: .init("SELECT id,n,g FROM ddlcompat.ao_validated ORDER BY id", "1\t10\t11\n2\t20\t21")),
+                .init(
+                    id: "without-validation-and-update",
+                    check: .init("SELECT id,n,g FROM ddlcompat.ao_updated ORDER BY id", "1\t30\t32\n2\t20\t22")),
+                .init(
+                    id: "ordered-table-comments",
+                    check: .init(
+                        "SELECT TABLE_NAME,TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME IN ('ao_validated','ao_updated') ORDER BY TABLE_NAME",
+                        "ao_updated\tordered\nao_validated\tordered")),
+                .init(
+                    id: "virtual-generated-columns",
+                    check: .init(
+                        "SELECT TABLE_NAME,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME IN ('ao_validated','ao_updated') AND COLUMN_NAME='g' ORDER BY TABLE_NAME",
+                        "ao_updated\tVIRTUAL GENERATED\nao_validated\tVIRTUAL GENERATED")),
+                .init(
+                    id: "original-table-dropped",
+                    check: .init(
+                        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
+                        "0")),
+            ], databases: ["ddlcompat"], cleanup: ["DROP TABLE ddlcompat.ao_validated,ddlcompat.ao_updated"]))
+
 }
