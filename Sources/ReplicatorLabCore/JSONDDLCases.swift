@@ -2,7 +2,7 @@ import Foundation
 
 extension DDLCompatibilityCases {
     static let jsonGeneratedIndexes = Case(
-        "json-indexes", "JSON generated-column indexes, ALTER, CREATE LIKE, row changes and restart",
+        "json-indexes", "Secondary indexes on generated columns derived from JSON",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,doc JSON,name VARCHAR(40) AS (doc->>'$.name') STORED,KEY by_name(name)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -11,37 +11,109 @@ extension DDLCompatibilityCases {
             ),
             .init(
                 "INSERT INTO ddlcompat.t(id,doc) VALUES(1,JSON_OBJECT('name','alpha','n',10)),(2,JSON_OBJECT('name','beta','n',20)),(3,NULL)",
-                [
-                    .init("SELECT id,name FROM ddlcompat.t FORCE INDEX(by_name) WHERE name='beta'", "2\tbeta")
-                ]),
-            .init(
-                "UPDATE ddlcompat.t SET doc=JSON_OBJECT('name','gamma','n',30) WHERE id=1",
-                [
-                    .init("SELECT id,name FROM ddlcompat.t FORCE INDEX(by_name) WHERE name='gamma'", "1\tgamma")
-                ], restartBefore: true),
+                phaseEnd: "before-restart-1"),
+            .init("UPDATE ddlcompat.t SET doc=JSON_OBJECT('name','gamma','n',30) WHERE id=1", restartBefore: true),
             .init("ALTER TABLE ddlcompat.t ADD n INT AS (JSON_EXTRACT(doc,'$.n')) STORED, ADD INDEX by_n(n)"),
-            .init(
-                "INSERT INTO ddlcompat.t(id,doc) VALUES(4,JSON_OBJECT('name','delta','n',40))",
-                [
-                    .init("SELECT id,n FROM ddlcompat.t FORCE INDEX(by_n) WHERE n=40", "4\t40")
-                ]),
+            .init("INSERT INTO ddlcompat.t(id,doc) VALUES(4,JSON_OBJECT('name','delta','n',40))"),
             .init("DELETE FROM ddlcompat.t WHERE id=2"),
             .init("CREATE TABLE ddlcompat.copy LIKE ddlcompat.t"),
-            .init(
-                "INSERT INTO ddlcompat.copy(id,doc) SELECT id,doc FROM ddlcompat.t",
-                [
-                    .init(
-                        "SELECT id,name,n FROM ddlcompat.copy ORDER BY id", "1\tgamma\t30\n3\tNULL\tNULL\n4\tdelta\t40")
-                ]),
+            .init("INSERT INTO ddlcompat.copy(id,doc) SELECT id,doc FROM ddlcompat.t", phaseEnd: "before-restart-2"),
             .init("ALTER TABLE ddlcompat.copy DROP INDEX by_name, ADD INDEX renamed_name(name)", restartBefore: true),
+            .init("UPDATE ddlcompat.copy SET doc=JSON_OBJECT('name','final','n',50) WHERE id=4"),
             .init(
-                "UPDATE ddlcompat.copy SET doc=JSON_OBJECT('name','final','n',50) WHERE id=4",
-                [
-                    .init(
+                "CREATE TABLE ddlcompat.ji_initial(id INT PRIMARY KEY,doc JSON,name VARCHAR(40) AS (doc->>'$.name') STORED,KEY by_name(name)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.ji_initial(id INT PRIMARY KEY,doc JSON,name VARCHAR(40) AS (doc->>'$.name') VIRTUAL,KEY by_name(name)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+            ),
+            .init(
+                "INSERT INTO ddlcompat.ji_initial(id,doc) VALUES(1,JSON_OBJECT('name','alpha','n',10)),(2,JSON_OBJECT('name','beta','n',20)),(3,NULL)"
+            ),
+            .init(
+                "CREATE TABLE ddlcompat.ji_before(id INT PRIMARY KEY,doc JSON,name VARCHAR(40) AS (doc->>'$.name') STORED,KEY by_name(name)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.ji_before(id INT PRIMARY KEY,doc JSON,name VARCHAR(40) AS (doc->>'$.name') VIRTUAL,KEY by_name(name)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+            ),
+            .init(
+                "INSERT INTO ddlcompat.ji_before(id,doc) VALUES(1,JSON_OBJECT('name','alpha','n',10)),(2,JSON_OBJECT('name','beta','n',20)),(3,NULL)"
+            ),
+            .init("UPDATE ddlcompat.ji_before SET doc=JSON_OBJECT('name','gamma','n',30) WHERE id=1"),
+            .init("ALTER TABLE ddlcompat.ji_before ADD n INT AS (JSON_EXTRACT(doc,'$.n')) STORED, ADD INDEX by_n(n)"),
+            .init("INSERT INTO ddlcompat.ji_before(id,doc) VALUES(4,JSON_OBJECT('name','delta','n',40))"),
+            .init("DELETE FROM ddlcompat.ji_before WHERE id=2"),
+            .init("CREATE TABLE ddlcompat.ji_copy LIKE ddlcompat.ji_before"),
+            .init(
+                "INSERT INTO ddlcompat.ji_copy(id,doc) SELECT id,doc FROM ddlcompat.ji_before",
+                phaseEnd: "write-and-retain-results"),
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "initial-name-lookup",
+                    check: .init(
+                        "SELECT id,name FROM ddlcompat.ji_initial FORCE INDEX(by_name) WHERE name='beta'", "2\tbeta")),
+                .init(
+                    id: "updated-name-lookup",
+                    check: .init("SELECT id,name FROM ddlcompat.t FORCE INDEX(by_name) WHERE name='gamma'", "1\tgamma")),
+                .init(
+                    id: "added-numeric-index-lookup",
+                    check: .init("SELECT id,n FROM ddlcompat.t FORCE INDEX(by_n) WHERE n=40", "4\t40")),
+                .init(
+                    id: "like-copy-before-update",
+                    check: .init(
+                        "SELECT id,name,n FROM ddlcompat.ji_copy ORDER BY id",
+                        "1\tgamma\t30\n3\tNULL\tNULL\n4\tdelta\t40")),
+                .init(
+                    id: "renamed-index-updated-lookup",
+                    check: .init(
                         "SELECT id,name,n FROM ddlcompat.copy FORCE INDEX(renamed_name) WHERE name='final'",
-                        "4\tfinal\t50")
-                ]),
-        ])
+                        "4\tfinal\t50")),
+                .init(
+                    id: "copy-index-names",
+                    check: .init(
+                        "SELECT INDEX_NAME,COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='copy' ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",
+                        "PRIMARY\tid\nby_n\tn\nrenamed_name\tname")),
+                .init(
+                    id: "t-generated-storage",
+                    check: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='name'",
+                        "STORED GENERATED"),
+                    transactionalCheck: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='name'",
+                        "VIRTUAL GENERATED")),
+                .init(
+                    id: "copy-generated-storage",
+                    check: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='copy' AND COLUMN_NAME='name'",
+                        "STORED GENERATED"),
+                    transactionalCheck: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='copy' AND COLUMN_NAME='name'",
+                        "VIRTUAL GENERATED")),
+                .init(
+                    id: "ji_initial-generated-storage",
+                    check: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='ji_initial' AND COLUMN_NAME='name'",
+                        "STORED GENERATED"),
+                    transactionalCheck: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='ji_initial' AND COLUMN_NAME='name'",
+                        "VIRTUAL GENERATED")),
+                .init(
+                    id: "ji_before-generated-storage",
+                    check: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='ji_before' AND COLUMN_NAME='name'",
+                        "STORED GENERATED"),
+                    transactionalCheck: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='ji_before' AND COLUMN_NAME='name'",
+                        "VIRTUAL GENERATED")),
+                .init(
+                    id: "ji_copy-generated-storage",
+                    check: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='ji_copy' AND COLUMN_NAME='name'",
+                        "STORED GENERATED"),
+                    transactionalCheck: .init(
+                        "SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='ji_copy' AND COLUMN_NAME='name'",
+                        "VIRTUAL GENERATED")),
+            ], databases: ["ddlcompat"],
+            cleanup: ["DROP TABLE ddlcompat.ji_initial,ddlcompat.ji_before,ddlcompat.ji_copy"]))
 }
 
 extension SharedCorrectness.Run {

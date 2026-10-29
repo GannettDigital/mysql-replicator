@@ -25,8 +25,9 @@ fixture per profile. See the linked implementation results at the end of this
 document. All four rename workflows now use final batched observations and
 pass focused checks. The [table-option conversions](BETA7_TABLE_OPTIONS_WORKFLOW_REVIEW.md)
 also pass focused checks. The [column-conversion slices](BETA7_COLUMN_CONVERSION_WORKFLOW_REVIEW.md)
-are complete and pass focused checks. Next: review spatial-column prefixes,
-generated JSON-column indexes and FULLTEXT execution boundaries.
+are complete and pass focused checks. The [index-workflow review](BETA7_INDEX_WORKFLOW_REVIEW.md)
+and conversions are complete. Both selected profiles passed. Next: review the
+remaining generated-column cases listed at the end of the index review.
 
 The new workflow uses the ID `ddl-modify-columns` and the title
 "ALTER TABLE: change column definitions and positions". This ID is now available
@@ -900,7 +901,15 @@ assertions and 20 focused unit tests. Harness SQL calls fell from 498 to 135.
 The source timestamp reset preserves fresh-client behavior within each batch.
 Intermediate types and the fractional row remain available for final comparison.
 
-Next: review spatial-column prefix indexes and generated JSON-column indexes,
-and check the existing FULLTEXT workflow's execution boundaries. Use saved SQL,
-timings and group-level coverage. Map assertions before another conversion;
-this review needs no build or database run. Keep the full suite for CI.
+The [index-workflow conversions](BETA7_INDEX_WORKFLOW_REVIEW.md#focused-integration-results)
+are complete. The three cases passed together on 5.7-to-5.7 MyISAM. JSON and
+FULLTEXT also passed on reverse InnoDB with the same coverage image. All 97 named
+integration assertions, 58 focused Swift tests and 18 migration/feature tool tests
+passed. Harness SQL calls fell from 1,203 to 328. Both fixtures completed cleanup,
+saved-schema restart and coverage export. The matrix and profile exclusions remain.
+
+Next: review the basic generated-column case and generated-expression case for
+final batched observations. The [remaining-work list](BETA7_INDEX_WORKFLOW_REVIEW.md#remaining-tablecolumnindex-work)
+identifies six cases that still use per-statement checks or small observation
+phases. Use saved measurements and map assertions before implementation. The
+review needs no build or local test. Keep the full suite for CI.

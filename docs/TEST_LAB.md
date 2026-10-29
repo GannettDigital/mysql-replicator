@@ -298,6 +298,10 @@ make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --ca
 ALTER, CREATE LIKE, row changes, and restart on all four profiles. It uses a
 STORED indexed column on MyISAM targets and a VIRTUAL indexed column on InnoDB
 targets. It also adds a STORED indexed column on all profiles.
+The case sends three source batches around its two deliberate restarts. Separate
+tables retain the initial index lookup and the LIKE copy before its final UPDATE.
+One final query batch checks forced-index results and generated-column metadata.
+The final schema comparison also checks the complete JSON values and types.
 
 `json-target57-limits` uses the 8.4 source and native InnoDB replica to accept
 JSON expression defaults, functional indexes, and an indexed VIRTUAL column.
@@ -341,6 +345,31 @@ creation and searches after multirow INSERT, UPDATE and DELETE. These named
 assertions replace `matrix-fulltext`. `metadata-columns-indexes` checks initial
 discovery of an existing ngram index and saves its parser metadata. See [FULLTEXT scope](../PLAN/FULLTEXT_SUPPORT.md) and the
 [migration review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md).
+
+The FULLTEXT case uses three source batches and keeps both deliberate restarts.
+Separate tables retain positive and negative search results before UPDATE,
+DELETE or index removal. Final `SHOW CREATE TABLE` checks read the `ngram`
+parser on the named index after explicit CREATE, ALTER ADD and LIKE. The saved
+assertions include the raw metadata. These checks do not prove all search terms
+or parser settings.
+
+`ddl-compat-spatial-prefix-indexes` checks ordinary BTREE prefixes on geometry
+columns between two MySQL 5.7 servers. It retains the original point, line and
+NULL values, then checks the changed compound prefix and its LIKE copy. It uses
+three source batches and two deliberate restarts. Exact geometry bytes enter
+the final comparison. This is not a SPATIAL index search test. Profiles with an
+8.4 source or target exclude it because native 8.4 rejects this index definition.
+
+Run these related cases in one fixture, then reuse the same coverage image for
+the InnoDB SQL branch:
+
+```sh
+make lab-test PROFILE=mysql57-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-spatial-prefix-indexes --case ddl-compat-json-indexes --case ddl-compat-fulltext --coverage"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case ddl-compat-json-indexes --case ddl-compat-fulltext --coverage --skip-build"
+```
+
+These cases keep their existing case IDs and CI assignments. They check live
+apply and saved-state restart. They do not add offline replay checks.
 
 `--case ddl-compat-constraints` exercises named PRIMARY/UNIQUE constraints in
 CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML

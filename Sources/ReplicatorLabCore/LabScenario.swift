@@ -70,7 +70,9 @@ struct LabScenario {
         value["dependencies"] = dependencies
         value["requires_main_applier"] = requiresMainApplier
         if let ddl = DDLCompatibilityCases.cases.first(where: { $0.test.id == id }) {
-            let assertions = ddl.steps.compactMap(\.assertionID)
+            let assertions =
+                ddl.steps.compactMap(\.assertionID)
+                + (ddl.finalObservations?.checks.map(\.id) ?? [])
             if !assertions.isEmpty { value["assertions"] = assertions }
             let replaces = DMLCompatibilityCases.cases.filter { $0.replicatedReplacement == id }.map {
                 "matrix-" + $0.id

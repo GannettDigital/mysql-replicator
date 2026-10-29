@@ -310,9 +310,9 @@ The DDL catalog check and `git diff --check` passed. The matrix still has 183 jo
 profile exclusions are unchanged. `source-preservation.json` confirms original
 SQL order; focused unit tests verify the retained prefixes.
 
-Next: review the remaining index-specific cases in `table-column-index-changes`,
-starting with spatial-column prefix indexes and generated JSON-column indexes.
-Check the existing FULLTEXT workflow's execution boundaries in the same review.
-Map assertions and required observations before selecting another conversion.
-Use saved SQL, timings and group-level coverage; this review needs no build or
-database run. Keep the later full suite in GitHub Actions.
+These changes are committed as `893a18f`. The following
+[index-workflow conversions](BETA7_INDEX_WORKFLOW_REVIEW.md#focused-integration-results)
+also passed. One coverage image served both selected profile fixtures. All 97
+named integration assertions passed. Next: review the remaining generated-column
+cases before another batch conversion. The index review lists the remaining
+work and its validation scope. Keep the full suite in GitHub Actions.

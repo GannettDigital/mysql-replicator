@@ -115,8 +115,10 @@ final class LabProfileTests: XCTestCase {
         for profile in LabProfile.allCases {
             XCTAssertNil(replacement.reason(profile))
             XCTAssertEqual(replacement.fields(profile)["replaces"] as? [String], ["matrix-fulltext"])
+            let assertions = try XCTUnwrap(replacement.fields(profile)["assertions"] as? [String])
+            XCTAssertEqual(assertions, DDLCompatibilityCases.fulltextIndexes.finalObservations?.checks.map(\.id))
             XCTAssertEqual(
-                replacement.fields(profile)["assertions"] as? [String],
+                assertions.filter { $0.hasPrefix("fulltext-ngram-") },
                 ["fulltext-ngram-create", "fulltext-ngram-insert", "fulltext-ngram-update", "fulltext-ngram-delete"])
         }
         XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-fulltext"])) { error in

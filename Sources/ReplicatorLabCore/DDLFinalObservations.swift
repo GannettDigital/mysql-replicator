@@ -7,6 +7,7 @@ struct DDLFinalObservations {
         let id: String
         let check: DDLCompatibilityCases.Check
         var transactionalCheck: DDLCompatibilityCases.Check? = nil
+        var fulltextParserIndex: String? = nil
 
         func selectedCheck(transactional: Bool) -> DDLCompatibilityCases.Check {
             transactional ? (transactionalCheck ?? check) : check
@@ -18,10 +19,20 @@ struct DDLFinalObservations {
             let check = selectedCheck(transactional: transactional)
             guard let value = values[id] else { throw LabError("\(id)/\(role): missing final observation") }
             let expected = check.expected(engine: engine)
+            let observed =
+                try fulltextParserIndex.map { try NativeFulltextParser.read(value, index: $0) }
+                ?? check.observation(value)
             try require(
-                LabSQLName.equal(check.observation(value), expected),
+                LabSQLName.equal(observed, expected),
                 "\(id)/\(role): \(check.sql) got \(value), expected \(expected)")
-            return ["query": check.sql, "value": value, "expected": expected, "fields": check.fields ?? []]
+            var result: [String: Any] = [
+                "query": check.sql, "value": value, "expected": expected, "fields": check.fields ?? [],
+            ]
+            if let index = fulltextParserIndex {
+                result["fulltextIndex"] = index
+                result["parser"] = observed
+            }
+            return result
         }
     }
     let checks: [Observation]
