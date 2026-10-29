@@ -213,30 +213,7 @@ enum DDLCompatibilityCases {
                 .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n DECIMAL(10,2))"),
                 .init("INSERT INTO ddlcompat.t VALUES(1,2.50)", [.init("SELECT id,n FROM ddlcompat.t", "1\t2.50")]),
             ]),
-        .init(
-            "generated", "Stored and virtual generated columns survive multirow INSERT, UPDATE and ALTER",
-            [
-                .init(
-                    "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT,doubled INT GENERATED ALWAYS AS (n*2) STORED,added INT AS (n+1) VIRTUAL)"
-                ),
-                .init(
-                    "INSERT INTO ddlcompat.t(id,n) VALUES(1,7),(2,NULL)",
-                    [.init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t7\t14\t8\n2\tNULL\tNULL\tNULL")],
-                    assertionID: "generated-insert-values"),
-                .init(
-                    "UPDATE ddlcompat.t SET n=9 WHERE id=1",
-                    [.init("SELECT * FROM ddlcompat.t WHERE id=1", "1\t9\t18\t10")],
-                    assertionID: "generated-update-values"),
-                .init("ALTER TABLE ddlcompat.t ADD next_value INT AS (n+2) STORED"),
-                .init(
-                    "INSERT INTO ddlcompat.t(id,n) VALUES(3,11)",
-                    [.init("SELECT * FROM ddlcompat.t WHERE id=3", "3\t11\t22\t12\t13")]),
-                .init(
-                    "DELETE FROM ddlcompat.t WHERE id=1",
-                    [.init("SELECT * FROM ddlcompat.t ORDER BY id", "2\tNULL\tNULL\tNULL\tNULL\n3\t11\t22\t12\t13")],
-                    assertionID: "generated-delete-retains-null"),
-                .init("DELETE FROM ddlcompat.t WHERE id=2", [.init("SELECT COUNT(*) FROM ddlcompat.t", "1")]),
-            ]),
+        generatedColumns,
         .init(
             "partitions", "Partition DDL removes and exchanges data without row-delete events",
             [

@@ -864,12 +864,36 @@ also needs a review of its SQL, expected results and measured code coverage.
 
 `ddl-compat-generated` replaces the replicated `matrix-generated` case. It checks
 multirow INSERT, NULL propagation, UPDATE and DELETE with stored generated
-columns. It retains its virtual-column and ALTER checks. Three named assertions
-save SQL, expected values and observed values from the source, native replica
+columns. It retains its virtual-column and ALTER checks. The three migration
+assertions save SQL, expected values and observed values from the source, native replica
 and target. `metadata-columns-indexes` checks the saved generated expression
 for an existing table. A selection of a retired ID fails and names its replacement.
 See [the consolidation plan](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md) for the
 comparison results and coverage review.
+
+The generated-column cases use source batches and final checks. The basic case
+uses one body batch. Separate tables retain the initial NULL values, updated
+values, values after ADD, and the NULL row before its final DELETE. Final checks
+also verify STORED and VIRTUAL metadata. The complete schema and row comparison
+runs on source, native and target.
+
+`ddl-compat-generated-expressions` uses three body batches around its two
+deliberate restarts. Retained tables keep the original expression values and the
+NULL inputs before later updates. Final checks cover the LIKE copy and the last
+DELETE too. The snapshot includes all generated columns, including date and
+binary expressions. Offline replay still stops after transaction three, then
+resumes with an unreachable source and checks the retained results again.
+Cleanup follows replay and the saved-state checks.
+
+Run both cases in one fixture with coverage:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-generated --case ddl-compat-generated-expressions --coverage"
+```
+
+The basic case has no offline replay sequence. It remains in the
+`without-source-gtids` selection. All four profiles keep these case IDs and CI
+assignments.
 
 Each `groups` entry is one lab invocation, not one CI job. It includes a command
 that runs its cases. Add `--commands` to print shell commands instead of JSON.

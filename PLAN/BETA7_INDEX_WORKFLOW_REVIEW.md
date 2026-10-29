@@ -358,3 +358,9 @@ Then select one applicable profile for the implementation check unless the
 review identifies different SQL or engine behavior that needs a second profile.
 Do not repeat the five index case executions recorded in this document merely
 to review another case. Keep full CI for the combined suite check.
+
+The [generated-column conversions](BETA7_GENERATED_COLUMN_WORKFLOW_REVIEW.md#focused-integration-results)
+are complete. Both cases passed in one forward MyISAM fixture, including all
+migration assertions and expression replay stopped after transaction three.
+Next: review generated-column dependencies and column swaps. The earlier work
+list above records their current execution and preservation requirements.

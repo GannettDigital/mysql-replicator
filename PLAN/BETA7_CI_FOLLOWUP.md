@@ -354,8 +354,14 @@ integration assertions, 58 focused Swift tests and 18 migration/feature tool tes
 passed. Harness SQL calls fell from 1,203 to 328. Both fixtures completed cleanup,
 saved-schema restart and coverage export. The matrix and profile exclusions remain.
 
-Next: review the basic generated-column case and generated-expression case for
-final batched observations. The [remaining-work list](BETA7_INDEX_WORKFLOW_REVIEW.md#remaining-tablecolumnindex-work)
-identifies six cases that still use per-statement checks or small observation
-phases. Use saved measurements and map assertions before implementation. The
-review needs no build or local test. Keep the full suite for CI.
+The [generated-column conversions](BETA7_GENERATED_COLUMN_WORKFLOW_REVIEW.md#focused-integration-results)
+are complete. Both cases passed in one forward MyISAM fixture: 38 named assertions,
+including ten replay checks. All 54 focused Swift tests and 18 tool tests passed.
+Harness SQL calls fell from 279 in saved CI to 97. The expression case's earlier
+local phase conversion used 121 calls; this conversion uses 64. The three migration
+assertions, two live restarts and replay stop after transaction three remain.
+Cleanup, saved-schema restart and coverage export passed. The matrix is unchanged.
+
+Next: review generated-column dependencies and column swaps for final batched
+observations. Use saved measurements and map their definitions, key identities
+and restart/replay boundaries before implementation. Keep the full suite for CI.

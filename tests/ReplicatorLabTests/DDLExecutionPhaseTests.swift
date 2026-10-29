@@ -6,10 +6,10 @@ final class DDLExecutionPhaseTests: XCTestCase {
     func testReviewedPlansKeepStatementOrderChecksAndRestartBoundaries() throws {
         let cases = [
             DDLCompatibilityCases.columnIndexSyntax, DDLCompatibilityCases.alterColumnKeys,
-            DDLCompatibilityCases.generatedDependencies, DDLCompatibilityCases.generatedExpressions,
+            DDLCompatibilityCases.generatedDependencies,
             DDLCompatibilityCases.columnSwaps,
         ]
-        for (test, counts) in zip(cases, [(20, 9, 2), (25, 14, 3), (23, 18, 4), (8, 7, 2), (15, 13, 4)]) {
+        for (test, counts) in zip(cases, [(20, 9, 2), (25, 14, 3), (23, 18, 4), (15, 13, 4)]) {
             let phases = try XCTUnwrap(DDLExecutionPhase.plan(test.steps))
             XCTAssertEqual(test.steps.count, counts.0)
             XCTAssertEqual(phases.count, counts.1)
@@ -18,9 +18,7 @@ final class DDLExecutionPhaseTests: XCTestCase {
             XCTAssertEqual(phases.flatMap(\.checks).map(\.sql), test.steps.flatMap(\.checks).map(\.sql))
             XCTAssertEqual(phases.flatMap(\.checks).map(\.expected), test.steps.flatMap(\.checks).map(\.expected))
             XCTAssertEqual(phases.flatMap(\.steps).reduce(0) { $0 + $1.transactions }, test.steps.count)
-            XCTAssertTrue(
-                phases.last!.steps.last!.sql.hasPrefix(
-                    test.test.id == "ddl-compat-generated-expressions" ? "DELETE FROM" : "DROP TABLE"))
+            XCTAssertTrue(phases.last!.steps.last!.sql.hasPrefix("DROP TABLE"))
         }
         let syntax = try XCTUnwrap(DDLExecutionPhase.plan(cases[0].steps))
         XCTAssertTrue(
@@ -55,22 +53,7 @@ final class DDLExecutionPhaseTests: XCTestCase {
         XCTAssertEqual(phases.flatMap(\.checks).count, 10)
     }
 
-    func testGeneratedPredicatesCopiesAndSwappedNamesKeepIntermediateObservations() throws {
-        let expressions = try XCTUnwrap(DDLExecutionPhase.plan(DDLCompatibilityCases.generatedExpressions.steps))
-        XCTAssertEqual(expressions.first!.steps.count, 2)
-        XCTAssertEqual(
-            expressions.map(\.id),
-            [
-                "generated-expression-seed", "expression-update-after-resume", "added-generated-predicates",
-                "predicate-input-update", "copy-generated-definitions", "copy-insert-after-resume",
-                "delete-original-row",
-            ])
-        XCTAssertEqual(expressions[2].steps.count, 1)
-        XCTAssertTrue(expressions[2].steps[0].sql.hasPrefix("ALTER TABLE"))
-        XCTAssertTrue(expressions[3].steps[0].sql.contains("SET n=1 WHERE id=2"))
-        XCTAssertEqual(expressions[4].steps[0].sql, "CREATE TABLE ddlcompat.copy LIKE ddlcompat.t")
-        XCTAssertTrue(expressions[5].steps[0].restartBefore)
-        XCTAssertEqual(expressions.flatMap(\.checks).count, 4)
+    func testSwappedNamesKeepIntermediateObservations() throws {
         let swaps = try XCTUnwrap(DDLExecutionPhase.plan(DDLCompatibilityCases.columnSwaps.steps))
         XCTAssertEqual(swaps.filter { $0.steps.count > 1 }.map(\.id), ["column-swap-seed", "generated-swap-seed"])
         XCTAssertEqual(

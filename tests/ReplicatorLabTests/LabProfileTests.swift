@@ -137,8 +137,10 @@ final class LabProfileTests: XCTestCase {
         for profile in LabProfile.allCases {
             XCTAssertNil(replacement.reason(profile))
             XCTAssertEqual(replacement.fields(profile)["replaces"] as? [String], ["matrix-generated"])
+            let assertions = try XCTUnwrap(replacement.fields(profile)["assertions"] as? [String])
+            XCTAssertEqual(assertions, DDLCompatibilityCases.generatedColumns.finalObservations?.checks.map(\.id))
             XCTAssertEqual(
-                replacement.fields(profile)["assertions"] as? [String],
+                assertions.filter { $0.hasPrefix("generated-") },
                 ["generated-insert-values", "generated-update-values", "generated-delete-retains-null"])
         }
         XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-generated"])) { error in
