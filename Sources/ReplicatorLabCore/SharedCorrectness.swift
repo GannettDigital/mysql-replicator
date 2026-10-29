@@ -811,13 +811,16 @@ public enum SharedCorrectness {
                         try replayDDLWorkflow("foreign-key-generated", stopAfter: 6, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-alter-table-rename" {
-                        try replayDDLWorkflow("alter-table-rename", stopAfter: 6, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "alter-table-rename", stopAfter: 6, from: begin, to: end,
+                            finalObservations: test.finalObservations)
                     }
                     if [
                         "ddl-compat-column-swaps", "ddl-compat-foreign-key-column-swaps", "ddl-compat-column-renames",
                         "ddl-compat-alter-options", "ddl-compat-generated-expressions",
                     ].contains(test.test.id) {
-                        try replayDDLWorkflow(test.test.id, stopAfter: 3, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            test.test.id, stopAfter: 3, from: begin, to: end, finalObservations: test.finalObservations)
                     }
                     if ["ddl-compat-partition-column-renames", "ddl-compat-partition-rename-syntax"].contains(
                         test.test.id)
@@ -1015,7 +1018,7 @@ public enum SharedCorrectness {
                         try require(
                             state(
                                 saved,
-                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database') IN ('ddlcompat','otherdb')"
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND ((json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('parent','child')) OR (json_extract(schema_json,'$.database')='otherdb' AND json_extract(schema_json,'$.table') IN ('parent','moved_child')))"
                             ) == "0", "relationship DROP left current schemas")
                     }
                     try applier.start(initialize: false)

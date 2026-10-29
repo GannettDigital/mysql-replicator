@@ -94,27 +94,105 @@ extension DDLCompatibilityCases {
                     "CREATE TABLE ddlcompat.child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid),FOREIGN KEY(pid) REFERENCES ddlcompat.parent(id) ON UPDATE CASCADE ON DELETE CASCADE)"
             ),
             .init("INSERT INTO ddlcompat.parent VALUES(1,10)"),
-            .init("INSERT INTO ddlcompat.child VALUES(1,1)"),
-            .init("RENAME TABLE ddlcompat.parent TO otherdb.parent", restartBefore: true),
-            .init(
-                "RENAME TABLE ddlcompat.child TO otherdb.moved_child",
-                [
-                    .init("SELECT COUNT(*) FROM otherdb.moved_child c JOIN otherdb.parent p ON p.id=c.pid", "1")
-                ], restartBefore: true),
+            .init("INSERT INTO ddlcompat.child VALUES(1,1)", phaseEnd: "prepare-original-pair"),
+            .init("RENAME TABLE ddlcompat.parent TO otherdb.parent", restartBefore: true, phaseEnd: "move-parent"),
+            .init("RENAME TABLE ddlcompat.child TO otherdb.moved_child", restartBefore: true),
             .init(
                 "UPDATE otherdb.parent SET n=20 WHERE id=1",
-                [
-                    .init("SELECT COUNT(*) FROM otherdb.moved_child c JOIN otherdb.parent p ON p.id=c.pid", "1")
-                ], sqlTransactional: "UPDATE otherdb.parent SET id=2 WHERE id=1"),
+                sqlTransactional: "UPDATE otherdb.parent SET id=2 WHERE id=1", phaseEnd: "move-child-and-update-parent"),
             .init(
                 "RENAME TABLE otherdb.parent TO ddlcompat.parent,otherdb.moved_child TO ddlcompat.child",
-                [
-                    .init("SELECT COUNT(*) FROM ddlcompat.child c JOIN ddlcompat.parent p ON p.id=c.pid", "1")
-                ], restartBefore: true),
+                restartBefore: true, phaseEnd: "return-parent-and-child"),
+            .init("DROP TABLE ddlcompat.child,ddlcompat.parent", restartBefore: true),
+            // Retain the cs_move endpoint for the final comparison.
+            .init("CREATE TABLE ddlcompat.cs_move_parent(id INT PRIMARY KEY,n INT)"),
             .init(
-                "DROP TABLE ddlcompat.child,ddlcompat.parent",
-                [
-                    .init("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat'", "0")
-                ], restartBefore: true),
-        ])
+                "CREATE TABLE ddlcompat.cs_move_child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid))",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.cs_move_child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid),FOREIGN KEY(pid) REFERENCES ddlcompat.cs_move_parent(id) ON UPDATE CASCADE ON DELETE CASCADE)"
+            ),
+            .init("INSERT INTO ddlcompat.cs_move_parent VALUES(1,10)"),
+            .init("INSERT INTO ddlcompat.cs_move_child VALUES(1,1)"),
+            .init("RENAME TABLE ddlcompat.cs_move_parent TO otherdb.cs_move_parent"),
+            .init("RENAME TABLE ddlcompat.cs_move_child TO otherdb.cs_move_child"),
+            // Retain the cs_update endpoint for the final comparison.
+            .init("CREATE TABLE ddlcompat.cs_update_parent(id INT PRIMARY KEY,n INT)"),
+            .init(
+                "CREATE TABLE ddlcompat.cs_update_child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid))",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.cs_update_child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid),FOREIGN KEY(pid) REFERENCES ddlcompat.cs_update_parent(id) ON UPDATE CASCADE ON DELETE CASCADE)"
+            ),
+            .init("INSERT INTO ddlcompat.cs_update_parent VALUES(1,10)"),
+            .init("INSERT INTO ddlcompat.cs_update_child VALUES(1,1)"),
+            .init("RENAME TABLE ddlcompat.cs_update_parent TO otherdb.cs_update_parent"),
+            .init("RENAME TABLE ddlcompat.cs_update_child TO otherdb.cs_update_child"),
+            .init(
+                "UPDATE otherdb.cs_update_parent SET n=20 WHERE id=1",
+                sqlTransactional: "UPDATE otherdb.cs_update_parent SET id=2 WHERE id=1"),
+            // Retain the cs_return endpoint for the final comparison.
+            .init("CREATE TABLE ddlcompat.cs_return_parent(id INT PRIMARY KEY,n INT)"),
+            .init(
+                "CREATE TABLE ddlcompat.cs_return_child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid))",
+                sqlTransactional:
+                    "CREATE TABLE ddlcompat.cs_return_child(id INT PRIMARY KEY,pid INT,KEY by_parent(pid),FOREIGN KEY(pid) REFERENCES ddlcompat.cs_return_parent(id) ON UPDATE CASCADE ON DELETE CASCADE)"
+            ),
+            .init("INSERT INTO ddlcompat.cs_return_parent VALUES(1,10)"),
+            .init("INSERT INTO ddlcompat.cs_return_child VALUES(1,1)"),
+            .init("RENAME TABLE ddlcompat.cs_return_parent TO otherdb.cs_return_parent"),
+            .init("RENAME TABLE ddlcompat.cs_return_child TO otherdb.cs_return_child"),
+            .init(
+                "UPDATE otherdb.cs_return_parent SET n=20 WHERE id=1",
+                sqlTransactional: "UPDATE otherdb.cs_return_parent SET id=2 WHERE id=1"),
+            .init(
+                "RENAME TABLE otherdb.cs_return_parent TO ddlcompat.cs_return_parent,otherdb.cs_return_child TO ddlcompat.cs_return_child",
+                phaseEnd: "drop-original-and-retain-endpoints"),
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "moved-parent-and-child",
+                    check: .init(
+                        "SELECT p.id,p.n,c.id,c.pid FROM otherdb.cs_move_parent p JOIN otherdb.cs_move_child c ON p.id=c.pid",
+                        "1\t10\t1\t1")),
+                .init(
+                    id: "cascade-after-move",
+                    check: .init(
+                        "SELECT p.id,p.n,c.id,c.pid FROM otherdb.cs_update_parent p JOIN otherdb.cs_update_child c ON p.id=c.pid",
+                        "1\t20\t1\t1"),
+                    transactionalCheck: .init(
+                        "SELECT p.id,p.n,c.id,c.pid FROM otherdb.cs_update_parent p JOIN otherdb.cs_update_child c ON p.id=c.pid",
+                        "2\t10\t1\t2")),
+                .init(
+                    id: "returned-parent-and-child",
+                    check: .init(
+                        "SELECT p.id,p.n,c.id,c.pid FROM ddlcompat.cs_return_parent p JOIN ddlcompat.cs_return_child c ON p.id=c.pid",
+                        "1\t20\t1\t1"),
+                    transactionalCheck: .init(
+                        "SELECT p.id,p.n,c.id,c.pid FROM ddlcompat.cs_return_parent p JOIN ddlcompat.cs_return_child c ON p.id=c.pid",
+                        "2\t10\t1\t2")),
+                .init(
+                    id: "dropped-original-tables",
+                    check: .init(
+                        "SELECT COUNT(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA='ddlcompat' AND TABLE_NAME IN ('parent','child')) OR (TABLE_SCHEMA='otherdb' AND TABLE_NAME IN ('parent','moved_child','cs_return_parent','cs_return_child'))",
+                        "0")),
+                .init(
+                    id: "moved-foreign-key",
+                    check: .init(
+                        "SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='otherdb' AND TABLE_NAME='cs_move_child'",
+                        "0"),
+                    transactionalCheck: .init(
+                        "SELECT REFERENCED_TABLE_NAME,UPDATE_RULE,DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='otherdb' AND TABLE_NAME='cs_move_child'",
+                        "cs_move_parent\tCASCADE\tCASCADE")),
+                .init(
+                    id: "returned-foreign-key",
+                    check: .init(
+                        "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cs_return_child' AND REFERENCED_TABLE_NAME IS NOT NULL",
+                        "0"),
+                    transactionalCheck: .init(
+                        "SELECT REFERENCED_TABLE_SCHEMA,REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cs_return_child' AND REFERENCED_TABLE_NAME IS NOT NULL",
+                        "ddlcompat\tcs_return_parent\tid")),
+            ], databases: ["ddlcompat", "otherdb"],
+            cleanup: [
+                "DROP TABLE otherdb.cs_move_child,otherdb.cs_update_child,ddlcompat.cs_return_child,otherdb.cs_move_parent,otherdb.cs_update_parent,ddlcompat.cs_return_parent"
+            ]))
 }

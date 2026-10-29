@@ -7,38 +7,142 @@ extension DDLCompatibilityCases {
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,a VARCHAR(30) DEFAULT 'seed' COMMENT 'keep comment',b INT GENERATED ALWAYS AS(id+1) STORED,legacy VARCHAR(20) CHARACTER SET latin1 DEFAULT 'café',KEY by_a(a(8))) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
             ),
-            .init("INSERT INTO ddlcompat.t(id,a) VALUES(1,'café'),(2,'next')"),
+            .init("INSERT INTO ddlcompat.t(id,a) VALUES(1,'café'),(2,'next')", phaseEnd: "prepare-original-table"),
             .init(
                 "ALTER TABLE ddlcompat.t RENAME COLUMN a TO renamed,RENAME COLUMN legacy TO legacy_name,ADD c INT DEFAULT 7",
                 restartBefore: true),
             .init(
                 "ALTER TABLE ddlcompat.t DEFAULT CHARACTER SET latin1,RENAME COLUMN renamed TO again",
-                [.init("SELECT HEX(legacy_name) FROM ddlcompat.t WHERE id=1", "636166E9")]),
+                phaseEnd: "rename-and-change-default-charset"),
             .init("ALTER TABLE ddlcompat.t RENAME COLUMN b TO computed", restartBefore: true),
+            .init("UPDATE ddlcompat.t SET again='終わり' WHERE id=1"),
             .init(
-                "UPDATE ddlcompat.t SET again='終わり' WHERE id=1",
-                [
-                    .init(
-                        "SELECT id,HEX(again),computed,c FROM ddlcompat.t ORDER BY id",
-                        "1\tE7B582E3828FE3828A\t2\t7\n2\t6E657874\t3\t7")
-                ]),
-            .init("ALTER TABLE ddlcompat.t ALGORITHM=COPY,RENAME COLUMN again TO a,ORDER BY id DESC"),
+                "ALTER TABLE ddlcompat.t ALGORITHM=COPY,RENAME COLUMN again TO a,ORDER BY id DESC",
+                phaseEnd: "rename-generated-column-and-copy"),
             .init(
-                "INSERT INTO ddlcompat.t(id) VALUES(3)", [.init("SELECT a FROM ddlcompat.t WHERE id=3", "seed")],
-                restartBefore: true),
+                "INSERT INTO ddlcompat.t(id) VALUES(3)", restartBefore: true, phaseEnd: "insert-with-omitted-columns"),
             .init(
                 "ALTER TABLE ddlcompat.t RENAME COLUMN a TO legacy_name,RENAME COLUMN legacy_name TO a",
-                [.init("SELECT legacy_name,HEX(a) FROM ddlcompat.t WHERE id=3", "seed\t636166E9")], restartBefore: true),
-            .init(
-                "UPDATE ddlcompat.t SET legacy_name='changed' WHERE id=3",
-                [.init("SELECT legacy_name FROM ddlcompat.t WHERE id=3", "changed")]),
+                restartBefore: true),
+            .init("UPDATE ddlcompat.t SET legacy_name='changed' WHERE id=3"),
             .init("DROP TABLE ddlcompat.t"),
+            // Retain the cr_encoding result until the final checks.
+            .init(
+                "CREATE TABLE ddlcompat.cr_encoding(id INT PRIMARY KEY,a VARCHAR(30) DEFAULT 'seed' COMMENT 'keep comment',b INT GENERATED ALWAYS AS(id+1) STORED,legacy VARCHAR(20) CHARACTER SET latin1 DEFAULT 'café',KEY by_a(a(8))) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+            ),
+            .init("INSERT INTO ddlcompat.cr_encoding(id,a) VALUES(1,'café'),(2,'next')"),
+            .init(
+                "ALTER TABLE ddlcompat.cr_encoding RENAME COLUMN a TO renamed,RENAME COLUMN legacy TO legacy_name,ADD c INT DEFAULT 7"
+            ),
+            .init("ALTER TABLE ddlcompat.cr_encoding DEFAULT CHARACTER SET latin1,RENAME COLUMN renamed TO again"),
+            // Retain the cr_generated result until the final checks.
+            .init(
+                "CREATE TABLE ddlcompat.cr_generated(id INT PRIMARY KEY,a VARCHAR(30) DEFAULT 'seed' COMMENT 'keep comment',b INT GENERATED ALWAYS AS(id+1) STORED,legacy VARCHAR(20) CHARACTER SET latin1 DEFAULT 'café',KEY by_a(a(8))) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+            ),
+            .init("INSERT INTO ddlcompat.cr_generated(id,a) VALUES(1,'café'),(2,'next')"),
+            .init(
+                "ALTER TABLE ddlcompat.cr_generated RENAME COLUMN a TO renamed,RENAME COLUMN legacy TO legacy_name,ADD c INT DEFAULT 7"
+            ),
+            .init("ALTER TABLE ddlcompat.cr_generated DEFAULT CHARACTER SET latin1,RENAME COLUMN renamed TO again"),
+            .init("ALTER TABLE ddlcompat.cr_generated RENAME COLUMN b TO computed"),
+            .init("UPDATE ddlcompat.cr_generated SET again='終わり' WHERE id=1"),
+            // Retain the cr_copy result until the final checks.
+            .init(
+                "CREATE TABLE ddlcompat.cr_copy(id INT PRIMARY KEY,a VARCHAR(30) DEFAULT 'seed' COMMENT 'keep comment',b INT GENERATED ALWAYS AS(id+1) STORED,legacy VARCHAR(20) CHARACTER SET latin1 DEFAULT 'café',KEY by_a(a(8))) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+            ),
+            .init("INSERT INTO ddlcompat.cr_copy(id,a) VALUES(1,'café'),(2,'next')"),
+            .init(
+                "ALTER TABLE ddlcompat.cr_copy RENAME COLUMN a TO renamed,RENAME COLUMN legacy TO legacy_name,ADD c INT DEFAULT 7"
+            ),
+            .init("ALTER TABLE ddlcompat.cr_copy DEFAULT CHARACTER SET latin1,RENAME COLUMN renamed TO again"),
+            .init("ALTER TABLE ddlcompat.cr_copy RENAME COLUMN b TO computed"),
+            .init("UPDATE ddlcompat.cr_copy SET again='終わり' WHERE id=1"),
+            .init("ALTER TABLE ddlcompat.cr_copy ALGORITHM=COPY,RENAME COLUMN again TO a,ORDER BY id DESC"),
+            .init("INSERT INTO ddlcompat.cr_copy(id) VALUES(3)"),
+            // Retain the cr_swap result until the final checks.
+            .init(
+                "CREATE TABLE ddlcompat.cr_swap(id INT PRIMARY KEY,a VARCHAR(30) DEFAULT 'seed' COMMENT 'keep comment',b INT GENERATED ALWAYS AS(id+1) STORED,legacy VARCHAR(20) CHARACTER SET latin1 DEFAULT 'café',KEY by_a(a(8))) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+            ),
+            .init("INSERT INTO ddlcompat.cr_swap(id,a) VALUES(1,'café'),(2,'next')"),
+            .init(
+                "ALTER TABLE ddlcompat.cr_swap RENAME COLUMN a TO renamed,RENAME COLUMN legacy TO legacy_name,ADD c INT DEFAULT 7"
+            ),
+            .init("ALTER TABLE ddlcompat.cr_swap DEFAULT CHARACTER SET latin1,RENAME COLUMN renamed TO again"),
+            .init("ALTER TABLE ddlcompat.cr_swap RENAME COLUMN b TO computed"),
+            .init("UPDATE ddlcompat.cr_swap SET again='終わり' WHERE id=1"),
+            .init("ALTER TABLE ddlcompat.cr_swap ALGORITHM=COPY,RENAME COLUMN again TO a,ORDER BY id DESC"),
+            .init("INSERT INTO ddlcompat.cr_swap(id) VALUES(3)"),
+            .init("ALTER TABLE ddlcompat.cr_swap RENAME COLUMN a TO legacy_name,RENAME COLUMN legacy_name TO a"),
+            // Retain the cr_updated result until the final checks.
+            .init(
+                "CREATE TABLE ddlcompat.cr_updated(id INT PRIMARY KEY,a VARCHAR(30) DEFAULT 'seed' COMMENT 'keep comment',b INT GENERATED ALWAYS AS(id+1) STORED,legacy VARCHAR(20) CHARACTER SET latin1 DEFAULT 'café',KEY by_a(a(8))) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+            ),
+            .init("INSERT INTO ddlcompat.cr_updated(id,a) VALUES(1,'café'),(2,'next')"),
+            .init(
+                "ALTER TABLE ddlcompat.cr_updated RENAME COLUMN a TO renamed,RENAME COLUMN legacy TO legacy_name,ADD c INT DEFAULT 7"
+            ),
+            .init("ALTER TABLE ddlcompat.cr_updated DEFAULT CHARACTER SET latin1,RENAME COLUMN renamed TO again"),
+            .init("ALTER TABLE ddlcompat.cr_updated RENAME COLUMN b TO computed"),
+            .init("UPDATE ddlcompat.cr_updated SET again='終わり' WHERE id=1"),
+            .init("ALTER TABLE ddlcompat.cr_updated ALGORITHM=COPY,RENAME COLUMN again TO a,ORDER BY id DESC"),
+            .init("INSERT INTO ddlcompat.cr_updated(id) VALUES(3)"),
+            .init("ALTER TABLE ddlcompat.cr_updated RENAME COLUMN a TO legacy_name,RENAME COLUMN legacy_name TO a"),
+            .init(
+                "UPDATE ddlcompat.cr_updated SET legacy_name='changed' WHERE id=3",
+                phaseEnd: "swap-drop-and-retain-results"),
         ],
         profileExclusions: [
             .reverse: "MySQL 5.7 source has no RENAME COLUMN syntax.",
             .mysql57MyISAM: "MySQL 5.7 source has no RENAME COLUMN syntax.",
             .mysql57InnoDB: "MySQL 5.7 source has no RENAME COLUMN syntax.",
-        ])
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "latin1-value-after-default-charset-change",
+                    check: .init("SELECT HEX(legacy_name) FROM ddlcompat.cr_encoding WHERE id=1", "636166E9")),
+                .init(
+                    id: "table-default-charset",
+                    check: .init(
+                        "SELECT TABLE_COLLATION LIKE 'latin1_%' FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cr_encoding'",
+                        "1")),
+                .init(
+                    id: "renamed-column-definition",
+                    check: .init(
+                        "SELECT COLUMN_DEFAULT,COLUMN_COMMENT,CHARACTER_SET_NAME,COLLATION_NAME,CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cr_encoding' AND COLUMN_NAME='again'",
+                        "seed\tkeep comment\tutf8mb4\tutf8mb4_bin\t30")),
+                .init(
+                    id: "renamed-prefix-index",
+                    check: .init(
+                        "SELECT COLUMN_NAME,SUB_PART FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cr_encoding' AND INDEX_NAME='by_a'",
+                        "again\t8")),
+                .init(
+                    id: "generated-column-and-multibyte-update",
+                    check: .init(
+                        "SELECT id,HEX(again),computed,c FROM ddlcompat.cr_generated ORDER BY id",
+                        "1\tE7B582E3828FE3828A\t2\t7\n2\t6E657874\t3\t7")),
+                .init(
+                    id: "omitted-column-default-after-copy",
+                    check: .init(
+                        "SELECT a,HEX(legacy_name),computed,c FROM ddlcompat.cr_copy WHERE id=3", "seed\t636166E9\t4\t7"
+                    )),
+                .init(
+                    id: "swapped-column-defaults",
+                    check: .init("SELECT legacy_name,HEX(a) FROM ddlcompat.cr_swap WHERE id=3", "seed\t636166E9")),
+                .init(
+                    id: "update-after-column-swap",
+                    check: .init(
+                        "SELECT legacy_name,HEX(a),computed,c FROM ddlcompat.cr_updated WHERE id=3",
+                        "changed\t636166E9\t4\t7")),
+                .init(
+                    id: "original-table-dropped",
+                    check: .init(
+                        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
+                        "0")),
+            ], databases: ["ddlcompat"],
+            cleanup: [
+                "DROP TABLE ddlcompat.cr_encoding,ddlcompat.cr_generated,ddlcompat.cr_copy,ddlcompat.cr_swap,ddlcompat.cr_updated"
+            ]))
     static let remainingAlterOptions = Case(
         "alter-options", "ORDER BY, validation clauses and native physical options",
         [

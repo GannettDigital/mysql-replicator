@@ -685,6 +685,26 @@ actual value. The final schema assertions retain separate snapshots for
 `ddlcompat` and `otherdb`. A failed case reports its artifact and support-bundle
 paths through the shared runner.
 
+### Compound table renames and cross-database foreign keys
+
+Run the two related workflows in one fixture:
+
+```bash
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case ddl-compat-alter-table-rename --case ddl-compat-cross-schema-relationships --coverage"
+```
+
+Use `mysql84-to-mysql57-myisam` to check the MyISAM branch. Each case retains
+four saved-state restart points. Separate parent/child table sets retain moved
+and returned results until the final queries. The InnoDB branch checks exact
+UPDATE cascade values and FK definitions. Both branches compare schema metadata
+and rows in `ddlcompat` and `otherdb`.
+
+The compound ALTER case also tests offline replay. It removes its retained
+tables from the target, stops replay after the original parent move, and resumes
+with an unreachable source. Replay repeats the final checks for both databases.
+Named results appear under `assertions/<case-id>/`; replay checks use the
+`replay-` prefix. The normal failure handler prints the support-bundle path.
+
 ### Select the same groups as CI
 
 Set `GROUP` to use the shared CI plan. `GROUP=all` lists or selects all existing
@@ -1314,6 +1334,21 @@ The selected cases `ddl-compat-column-renames` and `ddl-compat-alter-options`
 check translated column renames, ORDER BY and validation clauses. They include
 later DML, saved-state restart and offline stop/resume. Column renames require
 a MySQL 8.4 source.
+
+The column rename workflow uses five retained table sets for final checks of
+column definitions, encodings, generated values, index prefixes and defaults.
+It keeps four saved-state restart points. Offline replay stops after transaction
+three, immediately after the first compound RENAME COLUMN, then resumes with an
+unreachable source. Live and replay results have separate named assertions.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-column-renames --coverage"
+```
+
+One fixture runs five source batches between the restart points. Setup and
+cleanup each use one additional batch. Each source statement keeps its own GTID.
+The final checks include exact row bytes and a complete `ddlcompat` snapshot.
+Failure output identifies the assertion and the support-bundle path.
 
 `target84-index-spatial-metadata` checks an existing 8.4 target with invisible
 indexes and SRID constraints. `ddl-compat-absent-definers` checks invoker results

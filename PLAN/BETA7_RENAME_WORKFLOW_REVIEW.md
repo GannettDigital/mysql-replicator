@@ -2,7 +2,9 @@
 
 ## Decision
 
-Review complete. The multi-table pilot is implemented and its focused checks passed.
+All four reviewed rename workflows now use named source batches and final
+observations. Their focused checks passed. Remaining table-option and maintenance
+cases need review before the broader feature-area work.
 
 Use independent table sets to keep the result of each ordinary workflow until
 one final batch of checks. Distinct assertions do not require distinct waits or
@@ -40,8 +42,8 @@ operations and final queries for one result; it is not another test runner.
 ## Evidence
 
 Saved run: `40454033524`, commit `efb3458`. Its measurement summary and report
-are complete, with no failed jobs or missing coverage collections. The four
-case definitions have not changed since that run. The shared harness has changed.
+are complete, with no failed jobs or missing coverage collections. At the start of this review, the four
+case definitions had not changed since that run. The shared harness had changed.
 The extracted case costs are in `artifacts/rename-workflow-review/baseline.json`.
 
 Each cell is **case seconds / harness SQL calls**. These are default SQL runs.
@@ -265,3 +267,196 @@ Use independent parent/child tables and final observations in both databases.
 Add cleanup for retained destination tables before offline replay. Keep FK and
 cascade assertions. Run those two cases together on forward MyISAM and reverse
 InnoDB, as specified in slice 2 above.
+
+
+## Compound ALTER and cross-database FK conversion
+
+Implementation is complete. Focused integration validation passed on forward
+MyISAM and reverse InnoDB.
+The pilot is committed as `ee0ca85`.
+
+Both cases keep their original source SQL, transactional alternatives and four
+restart points. Source batches end at those restart points. Each case compares
+its retained tables once after all live writes. Both database snapshots include
+rows, columns, indexes, collations and foreign keys.
+
+| Previous observation | Final table set and assertion |
+|---|---|
+| Compound parent move with CHANGE; default `n=7`; child join | `ar_move`: `moved-parent-default-and-row` and `moved-parent-child-row` |
+| UPDATE after the parent move; child move with ADD | `ar_child`: `cascade-after-parent-move` and `moved-child-default` |
+| Child return with MODIFY and FK replacement; repeated parent RENAME | `ar_return`: `returned-parent-default`, `returned-child-definition` and `replacement-foreign-key` |
+| Same-name RENAME with ADD; later parent UPDATE | `ar_final`: `same-name-rename-and-following-update` |
+| Original compound-ALTER DELETE/DROP sequence and temporary names | Original SQL remains; `original-and-temporary-tables-absent` checks its final result |
+| Separate parent and child moves | `cs_move`: `moved-parent-and-child` and `moved-foreign-key` |
+| Parent UPDATE after the moves | `cs_update`: `cascade-after-move` checks exact parent and child values |
+| Joint return move | `cs_return`: `returned-parent-and-child` and `returned-foreign-key` |
+| Ordered child/parent DROP | Original SQL remains; `dropped-original-tables` and scoped SQLite schema-retirement check |
+
+The compound case has 53 source statements in five batches. The cross-database
+case has 30 statements in five batches. Setup and cleanup add two batches per
+case. The original operations run first, in the same order. Added table sets
+retain outcomes that subsequent UPDATE or DROP operations would otherwise erase.
+
+The InnoDB branch changes the parent key and checks the resulting child key.
+The MyISAM branch changes an ordinary parent column and has no FK. Observation
+queries and expected values select the same branch as source execution. The
+source can use InnoDB even when the target uses MyISAM, so target profile rules,
+rather than the queried server's engine alone, select this branch.
+
+Compound-ALTER replay still stops after transaction six, immediately after the
+original parent move. It resumes with an unreachable source. Before replay,
+the harness removes only the case's named retained tables, then resets
+`ddlcompat`. The reset disables FK checks in that target client session because
+some child references cross database boundaries. It does not reset `otherdb`.
+After replay, named assertions use the `replay-` prefix and compare both databases.
+The live writer resumes before source cleanup removes the retained tables.
+
+No case ID, profile selection, catalog obligation or runtime code changes.
+The separate MySQL 8.4 unsafe-rename refusal case is unchanged.
+
+Validation:
+
+- All 11 focused phase/observation unit tests passed.
+- Catalog validation passed: 63 scenarios, 235 cases, 56 support requirements.
+- The matrix remains at 183 jobs, 1,545 obligations and 182 coverage collections.
+- Original SQL and transactional alternatives remain an unchanged prefix in
+  both workloads. See `artifacts/rename-workflows-review/source-comparison.json`.
+- Formatting and whitespace checks passed.
+
+Only these two changed cases ran on forward MyISAM and reverse InnoDB, with
+coverage and SQL counts. Leave the full matrix to the later GitHub Actions run.
+
+
+### Focused integration results
+
+Forward MyISAM passed before the laptop restart. Its two cases shared one
+fixture. All 50 named assertions passed, including both-database replay checks.
+Saved-schema restart, coverage export and fixture cleanup passed.
+
+| Forward case | Saved CI SQL calls | Local SQL calls | Saved CI case time | Local case time |
+|---|---:|---:|---:|---:|
+| Compound ALTER rename | 268 | 100 | 58.53 s | 60.67 s |
+| Cross-database relationships | 158 | 82 | 45.47 s | 50.59 s |
+
+These are harness SQL calls, not target-applier statements. The runs used
+different hosts. The local workload also retains additional tables for final
+observations and adds destination-schema checks. Do not claim an elapsed-time
+improvement from these data. Combined runtime coverage for the two cases was
+8,946 of 20,880 lines. The saved CI coverage covers the larger group, so it is
+not a per-case coverage baseline.
+
+The forward result is in `artifacts/lab/20261029T011031Z-0fe9849a/result.json`.
+The extracted measurements are in `artifacts/rename-workflows-review/results.json`.
+
+After the laptop restart, Docker used OrbStack instead of Docker Desktop.
+The first reverse attempt stopped before fixture creation because OrbStack had
+no `mysql-replicator:coverage` image. Neither case ran. There was no applier
+failure or support bundle. The user selected OrbStack for the remaining check;
+it required a separate coverage-image build.
+
+The first OrbStack build stalled during SwiftPM dependency setup. The idle
+`swift-build` process had eight exited `git` children. Sending a child-exit signal
+did not recover it. The build was stopped; no fixture had started. A second build
+completed without code changes. SwiftPM has an
+[open report with similar symptoms](https://github.com/swiftlang/swift-package-manager/issues/9274),
+but this does not establish the cause of this local stall.
+
+Reverse InnoDB then passed all 50 named assertions in one fixture. It checked
+exact parent/child values after UPDATE cascades, moved/replaced FK definitions,
+eight explicit restart boundaries across the two cases, offline replay after
+transaction six, and both database snapshots. Saved-schema restart, coverage
+export and cleanup passed.
+
+| Reverse case | Saved CI SQL calls | Local SQL calls | Saved CI case time | Local case time |
+|---|---:|---:|---:|---:|
+| Compound ALTER rename | 267 | 99 | 49.96 s | 51.34 s |
+| Cross-database relationships | 157 | 81 | 39.54 s | 43.24 s |
+
+Combined reverse runtime coverage reached 9,574 of 20,880 lines. Its result is
+in `artifacts/lab/20261029T033612Z-ac19a20e/result.json`. Both profiles are included
+in `artifacts/rename-workflows-review/results.json`. No further code change was
+needed after the 11 focused unit tests passed.
+
+The application/test compilation phase took 223.36 s on OrbStack and 1,203.14 s
+on Docker Desktop with the same source inputs. These times exclude dependency
+setup and the stopped attempt. They are single local measurements, not a general
+benchmark of the two products. The forward and reverse test runs also use
+different profiles; their case times cannot isolate a Docker runtime effect.
+
+Next: convert `column-renames` to independent table sets and final observations.
+Keep its dependent ALTER sequences, encoding, generated-value and default checks.
+Retain four restart points and the replay stop after transaction three. Run its
+focused unit checks and one forward MyISAM/default/SQL case with coverage. A 5.7
+source excludes RENAME COLUMN, so do not repeat the reverse profile for this slice.
+
+
+## Column rename conversion
+
+Implementation and focused validation passed. The original 11 source statements
+remain an unchanged prefix, including all four restart points. Replay still
+stops after the third transaction, immediately after the first compound RENAME
+COLUMN statement. Use five additional table sets to retain the following results.
+
+| Previous check | Retained table and final check |
+|---|---|
+| Latin1 bytes after the table-default charset change | `cr_encoding`: exact `HEX(legacy_name)`; table default is latin1, while `again` remains utf8mb4_bin |
+| Full column definition and index after rename | `cr_encoding`: default, comment, maximum length and `by_a` prefix on `again` |
+| Generated-column rename and multibyte UPDATE | `cr_generated`: exact rows, UTF-8 bytes, generated values and added defaults |
+| Omitted-column default after COPY/ORDER BY | `cr_copy`: row 3 retains `seed`, latin1 bytes and generated/default values |
+| Simultaneous column-name swap | `cr_swap`: row 3 retains `seed` and the latin1 default bytes under the new names |
+| UPDATE after the swap | `cr_updated`: row 3 has `changed`; full snapshot retains all rows and definitions |
+| Original DROP | No `ddlcompat.t` remains; DONE intent and checkpoint checks remain |
+
+The new table sets execute each required ALTER prefix themselves. Do not clone
+a result table as proof that its earlier operations worked. Batch ordinary
+operations between the original restart boundaries. Compare the final tables
+once after live apply and again after offline replay. Use named `replay-`
+assertions with the existing case ID. Remove the retained tables after state
+and replay checks.
+
+The focused phase/observation unit tests and this one case ran on forward
+MyISAM, default variant, SQL transport, with coverage in OrbStack. The other
+profiles remain excluded because their 5.7 source does not accept RENAME COLUMN.
+
+
+### Column rename results
+
+All 12 focused unit tests passed. Catalog validation and matrix generation passed:
+183 jobs, 1,545 obligations and 182 coverage collections, with no selection change.
+The source comparison confirms the original 11 statements remain unchanged and
+in order. The adjacent ALTER-options case is unchanged.
+
+The local integration run passed all 30 named assertions in one fixture. These
+include four restart assertions and ten replay observations. The latter use the
+existing `ddl-compat-column-renames` case ID, with `replay-` assertion names.
+The 48 source statements run in five batches. Setup and cleanup add two batches.
+Saved-schema restart, coverage export and fixture cleanup passed.
+
+| Measurement | Saved CI case | Local OrbStack case |
+|---|---:|---:|
+| Harness SQL calls | 226 | 88 |
+| Case time | 53.71 s | 45.91 s |
+
+The change removes 138 harness SQL calls (61%). It retains the original workload
+and adds independent table sets. The runs use different hosts, so these times
+do not establish a measured speedup. Container startup took 11.45 s, database
+setup 2.18 s, coverage export 5.81 s and cleanup 11.01 s. These phases are separate
+from case time.
+
+Runtime coverage reached 9,650 of 20,880 lines. The saved CI coverage covers the
+whole table/column/index group; it cannot give a per-case before/after line set.
+Compare the complete group in the later full CI run. No other profile or full
+suite ran locally for this slice.
+
+Evidence:
+
+- `artifacts/lab/20261029T040737Z-16909bd2/result.json`: passing case and cleanup.
+- `artifacts/column-renames-review/results.json`: measurements and assertion count.
+- `artifacts/column-renames-review/source-comparison.json`: original SQL and adjacent-case checks.
+- `artifacts/column-renames-unit.log`: 12 passing unit tests.
+
+The four rename conversions are complete. Next: review `alter-options`,
+`table-options`, `table-maintenance` and `ignored-checks` for shared source batches
+and retained final results. Map their engine/version rules and required error,
+restart and replay boundaries before changing code. Use the saved SQL, timings
+and group-level coverage. That review needs no build or container run.

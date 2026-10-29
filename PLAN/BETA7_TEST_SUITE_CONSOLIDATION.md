@@ -75,10 +75,10 @@ This slice is committed as `99fb9d6`.
 
 The small SQL selections with source GTID preservation disabled now share one
 fixture per profile. See the [implementation results](BETA7_GTID_PRESERVATION_GROUP_REVIEW.md#implementation-results).
-The [rename workflow review](BETA7_RENAME_WORKFLOW_REVIEW.md) completes the next
-Slice 2 review. Start with the `multi-table` pilot, using independent table sets
-and final batched observations. The remaining feature groups
-still need review and conversion.
+The four workflows in the [rename review](BETA7_RENAME_WORKFLOW_REVIEW.md) now
+use independent table sets and final batched observations. Their focused checks
+passed. Continue Slice 2 with a review of table options, table maintenance and
+ignored CHECK clauses. The remaining feature areas still need review and conversion.
 
 This direction retains Steps 4–5, but strengthens their execution rule. Sharing
 containers alone is not sufficient. Ordinary correctness tests must also share
@@ -1296,7 +1296,19 @@ MyISAM/default/SQL run with coverage. It keeps five restart checks and passes
 25 named assertions. Harness SQL calls fell from 228 to 94. The review records
 the measurements and their limits. The matrix remains unchanged.
 
-Next: convert `alter-table-rename` and `cross-schema-relationships`. Use independent
-table sets, final checks in both databases and explicit cleanup before replay.
-Run those two cases together on forward MyISAM and reverse InnoDB. The InnoDB
-run checks the distinct FK and cascade branch. Leave the full suite to CI.
+The compound table rename and cross-schema FK conversion also passed. Both
+cases ran in one fixture per profile on forward MyISAM and reverse InnoDB.
+Each profile passed 50 named assertions. Original restart and replay boundaries
+remain. Harness SQL calls fell from 426 to 182 on forward MyISAM and from 424 to
+180 on reverse InnoDB. See the review for timings, coverage scope and build notes.
+
+The column rename conversion also passed on forward MyISAM in OrbStack:
+30 named assertions, all four original restarts, and replay stopped after the
+third transaction. All 12 focused unit tests passed. Harness SQL calls fell from
+226 to 88. The review records timings, coverage scope and the assertion map.
+
+Next: review `alter-options`, `table-options`, `table-maintenance` and
+`ignored-checks`. Map their engine/version rules, final observations and required
+error/restart/replay boundaries before implementation. Use saved SQL, timings
+and group-level coverage; this review needs no build or container run.
+Leave the full suite to CI.

@@ -4,7 +4,8 @@ extension SharedCorrectness.Run {
     /// Replay a live DDL workload from its database baseline. Stop at a saved
     /// transaction boundary, then resume with an unreachable source.
     func replayDDLWorkflow(
-        _ label: String, stopAfter: Int, from start: Boundary, to end: Boundary, stopGTIDs: String? = nil
+        _ label: String, stopAfter: Int, from start: Boundary, to end: Boundary, stopGTIDs: String? = nil,
+        finalObservations: DDLFinalObservations? = nil
     ) throws {
         let original = f.config
         defer { f.config = original }
@@ -34,10 +35,12 @@ extension SharedCorrectness.Run {
             return result
         }
         _ = try invoke(label + "-fetch", "fetch")
-        _ = try f.sql(
-            .target,
-            "SET sql_log_bin=0; DROP DATABASE ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
-        )
+        // Retained cross-database FK pairs must be removed before the baseline
+        // database is reset. Only this case's explicit table list is removed.
+        let cleanup =
+            finalObservations?.replayResetSQL
+            ?? "SET sql_log_bin=0; DROP DATABASE ddlcompat; CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+        _ = try f.sql(.target, cleanup)
         if f.variant != .withoutSourceGTIDs {
             _ = try f.sql(.target, f.profile.targetVersion.resetBinlogs + "; SET GLOBAL gtid_purged='\(start.gtids)'")
         }
@@ -134,7 +137,12 @@ extension SharedCorrectness.Run {
         f.config["source"] = source
         let resumed = try invoke(label + "-replay-resume", "replay")
         try require(resumed["appliedGTIDSet"] as? String == end.gtids, "DDL replay checkpoint differs")
-        _ = try compare("ddlcompat")
+        if let finalObservations {
+            let caseID = label.hasPrefix("ddl-compat-") ? label : "ddl-compat-" + label
+            try ddlFinalObservations(finalObservations, caseID: caseID, prefix: "replay-")
+        } else {
+            _ = try compare("ddlcompat")
+        }
         // Recovery uses apply.yaml. Restore the live writer's file before the
         // caller restarts it; restoring only f.config leaves replay credentials.
         f.config = original
