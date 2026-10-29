@@ -341,7 +341,13 @@ on reverse InnoDB. All 82 named integration assertions and ten focused unit test
 passed. Harness SQL calls fell from 816 to 302 across these selected runs.
 The original nine restarts, two replay stops, case IDs and matrix remain.
 
-Next: review `types`, `alter` and `alter-conversions`, then remaining index-specific
-cases. Map their assertions and required observations before implementation.
-Use saved SQL, timings and group-level coverage; no build or database run is
-needed for that review. Leave the full suite to CI.
+The [column-conversion slices](BETA7_COLUMN_CONVERSION_WORKFLOW_REVIEW.md#completion-and-next-review)
+are complete. The three cases passed on forward MyISAM: 42 named integration
+assertions and 20 focused unit tests. Harness SQL calls fell from 498 to 135.
+The source timestamp reset preserves fresh-client behavior within each batch.
+Intermediate types and the fractional row remain available for final comparison.
+
+Next: review spatial-column prefix indexes and generated JSON-column indexes,
+and check the existing FULLTEXT workflow's execution boundaries. Use saved SQL,
+timings and group-level coverage. Map assertions before another conversion;
+this review needs no build or database run. Keep the full suite for CI.

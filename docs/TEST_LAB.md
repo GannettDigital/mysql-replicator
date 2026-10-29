@@ -1354,6 +1354,49 @@ Failure output identifies the assertion and the support-bundle path.
 indexes and SRID constraints. `ddl-compat-absent-definers` checks invoker results
 and native error 1449. Both include restart and offline replay.
 
+### Column definitions and compound ALTER
+
+`ddl-compat-types` and `ddl-compat-alter` share the fixture and running applier.
+Each case sends its source operations in one batch. Independent tables retain
+values and definitions that later UPDATE, DELETE or ALTER operations would
+replace. Final queries compare those tables with the source and native replica.
+
+The `types` case checks mixed defaults and exact row values. It also adds an
+automatic DATETIME column at a fixed source timestamp. The phase runner resets
+`SESSION timestamp=DEFAULT` before each operation, then runs the original SQL.
+Thus, the following UPDATE uses current time and changes the automatic value.
+The reset does not change the applier's target-session policy. Warning collection
+still follows the source operation directly.
+
+The `alter` case retains the original column definition, compound ADD/CHANGE
+results, new defaults and indexes, and replacement composite primary key. It
+then checks DROP COLUMN, DROP DEFAULT and DELETE on the original table. These
+cases keep their saved-state checks. They add no deliberate restarts or replay.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-types --case ddl-compat-alter --coverage"
+```
+
+See the [assertion map and validation plan](../PLAN/BETA7_COLUMN_CONVERSION_WORKFLOW_REVIEW.md).
+
+### Conversion of existing indexed values
+
+`ddl-compat-alter-conversions` keeps its three deliberate applier restarts. Four
+source batches convert and update the original table, then prepare six separate
+tables that retain the intermediate INT, VARCHAR, DECIMAL, DOUBLE and BIT states.
+The final queries check values, defaults, nullability and index-column names.
+The shared snapshot compares every retained row and definition with native
+replication, including the fractional row after its conversion to INT.
+
+The retained INT table keeps ID 3. The original sequence later deletes that row,
+so checking only the original final table would miss a wrong conversion. The
+BIT table retains the state after DELETE. Cleanup follows the saved-state checks.
+This case adds no offline replay.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-alter-conversions --coverage"
+```
+
 ### Table options, index maintenance and ignored CHECK clauses
 
 These cases stay in the `table-column-index-changes` group. They batch source

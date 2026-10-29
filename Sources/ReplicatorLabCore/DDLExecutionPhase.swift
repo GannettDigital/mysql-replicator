@@ -30,12 +30,13 @@ struct DDLExecutionPhase {
 
     func writes(transactional: Bool) -> [LabSQLPhase.Write] {
         steps.enumerated().map { index, step in
-            // The old runner used a new client for each step. Reset the two
-            // session values changed by these workloads before every operation.
+            // The old runner used a new client for each step. Reset session
+            // overrides before the operation, so its SHOW WARNINGS stays intact.
             .init(
                 id: id + "-statement-\(index + 1)",
                 sql:
                     "SET SESSION auto_increment_increment=@@GLOBAL.auto_increment_increment,auto_increment_offset=@@GLOBAL.auto_increment_offset; "
+                    + "SET SESSION timestamp=DEFAULT; "
                     + (transactional ? step.sqlTransactional : step.sql))
         }
     }

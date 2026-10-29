@@ -334,8 +334,8 @@ SQL branches, generated values, index-state field selection and missing/incorrec
 observations. Source comparisons also confirm unchanged original SQL and adjacent
 workloads. `git diff --check` and the DDL catalog check passed.
 
-Next: review `types`, `alter` and `alter-conversions`, then the remaining
-index-specific cases in the table/column group. Map assertions, required
-observations and engine/version branches before selecting the next conversion.
-Use the saved SQL, timing and group-level coverage. This review needs no build
-or database run. Keep the full suite for GitHub Actions after the local slices.
+This work is committed as `05c520b`. The following
+[column-conversion slices](BETA7_COLUMN_CONVERSION_WORKFLOW_REVIEW.md) are complete
+and pass focused checks. Next: review remaining index-specific cases and their
+execution boundaries. The linked document records the results and next scope.
+Keep the full suite for GitHub Actions.

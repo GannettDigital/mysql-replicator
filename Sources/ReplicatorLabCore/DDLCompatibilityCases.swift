@@ -185,61 +185,8 @@ enum DDLCompatibilityCases {
                     [.init("SELECT id,v FROM ddlcompat.row_values ORDER BY id", "2\t40")],
                     assertionID: "primary-key-multirow-delete"),
             ]),
-        .init(
-            "types", "CREATE supported column types, defaults, auto increment, inline keys; follow with DML",
-            [
-                .init(
-                    "CREATE TABLE ddlcompat.t(id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, tiny TINYINT DEFAULT -7, small SMALLINT, medium MEDIUMINT, amount DECIMAL(12,3) NOT NULL DEFAULT 1.25, note TEXT, payload MEDIUMBLOB, dt DATETIME(6), ts TIMESTAMP NULL DEFAULT NULL, tm TIME(3), y YEAR DEFAULT 0, e ENUM('a','b') NOT NULL, s SET('x','y'), v VARCHAR(20) DEFAULT 'hello', normalized INT DEFAULT '0007', fixed BINARY(5) DEFAULT 'hi', UNIQUE KEY lookup(v), KEY by_amount(amount,id)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-                ),
-                .init(
-                    "INSERT INTO ddlcompat.t(note,payload,dt,ts,tm,y,s) VALUES('first',0x00ff,'2026-01-02 03:04:05.123456','2026-01-02 03:04:05','-12:30:20.123',2026,'x,y')",
-                    [
-                        .init(
-                            "SELECT id,tiny,amount,HEX(payload),e,s,v FROM ddlcompat.t",
-                            "1\t-7\t1.250\t00FF\ta\tx,y\thello")
-                    ]),
-                .init(
-                    "SET SESSION timestamp=1700000000.123456; ALTER TABLE ddlcompat.t ADD observed DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)",
-                    [
-                        .init(
-                            "SELECT CAST(observed AS CHAR),normalized,HEX(fixed) FROM ddlcompat.t",
-                            "2023-11-14 22:13:20.123456\t7\t6869000000")
-                    ]),
-                .init(
-                    "UPDATE ddlcompat.t SET amount=42.125,note='changed',v='next' WHERE id=1",
-                    [.init("SELECT id,amount,note,v FROM ddlcompat.t", "1\t42.125\tchanged\tnext")]),
-                .init("DELETE FROM ddlcompat.t WHERE id=1", [.init("SELECT COUNT(*) FROM ddlcompat.t", "0")]),
-            ]),
-        .init(
-            "alter", "Compound ADD/CHANGE/default/index and primary-key changes preserve existing data",
-            [
-                .init(
-                    "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,label VARCHAR(20) DEFAULT 'seed',KEY by_label(label)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-                ),
-                .init("INSERT INTO ddlcompat.t(id) VALUES(1)", []),
-                .init(
-                    "ALTER TABLE ddlcompat.t ADD amount DECIMAL(10,2) NOT NULL DEFAULT -2.50, CHANGE label caption VARCHAR(40) DEFAULT 'renamed', ALTER COLUMN id SET DEFAULT 10, ADD KEY by_amount(amount), ALGORITHM=COPY, LOCK=EXCLUSIVE",
-                    [.init("SELECT id,caption,amount FROM ddlcompat.t", "1\tseed\t-2.50")]),
-                .init(
-                    "INSERT INTO ddlcompat.t(id) VALUES(2)",
-                    [
-                        .init(
-                            "SELECT id,caption,amount FROM ddlcompat.t ORDER BY id", "1\tseed\t-2.50\n2\trenamed\t-2.50"
-                        )
-                    ]),
-                .init(
-                    "ALTER TABLE ddlcompat.t ADD report_date DATE NOT NULL DEFAULT '2026-01-01', DROP PRIMARY KEY, ADD PRIMARY KEY(report_date,id)"
-                ),
-                .init(
-                    "UPDATE ddlcompat.t SET report_date='2026-02-01',caption='moved' WHERE id=2",
-                    [
-                        .init(
-                            "SELECT report_date,id,caption FROM ddlcompat.t ORDER BY id",
-                            "2026-01-01\t1\tseed\n2026-02-01\t2\tmoved")
-                    ]),
-                .init("ALTER TABLE ddlcompat.t DROP COLUMN caption, ALTER COLUMN amount DROP DEFAULT"),
-                .init("DELETE FROM ddlcompat.t WHERE id=2", [.init("SELECT COUNT(*) FROM ddlcompat.t", "1")]),
-            ]),
+        columnDefinitions,
+        compoundColumnAlter,
         .init(
             "database", "ALTER defaults, DROP retires all table schemas, then recreate and resume DML",
             [
