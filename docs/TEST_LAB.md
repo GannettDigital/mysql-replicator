@@ -121,35 +121,41 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 make lab-plan ARGS="--profile all --suite correctness --case ddl-modify-columns"
 ```
 
-`ddl-compat-column-index-syntax` and `ddl-compat-alter-column-keys` also use
-named SQL phases. They compare keys, columns and rows before later statements
-replace or delete the result. Their deliberate restart and offline replay checks
-remain. Source operations within a phase keep their original transaction order;
-batching does not make them one transaction. Each phase records SQL, GTIDs, file
-offsets, expected values and the three-server comparison.
+`ddl-compat-column-index-syntax` uses three source batches. It retains table
+states for column keys, index creation/removal and SERIAL insert/update/delete.
+`ddl-compat-alter-column-keys` uses four source batches. It retains implicit
+values, key changes and AUTO_INCREMENT rebuild results. Final queries and the
+full schema/row comparison check those states against the native replica.
+
+The cases keep two and three live restarts. Both offline replay checks stop
+after transaction four, resume, and repeat the final observations. Each source
+operation keeps its transaction boundary and resets session AUTO_INCREMENT
+settings before any operation-specific override. The SQLite check still requires
+the original rebuild intent to store increment 3 and offset 2.
 
 Run both cases in one fixture:
 
 ```sh
-make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-column-index-syntax --case ddl-compat-alter-column-keys"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-column-index-syntax --case ddl-compat-alter-column-keys --coverage"
 ```
 
-`ddl-compat-generated-dependencies` uses named phases for generated expressions,
-column renames and conversions between stored generated and ordinary columns.
-It compares intermediate results before later ALTER statements replace or drop
-them. Four saved-state restarts and offline stop/resume replay remain.
-
-`ddl-compat-generated-expressions` and `ddl-compat-column-swaps` also use named
-phases. They keep comparisons before later updates replace NULL inputs or before
-ALTER statements replace column names, positions and expressions. CREATE TABLE
-and its seed INSERT share a phase. The six live restarts and offline replay
-checks remain.
+`ddl-compat-generated-dependencies` and `ddl-compat-column-swaps` each use five
+source batches. Separate tables retain the results before later ALTER statements
+replace expressions, column names, positions or keys. One final query batch per
+server checks the expected values. The full comparison also checks all rows,
+column definitions and key references. Each case keeps four live restarts and
+an offline replay stop/resume check. Replay repeats the final observations.
+The source statements keep their separate transaction boundaries.
 
 Run both cases in one fixture:
 
 ```sh
-make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-generated-expressions --case ddl-compat-column-swaps"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-generated-dependencies --case ddl-compat-column-swaps --coverage"
 ```
+
+`ddl-compat-generated-expressions` uses three source batches and final checks on
+retained tables. It keeps values from before NULL inputs change. Its two live
+restarts and offline replay stop/resume check remain.
 
 The `database` family includes `ddl-compat-database`. CI runs it in
 `database-defaults-transactions` with the database creation cases. All cases in
@@ -1338,9 +1344,23 @@ make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --ca
 Select `ddl-compat-subpartitions` for subpartition metadata and data-changing
 DDL on all four profiles. It also tests restart and offline replay through a
 TRUNCATE boundary. Select `ddl-compat-partition-hash-forms` for named HASH/KEY
-partitions, ADD counts and implicit KEY columns. Existing `ddl-compat-partitions`
-and `ddl-compat-hash-list` cover the earlier partition operations. See
+partitions, ADD counts and implicit KEY columns. See
 [partition scope](../PLAN/PARTITION_SUPPORT.md) for limits and native references.
+
+`ddl-compat-partitions` checks RANGE COLUMNS, DROP, TRUNCATE, REORGANIZE,
+EXCHANGE WITH VALIDATION, following UPDATE and REMOVE PARTITIONING.
+`ddl-compat-hash-list` checks HASH, COALESCE, repartitioning to KEY and LIST,
+and INSERT into an added LIST partition. Each case uses one source body batch.
+Separate tables retain the earlier row and partition states for final queries
+and a full schema/row comparison. Both sides of EXCHANGE remain visible.
+Source operations keep their separate transaction boundaries. The cases retain
+the shared checkpoint, completed-DDL and saved-schema restart checks.
+
+Run the pair in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partitions --case ddl-compat-hash-list --coverage"
+```
 
 Select `ddl-compat-partition-key-algorithm` to check KEY algorithm 1 row
 placement, ALTER, CREATE LIKE, saved schemas and offline stop/resume. Select

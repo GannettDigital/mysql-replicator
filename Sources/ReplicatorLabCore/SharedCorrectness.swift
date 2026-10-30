@@ -846,10 +846,14 @@ public enum SharedCorrectness {
                         try replayDDLWorkflow("grouped-constraints", stopAfter: 6, from: begin, to: end)
                     }
                     if test.test.id == "ddl-compat-column-index-syntax" {
-                        try replayDDLWorkflow("column-index-syntax", stopAfter: 4, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "column-index-syntax", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations)
                     }
                     if test.test.id == "ddl-compat-generated-dependencies" {
-                        try replayDDLWorkflow("generated-dependencies", stopAfter: 4, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "generated-dependencies", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations)
                     }
                     if test.test.id == "ddl-compat-alter-column-keys" {
                         try require(
@@ -857,7 +861,9 @@ public enum SharedCorrectness {
                                 saved,
                                 "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE target_sql LIKE 'ALTER TABLE ddlcompat.t ADD aid%' AND json_extract(context_json,'$.autoIncrementIncrement')=3 AND json_extract(context_json,'$.autoIncrementOffset')=2 AND status='DONE'"
                             ) == "1", "ALTER lost its logged AUTO_INCREMENT settings")
-                        try replayDDLWorkflow("alter-column-keys", stopAfter: 4, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "alter-column-keys", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations)
                     }
                     if test.test.id == "ddl-compat-foreign-key-compound-indexes" {
                         try require(

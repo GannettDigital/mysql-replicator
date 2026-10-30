@@ -214,56 +214,8 @@ enum DDLCompatibilityCases {
                 .init("INSERT INTO ddlcompat.t VALUES(1,2.50)", [.init("SELECT id,n FROM ddlcompat.t", "1\t2.50")]),
             ]),
         generatedColumns,
-        .init(
-            "partitions", "Partition DDL removes and exchanges data without row-delete events",
-            [
-                .init(
-                    "CREATE TABLE ddlcompat.t(report_date DATE NOT NULL,id INT NOT NULL,n INT,PRIMARY KEY(report_date,id)) PARTITION BY RANGE COLUMNS(report_date) (PARTITION old VALUES LESS THAN ('2026-01-01'),PARTITION current_data VALUES LESS THAN ('2027-01-01'),PARTITION future VALUES LESS THAN (MAXVALUE))"
-                ),
-                .init("INSERT INTO ddlcompat.t VALUES('2025-06-01',1,10),('2026-06-01',2,20),('2027-06-01',3,30)"),
-                .init(
-                    "ALTER TABLE ddlcompat.t DROP PARTITION old",
-                    [.init("SELECT id FROM ddlcompat.t ORDER BY id", "2\n3")]),
-                .init(
-                    "ALTER TABLE ddlcompat.t TRUNCATE PARTITION current_data",
-                    [.init("SELECT id FROM ddlcompat.t ORDER BY id", "3")]),
-                .init(
-                    "ALTER TABLE ddlcompat.t REORGANIZE PARTITION future INTO (PARTITION next_year VALUES LESS THAN ('2028-01-01'),PARTITION future VALUES LESS THAN (MAXVALUE))"
-                ),
-                .init(
-                    "CREATE TABLE ddlcompat.stage(report_date DATE NOT NULL,id INT NOT NULL,n INT,PRIMARY KEY(report_date,id))"
-                ),
-                .init("INSERT INTO ddlcompat.stage VALUES('2027-08-01',4,40)"),
-                .init(
-                    "ALTER TABLE ddlcompat.t EXCHANGE PARTITION next_year WITH TABLE ddlcompat.stage WITH VALIDATION",
-                    [
-                        .init("SELECT id FROM ddlcompat.t ORDER BY id", "4"),
-                        .init("SELECT id FROM ddlcompat.stage ORDER BY id", "3"),
-                    ]),
-                .init(
-                    "UPDATE ddlcompat.t SET n=41 WHERE report_date='2027-08-01' AND id=4",
-                    [.init("SELECT n FROM ddlcompat.t", "41")]),
-                .init(
-                    "ALTER TABLE ddlcompat.t REMOVE PARTITIONING",
-                    [
-                        .init(
-                            "SELECT COUNT(*) FROM information_schema.PARTITIONS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND PARTITION_NAME IS NOT NULL",
-                            "0")
-                    ]),
-            ], nativeInnoDB: true),
-        .init(
-            "hash-list", "HASH/KEY and LIST partition creation and lifecycle",
-            [
-                .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT) PARTITION BY HASH(id) PARTITIONS 4"),
-                .init("INSERT INTO ddlcompat.t VALUES(1,10),(2,20)"),
-                .init("ALTER TABLE ddlcompat.t COALESCE PARTITION 2", [.init("SELECT SUM(n) FROM ddlcompat.t", "30")]),
-                .init("ALTER TABLE ddlcompat.t PARTITION BY KEY(id) PARTITIONS 2"),
-                .init(
-                    "ALTER TABLE ddlcompat.t PARTITION BY LIST(id) (PARTITION p1 VALUES IN (1),PARTITION p2 VALUES IN (2))"
-                ),
-                .init("ALTER TABLE ddlcompat.t ADD PARTITION (PARTITION p3 VALUES IN (3))"),
-                .init("INSERT INTO ddlcompat.t VALUES(3,30)", [.init("SELECT SUM(n) FROM ddlcompat.t", "60")]),
-            ], nativeInnoDB: true),
+        rangePartitionManagement,
+        hashKeyListManagement,
         .init(
             "views", "Create/replace/alter/drop views and apply their base-table row effects",
             [

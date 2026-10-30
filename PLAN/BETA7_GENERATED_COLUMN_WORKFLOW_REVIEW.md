@@ -283,3 +283,8 @@ suite or benchmark ran. The matrix and profile exclusions are unchanged.
 Next: review generated-column dependencies and column swaps for final batched
 observations. Keep their distinct definitions, key identities and replay stops.
 Use saved evidence for that review before another implementation or local run.
+
+The [dependency and column-swap conversion](BETA7_DEPENDENCY_SWAP_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+is now complete. Both cases passed in one forward MyISAM fixture. They keep
+all eight live restarts and both replay stop/resume checks. Client calls fell
+from 488 to 162 across the two cases. The matrix is unchanged.

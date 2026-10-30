@@ -9,6 +9,14 @@ work; their next-step notes are historical.
 
 Current progress:
 
+- Current table/column/index conversion work is locally complete: 20
+  compatibility cases use final observations, and the MODIFY pilot uses shared
+  preparation, observations and binlog checks. See the
+  [completion review](BETA7_TABLE_COLUMN_INDEX_COMPLETION.md). Full-matrix
+  validation remains. Slice 3 has started: the RANGE/exchange and HASH/KEY/LIST
+  workflows pass one focused fixture. Next: review partition forms, subpartitions
+  and computed bounds.
+
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
 - Step 2: generated-column and FULLTEXT migrations pass focused local checks.
@@ -1338,6 +1346,31 @@ local phase conversion used 121 calls; this conversion uses 64. The three migrat
 assertions, two live restarts and replay stop after transaction three remain.
 Cleanup, saved-schema restart and coverage export passed. The matrix is unchanged.
 
-Next: review generated-column dependencies and column swaps for final batched
-observations. Use saved measurements and map their definitions, key identities
-and restart/replay boundaries before implementation. Keep the full suite for CI.
+The [dependency and column-swap conversion](BETA7_DEPENDENCY_SWAP_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed in one forward MyISAM fixture. Each case uses five body batches and keeps
+four live restarts. All 98 named assertions, both offline replay stop/resume
+checks, saved-schema restart and cleanup passed. Client calls fell from 273 to
+80 for dependencies and from 215 to 82 for swaps. Case times were 46.51s and
+44.74s. The matrix is unchanged.
+
+The [column-key conversions](BETA7_COLUMN_KEY_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed in one forward MyISAM fixture. All 78 named assertions, five live restarts,
+both replay stop/resume checks and the exact original AUTO_INCREMENT context
+check passed. Client calls fell from 351 to 132. The combined coverage comparison
+found three old-only source-rate sampling lines and one new queue-wait line;
+no DDL lines were lost. The matrix, saved-schema restart and cleanup passed.
+
+The [completion review](BETA7_TABLE_COLUMN_INDEX_COMPLETION.md) confirms all 21
+current table/column/index cases use the shared workflow approach. Local slices
+are complete; whole-group timing and full-matrix validation remain for CI.
+
+The [partition pilot](BETA7_TABLE_COLUMN_INDEX_COMPLETION.md#partition-pilot-implementation-and-focused-results)
+passed in one forward MyISAM fixture. Both cases use one body batch. All 41
+named assertions, saved-schema restart, completed-DDL checks and cleanup passed.
+Client calls fell from 282 in saved CI to 65 locally. The InnoDB native reference,
+MyISAM target, case selections and matrix remain unchanged.
+
+Next: review partition HASH/KEY forms, subpartitions and computed partition
+bounds. Map their routing, metadata and existing restart/replay checks before
+implementation. Use saved results. Do not rebalance jobs or select the final PR
+list yet. Keep the full suite for CI.
