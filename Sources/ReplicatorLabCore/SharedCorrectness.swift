@@ -740,7 +740,9 @@ public enum SharedCorrectness {
                                 saved,
                                 "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_array_length(schema_json,'$.partitions[0].subpartitions')=2"
                             ) == "1", "saved schema lost subpartitions")
-                        try replayDDLWorkflow("subpartitions", stopAfter: 3, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "subpartitions", stopAfter: 3, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-partition-column-bounds" {
                         try replayDDLWorkflow("partition-column-bounds", stopAfter: 3, from: begin, to: end)
@@ -984,7 +986,9 @@ public enum SharedCorrectness {
                                 saved,
                                 "SELECT COUNT(*) FROM schemas WHERE json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t' AND json_extract(schema_json,'$.partitions[0].description')='739982'"
                             ) != "0", "saved schema lost the evaluated partition bound")
-                        try replayDDLWorkflow("partition-expressions", stopAfter: 3, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "partition-expressions", stopAfter: 3, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-partition-exchange-unchecked" {
                         try require(

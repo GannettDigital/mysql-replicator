@@ -153,6 +153,21 @@ Run both cases in one fixture:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-generated-dependencies --case ddl-compat-column-swaps --coverage"
 ```
 
+`ddl-compat-partition-hash-forms`, `ddl-compat-subpartitions` and
+`ddl-compat-partition-expressions` use three, four and four source batches.
+Separate tables retain earlier partition definitions and rows. Final queries
+check evaluated bounds, tuple routing, subpartition names and methods, and both
+sides of EXCHANGE. The full comparison checks all retained schemas and rows.
+The cases keep two, three and three live restarts. Subpartition and expression
+replay each stop after transaction three, resume, and repeat the final checks.
+The original source transaction boundaries remain unchanged.
+
+Run the three cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partition-hash-forms --case ddl-compat-subpartitions --case ddl-compat-partition-expressions --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.

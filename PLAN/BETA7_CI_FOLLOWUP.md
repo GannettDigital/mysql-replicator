@@ -386,7 +386,13 @@ named assertions, saved-schema restart, completed-DDL checks and cleanup passed.
 Client calls fell from 282 in saved CI to 65 locally. The InnoDB native reference,
 MyISAM target, case selections and matrix remain unchanged.
 
-Next: review partition HASH/KEY forms, subpartitions and computed partition
-bounds. Map their routing, metadata and existing restart/replay checks before
-implementation. Use saved results. Do not rebalance jobs or select the final PR
-list yet. Keep the full suite for CI.
+The [partition forms conversion](BETA7_PARTITION_FORMS_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed all three cases in one forward MyISAM/default/SQL fixture. It keeps the
+15 original predicates, eight live restarts and both offline replay paths.
+All 136 named assertions, saved-schema restart and cleanup passed. Harness SQL
+client calls fell from 638 in saved CI to 195 locally. The matrix is unchanged.
+
+Next: review partition column renames and column bounds with saved SQL,
+assertions and timings. Map their rename syntax, row routing, encoded bounds
+and restart/replay checks before implementation. Keep full-matrix validation
+for CI. Do not rebalance jobs or select the final PR list yet.
