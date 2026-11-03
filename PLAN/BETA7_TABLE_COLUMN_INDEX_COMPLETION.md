@@ -268,5 +268,15 @@ The original SQL, predicates and matrix remain intact.
 The [partition completion audit](BETA7_PARTITION_ADMINISTRATION_REVIEW.md#partition-area-local-completion-audit)
 confirms all 11 cases use final observations, with 34 body batches and 23 live
 restarts. Local partition conversion work is complete. Full-matrix validation
-and whole-group timing remain for CI. Next: review stored-object workflows with
-saved SQL, assertions and timings. Keep final job balancing and PR selection later.
+and whole-group timing remain for CI.
+
+The [stored-object pilot](BETA7_STORED_OBJECT_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
+passed both views/routines cases in one forward MyISAM/default/SQL fixture.
+All 23 named assertions, original absence checks, compound-body checks,
+saved-schema restart and cleanup passed. Client calls fell from 222 in saved CI
+to 78 locally. The eight original predicates and matrix remain intact.
+
+Next: review `ddl-compat-stored-objects`, including routine ALTER, view CHECK
+OPTION, exact journal SQL and its restart/replay checks. Then continue view
+renames, conditional routines and absent definers. Keep full-matrix validation,
+final group balancing and PR selection for later.

@@ -202,6 +202,20 @@ Run all three cases in one fixture:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partition-key-algorithm --case ddl-compat-partition-exchange-unchecked --case ddl-compat-partition-maintenance --coverage"
 ```
 
+`ddl-compat-views` and `ddl-compat-routines` each use one source batch.
+Retained views and routines live in separate databases. This preserves the
+original checks that DROP leaves no views or routines in `ddlcompat`. Final
+queries check each retained view result, function output and routine security.
+Empty retained tables confirm that CREATE did not execute procedure bodies.
+The original CALL checks the procedure's row effect. Compound BEGIN/END bodies
+remain in one source operation. Cleanup drops only the retained databases.
+
+Run both cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-views --case ddl-compat-routines --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.

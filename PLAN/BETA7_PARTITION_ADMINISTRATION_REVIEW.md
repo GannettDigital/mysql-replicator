@@ -293,6 +293,15 @@ The local measurements used different runs and code revisions. Keep the later
 full instrumented CI run for group timing, profile validation and job balancing.
 Choose the final short PR selection after that analysis.
 
-Next: review stored-object workflows with saved SQL, assertions and timings.
-Then continue character sets/collations, data types and row-key/index operations
-in the overall consolidation plan.
+The [stored-object pilot](BETA7_STORED_OBJECT_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
+passed both views/routines cases in one forward MyISAM/default/SQL fixture.
+All 23 named assertions, original absence checks, compound-body checks,
+saved-schema restart and cleanup passed. Client calls fell from 222 in saved CI
+to 78 locally. The eight original predicates and matrix remain intact.
+
+Next: review `ddl-compat-stored-objects`, including routine ALTER, view CHECK
+OPTION, exact journal SQL and its restart/replay checks. Then continue view
+renames, conditional routines and absent definers. Keep full-matrix validation,
+final group balancing and PR selection for later.
+Continue character sets/collations, data types and row-key/index operations in
+the overall consolidation plan after these group reviews.
