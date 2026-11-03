@@ -250,6 +250,9 @@ and cleanup passed. SQL trace calls fell from 359 in saved CI to 188 locally.
 The [temporary-table conversion and group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 passed both focused fixtures. All 43 named assertions passed, including 5.7
 cleanup and exact replay positions. SQL calls fell from 438 in saved CI to 173
-locally. All 11 group cases now use final observations. Next: review character
-sets and collations. Full-matrix validation, final balancing and short PR test
-selection remain later.
+locally. All 11 group cases now use final observations. The
+[first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
+passed its focused forward pair with 26 named assertions. SQL calls fell from
+335 in saved CI to 111 locally. Next: review `charset-conversion` intermediate
+states. Full-matrix validation, final balancing and short PR selection remain
+later.

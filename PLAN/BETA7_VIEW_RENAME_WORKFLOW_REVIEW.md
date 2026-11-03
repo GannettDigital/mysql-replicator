@@ -280,6 +280,13 @@ Source counts remain observed: the 12-operation SELECT workflow produced 17
 transactions on 5.7. Exact replay offsets passed. SQL trace calls fell from 438
 in saved CI to 173 locally. The permanent CTAS contract is unchanged. The
 [group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#stored-object-group-local-completion-audit)
-finds all 11 cases converted with the same profile selections. Next: review
-character sets and collations. Keep full-matrix validation and final balancing
-later.
+finds all 11 cases converted with the same profile selections.
+
+The [first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
+passed table defaults and compound CONVERT/default clauses together on forward
+MyISAM. All 26 named assertions, seven original predicates, four restarts,
+exact GTIDs/offsets, saved-schema restart and cleanup passed. SQL trace calls fell
+from 335 in saved CI to 111 locally. Matrix and profile selections remain.
+Next: review full `charset-conversion` states and assertions, then DEFAULT session
+context and encoded SQL. Keep DML inventories, full-matrix validation and final
+balancing later.

@@ -235,8 +235,9 @@ The [absent definer conversion](BETA7_ABSENT_DEFINER_WORKFLOW_REVIEW.md#implemen
 passed its focused forward MyISAM/default/SQL fixture. All 38 assertions passed,
 including both error stages, replay stop four/resume 13, saved-schema restart
 and cleanup. SQL trace calls fell from 177 in saved CI to 111 locally. Next:
-review character sets and collations. The
-[temporary-table conversion and group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+review `charset-conversion` after the
+[first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
+passed its forward pair with 26 named assertions and 111 SQL calls. The [temporary-table conversion and group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 passed both focused fixtures and found all 11 group cases converted. The
 [executable-comment conversion](BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 passed both focused fixtures: 39 named assertions, four restarts and all three

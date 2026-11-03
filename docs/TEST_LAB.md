@@ -1690,6 +1690,30 @@ cleanup. Profile exclusions and all eight applicable CI selections remain.
 See [the conversion results](../PLAN/BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results).
 
 
+### Table character set and collation workflows
+
+`ddl-compat-table-charset` uses three source batches. Retained tables keep the
+column collations and row bytes from before later ALTER and DELETE statements.
+It checks both orders of ADD COLUMN and table-default clauses, existing column
+encodings, LIKE inheritance and inserted defaults.
+
+`ddl-compat-compound-charset` also uses three batches. It checks that CONVERT
+uses its own collation while a later table default applies to a following ADD
+COLUMN. A retained table keeps the earlier two-column metadata available.
+
+The pair keeps four deliberate restarts and all seven original query checks.
+Cleanup removes only the retained tables. These cases use ordinary compatible
+collations; they do not enable a translation policy. The DEFAULT-syntax,
+encoded-query and full-conversion cases remain separate selections.
+
+Run the pair in one forward fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-table-charset --case ddl-compat-compound-charset --coverage"
+```
+
+See [the character-set workflow results](../PLAN/BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results).
+
 ### Temporary-table cases
 
 `ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT

@@ -2,8 +2,7 @@ import Foundation
 
 extension DDLCompatibilityCases {
     static let compoundCharset = Case(
-        "compound-charset",
-        "CONVERT collation stays separate from a later table default; DEFAULT inherits database encoding",
+        "compound-charset", "Column character set conversion: compound CONVERT and table defaults",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,v VARCHAR(20) DEFAULT 'café') DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
@@ -11,25 +10,44 @@ extension DDLCompatibilityCases {
             .init("INSERT INTO ddlcompat.t(id) VALUES(1)"),
             .init(
                 "ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, DEFAULT COLLATE utf8mb4_general_ci, ADD n VARCHAR(20) DEFAULT 'new'",
-                [
-                    .init(
-                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
-                        "utf8mb4_general_ci"),
-                    .init(
-                        "SELECT COLUMN_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLLATION_NAME IS NOT NULL ORDER BY ORDINAL_POSITION",
-                        "v\tutf8mb4_bin\nn\tutf8mb4_bin"),
-                ]),
-            .init(
-                "ALTER TABLE ddlcompat.t ADD follows VARCHAR(20) DEFAULT 'later'",
-                [
-                    .init(
-                        "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='follows'",
-                        "utf8mb4_general_ci")
-                ], restartBefore: true),
-            .init("INSERT INTO ddlcompat.t(id) VALUES(2)"),
+                phaseEnd: "convert-and-set-table-default"),
+            .init("ALTER TABLE ddlcompat.t ADD follows VARCHAR(20) DEFAULT 'later'", restartBefore: true),
+            .init("INSERT INTO ddlcompat.t(id) VALUES(2)", phaseEnd: "add-inheriting-column-and-insert"),
             .init("UPDATE ddlcompat.t SET v='été',n='café' WHERE id=1", restartBefore: true),
             .init("DELETE FROM ddlcompat.t WHERE id=2"),
-        ])
+            .init(
+                "CREATE TABLE ddlcompat.cc_after_convert(id INT PRIMARY KEY,v VARCHAR(20) DEFAULT 'café') DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("INSERT INTO ddlcompat.cc_after_convert(id) VALUES(1)"),
+            .init(
+                "ALTER TABLE ddlcompat.cc_after_convert CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, DEFAULT COLLATE utf8mb4_general_ci, ADD n VARCHAR(20) DEFAULT 'new'",
+                phaseEnd: "update-delete-and-retain-conversion"),
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "table-default-after-convert",
+                    check: .init(
+                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
+                        "utf8mb4_general_ci")),
+                .init(
+                    id: "converted-column-collations",
+                    check: .init(
+                        "SELECT COLUMN_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cc_after_convert' AND COLLATION_NAME IS NOT NULL ORDER BY ORDINAL_POSITION",
+                        "v\tutf8mb4_bin\nn\tutf8mb4_bin")),
+                .init(
+                    id: "later-column-inherits-default",
+                    check: .init(
+                        "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='follows'",
+                        "utf8mb4_general_ci")),
+                .init(
+                    id: "final-row-bytes",
+                    check: .init(
+                        "SELECT id,HEX(v),HEX(n),HEX(follows) FROM ddlcompat.t ORDER BY id",
+                        "1\tC3A974C3A9\t636166C3A9\t6C61746572")),
+            ], databases: ["ddlcompat"],
+            cleanup: ["DROP TABLE ddlcompat.cc_after_convert"]
+        ))
     static let charsetDefaults = Case(
         "charset-defaults", "5.7 DEFAULT encoding forms retain database inheritance on both target versions",
         [
@@ -71,7 +89,7 @@ extension DDLCompatibilityCases {
         ],
         profileExclusions: [.forward: "MySQL 8.4 source rejects DEFAULT as a charset or collation name (error 1064)."])
     static let tableCharset = Case(
-        "table-charset", "Table defaults affect new columns in either ALTER order, without converting existing columns",
+        "table-charset", "Table character set and collation: defaults, new columns and CREATE TABLE ... LIKE",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,v VARCHAR(20) DEFAULT 'café') DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
@@ -79,31 +97,75 @@ extension DDLCompatibilityCases {
             .init("INSERT INTO ddlcompat.t VALUES(1,'café')"),
             .init(
                 "ALTER TABLE ddlcompat.t ADD next_v VARCHAR(20) DEFAULT 'new', DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_bin",
-                [
-                    .init(
-                        "SELECT COLUMN_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLLATION_NAME IS NOT NULL ORDER BY ORDINAL_POSITION",
-                        "v\tlatin1_bin\nnext_v\tutf8mb4_bin"),
-                    .init("SELECT HEX(v),HEX(next_v) FROM ddlcompat.t", "636166E9\t6E6577"),
-                ]),
+                phaseEnd: "add-column-before-table-default"),
             .init(
                 "ALTER TABLE ddlcompat.t DEFAULT CHARSET=latin1 COLLATE=latin1_bin, ADD last_v VARCHAR(20) DEFAULT 'fin'",
                 restartBefore: true),
-            .init(
-                "UPDATE ddlcompat.t SET v='été',next_v='été',last_v='été' WHERE id=1",
-                [
-                    .init("SELECT HEX(v),HEX(next_v),HEX(last_v) FROM ddlcompat.t", "E974E9\tC3A974C3A9\tE974E9")
-                ]),
+            .init("UPDATE ddlcompat.t SET v='été',next_v='été',last_v='été' WHERE id=1"),
             .init("ALTER TABLE ddlcompat.t COLLATE=latin1_swedish_ci"),
-            .init(
-                "CREATE TABLE ddlcompat.copy LIKE ddlcompat.t",
-                [
-                    .init(
-                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='copy'",
-                        "latin1_swedish_ci")
-                ]),
+            .init("CREATE TABLE ddlcompat.copy LIKE ddlcompat.t", phaseEnd: "table-default-before-column-and-like"),
             .init("INSERT INTO ddlcompat.copy(id) VALUES(2)", restartBefore: true),
             .init("DELETE FROM ddlcompat.t WHERE id=1"),
-        ])
+            .init(
+                "CREATE TABLE ddlcompat.tc_after_default(id INT PRIMARY KEY,v VARCHAR(20) DEFAULT 'café') DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("INSERT INTO ddlcompat.tc_after_default VALUES(1,'café')"),
+            .init(
+                "ALTER TABLE ddlcompat.tc_after_default ADD next_v VARCHAR(20) DEFAULT 'new', DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_bin"
+            ),
+            .init(
+                "CREATE TABLE ddlcompat.tc_after_update(id INT PRIMARY KEY,v VARCHAR(20) DEFAULT 'café') DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("INSERT INTO ddlcompat.tc_after_update VALUES(1,'café')"),
+            .init(
+                "ALTER TABLE ddlcompat.tc_after_update ADD next_v VARCHAR(20) DEFAULT 'new', DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_bin"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.tc_after_update DEFAULT CHARSET=latin1 COLLATE=latin1_bin, ADD last_v VARCHAR(20) DEFAULT 'fin'"
+            ),
+            .init(
+                "UPDATE ddlcompat.tc_after_update SET v='été',next_v='été',last_v='été' WHERE id=1",
+                phaseEnd: "insert-copy-delete-and-retain-results"),
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "added-column-collations",
+                    check: .init(
+                        "SELECT COLUMN_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='tc_after_default' AND COLLATION_NAME IS NOT NULL ORDER BY ORDINAL_POSITION",
+                        "v\tlatin1_bin\nnext_v\tutf8mb4_bin")),
+                .init(
+                    id: "added-column-row-bytes",
+                    check: .init("SELECT HEX(v),HEX(next_v) FROM ddlcompat.tc_after_default", "636166E9\t6E6577")),
+                .init(
+                    id: "updated-row-bytes",
+                    check: .init(
+                        "SELECT HEX(v),HEX(next_v),HEX(last_v) FROM ddlcompat.tc_after_update",
+                        "E974E9\tC3A974C3A9\tE974E9")),
+                .init(
+                    id: "like-table-collation",
+                    check: .init(
+                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='copy'",
+                        "latin1_swedish_ci")),
+                .init(
+                    id: "final-table-collation",
+                    check: .init(
+                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
+                        "latin1_swedish_ci")),
+                .init(
+                    id: "final-column-collations",
+                    check: .init(
+                        "SELECT COLUMN_NAME,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLLATION_NAME IS NOT NULL ORDER BY ORDINAL_POSITION",
+                        "v\tlatin1_bin\nnext_v\tutf8mb4_bin\nlast_v\tlatin1_bin")),
+                .init(id: "deleted-original-row", check: .init("SELECT COUNT(*) FROM ddlcompat.t", "0")),
+                .init(
+                    id: "like-default-row",
+                    check: .init(
+                        "SELECT id,HEX(v),HEX(next_v),HEX(last_v) FROM ddlcompat.copy ORDER BY id",
+                        "2\t636166E9\t6E6577\t66696E")),
+            ], databases: ["ddlcompat"],
+            cleanup: ["DROP TABLE ddlcompat.tc_after_default,ddlcompat.tc_after_update"]
+        ))
     static let charsetConversion = Case(
         "charset-conversion",
         "Native charset conversion widens TEXT and preserves defaults, labels, binary bytes and restart",

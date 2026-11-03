@@ -322,7 +322,10 @@ or profile/variant CI run. Do not sum times from separate local fixtures and
 present them as a measured whole-group time. Evidence:
 `artifacts/temporary-table-workflow-review/group-completion.json`.
 
-Next: review character-set and collation workflows against the saved SQL,
-assertions, line sets and timings. Continue the remaining type/value and key/index
-reviews in the overall plan. Keep full-matrix validation, final balancing and
-selection of short PR tests for the later measured CI comparison.
+The [first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
+passed its forward pair: all 26 named assertions, seven old predicates, four
+restarts, exact checkpoints, saved-schema restart and cleanup. SQL calls fell
+from 335 in saved CI to 111 locally. Next: review `charset-conversion`, then
+DEFAULT session context and encoded SQL. Keep native inventory, ENUM/SET,
+type/value and key/index reviews, full-matrix validation, final balancing and
+short PR test selection in the overall plan.
