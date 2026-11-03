@@ -758,7 +758,9 @@ public enum SharedCorrectness {
                                 saved,
                                 "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql=target_sql AND (source_sql LIKE 'ALTER PROCEDURE ddlcompat.p%' OR source_sql LIKE 'ALTER FUNCTION ddlcompat.f%' OR source_sql LIKE 'DROP VIEW IF EXISTS ddlcompat.v,%')"
                             ) == "3", "stored object journal lost the original SQL")
-                        try replayDDLWorkflow("stored-objects", stopAfter: 4, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "stored-objects", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-foreign-key-ddl" {
                         try require(

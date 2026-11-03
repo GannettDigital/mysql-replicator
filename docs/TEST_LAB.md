@@ -216,6 +216,21 @@ Run both cases in one fixture:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-views --case ddl-compat-routines --coverage"
 ```
 
+`ddl-compat-stored-objects` uses four source batches. It retains routine ALTER
+characteristics and LOCAL/CASCADED view metadata in `stored_alter_results`.
+The original operations remain first, including multi-view DROP, routine DROP
+and DELETE. Final checks preserve all earlier values and the original absence
+queries in `ddlcompat`. Three live restarts remain. Offline replay stops after
+transaction four, resumes, and repeats the final checks. The journal still
+requires the three original DDL records to preserve their SQL. Cleanup drops
+only the retained database.
+
+Run this case alone:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-stored-objects --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.

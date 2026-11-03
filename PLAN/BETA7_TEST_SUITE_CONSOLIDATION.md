@@ -23,8 +23,10 @@ Current progress:
   confirms all 11 partition cases now use final observations. Local conversion
   work is complete; full-matrix validation remains. The
   [stored-object pilot](BETA7_STORED_OBJECT_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
-  passed views and routines in one fixture. Next: review the routine ALTER and
-  view CHECK OPTION case before continuing the larger stored-object workflows.
+  passed views and routines in one fixture. The
+  [stored-object ALTER conversion](BETA7_STORED_OBJECT_ALTER_REVIEW.md#implementation-and-focused-results)
+  also passed its focused case, including replay and journal checks. Next:
+  review view rename chains.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1408,7 +1410,13 @@ All 23 named assertions, original absence checks, compound-body checks,
 saved-schema restart and cleanup passed. Client calls fell from 222 in saved CI
 to 78 locally. The eight original predicates and matrix remain intact.
 
-Next: review `ddl-compat-stored-objects`, including routine ALTER, view CHECK
-OPTION, exact journal SQL and its restart/replay checks. Then continue view
-renames, conditional routines and absent definers. Keep full-matrix validation,
-final group balancing and PR selection for later.
+The [stored-object ALTER conversion](BETA7_STORED_OBJECT_ALTER_REVIEW.md#implementation-and-focused-results)
+passed its focused forward MyISAM/default/SQL fixture. All 52 named assertions,
+three restarts, replay stop four/resume 79, the three original journal records,
+saved-schema restart and cleanup passed. Client calls fell from 263 in saved CI
+to 86 locally. The 11 original predicates and matrix remain intact.
+
+Next: review view rename chains with saved SQL, assertions and timings. Preserve
+error 1450, view-transition records, row-schema-cache exclusions and replay
+metadata/results. Then continue conditional routines and absent definers. Keep
+full-matrix validation, final balancing and PR selection for later.

@@ -242,8 +242,13 @@ Evidence:
 - `artifacts/stored-object-workflow-review/matrix-comparison.json`
 - `artifacts/stored-object-workflow-review/unit.log`
 
-Next: review `ddl-compat-stored-objects` for batched routine ALTER and view CHECK
-OPTION workflows. Keep its 11 predicates, three restarts, replay stop after
-transaction four and exact original journal check. Plan retained objects and
-cleanup before implementation. Then continue view renames, conditional routines
-and absent definers. Leave full-matrix validation and final balancing for CI.
+The [stored-object ALTER conversion](BETA7_STORED_OBJECT_ALTER_REVIEW.md#implementation-and-focused-results)
+passed its focused forward MyISAM/default/SQL fixture. All 52 named assertions,
+three restarts, replay stop four/resume 79, the three original journal records,
+saved-schema restart and cleanup passed. Client calls fell from 263 in saved CI
+to 86 locally. The 11 original predicates and matrix remain intact.
+
+Next: review view rename chains with saved SQL, assertions and timings. Preserve
+error 1450, view-transition records, row-schema-cache exclusions and replay
+metadata/results. Then continue conditional routines and absent definers. Keep
+full-matrix validation, final balancing and PR selection for later.
