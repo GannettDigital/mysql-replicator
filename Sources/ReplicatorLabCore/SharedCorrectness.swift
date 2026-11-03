@@ -365,9 +365,8 @@ public enum SharedCorrectness {
                 snapshot["tables"] = try actualTables.components(separatedBy: "\n").map { line in
                     var fields = line.components(separatedBy: "\t")
                     if fields.count >= 4 && fields[1] == "BASE TABLE" {
-                        let explicitTemporaryClone =
-                            !f.profile.transactionalTarget && role == .source && database == "ddlcompat"
-                            && fields[0] == "cloned"
+                        let explicitTemporaryClone = TemporaryTableWorkflowEvidence.explicitMyISAMClone(
+                            profile: f.profile, role: role, database: database, table: fields[0])
                         let expected =
                             explicitTemporaryClone
                             ? "MyISAM" : role == .native && nativeInnoDB ? "InnoDB" : f.profile.engine(role)
@@ -550,23 +549,19 @@ public enum SharedCorrectness {
                         try final.validate(phases ?? [])
                     }
                     if phases != nil {
-                        _ = try sourcePhase(
-                            test.test.id + "-setup",
-                            writes: [
-                                .init(id: "drop-database", sql: "DROP DATABASE IF EXISTS ddlcompat"),
-                                .init(
-                                    id: "create-database",
-                                    sql: "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
-                            ], database: "ddlcompat")
+                        var setupWrites: [LabSQLPhase.Write] = [
+                            .init(id: "drop-database", sql: "DROP DATABASE IF EXISTS ddlcompat"),
+                            .init(
+                                id: "create-database",
+                                sql: "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+                        ]
+                        setupWrites += TemporaryTableWorkflowEvidence.additionalSetup(test.test.id)
+                        _ = try sourcePhase(test.test.id + "-setup", writes: setupWrites, database: "ddlcompat")
                     } else {
                         try step("DROP DATABASE IF EXISTS ddlcompat", database: "ddlcompat")
                         try step(
                             "CREATE DATABASE ddlcompat CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "ddlcompat"
                         )
-                    }
-                    if test.test.id == "ddl-compat-temporary" {
-                        try step("CREATE TABLE ddlcompat.tmp(id INT PRIMARY KEY,n INT)", database: "ddlcompat")
-                        try step("INSERT INTO ddlcompat.tmp VALUES(99,99)", database: "ddlcompat")
                     }
                     let before = try applier.latestProgress() ?? [:]
                     let begin = try f.boundary()
@@ -751,8 +746,16 @@ public enum SharedCorrectness {
                             "partition-column-bounds", stopAfter: 3, from: begin, to: end,
                             finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
+                    if test.test.id == "ddl-compat-temporary" && f.profile.sourceVersion == .mysql57 {
+                        try assertion("temporary-cleanup-audit", caseID: test.test.id) {
+                            try TemporaryTableWorkflowEvidence.cleanupObservation(
+                                state(saved, TemporaryTableWorkflowEvidence.cleanupSQL))
+                        }
+                    }
                     if test.test.id == "ddl-compat-temporary-create-select" {
-                        try replayDDLWorkflow("temporary-create-select", stopAfter: 3, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "temporary-create-select", stopAfter: 3, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-stored-objects" {
                         try require(

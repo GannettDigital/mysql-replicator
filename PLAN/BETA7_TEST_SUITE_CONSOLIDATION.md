@@ -34,7 +34,9 @@ Current progress:
   also passed its focused case, including both error stages and replay.
   The [executable-comment conversion](BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
   also passed its two focused fixtures, including source/target version rules.
-  Next: review temporary-table workflows.
+  The [temporary-table conversion and group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+  also passed both focused fixtures. All 11 stored-object group cases now use
+  final observations. Next: review character sets and collations.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1453,6 +1455,15 @@ MyISAM, source-version on reverse InnoDB. All 39 named assertions, four restarts
 three replay paths, original journal records, role-specific comments,
 saved-schema restarts and cleanup passed. SQL trace calls fell from 359 in saved
 CI to 188 locally. Original predicates, comment bytes and profile selections
-remain. Next: review temporary-table workflows. Preserve session behavior,
-source logging, permanent-table name resolution and filters. Keep full-matrix
-validation and final balancing later.
+remain.
+
+The [temporary-table conversion](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed both focused fixtures: 43 named assertions, retained row checks, engine
+variants, permanent `tmp` rows, 5.7 cleanup audit, restart/replay and cleanup.
+Source counts remain observed: the 12-operation SELECT workflow produced 17
+transactions on 5.7. Exact replay offsets passed. SQL trace calls fell from 438
+in saved CI to 173 locally. The permanent CTAS contract is unchanged. The
+[group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#stored-object-group-local-completion-audit)
+finds all 11 cases converted with the same profile selections. Next: review
+character sets and collations. Keep full-matrix validation and final balancing
+later.

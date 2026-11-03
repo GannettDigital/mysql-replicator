@@ -1,31 +1,5 @@
 import Foundation
 
-extension DDLCompatibilityCases {
-    static let temporaryCreateSelect = Case(
-        "temporary-create-select",
-        "Temporary CTAS logs permanent row effects; restart and offline replay preserve them",
-        [
-            .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)"),
-            .init("INSERT INTO ddlcompat.t VALUES(1,10),(2,20)"),
-            .init(
-                "USE ddlcompat; CREATE TEMPORARY TABLE tmp (PRIMARY KEY(id)) SELECT * FROM t; UPDATE tmp SET n=n+1; INSERT INTO t SELECT id+10,n FROM tmp; DROP TEMPORARY TABLE tmp",
-                [
-                    .init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t10\n2\t20\n11\t11\n12\t21"),
-                    .init(
-                        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='tmp'",
-                        "0"),
-                ]),
-            .init(
-                "USE ddlcompat; CREATE TEMPORARY TABLE tmp SELECT * FROM t WHERE 0; INSERT INTO tmp VALUES(99,99); UPDATE t JOIN tmp ON t.id=tmp.id-98 SET t.n=tmp.n; DROP TEMPORARY TABLE tmp",
-                [
-                    .init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t99\n2\t20\n11\t11\n12\t21")
-                ], restartBefore: true),
-            .init(
-                "DELETE FROM ddlcompat.t WHERE id=2",
-                [.init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t99\n11\t11\n12\t21")]),
-        ])
-}
-
 extension SharedCorrectness.Run {
     func createSelectContract() throws {
         guard selects("create-select-contract") else { return }

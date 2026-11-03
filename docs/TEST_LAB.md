@@ -1690,6 +1690,36 @@ cleanup. Profile exclusions and all eight applicable CI selections remain.
 See [the conversion results](../PLAN/BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results).
 
 
+### Temporary-table cases
+
+`ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT
+rows, an empty LIKE clone, a following clone INSERT and the permanent `tmp` row
+which the temporary table hides. Its setup batch creates that permanent table
+before the body checkpoint interval. The template uses explicit MyISAM for
+MyISAM target profiles and explicit InnoDB for InnoDB target profiles.
+
+`ddl-compat-temporary-create-select` uses two body batches. Retained tables keep
+the INSERT ... SELECT and UPDATE JOIN results until final comparison. The case
+keeps its restart and replay stop after transaction three. Final queries run
+again after replay. Each temporary CREATE/use/DROP script stays in one request.
+
+On 5.7, source scripts can log extra temporary-table cleanup transactions.
+The lab compares actual source GTID counts and file offsets. It also checks the
+recorded cleanup skips and the permanent `tmp` row. An INFORMATION_SCHEMA.TABLES
+query cannot by itself establish temporary-table lifetime; the explicit DROP
+and successful name reuse in one session supply separate checks.
+
+Run both cases together, with one fixture per profile:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-temporary --case ddl-compat-temporary-create-select --coverage"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case ddl-compat-temporary --case ddl-compat-temporary-create-select --coverage"
+```
+
+Cleanup drops only the retained tables. The separate `create-select-contract`
+case still tests native permanent CREATE TABLE ... SELECT restrictions. See
+[the temporary-table results](../PLAN/BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results).
+
 ### Measure schema discovery with target network delay
 
 `benchmark --mode discovery` runs a local applier against disposable MySQL

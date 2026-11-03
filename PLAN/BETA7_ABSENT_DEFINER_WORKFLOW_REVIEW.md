@@ -247,6 +247,9 @@ The [executable-comment conversion](BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#
 passed both focused fixtures. All 39 named assertions, four restarts, three replay
 paths, original journal checks, role-specific comments, saved-schema restarts
 and cleanup passed. SQL trace calls fell from 359 in saved CI to 188 locally.
-Next: review temporary-table workflows. Preserve session behavior, source
-logging, permanent-table name resolution and filters. Keep full-matrix validation,
-final balancing and selection of short PR tests for the later CI comparison.
+The [temporary-table conversion and group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed both focused fixtures. All 43 named assertions passed, including 5.7
+cleanup and exact replay positions. SQL calls fell from 438 in saved CI to 173
+locally. All 11 group cases now use final observations. Next: review character
+sets and collations. Full-matrix validation, final balancing and short PR test
+selection remain later.

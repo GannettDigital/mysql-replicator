@@ -287,7 +287,9 @@ Evidence:
 - `artifacts/executable-comment-workflow-review/matrix-comparison.json`
 - `artifacts/executable-comment-workflow-review/unit.log`
 
-Next: review temporary-table workflows. Preserve session behavior, source
-logging rules, permanent-table name resolution, filters, restart and replay
-conditions. Keep full-matrix validation, final balancing and selection of short
-PR tests for the later CI comparison.
+The [temporary-table conversion and group audit](BETA7_TEMPORARY_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed both focused fixtures: 43 named assertions, 5.7 cleanup, engine variants,
+exact replay checkpoints, saved-schema restarts and cleanup. SQL calls fell from
+438 in saved CI to 173 locally. All 11 group cases now use final observations.
+Next: review character sets and collations. Full-matrix validation, final
+balancing and selection of short PR tests remain later.
