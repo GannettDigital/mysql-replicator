@@ -262,7 +262,14 @@ Evidence:
 - `artifacts/partition-forms-workflow-review/matrix-comparison.json`
 - `artifacts/partition-forms-workflow-review/unit.log`
 
-Next: review partition column renames and column bounds using saved SQL,
-assertions and timings. Map their distinct rename syntax, row routing, encoded
-bounds and restart/replay checks before implementation. Keep the full matrix
-for CI. Do not rebalance jobs or select the final short PR list yet.
+The [partition rename/bounds conversion](BETA7_PARTITION_RENAME_BOUNDS_REVIEW.md#implementation-and-focused-results)
+passed all three cases in one forward MyISAM/default/SQL fixture. All 120 named
+assertions, eight live restarts, three replay stop/resume checks, saved-schema
+restart and cleanup passed. Harness SQL client calls fell from 649 in saved CI
+to 242 locally. The original SQL, byte predicates and matrix remain intact.
+
+Next: review KEY algorithms, unchecked exchange and partition maintenance with
+saved SQL, assertions and timings. Map algorithm metadata, row placement,
+restart/replay checks and zero-transaction operations before implementation.
+Keep full-matrix validation for CI. Do not rebalance jobs or select the final
+short PR list yet.

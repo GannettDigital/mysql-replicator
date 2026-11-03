@@ -253,7 +253,14 @@ passed all three cases in one forward MyISAM/default/SQL fixture. It keeps the
 All 136 named assertions, saved-schema restart and cleanup passed. Harness SQL
 client calls fell from 638 in saved CI to 195 locally. The matrix is unchanged.
 
-Next: review partition column renames and column bounds with saved SQL,
-assertions and timings. Map their rename syntax, row routing, encoded bounds
-and restart/replay checks before implementation. Keep full-matrix validation
-for CI. Do not rebalance jobs or select the final PR list yet.
+The [partition rename/bounds conversion](BETA7_PARTITION_RENAME_BOUNDS_REVIEW.md#implementation-and-focused-results)
+passed all three cases in one forward MyISAM/default/SQL fixture. All 120 named
+assertions, eight live restarts, three replay stop/resume checks, saved-schema
+restart and cleanup passed. Harness SQL client calls fell from 649 in saved CI
+to 242 locally. The original SQL, byte predicates and matrix remain intact.
+
+Next: review KEY algorithms, unchecked exchange and partition maintenance with
+saved SQL, assertions and timings. Map algorithm metadata, row placement,
+restart/replay checks and zero-transaction operations before implementation.
+Keep full-matrix validation for CI. Do not rebalance jobs or select the final
+short PR list yet.

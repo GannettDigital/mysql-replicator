@@ -745,7 +745,9 @@ public enum SharedCorrectness {
                             finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-partition-column-bounds" {
-                        try replayDDLWorkflow("partition-column-bounds", stopAfter: 3, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "partition-column-bounds", stopAfter: 3, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-temporary-create-select" {
                         try replayDDLWorkflow("temporary-create-select", stopAfter: 3, from: begin, to: end)
@@ -834,7 +836,9 @@ public enum SharedCorrectness {
                     if ["ddl-compat-partition-column-renames", "ddl-compat-partition-rename-syntax"].contains(
                         test.test.id)
                     {
-                        try replayDDLWorkflow(test.test.id, stopAfter: 5, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            test.test.id, stopAfter: 5, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-absent-definers" {
                         try verifyAbsentDefinerErrors()

@@ -168,6 +168,23 @@ Run the three cases in one fixture:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partition-hash-forms --case ddl-compat-subpartitions --case ddl-compat-partition-expressions --coverage"
 ```
 
+`ddl-compat-partition-column-renames`, `ddl-compat-partition-rename-syntax`
+and `ddl-compat-partition-column-bounds` use five, three and three source batches.
+Retained tables preserve column swaps, partition replacement/removal and binary
+bounds before later changes or DROP. Final checks compare partition references,
+row placement and exact byte values. The bounds case retains its connection
+character-set override and the session reset before the next operation.
+
+The cases keep four, two and two live restarts. Offline replay stops after
+transactions five, five and three, then resumes and repeats the final checks.
+RENAME COLUMN keeps its exclusions for MySQL 5.7 sources.
+
+Run all three cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partition-column-renames --case ddl-compat-partition-rename-syntax --case ddl-compat-partition-column-bounds --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.
