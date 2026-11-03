@@ -998,9 +998,11 @@ public enum SharedCorrectness {
                         try require(
                             state(
                                 saved,
-                                "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE status='DONE' AND source_sql LIKE '%EXCHANGE PARTITION%WITHOUT VALIDATION' AND target_sql=source_sql AND json_array_length(transitions_json)=2"
+                                "SELECT COUNT(*) FROM ddl_intents JOIN ddl_details USING(gtid) WHERE status='DONE' AND source_sql='ALTER TABLE ddlcompat.t EXCHANGE PARTITION p WITH TABLE ddlcompat.stage WITHOUT VALIDATION' AND target_sql=source_sql AND json_array_length(transitions_json)=2"
                             ) == "3", "EXCHANGE lost its SQL or one table transition")
-                        try replayDDLWorkflow("partition-exchange", stopAfter: 5, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "partition-exchange", stopAfter: 5, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-partition-key-algorithm" {
                         try require(
@@ -1013,7 +1015,14 @@ public enum SharedCorrectness {
                                 saved,
                                 "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='sub' AND json_extract(schema_json,'$.partitions[0].subpartitions[0].keyAlgorithm')=1"
                             ) == "1", "saved schema lost the subpartition KEY algorithm")
-                        try replayDDLWorkflow("partition-key", stopAfter: 3, from: begin, to: end)
+                        try require(
+                            state(
+                                saved,
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='ka_algorithm_two' AND json_extract(schema_json,'$.partitions[0].method')='KEY' AND COALESCE(json_extract(schema_json,'$.partitions[0].keyAlgorithm'),2)=2"
+                            ) == "1", "saved schema lost KEY algorithm 2")
+                        try replayDDLWorkflow(
+                            "partition-key", stopAfter: 3, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-database" {
                         try require(

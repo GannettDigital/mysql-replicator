@@ -137,9 +137,9 @@ extension DDLCompatibilityCases {
         ))
 
     static let partitionExchangeUnchecked = Case(
-        "partition-exchange-unchecked",
-        "Unchecked exchange preserves native misplaced rows; exchange back, DML, restart and offline replay",
+        "partition-exchange-unchecked", "EXCHANGE PARTITION WITHOUT VALIDATION: misplaced rows and exchange back",
         [
+            // Preserve the original source operations before independent retained histories.
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
             ),
@@ -148,22 +148,197 @@ extension DDLCompatibilityCases {
             .init("INSERT INTO ddlcompat.stage VALUES(20,200)"),
             .init(
                 "ALTER TABLE ddlcompat.t EXCHANGE PARTITION p WITH TABLE ddlcompat.stage WITHOUT VALIDATION",
-                [
-                    .init("SELECT id,n FROM ddlcompat.t PARTITION(p)", "20\t200"),
-                    .init("SELECT COUNT(*) FROM ddlcompat.t WHERE id=20", "0"),
-                    .init("SELECT id FROM ddlcompat.stage", "1"),
-                ]),
+                phaseEnd: "create-seed-and-exchange"),
             .init(
                 "ALTER TABLE ddlcompat.t EXCHANGE PARTITION p WITH TABLE ddlcompat.stage WITHOUT VALIDATION",
-                [.init("SELECT id FROM ddlcompat.t ORDER BY id", "1\n11")], restartBefore: true),
+                restartBefore: true),
             .init("DELETE FROM ddlcompat.stage WHERE id=20"),
             .init("INSERT INTO ddlcompat.stage VALUES(2,20)"),
-            .init("ALTER TABLE ddlcompat.t EXCHANGE PARTITION p WITH TABLE ddlcompat.stage WITHOUT VALIDATION"),
             .init(
-                "UPDATE ddlcompat.t SET n=21 WHERE id=2",
-                [.init("SELECT id,n FROM ddlcompat.t ORDER BY id", "2\t21\n11\t110")], restartBefore: true),
+                "ALTER TABLE ddlcompat.t EXCHANGE PARTITION p WITH TABLE ddlcompat.stage WITHOUT VALIDATION",
+                phaseEnd: "restore-and-exchange"),
+            .init("UPDATE ddlcompat.t SET n=21 WHERE id=2", restartBefore: true),
             .init("DELETE FROM ddlcompat.stage WHERE id=1"),
             .init("INSERT INTO ddlcompat.t VALUES(3,30)"),
-            .init("ALTER TABLE ddlcompat.t TRUNCATE PARTITION p", [.init("SELECT id,n FROM ddlcompat.t", "11\t110")]),
-        ], nativeInnoDB: true)
+            .init("ALTER TABLE ddlcompat.t TRUNCATE PARTITION p"),
+            .init(
+                "CREATE TABLE ddlcompat.ex_seed(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_seed_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_seed VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_seed_stage VALUES(20,200)"),
+            .init(
+                "CREATE TABLE ddlcompat.ex_misplaced(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_misplaced_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_misplaced VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_misplaced_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_misplaced EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_misplaced_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "CREATE TABLE ddlcompat.ex_restored(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_restored_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_restored VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_restored_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_restored EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_restored_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_restored EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_restored_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "CREATE TABLE ddlcompat.ex_stage_empty(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_stage_empty_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_stage_empty VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_stage_empty_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_empty EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_empty_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_empty EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_empty_stage WITHOUT VALIDATION"
+            ),
+            .init("DELETE FROM ddlcompat.ex_stage_empty_stage WHERE id=20"),
+            .init(
+                "CREATE TABLE ddlcompat.ex_stage_seeded(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_stage_seeded_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_stage_seeded VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_stage_seeded_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_seeded EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_seeded_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_seeded EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_seeded_stage WITHOUT VALIDATION"
+            ),
+            .init("DELETE FROM ddlcompat.ex_stage_seeded_stage WHERE id=20"),
+            .init("INSERT INTO ddlcompat.ex_stage_seeded_stage VALUES(2,20)"),
+            .init(
+                "CREATE TABLE ddlcompat.ex_exchanged(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_exchanged_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_exchanged VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_exchanged_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_exchanged EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_exchanged_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_exchanged EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_exchanged_stage WITHOUT VALIDATION"
+            ),
+            .init("DELETE FROM ddlcompat.ex_exchanged_stage WHERE id=20"),
+            .init("INSERT INTO ddlcompat.ex_exchanged_stage VALUES(2,20)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_exchanged EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_exchanged_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "CREATE TABLE ddlcompat.ex_updated(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_updated_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_updated VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_updated_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_updated EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_updated_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_updated EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_updated_stage WITHOUT VALIDATION"
+            ),
+            .init("DELETE FROM ddlcompat.ex_updated_stage WHERE id=20"),
+            .init("INSERT INTO ddlcompat.ex_updated_stage VALUES(2,20)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_updated EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_updated_stage WITHOUT VALIDATION"
+            ),
+            .init("UPDATE ddlcompat.ex_updated SET n=21 WHERE id=2"),
+            .init(
+                "CREATE TABLE ddlcompat.ex_stage_deleted(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_stage_deleted_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_stage_deleted VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_stage_deleted_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_deleted EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_deleted_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_deleted EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_deleted_stage WITHOUT VALIDATION"
+            ),
+            .init("DELETE FROM ddlcompat.ex_stage_deleted_stage WHERE id=20"),
+            .init("INSERT INTO ddlcompat.ex_stage_deleted_stage VALUES(2,20)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_stage_deleted EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_stage_deleted_stage WITHOUT VALIDATION"
+            ),
+            .init("UPDATE ddlcompat.ex_stage_deleted SET n=21 WHERE id=2"),
+            .init("DELETE FROM ddlcompat.ex_stage_deleted_stage WHERE id=1"),
+            .init(
+                "CREATE TABLE ddlcompat.ex_inserted(id INT PRIMARY KEY,n INT) PARTITION BY RANGE(id)(PARTITION p VALUES LESS THAN(10),PARTITION q VALUES LESS THAN MAXVALUE)"
+            ),
+            .init("CREATE TABLE ddlcompat.ex_inserted_stage(id INT PRIMARY KEY,n INT)"),
+            .init("INSERT INTO ddlcompat.ex_inserted VALUES(1,10),(11,110)"),
+            .init("INSERT INTO ddlcompat.ex_inserted_stage VALUES(20,200)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_inserted EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_inserted_stage WITHOUT VALIDATION"
+            ),
+            .init(
+                "ALTER TABLE ddlcompat.ex_inserted EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_inserted_stage WITHOUT VALIDATION"
+            ),
+            .init("DELETE FROM ddlcompat.ex_inserted_stage WHERE id=20"),
+            .init("INSERT INTO ddlcompat.ex_inserted_stage VALUES(2,20)"),
+            .init(
+                "ALTER TABLE ddlcompat.ex_inserted EXCHANGE PARTITION p WITH TABLE ddlcompat.ex_inserted_stage WITHOUT VALIDATION"
+            ),
+            .init("UPDATE ddlcompat.ex_inserted SET n=21 WHERE id=2"),
+            .init("DELETE FROM ddlcompat.ex_inserted_stage WHERE id=1"),
+            .init("INSERT INTO ddlcompat.ex_inserted VALUES(3,30)", phaseEnd: "update-and-retain-results"),
+        ], nativeInnoDB: true,
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "misplaced-partition-row",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_misplaced PARTITION(p)", "20\t200")),
+                .init(
+                    id: "misplaced-row-pruned",
+                    check: .init("SELECT COUNT(*) FROM ddlcompat.ex_misplaced WHERE id=20", "0")),
+                .init(id: "misplaced-stage-row", check: .init("SELECT id FROM ddlcompat.ex_misplaced_stage", "1")),
+                .init(
+                    id: "exchange-back-rows", check: .init("SELECT id FROM ddlcompat.ex_restored ORDER BY id", "1\n11")),
+                .init(
+                    id: "updated-rows",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_updated ORDER BY id", "2\t21\n11\t110")),
+                .init(id: "truncated-final-rows", check: .init("SELECT id,n FROM ddlcompat.t", "11\t110")),
+                .init(
+                    id: "seed-main", check: .init("SELECT id,n FROM ddlcompat.ex_seed ORDER BY id", "1\t10\n11\t110")),
+                .init(
+                    id: "seed-stage", check: .init("SELECT id,n FROM ddlcompat.ex_seed_stage ORDER BY id", "20\t200")),
+                .init(
+                    id: "restored-stage",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_restored_stage ORDER BY id", "20\t200")),
+                .init(
+                    id: "stage-before-insert-empty",
+                    check: .init("SELECT COUNT(*) FROM ddlcompat.ex_stage_empty_stage", "0")),
+                .init(
+                    id: "stage-exchange-input",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_stage_seeded_stage ORDER BY id", "2\t20")),
+                .init(
+                    id: "exchanged-partition",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_exchanged PARTITION(p) ORDER BY id", "2\t20")),
+                .init(
+                    id: "exchanged-stage",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_exchanged_stage ORDER BY id", "1\t10")),
+                .init(
+                    id: "stage-after-update",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_updated_stage ORDER BY id", "1\t10")),
+                .init(
+                    id: "stage-after-delete-empty",
+                    check: .init("SELECT COUNT(*) FROM ddlcompat.ex_stage_deleted_stage", "0")),
+                .init(
+                    id: "before-truncate",
+                    check: .init("SELECT id,n FROM ddlcompat.ex_inserted ORDER BY id", "2\t21\n3\t30\n11\t110")),
+                .init(id: "final-partition-empty", check: .init("SELECT COUNT(*) FROM ddlcompat.t PARTITION(p)", "0")),
+                .init(id: "final-stage-empty", check: .init("SELECT COUNT(*) FROM ddlcompat.stage", "0")),
+            ], databases: ["ddlcompat"],
+            cleanup: [
+                "DROP TABLE ddlcompat.ex_seed,ddlcompat.ex_seed_stage,ddlcompat.ex_misplaced,ddlcompat.ex_misplaced_stage,ddlcompat.ex_restored,ddlcompat.ex_restored_stage,ddlcompat.ex_stage_empty,ddlcompat.ex_stage_empty_stage,ddlcompat.ex_stage_seeded,ddlcompat.ex_stage_seeded_stage,ddlcompat.ex_exchanged,ddlcompat.ex_exchanged_stage,ddlcompat.ex_updated,ddlcompat.ex_updated_stage,ddlcompat.ex_stage_deleted,ddlcompat.ex_stage_deleted_stage,ddlcompat.ex_inserted,ddlcompat.ex_inserted_stage"
+            ]
+        ))
+
 }

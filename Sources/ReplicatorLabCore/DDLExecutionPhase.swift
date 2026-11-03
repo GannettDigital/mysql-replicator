@@ -41,6 +41,20 @@ struct DDLExecutionPhase {
         }
     }
 
+    /// CHECK and LOCAL statements must leave both GTIDs and file offsets unchanged.
+    func validateUnlogged(_ results: [LabSQLPhase.Result]) throws -> Int {
+        try require(results.count == steps.count, "DDL phase result count differs: " + id)
+        var checked = 0
+        for (step, result) in zip(steps, results) where step.transactions == 0 {
+            try require(
+                result.gtids.isEmpty && result.start.gtids == result.end.gtids
+                    && result.start.file == result.end.file && result.start.position == result.end.position,
+                "unlogged source operation changed the binlog: " + result.write.id)
+            checked += 1
+        }
+        return checked
+    }
+
     var checks: [DDLCompatibilityCases.Check] { steps.last!.checks }
     var queries: [LabSQLBatch.Query] {
         checks.enumerated().map { index, check in
@@ -79,8 +93,9 @@ extension SharedCorrectness.Run {
                 let writes = try sourcePhase(
                     test.test.id + "-" + phase.id,
                     writes: phase.writes(transactional: f.profile.transactionalTarget), database: "ddlcompat")
+                let unlogged = try phase.validateUnlogged(writes)
                 if test.finalObservations != nil {
-                    return ["writes": writes.map(\.json)]
+                    return ["writes": writes.map(\.json), "unloggedOperations": unlogged]
                 }
                 var observations: [String: Any] = [:]
                 for role in LabProfile.Role.allCases {

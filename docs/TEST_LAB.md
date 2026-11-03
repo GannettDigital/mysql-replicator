@@ -185,6 +185,23 @@ Run all three cases in one fixture:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partition-column-renames --case ddl-compat-partition-rename-syntax --case ddl-compat-partition-column-bounds --coverage"
 ```
 
+`ddl-compat-partition-key-algorithm`, `ddl-compat-partition-exchange-unchecked`
+and `ddl-compat-partition-maintenance` use four, three and three source batches.
+Retained tables preserve KEY algorithms, misplaced rows after unchecked EXCHANGE,
+and rows after each maintenance operation. The cases keep three, two and two
+live restarts. KEY and EXCHANGE replay stop after transactions three and five,
+then resume and repeat the final checks.
+
+The maintenance case has 44 source operations and 39 transactions. Its five
+unlogged CHECK/LOCAL operations must leave GTIDs and file offsets unchanged.
+The body assertion records how many unlogged operations it checked.
+
+Run all three cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-partition-key-algorithm --case ddl-compat-partition-exchange-unchecked --case ddl-compat-partition-maintenance --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.

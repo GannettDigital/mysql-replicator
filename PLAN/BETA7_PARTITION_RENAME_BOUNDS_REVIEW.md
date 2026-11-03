@@ -275,8 +275,14 @@ Evidence:
 - `artifacts/partition-rename-bounds-review/matrix-comparison.json`
 - `artifacts/partition-rename-bounds-review/unit.log`
 
-Next: review KEY algorithms, unchecked exchange and partition maintenance with
-saved SQL, assertions and timings. Map their algorithm metadata, row placement,
-restart/replay checks and zero-transaction operations before implementation.
-Keep full-matrix validation for CI. Do not rebalance jobs or select the final
-short PR list yet.
+The [partition administration conversion](BETA7_PARTITION_ADMINISTRATION_REVIEW.md#implementation-and-focused-results)
+passed all three cases across two focused forward MyISAM/default/SQL fixtures.
+All 105 named assertions, seven restarts, both replay paths and five unlogged
+boundary checks passed. Client calls fell from 591 in saved CI to 185 locally.
+The original SQL, predicates and matrix remain intact.
+
+The [partition completion audit](BETA7_PARTITION_ADMINISTRATION_REVIEW.md#partition-area-local-completion-audit)
+confirms all 11 cases use final observations, with 34 body batches and 23 live
+restarts. Local partition conversion work is complete. Full-matrix validation
+and whole-group timing remain for CI. Next: review stored-object workflows with
+saved SQL, assertions and timings. Keep final job balancing and PR selection later.
