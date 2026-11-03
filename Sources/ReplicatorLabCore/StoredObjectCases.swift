@@ -1,53 +1,6 @@
 import Foundation
 
 extension DDLCompatibilityCases {
-    static let viewRenames = Case(
-        "view-renames", "View and table rename chains retain definitions, journal, restart and replay",
-        [
-            .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,n INT)"),
-            .init("INSERT INTO ddlcompat.t VALUES(1,10)"),
-            .init("CREATE TABLE ddlcompat.aux(id INT PRIMARY KEY,n INT)"),
-            .init("INSERT INTO ddlcompat.aux VALUES(2,20)"),
-            .init(
-                "CREATE ALGORITHM=MERGE DEFINER='root'@'localhost' SQL SECURITY INVOKER VIEW ddlcompat.v AS SELECT id,n FROM ddlcompat.t WHERE n>0 WITH LOCAL CHECK OPTION"
-            ),
-            .init(
-                "CREATE DEFINER='root'@'localhost' SQL SECURITY DEFINER VIEW ddlcompat.v2 AS SELECT id,n+1 AS n FROM ddlcompat.t"
-            ),
-            .init(
-                "RENAME TABLE ddlcompat.v TO ddlcompat.renamed",
-                [
-                    .init("SELECT * FROM ddlcompat.renamed", "1\t10"),
-                    .init(
-                        "SELECT DEFINER,SECURITY_TYPE,CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='renamed'",
-                        "root@localhost\tINVOKER\tLOCAL"),
-                ], restartBefore: true),
-            .init(
-                "RENAME TABLE ddlcompat.renamed TO ddlcompat.tmp,ddlcompat.v2 TO ddlcompat.renamed,ddlcompat.tmp TO ddlcompat.v2",
-                [
-                    .init("SELECT * FROM ddlcompat.renamed", "1\t11"), .init("SELECT * FROM ddlcompat.v2", "1\t10"),
-                ]),
-            .init(
-                "RENAME TABLE ddlcompat.aux TO ddlcompat.tmp,ddlcompat.v2 TO ddlcompat.aux,ddlcompat.tmp TO ddlcompat.v2",
-                [
-                    .init("SELECT * FROM ddlcompat.aux", "1\t10"), .init("SELECT * FROM ddlcompat.v2", "2\t20"),
-                ], restartBefore: true),
-            .init("UPDATE ddlcompat.v2 SET n=21 WHERE id=2", [.init("SELECT * FROM ddlcompat.v2", "2\t21")]),
-            .init(
-                "INSERT INTO ddlcompat.aux VALUES(3,30)",
-                [.init("SELECT * FROM ddlcompat.t ORDER BY id", "1\t10\n3\t30")]),
-            .init(
-                "RENAME TABLE ddlcompat.v2 TO ddlcompat.moved,ddlcompat.aux TO ddlcompat.final_view",
-                [
-                    .init("SELECT * FROM ddlcompat.final_view ORDER BY id", "1\t10\n3\t30"),
-                    .init(
-                        "SELECT DEFINER,SECURITY_TYPE,CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='final_view'",
-                        "root@localhost\tINVOKER\tLOCAL"),
-                ]),
-            .init(
-                "DELETE FROM ddlcompat.moved WHERE id=2", [.init("SELECT COUNT(*) FROM ddlcompat.moved", "0")],
-                restartBefore: true),
-        ])
     static let conditionalRoutines = Case(
         "conditional-routines",
         "Conditional routine creation preserves existing bodies, records no-ops and supports replay",

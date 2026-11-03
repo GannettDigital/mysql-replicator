@@ -291,7 +291,14 @@ three restarts, replay stop four/resume 79, the three original journal records,
 saved-schema restart and cleanup passed. Client calls fell from 263 in saved CI
 to 86 locally. The 11 original predicates and matrix remain intact.
 
-Next: review view rename chains with saved SQL, assertions and timings. Preserve
-error 1450, view-transition records, row-schema-cache exclusions and replay
-metadata/results. Then continue conditional routines and absent definers. Keep
-full-matrix validation, final balancing and PR selection for later.
+The [view rename conversion](BETA7_VIEW_RENAME_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its focused forward MyISAM/default/SQL fixture. All 50 named assertions,
+three restarts, replay stop seven/resume 77, four original journal records,
+view/base-table cache checks, error 1450 checks, saved-schema restart and cleanup
+passed. Client calls fell from 251 in saved CI to 97 locally. The 11 original
+predicates and matrix remain intact.
+
+Next: review conditional routine creation with saved SQL, assertions and timings.
+Preserve existing bodies/metadata, no-op and compatibility records, source-version
+exclusions and restart/replay checks. Then review absent definers. Keep full-matrix
+validation, final balancing and PR selection for later.

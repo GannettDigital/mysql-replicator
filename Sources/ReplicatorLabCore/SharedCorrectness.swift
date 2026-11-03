@@ -926,13 +926,23 @@ public enum SharedCorrectness {
                         try require(
                             state(
                                 saved,
-                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_array_length(context_json,'$.viewTransitions')>0"
+                                ViewRenameWorkflowEvidence.originalJournalSQL
                             ) == "4", "view rename journal lost metadata")
                         try require(
                             state(
                                 saved,
                                 "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('final_view','renamed')"
                             ) == "0", "view entered the row-schema cache")
+                        try require(
+                            state(saved, ViewRenameWorkflowEvidence.cacheSQL(ViewRenameWorkflowEvidence.retainedViews))
+                                == "0",
+                            "retained view entered the row-schema cache")
+                        try require(
+                            state(
+                                saved,
+                                ViewRenameWorkflowEvidence.cacheSQL(ViewRenameWorkflowEvidence.retainedBaseTables))
+                                == "14",
+                            "retained base-table identity was lost")
                         let rejectedSQL = "RENAME TABLE ddlcompat.final_view TO mysql.moved_view"
                         var rejections: [String: String] = [:]
                         for role: LabProfile.Role in [.source, .native, .target] {
@@ -953,7 +963,9 @@ public enum SharedCorrectness {
                             rejections[f.profile.service(role)] = message
                         }
                         try writeJSON(rejections, to: f.output.appendingPathComponent("view-rename-rejections.json"))
-                        try replayDDLWorkflow("view-renames", stopAfter: 7, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "view-renames", stopAfter: 7, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                         let metadata =
                             "SELECT TABLE_NAME,DEFINER,SECURITY_TYPE,CHECK_OPTION FROM information_schema.VIEWS WHERE TABLE_SCHEMA='ddlcompat' ORDER BY TABLE_NAME"
                         try require(

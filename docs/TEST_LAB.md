@@ -231,6 +231,23 @@ Run this case alone:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-stored-objects --coverage"
 ```
 
+`ddl-compat-view-renames` uses four source batches. Retained histories in
+`view_rename_results` keep complete view/view and table/view rename chains,
+including the temporary alias inside each multi-pair RENAME. Final queries check
+row values, object types and view security. Current view identities must stay
+out of the row-schema cache; renamed base-table identities must remain in it.
+
+The case keeps three live restarts, error 1450 checks on source/native/target,
+and an offline replay stop after transaction seven. Replay repeats the final
+checks. The original journal count still selects four original RENAME statements.
+Cleanup drops only the retained database.
+
+Run this case alone:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-view-renames --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.
