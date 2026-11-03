@@ -231,5 +231,9 @@ Evidence:
 - `artifacts/conditional-routine-workflow-review/matrix-comparison.json`
 - `artifacts/conditional-routine-workflow-review/unit.log`
 
-Next: review absent definers. Preserve ERROR 1449 checks and unchanged GTIDs
-and file offsets before and after replay. Full-matrix validation remains later.
+The [absent definer conversion](BETA7_ABSENT_DEFINER_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its focused forward MyISAM/default/SQL fixture. All 38 assertions passed,
+including both error stages, replay stop four/resume 13, saved-schema restart
+and cleanup. SQL trace calls fell from 177 in saved CI to 111 locally. Next:
+review executable-comment workflows, then temporary tables. Full-matrix
+validation remains later.

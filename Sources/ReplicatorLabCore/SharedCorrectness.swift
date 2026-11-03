@@ -844,9 +844,11 @@ public enum SharedCorrectness {
                             finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-absent-definers" {
-                        try verifyAbsentDefinerErrors()
-                        try replayDDLWorkflow("absent-definers", stopAfter: 4, from: begin, to: end)
-                        try verifyAbsentDefinerErrors()
+                        try verifyAbsentDefinerErrors(.beforeReplay, caseID: test.test.id)
+                        try replayDDLWorkflow(
+                            "absent-definers", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
+                        try verifyAbsentDefinerErrors(.afterReplay, caseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-primary-key-parts" {
                         try replayDDLWorkflow("primary-key-parts", stopAfter: 4, from: begin, to: end)

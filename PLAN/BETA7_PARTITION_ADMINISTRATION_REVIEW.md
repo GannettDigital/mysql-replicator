@@ -318,8 +318,16 @@ two live restarts, replay stop four/resume 50, original journal counts five/two,
 saved-schema restart and cleanup passed. Captured source GTIDs select the original
 journal records because MySQL changes stored routine SQL formatting. Client calls
 fell from 186 in saved CI to 79 locally. All six original predicates and the matrix
-remain intact. Next: review absent definers. Preserve ERROR 1449 checks and
-unchanged GTIDs/offsets before and after replay. Keep full-matrix validation and
-final balancing later.
+remain intact.
+
+The [absent definer conversion](BETA7_ABSENT_DEFINER_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its focused forward MyISAM/default/SQL fixture. All 38 named assertions,
+two restarts, replay stop four/resume 13 and twelve ERROR 1449 checks passed.
+Each error left GTIDs/offsets unchanged. Both error stages have separate evidence.
+Saved-schema restart and cleanup passed. SQL trace calls fell from 177 in saved
+CI to 111 locally; both totals include the twelve expected failures. All four
+original predicates and the matrix remain. Next: review executable-comment
+workflows, then temporary tables. Keep full-matrix validation and final balancing
+later.
 Continue character sets/collations, data types and row-key/index operations in
 the overall consolidation plan after these group reviews.

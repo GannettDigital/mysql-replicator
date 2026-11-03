@@ -266,6 +266,23 @@ Run this case alone:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-conditional-routines --coverage"
 ```
 
+`ddl-compat-absent-definers` uses three source batches. One retained history
+keeps the INVOKER view's initial rows and the INVOKER function result available
+for final queries. The original function changes to DEFINER security, and the
+original view reads the updated rows.
+
+The case keeps two live restarts and replay stop after transaction four. It
+checks ERROR 1449 for the original DEFINER view and function on source, native
+and target, before and after replay. Each failed query must leave GTIDs and
+binlog offsets unchanged. Twelve named assertions and separate text files
+preserve both error stages. Cleanup drops only `absent_definer_results`.
+
+Run this case alone:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-absent-definers --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.
