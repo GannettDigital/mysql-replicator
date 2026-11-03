@@ -683,36 +683,37 @@ public enum SharedCorrectness {
                             test.test.id, stopAfter: 2, from: begin, to: end, stopGTIDs: uuid + ":green:1")
                     }
                     if test.test.id.hasPrefix("ddl-compat-executable-comments") {
-                        if test.test.id != "ddl-compat-executable-comments-source-gate" {
-                            try require(
-                                state(
-                                    saved,
-                                    "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/*!%ALTER%' AND source_sql=target_sql AND context_json LIKE '%target-version-executable-comments%' AND status='DONE'"
-                                ) != "0", "executable comments were not preserved in the completed DDL journal")
-                        } else {
-                            try require(
-                                state(
-                                    saved,
-                                    "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE source_sql LIKE '%/* 80000%' AND source_sql=target_sql AND status='DONE'"
-                                ) == "1", "source-disabled comment changed in transit")
+                        try assertion("original-comment-journal", caseID: test.test.id) {
+                            let query = try ExecutableCommentWorkflowEvidence.journalSQL(
+                                test.test.id, writes: phaseWrites)
+                            var observation = try ExecutableCommentWorkflowEvidence.journalObservation(
+                                state(saved, query), caseID: test.test.id)
+                            observation["query"] = query
+                            observation["gtid"] = try ExecutableCommentWorkflowEvidence.originalGTID(
+                                test.test.id, writes: phaseWrites)
+                            return observation
                         }
                         if test.test.id == "ddl-compat-executable-comments-target-gate" {
-                            for role in LabProfile.Role.allCases {
-                                let expected = role == .target ? "" : "source-only"
-                                try require(
-                                    f.sql(
-                                        role,
-                                        "SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'"
-                                    ) == expected, "native target version gate differs")
+                            try assertion("target-version-table-comment", caseID: test.test.id) {
+                                try Dictionary(
+                                    uniqueKeysWithValues: LabProfile.Role.allCases.map { role in
+                                        (
+                                            role.rawValue,
+                                            try ExecutableCommentWorkflowEvidence.tableComment(
+                                                f.sql(role, ExecutableCommentWorkflowEvidence.tableCommentSQL),
+                                                role: role)
+                                        )
+                                    })
                             }
                         }
-                        try replayDDLWorkflow(test.test.id, stopAfter: 2, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            test.test.id, stopAfter: 2, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                         if test.test.id == "ddl-compat-executable-comments-target-gate" {
-                            try require(
-                                f.sql(
-                                    .target,
-                                    "SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'"
-                                ) == "", "replay enabled an inactive target comment")
+                            try assertion("replay-target-version-table-comment", caseID: test.test.id) {
+                                try ExecutableCommentWorkflowEvidence.tableComment(
+                                    f.sql(.target, ExecutableCommentWorkflowEvidence.tableCommentSQL), role: .target)
+                            }
                         }
                     }
                     if test.test.id == "ddl-compat-ignored-checks" {

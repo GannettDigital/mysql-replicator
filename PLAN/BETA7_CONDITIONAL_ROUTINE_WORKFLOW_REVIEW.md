@@ -235,5 +235,8 @@ The [absent definer conversion](BETA7_ABSENT_DEFINER_WORKFLOW_REVIEW.md#implemen
 passed its focused forward MyISAM/default/SQL fixture. All 38 assertions passed,
 including both error stages, replay stop four/resume 13, saved-schema restart
 and cleanup. SQL trace calls fell from 177 in saved CI to 111 locally. Next:
-review executable-comment workflows, then temporary tables. Full-matrix
+review temporary-table workflows. The
+[executable-comment conversion](BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed both focused fixtures: 39 named assertions, four restarts and all three
+replay paths. SQL trace calls fell from 359 in saved CI to 188 locally. Full-matrix
 validation remains later.

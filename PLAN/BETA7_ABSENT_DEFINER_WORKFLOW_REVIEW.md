@@ -243,6 +243,10 @@ Evidence:
 - `artifacts/absent-definer-workflow-review/matrix-comparison.json`
 - `artifacts/absent-definer-workflow-review/unit.log`
 
-Next: review executable-comment workflows, then temporary tables. Preserve
-version rules, session behavior and expected errors. Keep full-matrix validation,
+The [executable-comment conversion](BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed both focused fixtures. All 39 named assertions, four restarts, three replay
+paths, original journal checks, role-specific comments, saved-schema restarts
+and cleanup passed. SQL trace calls fell from 359 in saved CI to 188 locally.
+Next: review temporary-table workflows. Preserve session behavior, source
+logging, permanent-table name resolution and filters. Keep full-matrix validation,
 final balancing and selection of short PR tests for the later CI comparison.

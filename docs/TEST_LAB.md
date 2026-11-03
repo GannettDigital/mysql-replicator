@@ -1670,6 +1670,26 @@ by a 5.7 source. The latter includes the 8.4 target. The tests compare the saved
 source and target SQL and check native gate outcomes. See
 [the implementation contract](../PLAN/EXECUTABLE_COMMENTS.md).
 
+The main case uses three source batches and retains its earlier UPDATE result
+in `executable_comment_results`. The two version-specific cases each use two
+batches. All four original restart points remain. Replay stops after transaction
+two in each case, then resumes through 13, 4 and 4 operations respectively.
+Final queries run again after replay. Journal checks use the original source
+GTIDs and require unchanged logged SQL. Named checks record the different
+TABLE_COMMENT values on source/native 8.4 and target 5.7.
+
+Run the forward pair in one fixture, and the source-version case on reverse:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-executable-comments --case ddl-compat-executable-comments-target-gate --coverage"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case ddl-compat-executable-comments-source-gate --coverage"
+```
+
+The forward pair shares containers. Only the main case needs retained-database
+cleanup. Profile exclusions and all eight applicable CI selections remain.
+See [the conversion results](../PLAN/BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results).
+
+
 ### Measure schema discovery with target network delay
 
 `benchmark --mode discovery` runs a local applier against disposable MySQL

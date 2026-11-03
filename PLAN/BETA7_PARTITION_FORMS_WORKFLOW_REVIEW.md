@@ -312,6 +312,14 @@ two restarts, replay stop four/resume 13 and twelve ERROR 1449 checks passed.
 Each error left GTIDs/offsets unchanged. Both error stages have separate evidence.
 Saved-schema restart and cleanup passed. SQL trace calls fell from 177 in saved
 CI to 111 locally; both totals include the twelve expected failures. All four
-original predicates and the matrix remain. Next: review executable-comment
-workflows, then temporary tables. Keep full-matrix validation and final balancing
-later.
+original predicates and the matrix remain.
+
+The [executable-comment conversion](BETA7_EXECUTABLE_COMMENT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its two focused default/SQL fixtures: main/target-version on forward
+MyISAM, source-version on reverse InnoDB. All 39 named assertions, four restarts,
+three replay paths, original journal records, role-specific comments,
+saved-schema restarts and cleanup passed. SQL trace calls fell from 359 in saved
+CI to 188 locally. Original predicates, comment bytes and profile selections
+remain. Next: review temporary-table workflows. Preserve session behavior,
+source logging, permanent-table name resolution and filters. Keep full-matrix
+validation and final balancing later.
