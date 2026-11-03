@@ -248,6 +248,24 @@ Run this case alone:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-view-renames --coverage"
 ```
 
+`ddl-compat-conditional-routines` uses three source batches. Retained histories
+in `conditional_routine_results` preserve ignored replacement attempts, procedure
+DROP and recreation, and row effects from the old and new procedure bodies.
+Final queries read metadata and function results; they do not CALL procedures.
+
+The case keeps two live restarts and replay stop after transaction four, the
+first CREATE skipped on the target. That operation still counts as a source
+transaction. The journal checks use captured source GTIDs to select the original
+five compatibility records and two skipped statements. Replay repeats final
+observations. Cleanup drops
+only the retained database. The three 5.7-source exclusions remain.
+
+Run this case alone:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-conditional-routines --coverage"
+```
+
 `ddl-compat-generated-expressions` uses three source batches and final checks on
 retained tables. It keeps values from before NULL inputs change. Its two live
 restarts and offline replay stop/resume check remain.

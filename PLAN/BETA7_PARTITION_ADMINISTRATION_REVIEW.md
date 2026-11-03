@@ -312,9 +312,14 @@ view/base-table cache checks, error 1450 checks, saved-schema restart and cleanu
 passed. Client calls fell from 251 in saved CI to 97 locally. The 11 original
 predicates and matrix remain intact.
 
-Next: review conditional routine creation with saved SQL, assertions and timings.
-Preserve existing bodies/metadata, no-op and compatibility records, source-version
-exclusions and restart/replay checks. Then review absent definers. Keep full-matrix
-validation, final balancing and PR selection for later.
+The [conditional routine conversion](BETA7_CONDITIONAL_ROUTINE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its focused forward MyISAM/default/SQL fixture. All 38 named assertions,
+two live restarts, replay stop four/resume 50, original journal counts five/two,
+saved-schema restart and cleanup passed. Captured source GTIDs select the original
+journal records because MySQL changes stored routine SQL formatting. Client calls
+fell from 186 in saved CI to 79 locally. All six original predicates and the matrix
+remain intact. Next: review absent definers. Preserve ERROR 1449 checks and
+unchanged GTIDs/offsets before and after replay. Keep full-matrix validation and
+final balancing later.
 Continue character sets/collations, data types and row-key/index operations in
 the overall consolidation plan after these group reviews.

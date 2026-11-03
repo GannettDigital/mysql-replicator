@@ -570,8 +570,9 @@ public enum SharedCorrectness {
                     }
                     let before = try applier.latestProgress() ?? [:]
                     let begin = try f.boundary()
+                    var phaseWrites: [LabSQLPhase.Result] = []
                     if let phases {
-                        try ddlPhases(phases, test: test)
+                        phaseWrites = try ddlPhases(phases, test: test)
                     } else {
                         for item in test.steps {
                             if item.restartBefore {
@@ -978,14 +979,16 @@ public enum SharedCorrectness {
                         try require(
                             state(
                                 saved,
-                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_extract(context_json,'$.nativeCompatibilityRules[0]')='mysql57-routine-create-if-not-exists'"
+                                ConditionalRoutineWorkflowEvidence.compatibilitySQL(phaseWrites)
                             ) == "5", "conditional routine rule was not journaled")
                         try require(
                             state(
                                 saved,
-                                "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND source_sql LIKE '%IF NOT EXISTS%' AND target_sql=''"
+                                ConditionalRoutineWorkflowEvidence.skippedSQL(phaseWrites)
                             ) == "2", "conditional routine no-op count differs")
-                        try replayDDLWorkflow("conditional-routines", stopAfter: 4, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "conditional-routines", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                         try require(
                             f.sql(.target, "SELECT ddlcompat.f(7)") == "8", "replay replaced the existing function")
                         try require(

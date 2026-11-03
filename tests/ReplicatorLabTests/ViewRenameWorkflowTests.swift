@@ -78,8 +78,8 @@ final class ViewRenameWorkflowTests: XCTestCase {
     }
 
     func testJournalAndCacheQueriesUseSQLiteStringLiterals() {
-        XCTAssertEqual(ViewRenameWorkflowEvidence.sqliteLiteral("O'Reilly"), "'O''Reilly'")
-        XCTAssertEqual(ViewRenameWorkflowEvidence.sqliteLiteral("view_name"), "'view_name'")
+        XCTAssertEqual(LabSQLName.sqliteLiteral("O'Reilly"), "'O''Reilly'")
+        XCTAssertEqual(LabSQLName.sqliteLiteral("view_name"), "'view_name'")
         for query in [
             ViewRenameWorkflowEvidence.originalJournalSQL,
             ViewRenameWorkflowEvidence.cacheSQL(["O'Reilly"]),

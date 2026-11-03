@@ -210,14 +210,10 @@ extension DDLCompatibilityCases {
 }
 
 enum ViewRenameWorkflowEvidence {
-    static func sqliteLiteral(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "''") + "'"
-    }
-
     static var originalJournalSQL: String {
         let statements = DDLCompatibilityCases.viewRenames.steps.prefix(13).filter {
             $0.sql.hasPrefix("RENAME TABLE ")
-        }.map { sqliteLiteral($0.sql) }.joined(separator: ",")
+        }.map { LabSQLName.sqliteLiteral($0.sql) }.joined(separator: ",")
         return
             "SELECT COUNT(*) FROM ddl_details JOIN ddl_intents USING(gtid) WHERE status='DONE' AND json_array_length(context_json,'$.viewTransitions')>0 AND source_sql IN ("
             + statements + ")"
@@ -256,6 +252,6 @@ enum ViewRenameWorkflowEvidence {
     ]
     static func cacheSQL(_ names: [String]) -> String {
         "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='view_rename_results' AND json_extract(schema_json,'$.table') IN ("
-            + names.map { sqliteLiteral($0) }.joined(separator: ",") + ")"
+            + names.map { LabSQLName.sqliteLiteral($0) }.joined(separator: ",") + ")"
     }
 }

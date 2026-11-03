@@ -78,7 +78,8 @@ struct DDLExecutionPhase {
 }
 
 extension SharedCorrectness.Run {
-    func ddlPhases(_ phases: [DDLExecutionPhase], test: DDLCompatibilityCases.Case) throws {
+    func ddlPhases(_ phases: [DDLExecutionPhase], test: DDLCompatibilityCases.Case) throws -> [LabSQLPhase.Result] {
+        var captured: [LabSQLPhase.Result] = []
         try test.finalObservations?.validate(phases)
         for phase in phases {
             if phase.steps[0].restartBefore {
@@ -93,6 +94,7 @@ extension SharedCorrectness.Run {
                 let writes = try sourcePhase(
                     test.test.id + "-" + phase.id,
                     writes: phase.writes(transactional: f.profile.transactionalTarget), database: "ddlcompat")
+                captured += writes
                 let unlogged = try phase.validateUnlogged(writes)
                 if test.finalObservations != nil {
                     return ["writes": writes.map(\.json), "unloggedOperations": unlogged]
@@ -112,5 +114,6 @@ extension SharedCorrectness.Run {
         if let final = test.finalObservations {
             try ddlFinalObservations(final, caseID: test.test.id)
         }
+        return captured
     }
 }
