@@ -1419,9 +1419,27 @@ See [the catalog guide](../tests/DDLCoverage/README.md#beta6-support-audit).
 
 `matrix-enumzero` distinguishes ENUM ordinal zero
 from a declared empty-string label. It checks multirow INSERT, ordinal changes,
-NULL, primary-key changes, DELETE and schema restart on all four profiles. The
+NULL, primary-key changes and DELETE on all four profiles. The shared fixture
+also restarts from saved state and verifies a write to reverse_poc.aux. The
 former `matrix-reject-enum-error-value` case is removed. Ordered-label and
 missing-label refusal cases remain.
+
+The [ENUM and SET workflow review](../PLAN/BETA7_ENUM_SET_WORKFLOW_REVIEW.md)
+maps the seven value cases, ordered labels, exact bytes, defaults and ordinal
+boundaries. It keeps all seven IDs and their version limits.
+
+`matrix-choices` uses preparation and body batches with one running applier.
+Two retained tables keep all five inserted rows and the result after UPDATE.
+Final queries compare ENUM ordinals and bytes, unsigned SET masks, empty members
+and NULL fields. They retain the apostrophe label, comma label and UTF-8 value
+which the final DELETE removes. The case keeps all three original predicates,
+the original scripts and FULL row metadata. Cleanup drops only the two retained
+tables. The case adds no applier restart. The other six ENUM/SET cases keep their
+current execution paths.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-choices --coverage"
+```
 
 `matrix-zerofill` checks integer display widths,
 implicit UNSIGNED, padded defaults, numeric boundaries, ALTER and DML. The
@@ -1446,11 +1464,20 @@ The `matrix-nativeencodings` case adds the
 remaining 36 native 5.7 text encodings. It checks raw CHAR/VARCHAR/TEXT bytes,
 encoding-specific CHAR padding, NUL, defaults, NULL and DML/DDL phases. A UTF16
 primary key checks binary parameter conversion in key predicates.
+Preparation and body batches share one running applier. Three retained tables
+keep defaults, updated byte vectors and the result after ADD COLUMN. Final
+queries check all 108 original fields, UTF-16 key bytes, numeric collation IDs
+and the added four-byte gb18030 value. The original scripts and four predicates
+remain. Cleanup drops only the retained tables. The case adds no applier restart.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-nativeencodings --coverage"
+```
 
 The [inventory workflow review](../PLAN/BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md)
 records every selected collation ID and character-set byte vector. It defines
-the conversion steps for these cases. The native-encoding case still uses its
-original phase checks. Both definitions remain inputs to metadata-discovery tests.
+the conversion steps and focused results for both cases. Both definitions remain
+inputs to metadata-discovery tests.
 
 The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
 The DML cases and their metadata definitions run on both 5.7-to-5.7 profiles. The inventory gives

@@ -118,7 +118,7 @@ final class CollationInventoryWorkflowTests: XCTestCase {
         XCTAssertTrue(fixture.setup.isEmpty)
         XCTAssertNil(fixture.rowMetadata)
         XCTAssertNil(fixture.replicatedReplacement)
-        XCTAssertNil(DMLCompatibilityCases.nativeEncodings.workflow)
+        XCTAssertNotNil(DMLCompatibilityCases.nativeEncodings.workflow)
         for profile in LabProfile.allCases {
             let metadata = try XCTUnwrap(
                 MetadataDiscoveryCases.fixtures(MetadataDiscoveryCases.encodings.id, profile: profile).first {
@@ -270,9 +270,9 @@ final class CollationInventoryWorkflowTests: XCTestCase {
             fixture.displayName, "Character sets and collations: collation IDs, stored bytes and case-insensitive keys")
         XCTAssertEqual(LabScenario.correctness.first { $0.id == "matrix-collations" }?.test.name, fixture.displayName)
         XCTAssertTrue(plan.final.queries().allSatisfy(\.preserveWhitespace))
-        XCTAssertNil(DMLCompatibilityCases.nativeEncodings.workflow)
+        XCTAssertNotNil(DMLCompatibilityCases.nativeEncodings.workflow)
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
-            ["collations", "identifiercase", "unicodeidentifiers"])
+            ["collations", "nativeencodings", "identifiercase", "unicodeidentifiers", "choices"])
     }
 }

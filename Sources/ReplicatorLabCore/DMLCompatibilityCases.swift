@@ -394,7 +394,33 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_choices WHERE id IN (1,2,3,5)",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_choices WHERE id=4 AND e IS NULL"),
-                ], rowMetadata: "FULL"),
+                ], rowMetadata: "FULL",
+                workflow: .init(
+                    title: "ENUM and SET: quoted values, comma labels, empty members and NULL",
+                    histories: [
+                        .init(table: "ch_after_insert", throughPhase: 1),
+                        .init(table: "ch_after_update", throughPhase: 2),
+                    ], phaseTransactions: [1, 1, 1],
+                    predicateIDs: ["inserted-empty-members", "updated-comma-label-and-set", "surviving-null-row"],
+                    additionalChecks: [
+                        .init(
+                            id: "initial-rows",
+                            check: .init(
+                                "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.ch_after_insert ORDER BY id",
+                                "1\t1\t\t0\t\n2\t2\t6F6E65\t7\t612C622C63\n3\t3\t69742773\t5\t612C63\n4\tNULL\tNULL\tNULL\tNULL\n5\t5\tC3A9\t2\t62"
+                            )),
+                        .init(
+                            id: "updated-rows",
+                            check: .init(
+                                "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.ch_after_update ORDER BY id",
+                                "1\t1\t\t0\t\n2\t2\t6F6E65\t7\t612C622C63\n3\t4\t782C79\t6\t622C63\n4\tNULL\tNULL\tNULL\tNULL\n5\t5\tC3A9\t2\t62"
+                            )),
+                        .init(
+                            id: "final-row",
+                            check: .init(
+                                "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.matrix_choices ORDER BY id",
+                                "4\tNULL\tNULL\tNULL\tNULL")),
+                    ], expectedDDL: 3, expectedRows: 21)),
             Case(
                 id: "widechoices",
                 definition: "id INT PRIMARY KEY,e ENUM(" + (1...256).map { "'e\($0)'" }.joined(separator: ",")

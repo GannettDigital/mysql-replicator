@@ -55,6 +55,80 @@ extension DMLCompatibilityCases {
             ["HEX(c_\(cs))='\(trimmed)'", "HEX(v_\(cs))='\(hex)'", "HEX(t_\(cs))='\(hex)'"]
         }.joined(separator: " AND ")
         let empty = names.map { "\($0)=NULL" }.joined(separator: ",")
+        // Fixed native IDs; keep expectations independent of the apply registry.
+        let collationIDs: [String: Int] = [
+            "armscii8": 64,
+            "big5": 84,
+            "cp1250": 99,
+            "cp1251": 52,
+            "cp1256": 67,
+            "cp1257": 59,
+            "cp850": 80,
+            "cp852": 81,
+            "cp866": 68,
+            "cp932": 96,
+            "dec8": 69,
+            "eucjpms": 98,
+            "euckr": 85,
+            "gb18030": 250,
+            "gb2312": 86,
+            "gbk": 87,
+            "geostd8": 93,
+            "greek": 70,
+            "hebrew": 71,
+            "hp8": 72,
+            "keybcs2": 73,
+            "koi8r": 74,
+            "koi8u": 75,
+            "latin2": 77,
+            "latin5": 78,
+            "latin7": 79,
+            "macce": 43,
+            "macroman": 53,
+            "sjis": 88,
+            "swe7": 82,
+            "tis620": 89,
+            "ucs2": 159,
+            "ujis": 91,
+            "utf16": 124,
+            "utf16le": 62,
+            "utf32": 183,
+        ]
+        func row(_ key: String, updated: Bool = false, cleared: Bool = false, extra: String? = nil) -> String {
+            var fields = encodings.flatMap { charset, _, full, trimmed -> [String] in
+                if cleared { return ["NULL", "NULL", "NULL"] }
+                if updated { return [trimmed, full, full] }
+                let initial =
+                    charset == "ucs2" || charset == "utf16"
+                    ? "0041"
+                    : charset == "utf16le" ? "4100" : charset == "utf32" ? "00000041" : "41"
+                return [initial, "NULL", "NULL"]
+            }
+            if let extra { fields.append(extra) }
+            return ([key] + fields).joined(separator: "\t")
+        }
+        func rows(_ table: String, added: Bool = false, expected: String, id: String)
+            -> DDLFinalObservations.Observation
+        {
+            let fields = ["HEX(id)"] + (names + (added ? ["extra"] : [])).map { "IFNULL(HEX(\($0)),'NULL')" }
+            return .init(
+                id: id,
+                check: .init(
+                    "SELECT " + fields.joined(separator: ",") + " FROM poc." + table + " ORDER BY BINARY id", expected))
+        }
+        func metadata(_ table: String, added: Bool, id: String) -> DDLFinalObservations.Observation {
+            var fields =
+                ["id\t55\tutf16\tutf16_bin"]
+                + encodings.flatMap { charset, collation, _, _ in
+                    ["c_", "v_", "t_"].map { "\($0)\(charset)\t\(collationIDs[charset]!)\t\(charset)\t\(collation)" }
+                }
+            if added { fields.append("extra\t249\tgb18030\tgb18030_bin") }
+            return .init(
+                id: id,
+                check: .init(
+                    "SELECT c.COLUMN_NAME,k.ID,c.CHARACTER_SET_NAME,c.COLLATION_NAME FROM information_schema.COLUMNS c JOIN information_schema.COLLATIONS k ON k.COLLATION_NAME=c.COLLATION_NAME WHERE c.TABLE_SCHEMA='poc' AND c.TABLE_NAME='\(table)' ORDER BY c.ORDINAL_POSITION",
+                    fields.joined(separator: "\n")))
+        }
         return Case(
             id: "nativeencodings",
             definition: "id VARCHAR(12) CHARACTER SET utf16 COLLATE utf16_bin PRIMARY KEY,"
@@ -79,6 +153,38 @@ extension DMLCompatibilityCases {
                 .init(
                     sql: "DELETE FROM poc.matrix_nativeencodings WHERE id='changed'",
                     check: "SELECT COUNT(*)=1 AND MIN(id)='second' FROM poc.matrix_nativeencodings"),
-            ])
+            ],
+            workflow: .init(
+                title: "Character sets: CHAR, VARCHAR and TEXT byte values and multibyte keys",
+                histories: [
+                    .init(table: "ne_after_insert", throughPhase: 1),
+                    .init(table: "ne_after_update", throughPhase: 2),
+                    .init(table: "ne_after_add", throughPhase: 3),
+                ], phaseTransactions: [1, 1, 2, 1],
+                predicateIDs: [
+                    "inserted-defaults", "updated-bytes-and-key", "added-column-and-null-fields", "deleted-changed-key",
+                ],
+                additionalChecks: [
+                    rows(
+                        "ne_after_insert",
+                        expected: row("00660069007200730074") + "\n" + row("007300650063006F006E0064"),
+                        id: "initial-rows"),
+                    rows(
+                        "ne_after_update",
+                        expected: row("006300680061006E006700650064", updated: true) + "\n"
+                            + row("007300650063006F006E0064"),
+                        id: "updated-rows"),
+                    rows(
+                        "ne_after_add", added: true,
+                        expected: row("006300680061006E006700650064", updated: true, extra: "NULL") + "\n"
+                            + row("007300650063006F006E0064", cleared: true, extra: "9439FC36"),
+                        id: "added-column-rows"),
+                    rows(
+                        "matrix_nativeencodings", added: true,
+                        expected: row("007300650063006F006E0064", cleared: true, extra: "9439FC36"),
+                        id: "surviving-row"),
+                    metadata("ne_after_update", added: false, id: "original-character-set-ids"),
+                    metadata("ne_after_add", added: true, id: "added-character-set-ids"),
+                ], expectedDDL: 6, expectedRows: 14))
     }()
 }

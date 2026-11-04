@@ -1,8 +1,8 @@
 # Character sets and collations: inventory workflow review
 
-Status: the matrix-collations pilot passed its focused forward test. The Unicode
-identifier workflow is committed as `2729752`. Next: convert only
-matrix-nativeencodings with the existing DML workflow helper.
+Status: both inventory workflows passed their focused forward tests. The
+collation pilot is committed as `6574be6`. The [ENUM/SET pilot](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#choices-pilot-implementation-and-focused-results)
+passed matrix-choices with all 12 assertions. Next: convert only matrix-widechoices.
 
 ## Decision and scope
 
@@ -19,9 +19,8 @@ the helper's existing prerequisites. Keep metadata-labels-defaults membership:
 its cold metadata reads use the same definitions and initial INSERT/check.
 
 The initial review used source and saved measurements without builds or tests.
-The collation implementation results below confirm its new rows and counts.
-The native-encoding conversion remains a separate slice. No replication
-implementation change belongs in this work.
+The implementation results below confirm both workflows' new rows and counts.
+No replication implementation change belongs in this work.
 
 ## MySQL names and sources
 
@@ -300,8 +299,8 @@ Per case:
 
 Body counts are original 1/1/2/1, then retained prefixes 1, 1/1 and 1/1/2.
 Expected before-cleanup deltas are 16 applied transactions, 6 DDL and 14 changed
-rows. After cleanup: 17 transactions, 7 DDL and 14 rows. The collation pilot
-confirmed these counts. They remain predictions for the native-encoding case.
+rows. After cleanup: 17 transactions, 7 DDL and 14 rows. Both focused inventory
+runs confirmed these counts.
 
 Preparation uses the exact original definition and the existing table default
 utf8mb4/utf8mb4_bin. Keep each body request's USE poc and source-session setup.
@@ -358,9 +357,9 @@ savings. Do not rerun all profiles locally for these ordinary value workflows.
 
 ## Collation pilot implementation and focused results
 
-Steps 1–4 are complete for matrix-collations. This slice adds only that case to
-the existing DML workflow helper. The helper, shared runner, metadata-discovery
-selection and all other source cases are unchanged. The original 63-member list,
+Steps 1–4 are complete for matrix-collations. This pilot added only that case to
+the existing DML workflow helper. At that step, the helper, shared runner,
+metadata-discovery selection and all other source cases were unchanged. The original 63-member list,
 definition generation, four scripts and four predicates remain unchanged.
 The case shares its title between catalog inventory and execution.
 
@@ -445,8 +444,100 @@ Evidence:
 - `artifacts/collation-inventory-workflow-review/verify.py`
 - `artifacts/collation-inventory-workflow-review/unit.log`
 
-Next: convert only matrix-nativeencodings with the same helper. Keep all 36
-vectors, 108 fields, CHAR trimming, defaults/NULLs, UTF-16 key bytes and the
-added gb18030 value. Use focused unit tests and one forward case. Then review
-ENUM/SET overlap. Keep remaining type/value and key/index work, full-matrix
-validation, final balancing and short PR selection in the overall plan.
+This collation pilot is committed as `6574be6`. The next section records its
+separate native-encoding follow-up. Keep full profile/group validation and the
+remaining reviews in the overall plan.
+
+## Native-encoding implementation and focused results
+
+Step 5 is complete. The native-encoding case now uses the same helper with three
+retained histories. Its original 36 tuples, definition generation, four scripts
+and four predicates are unchanged. The collation and identifier source fixtures,
+shared helper/runner and metadata-discovery selection are unchanged. No decoder,
+applier or production conversion code changed in this slice.
+
+Four complete HEX row queries retain all 108 fields. They distinguish CHAR's
+retrieved bytes from VARCHAR/TEXT bytes. They also check native default A bytes,
+NULL fields, the stored UTF-16 keys and extra=9439FC36 after ADD. Earlier changed
+rows remain available after the original DELETE. Two metadata queries check all
+109 original columns, then all 110 columns after ADD, with fixed native IDs.
+The key uses ID 55; the utf16 member fields use ID 124. The added column uses
+ID 249; the original gb18030 member fields use ID 250. Keep these distinctions.
+
+The six new unit tests contain an independent fixed 36-member ID/byte/default
+map. They verify all three field kinds, exact original SQL, original predicates,
+4/12/1 transaction counts, final rows, metadata IDs and cleanup ownership.
+Negative checks reject untrimmed CHAR results for each of the 36 members,
+missing fields, a wrong key collation and a substituted gb18030 value.
+
+Focused checks passed:
+
+- 30 Swift tests: six native-encoding tests, six collation tests, four helper
+  tests, five ASCII identifier tests, six Unicode tests and three metadata tests.
+- Strict Swift format lint on the changed source and four changed test files.
+- Catalog structure and normalized matrix comparison: 183 jobs, 1,545 catalog
+  obligations and 182 instrumented collections. Selection and order are unchanged.
+- Source audit: original vector list, schema/SQL generation and phase checks are
+  unchanged. All other source fixtures, the helper/runner and metadata inputs
+  match the collation pilot commit. Display names, source locations, assertion
+  descriptions and the source-input fingerprint are excluded from inventory
+  normalization.
+
+One integration case ran with coverage: mysql84-to-mysql57-myisam, default
+variant, SQL transport, matrix-nativeencodings. All 16 named assertions passed.
+Source, native and target agree on every retained row field and numeric metadata
+mapping. Full schema/row comparison and raw engine checks passed. The existing
+shared saved-schema restart passed.
+
+| Measurement | Result |
+|---|---:|
+| Case execution | 6.64 seconds |
+| Case SQL client calls | 44 |
+| Source batches / client write requests | 3 / 15 |
+| Applied transactions before cleanup / after cleanup | 16 / 17 |
+| Applied DDL before cleanup / after cleanup | 6 / 7 |
+| Changed rows before cleanup / after cleanup | 14 / 14 |
+| Fixture setup | 14.89 seconds |
+| Container startup, included in setup | 12.03 seconds |
+| Coverage export | 1.60 seconds |
+| Fixture cleanup | 10.74 seconds |
+| Instrumented Swift lines executed / mapped | 7,648 / 20,880 |
+
+The call count includes 15 batched default-value probes: five calls and 144
+values per role. All 36 CHAR defaults remain checked on each of the four tables.
+Saved CI reported 15.34 seconds and 134 calls. The old whole-group run had more
+accumulated tables in poc; the local run selects one case and adds retained
+tables. This is not a controlled speed comparison. Coverage includes setup and
+the shared restart. It does not establish individual coverage equivalence.
+
+Both checkpoint assertions confirm exact GTID sets, offsets and counter deltas.
+Read-only final SQLite inspection confirms all 17 expanded GTIDs are APPLIED,
+with each request's last group at its recorded end offset. DDL/row intents are
+DONE. Latest schemas preserve every CHAR/VARCHAR/TEXT type, character set,
+collation and default, plus the UTF-16 key and added gb18030 field. Cleanup
+retires only the three retained tables; matrix_nativeencodings remains current.
+Final state is STOPPED with no active GTID, at the shared restart check's later
+offset. Two successful applier invocations are recorded: initial apply and that
+existing restart. No per-case lifecycle transition or offline replay was added.
+
+No other integration case/profile, full suite, benchmark or syntax suite ran
+locally. Selection tooling and runner code did not change, so their Python tests
+were not repeated. Leave other profiles/variants and whole-group checks to
+GitHub Actions.
+
+Evidence:
+
+- `artifacts/lab/20261104T164023Z-99853e79/result.json`
+- `artifacts/native-encoding-workflow-review/results.json`
+- `artifacts/native-encoding-workflow-review/state-results.json`
+- `artifacts/native-encoding-workflow-review/source-manifest.json`
+- `artifacts/native-encoding-workflow-review/inventory-results.json`
+- `artifacts/native-encoding-workflow-review/verify.py`
+- `artifacts/native-encoding-workflow-review/unit.log`
+
+The [ENUM/SET review](BETA7_ENUM_SET_WORKFLOW_REVIEW.md) records the label/byte maps,
+phase results, overlap and implementation order. Its matrix-choices pilot passed
+all 12 assertions. Next: convert only matrix-widechoices. Keep all seven IDs,
+cold metadata inputs, FULL overrides and native version
+exclusions. Keep remaining type/value and key/index work, full-matrix validation,
+final balancing and short PR selection in the overall plan.

@@ -49,10 +49,13 @@ Current progress:
   passed its forward mode-1 case, including both restarts and retained rows.
   The [DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
   passed both focused forward cases. The
-  [collation inventory pilot](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#collation-pilot-implementation-and-focused-results)
-  passed its focused forward case with all 16 named assertions. Next: convert
-  only matrix-nativeencodings with the same helper. Keep all 36 vectors and
-  108 fields, then review ENUM/SET.
+  [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
+  passed both focused forward cases, each with all 16 named assertions. The
+  collation pilot is committed as `6574be6`. The
+  [ENUM/SET pilot](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#choices-pilot-implementation-and-focused-results)
+  passed matrix-choices on forward MyISAM with all 12 assertions. Next: convert
+  only matrix-widechoices. Keep all seven IDs, cold metadata inputs, FULL overrides
+  and version exclusions.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1514,8 +1517,11 @@ SQL client calls changed from 160 in saved CI to 74 locally. The
 [DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
 passed their focused forward cases: 16 ASCII assertions and 20 Unicode assertions.
 Both keep the original SQL and metadata inputs, check GTID intervals and add no
-applier restart. The [collation inventory pilot](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#collation-pilot-implementation-and-focused-results)
-passed its focused forward case with all 16 named assertions. Next: convert
-only matrix-nativeencodings with the same helper. Preserve all 36 vectors and
-108 fields, then review ENUM/SET. Keep remaining type/value and key/index work,
-full-matrix validation, final balancing and short PR selection later.
+applier restart. The [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
+passed both focused forward cases, each with all 16 named assertions. They keep
+all 63 collation members and 36 encoding vectors. The
+[ENUM/SET pilot](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#choices-pilot-implementation-and-focused-results)
+passed matrix-choices on forward MyISAM with all 12 assertions. Next: convert
+only matrix-widechoices. Keep all seven IDs and their metadata/version rules.
+Keep remaining type/value and key/index work, full-matrix validation, final
+balancing and short PR selection later.
