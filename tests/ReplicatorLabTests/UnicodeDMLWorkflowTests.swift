@@ -167,7 +167,8 @@ final class UnicodeDMLWorkflowTests: XCTestCase {
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
-                "collations", "nativeencodings", "binarychoices", "identifiercase", "unicodeidentifiers", "choices",
+                "collations", "nativeencodings", "exactchoices", "binarychoices", "identifiercase",
+                "unicodeidentifiers", "choices",
                 "widechoices",
             ])
     }

@@ -3,6 +3,10 @@ import Foundation
 /// Opt-in histories retain intermediate matrix results until one final read.
 /// Client requests keep their original SQL and declared source transaction counts.
 struct DMLExecutionWorkflow {
+    enum Order: String {
+        case id = "id"
+        case idOrdinal = "id+0"
+    }
     struct History {
         let table: String
         let throughPhase: Int
@@ -65,6 +69,8 @@ struct DMLExecutionWorkflow {
     let additionalChecks: [DDLFinalObservations.Observation]
     let expectedDDL: Int
     let expectedRows: Int
+    // Fixed final queries declare this ordering; it is not arbitrary SQL.
+    var order: Order = .id
 
     func plan(_ test: DMLCompatibilityCases.Case) throws -> Plan {
         func validName(_ value: String) -> Bool {
@@ -75,7 +81,7 @@ struct DMLExecutionWorkflow {
         }
         try require(validName(test.id) && !title.isEmpty, "invalid DML workflow identity")
         try require(
-            test.setup.isEmpty && test.orderBy == "id" && test.replicatedReplacement == nil
+            test.setup.isEmpty && test.orderBy == order.rawValue && test.replicatedReplacement == nil
                 && !test.phases.contains(where: \.expectsJSONDiff),
             "DML workflow needs an explicit plan for setup, ordering, replacement or JSON diff checks")
         try require(

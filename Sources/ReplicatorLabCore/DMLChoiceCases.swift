@@ -29,7 +29,54 @@ extension DMLCompatibilityCases {
                 check:
                     "SELECT COUNT(*)=2 AND SUM(id+0=1)=0 AND SUM(id+0=3 AND HEX(id)='61' AND v=10)=1 FROM poc.matrix_exactchoices"
             ),
-        ], orderBy: "id+0", rowMetadata: "FULL")
+        ], orderBy: "id+0", rowMetadata: "FULL",
+        workflow: .init(
+            title: "ENUM and SET: encoded labels, numeric and quoted defaults",
+            histories: [
+                .init(table: "ex_after_insert", throughPhase: 1),
+                .init(table: "ex_after_update", throughPhase: 2),
+                .init(table: "ex_after_default", throughPhase: 3),
+            ], phaseTransactions: [1, 1, 2, 2],
+            predicateIDs: [
+                "inserted-encoded-defaults", "updated-encoded-row", "changed-defaults-and-added-set",
+                "deleted-and-reused-primary-key",
+            ],
+            additionalChecks: [
+                .init(
+                    id: "initial-rows",
+                    check: .init(
+                        "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(n+0,'NULL'),IFNULL(HEX(n),'NULL'),IFNULL(q+0,'NULL'),IFNULL(HEX(q),'NULL'),v FROM poc.ex_after_insert ORDER BY id+0",
+                        "1\tF09F9880\t1\tE9\t5\tF09F98802C61\t2\t4E2D\t2\t61\t1\t32\t10\n2\t3F\t2\tFF\t2\t3F\t1\t2020\t1\t32\t2\t61\t20\n3\t61\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\t30"
+                    )),
+                .init(
+                    id: "updated-rows",
+                    check: .init(
+                        "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(n+0,'NULL'),IFNULL(HEX(n),'NULL'),IFNULL(q+0,'NULL'),IFNULL(HEX(q),'NULL'),v FROM poc.ex_after_update ORDER BY id+0",
+                        "1\tF09F9880\t1\tE9\t5\tF09F98802C61\t2\t4E2D\t2\t61\t1\t32\t10\n2\t3F\t1\tE9\t7\tF09F98802C3F2C61\t2\t4E2D\t2\t61\t1\t32\t21\n3\t61\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\t30"
+                    )),
+                .init(
+                    id: "changed-default-rows",
+                    check: .init(
+                        "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(n+0,'NULL'),IFNULL(HEX(n),'NULL'),IFNULL(q+0,'NULL'),IFNULL(HEX(q),'NULL'),v,IFNULL(CAST(extra AS UNSIGNED),'NULL'),IFNULL(HEX(extra),'NULL') FROM poc.ex_after_default ORDER BY id+0",
+                        "1\tF09F9880\t1\tE9\t5\tF09F98802C61\t2\t4E2D\t1\t32\t2\t61\t10\t3\tE92CFF\n2\t3F\t1\tE9\t7\tF09F98802C3F2C61\t2\t4E2D\t2\t61\t1\t32\t21\t3\tE92CFF\n3\t61\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\t30\t3\tE92CFF"
+                    )),
+                .init(
+                    id: "final-rows",
+                    check: .init(
+                        "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(n+0,'NULL'),IFNULL(HEX(n),'NULL'),IFNULL(q+0,'NULL'),IFNULL(HEX(q),'NULL'),v,IFNULL(CAST(extra AS UNSIGNED),'NULL'),IFNULL(HEX(extra),'NULL') FROM poc.matrix_exactchoices ORDER BY id+0",
+                        "2\t3F\t1\tE9\t7\tF09F98802C3F2C61\t2\t4E2D\t2\t61\t1\t32\t21\t3\tE92CFF\n3\t61\t1\tE9\t5\tF09F98802C61\t2\t4E2D\t1\t32\t2\t61\t10\t3\tE92CFF"
+                    )),
+                .init(
+                    id: "original-default-bytes",
+                    check: .init(
+                        "SELECT HEX(DEFAULT(n)),HEX(DEFAULT(q)),HEX(DEFAULT(e)),HEX(DEFAULT(s)),HEX(DEFAULT(w)) FROM poc.ex_after_insert WHERE id+0=1",
+                        "61\t32\tE9\tF09F98802C61\t4E2D")),
+                .init(
+                    id: "changed-default-bytes",
+                    check: .init(
+                        "SELECT HEX(DEFAULT(n)),HEX(DEFAULT(q)),HEX(DEFAULT(e)),HEX(DEFAULT(s)),HEX(DEFAULT(w)),HEX(DEFAULT(extra)) FROM poc.ex_after_default WHERE id+0=1",
+                        "32\t61\tE9\tF09F98802C61\t4E2D\tE92CFF")),
+            ], expectedDDL: 6, expectedRows: 19, order: .idOrdinal))
     static let choiceBoundaries: Case = {
         let members = (1...64).map { "'s\($0)'" }.joined(separator: ",")
         return Case(

@@ -1,8 +1,8 @@
 # ENUM and SET: value and workflow review
 
-Status: choices, widechoices and binarychoices passed their focused forward tests.
-The wide conversion is committed as `9bcd237`. Next: convert only matrix-exactchoices
-after adding tested, narrow id+0 ordering support. The
+Status: choices, widechoices, binarychoices and exactchoices passed their focused
+forward tests. The binary conversion is committed as `72f5a15`. Next: convert only
+matrix-enumzero with the explicit id+0 ordering setting. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -20,8 +20,9 @@ Do not route these cases through the DDL loop or set replicatedReplacement.
 Do not change production replication or the independent native schema parser.
 
 The initial review used source inspection, MySQL documentation and saved CI
-results without new builds or tests. The results below confirm choices and
-widechoices and binarychoices. Other row maps and counts remain proposed expectations for their own slices.
+results without new builds or tests. The results below confirm choices,
+widechoices, binarychoices and exactchoices. Other row maps and counts remain
+proposed expectations for their own slices.
 
 ## MySQL terms and test titles
 
@@ -215,7 +216,8 @@ No new per-case restart or offline replay is required for this batching work.
 These scripts have autocommit DML and implicit DDL commits. Preserve each
 multi-statement script; do not split on semicolons or add BEGIN/COMMIT.
 Counts below come from source inspection and the proposed retained prefixes.
-The results below confirm choices, widechoices and binarychoices; other cases need their own focused confirmation.
+The results below confirm choices, widechoices, binarychoices and exactchoices.
+Other cases need their own focused confirmation.
 
 | Case | GTIDs per original phase | Original total with CREATE | Preparation writes | Body writes / GTIDs | Before cleanup: GTIDs / DDL / rows | After cleanup GTIDs |
 |---|---|---:|---:|---:|---:|---:|
@@ -278,8 +280,8 @@ Pilot command, after implementation:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-choices --coverage"
 ```
 
-No tests or native version exclusions are removed by this review. Only the
-choices pilot results below establish new observed behavior in this plan.
+No tests or native version exclusions are removed by this review. The
+implementation results below identify the cases and profiles tested locally.
 
 ## Choices pilot implementation and focused results
 
@@ -557,7 +559,101 @@ Evidence:
 - `artifacts/binary-choices-workflow-review/verify.py`
 - `artifacts/binary-choices-workflow-review/unit.log`
 
-Next: convert only matrix-exactchoices. Add narrow, tested id+0 ordering support
-before it opts into the helper. Keep FULL metadata, all encoded labels, numeric
-versus quoted defaults, added SET defaults and PRIMARY KEY reuse. Use focused
-lab tests and one forward case. Then continue with the remaining slices above.
+The binary conversion is committed as `72f5a15`. The next section records its
+separate exactchoices follow-up. Keep the remaining slices above.
+
+## Encoded ENUM and SET implementation and focused results
+
+The exactchoices part of Step 5 is complete. matrix-exactchoices now uses the
+existing helper with three retained histories. Its original definition, four
+scripts, four predicates, id+0 ordering and FULL metadata remain unchanged.
+The definition keeps utf8mb4, latin1 and utf16 labels, supplementary characters,
+numeric versus quoted ENUM defaults, an added SET default and PRIMARY KEY reuse.
+No production parser, decoder or applier code changed.
+
+The shared helper adds an explicit Order setting. Existing workflows keep id;
+exactchoices selects idOrdinal, which means id+0. The setting must match the
+case's existing orderBy. Other expressions still fail validation. Setup SQL,
+replacement cases and JSON difference checks still require a separate plan.
+The helper's execution code, shared runner and native schema oracle are unchanged.
+
+Four fixed row queries retain every column after INSERT, UPDATE and ALTER, and
+in the final table. They check ENUM ordinals, unsigned SET masks, raw hex bytes,
+NULL fields and the reused primary key. Two further queries read
+HEX(DEFAULT(column)) from the retained tables. These confirm n/q default bytes
+61/32 before ALTER and 32/61 afterward. The other defaults stay E9, F09F98802C61
+and 4E2D. The added SET default is E92CFF in declared member order.
+
+Focused checks passed:
+
+- 59 Swift tests: seven new exactchoices tests, one new helper ordering test and
+  the 51 workflow, metadata and native-schema tests selected for binarychoices.
+- Strict Swift format lint on both changed source files and nine test files.
+- Catalog structure and normalized matrix comparison: 183 jobs, 1,545 catalog
+  obligations and 182 instrumented collections. Selection and order are unchanged.
+- Source audit: original exactchoices definition/scripts/predicates, other cases,
+  metadata inputs, helper execution, runner and native schema oracle are unchanged.
+  Inventory normalization excludes display names, source locations, assertion
+  descriptions and the source-input fingerprint.
+
+The unit tests check exact SQL and encoded bytes, source transaction counts,
+multi-statement request order, session resets, complete results, default queries,
+cleanup ownership and the shared title. Negative checks reject wrong UTF-8 bytes,
+changed UTF16 bytes, NULL-to-empty substitutions, unchanged defaults, reversed SET
+member order and an earlier row set in place of the final primary-key result.
+Helper tests require a matching explicit ordering setting and reject other orders.
+
+One integration case ran with coverage: mysql84-to-mysql57-myisam, default
+variant, SQL transport, matrix-exactchoices. All 16 named assertions passed.
+Source, native and target agree on all original predicates, complete row results,
+default bytes and schema comparisons. Raw engine checks confirm source InnoDB
+and native/target MyISAM. The existing shared saved-schema restart passed.
+
+| Measurement | Result |
+|---|---:|
+| Case execution | 4.69 seconds |
+| Case SQL client calls | 29 |
+| Source batches / client write requests | 3 / 15 |
+| Applied transactions before cleanup / after cleanup | 17 / 18 |
+| Applied DDL before cleanup / after cleanup | 6 / 7 |
+| Changed rows before cleanup / after cleanup | 19 / 19 |
+| Fixture setup | 18.79 seconds |
+| Container startup, included in setup | 16.02 seconds |
+| Coverage export | 1.99 seconds |
+| Fixture cleanup | 10.92 seconds |
+| Instrumented Swift lines executed / mapped | 8,130 / 20,880 |
+
+Saved CI reported 14.98 seconds and 133 calls. Its group compared more accumulated
+poc tables. The local run selected one case and added retained tables. This is
+not a controlled speed comparison. Coverage includes setup and the shared restart;
+it does not establish individual-case equivalence with the old group-level report.
+
+Both checkpoint assertions confirm exact GTID sets, offsets and counter deltas.
+Read-only final SQLite inspection confirms all 18 expanded GTIDs are APPLIED.
+For each multi-GTID request, its last group has the recorded request end offset.
+DDL and row intents are DONE. Latest saved schemas retain ordered label bytes,
+the numeric/quoted default transition and the added SET default. Cleanup retires
+all three histories and keeps matrix_exactchoices current. Final state is STOPPED
+with no active GTID, at the shared restart check's later offset. Two successful
+applier invocations are recorded: initial apply and that existing restart. The
+restart writes reverse_poc.aux; it does not write each ENUM/SET table. This case
+adds no per-case lifecycle transition or offline replay.
+
+No other integration case/profile, full suite, benchmark or syntax suite ran
+locally. Selection tooling and runner code did not change, so their Python tests
+were not repeated. Leave other profiles, variants and whole-group validation to CI.
+
+Evidence:
+
+- `artifacts/lab/20261104T195419Z-5649176b/result.json`
+- `artifacts/exact-choices-workflow-review/results.json`
+- `artifacts/exact-choices-workflow-review/state-results.json`
+- `artifacts/exact-choices-workflow-review/source-manifest.json`
+- `artifacts/exact-choices-workflow-review/inventory-results.json`
+- `artifacts/exact-choices-workflow-review/verify.py`
+- `artifacts/exact-choices-workflow-review/unit.log`
+
+Next: convert only matrix-enumzero with the explicit id+0 ordering setting. Keep
+session resets, non-strict SQL mode, ordinal zero versus the declared empty
+member, NULL and primary-key reuse. Use focused unit tests and its own forward
+case. Then continue with choiceboundaries and legacybinaryset as listed above.

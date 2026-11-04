@@ -1,9 +1,10 @@
 # Character sets and collations: inventory workflow review
 
 Status: both inventory workflows passed their focused forward tests. The
-collation pilot is committed as `6574be6`. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#binary-enum-and-set-implementation-and-focused-results)
-passed choices/widechoices with 12 assertions each and binarychoices with 14.
-Next: convert only matrix-exactchoices with narrow, tested id+0 ordering support.
+collation pilot is committed as `6574be6`. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#encoded-enum-and-set-implementation-and-focused-results)
+passed choices/widechoices with 12 assertions each, binarychoices with 14
+and exactchoices with 16. Next: convert only matrix-enumzero with the explicit
+id+0 ordering setting.
 
 ## Decision and scope
 
@@ -538,8 +539,9 @@ Evidence:
 
 The [ENUM/SET review](BETA7_ENUM_SET_WORKFLOW_REVIEW.md) records the label/byte maps,
 phase results, overlap and implementation order. Its matrix-choices pilot passed
-all 12 assertions. Widechoices also passed 12, and binarychoices passed 14.
-Next: convert only matrix-exactchoices with narrow, tested id+0 ordering support. Keep all seven IDs,
+all 12 assertions. Widechoices also passed 12, binarychoices passed 14 and
+exactchoices passed 16. Next: convert only matrix-enumzero with the explicit
+id+0 ordering setting. Keep all seven IDs,
 cold metadata inputs, FULL overrides and native version
 exclusions. Keep remaining type/value and key/index work, full-matrix validation,
 final balancing and short PR selection in the overall plan.

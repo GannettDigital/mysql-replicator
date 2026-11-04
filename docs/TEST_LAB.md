@@ -1457,10 +1457,23 @@ queries check ENUM ordinal 256 before UPDATE and 255 afterward. They also check
 the full 64-bit SET mask, the high bit and exact label bytes. A separate query
 requires the original table to be empty after DELETE. The case keeps all 256
 ENUM labels, 64 SET members, original scripts and FULL metadata. Cleanup drops
-only the retained tables. The other four ENUM/SET cases keep their current paths.
+only the retained tables.
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-widechoices --coverage"
+```
+
+`matrix-exactchoices` uses the same workflow with three retained tables. Final
+queries check utf8mb4, latin1 and utf16 label bytes, ENUM ordinals, unsigned SET
+masks and NULL fields. They also check numeric versus quoted defaults before
+and after ALTER, the added SET default and primary-key reuse. Row queries use
+the original `id+0` ordering. The helper requires an explicit matching order
+setting; it does not accept arbitrary SQL expressions. All four original
+predicates, original scripts and FULL metadata remain. Cleanup drops only the
+retained tables. The other three ENUM/SET cases keep their current paths.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-exactchoices --coverage"
 ```
 
 `matrix-zerofill` checks integer display widths,

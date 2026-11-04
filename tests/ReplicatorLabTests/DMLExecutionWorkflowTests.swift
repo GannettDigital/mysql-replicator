@@ -79,6 +79,22 @@ final class DMLExecutionWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try missingCounts.plan(fixture))
     }
 
+    func testOrderingNeedsExplicitMatchingFixedExpression() throws {
+        var ordinal = try XCTUnwrap(fixture.workflow)
+        ordinal.order = .idOrdinal
+        var test = fixture
+        XCTAssertThrowsError(try ordinal.plan(test))
+        test.orderBy = "id+0"
+        XCTAssertThrowsError(try XCTUnwrap(fixture.workflow).plan(test))
+        XCTAssertNoThrow(try ordinal.plan(test))
+        test.orderBy = "id DESC"
+        XCTAssertThrowsError(try ordinal.plan(test))
+        XCTAssertNil(DMLExecutionWorkflow.Order(rawValue: "id DESC"))
+        XCTAssertNil(DMLExecutionWorkflow.Order(rawValue: "Value"))
+        XCTAssertEqual(DMLExecutionWorkflow.Order.id.rawValue, "id")
+        XCTAssertEqual(DMLExecutionWorkflow.Order.idOrdinal.rawValue, "id+0")
+    }
+
     func testEveryWriteKeepsSessionSetupAndOriginalAutocommitScripts() throws {
         let plan = try XCTUnwrap(fixture.workflow).plan(fixture)
         for batch in [plan.prepare, plan.body, plan.cleanup] {
