@@ -308,7 +308,7 @@ Evidence:
 The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
 passed the forward case, including exact original bytes and connection settings.
 The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-passed the forward case. Next: review the lower-case variant and DML identifier
-cases. Keep native encoding inventories, ENUM/SET, remaining type/value and
-key/index reviews, full-matrix validation, final balancing and short PR selection
-in the overall plan.
+passed the forward case. The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+also passed its forward mode-1 case. Next: review DML identifier cases. Keep
+native encoding inventories, ENUM/SET, remaining type/value and key/index reviews,
+full-matrix validation, final balancing and short PR selection in the overall plan.

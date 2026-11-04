@@ -355,5 +355,10 @@ passed the forward case with all 20 named assertions. One body batch preserves
 all original names, four old predicates, pre-update/renamed/LIKE rows and DROP
 outcomes. Saved state confirms nine current tables with exact bytes and retired
 names. SQL client calls changed from 213 in saved CI to 60 locally.
-Next: review the lower-case table-name variant, then DML identifier phases. Keep
-native inventories, full-matrix validation, final balancing and short PR selection later.
+The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the forward lowercase-tables case with all 21 named assertions. Three
+batches preserve mixed-case references, both old predicates, both restarts and
+earlier ADD/copy rows. Runtime evidence confirms mode 1 on all three servers.
+SQL client calls changed from 160 in saved CI to 74 locally. Next: review DML
+identifier phases. Keep native inventories, full-matrix validation, final balancing
+and short PR selection later.

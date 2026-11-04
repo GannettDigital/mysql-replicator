@@ -321,7 +321,8 @@ Evidence:
 - `artifacts/query-identifier-workflow-review/unit.log`
 
 The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-passed the forward case with exact name bytes and retained row results. Next:
-review the lower-case variant and DML identifier phases. Keep native inventories,
-ENUM/SET, remaining type/value and key/index reviews, full-matrix validation,
-final balancing and short PR selection in the overall plan.
+passed the forward case with exact name bytes and retained row results. The
+[lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its forward mode-1 case. Next: review DML identifier phases. Keep native
+inventories, ENUM/SET, remaining type/value and key/index reviews, full-matrix
+validation, final balancing and short PR selection in the overall plan.

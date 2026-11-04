@@ -1813,6 +1813,29 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 The case needs lower_case_table_names=0. Keep the separate lower-case table-name
 variant for mode 1. See the [Unicode table-name review](../PLAN/BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md).
 
+### Lower-case table names
+
+`ddl-compat-table-name-case` uses three source body batches. It keeps all ten
+original operations and both deliberate restarts. Four retained databases keep
+earlier defaults, copied rows and rename results. Copied statements preserve
+uppercase/lowercase database qualifiers and the original accented table names.
+
+The final queries check the added column's value 3 before UPDATE, later value 9,
+LIKE/INSERT SELECT rows and the renamed table's value 8. They also check stored
+lowercase table names and the original uppercase column spelling ID. Full
+schema/index/row comparisons cover all five databases. Cleanup drops only the
+four retained databases after saved-state checks.
+
+This case requires lower_case_table_names=1 on source, native and target.
+Select the fixture explicitly:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-table-name-case --variant lowercase-tables --coverage"
+```
+
+The default variant excludes this case. Keep the separate Unicode table-name
+case on mode 0. See the [lower-case table-name review](../PLAN/BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md).
+
 ### Temporary-table cases
 
 `ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT

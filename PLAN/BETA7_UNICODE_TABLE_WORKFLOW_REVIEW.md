@@ -295,7 +295,8 @@ Evidence:
 - `artifacts/unicode-table-workflow-review/matrix-comparison.json`
 - `artifacts/unicode-table-workflow-review/unit.log`
 
-Next: review the lower-case table-name variant, then the DML identifier phases.
-Keep native collation/encoding inventories, ENUM/SET, remaining type/value and
-key/index reviews, full-matrix validation, final balancing and short PR selection
-in the overall consolidation plan.
+The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its forward mode-1 case. Next: review DML identifier phases. Keep native
+collation/encoding inventories, ENUM/SET, remaining type/value and key/index
+reviews, full-matrix validation, final balancing and short PR selection in the
+overall consolidation plan.

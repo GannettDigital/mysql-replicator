@@ -259,6 +259,6 @@ The [DEFAULT workflow results](BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md#impleme
 passed the reverse case, including source session checks and retained row states.
 The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
 passed the forward case. The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-also passed its forward case. Next: review the lower-case variant and DML
-identifier cases. Keep the other areas and full-matrix validation in the overall
-consolidation plan.
+also passed its forward case. The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed its forward mode-1 case. Next: review DML identifier cases. Keep the other
+areas and full-matrix validation in the overall consolidation plan.
