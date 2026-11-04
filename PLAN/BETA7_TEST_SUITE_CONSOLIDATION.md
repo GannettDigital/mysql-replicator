@@ -40,8 +40,10 @@ Current progress:
   also passed its focused pair: table defaults and compound conversion.
   The [charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#implementation-and-focused-results)
   also passed its focused case. The [DEFAULT workflow](BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-  passed its reverse case, including source session checks. Next: review encoded
-  Query SQL and identifier workflows.
+  passed its reverse case, including source session checks. The
+  [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
+  passed its forward case, including original byte and session checks. Next:
+  review Unicode table-name workflows; keep the case-setting variant separate.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1485,5 +1487,11 @@ passed the reverse case with all 17 named assertions. Five batches preserve
 unselected-database statements, logged collation overrides, four old predicates
 and INSERT/UPDATE row states. Captured Query events confirm the session contexts.
 SQL client calls changed from 168 in saved CI to 64 locally.
-Next: review encoded Query SQL and identifier workflows. Keep DML inventories,
-full-matrix validation, final balancing and short PR selection later.
+The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
+passed the forward MyISAM case with all 15 named assertions. Three batches
+retain four old predicates, both restarts, FULL metadata and the added-column
+value before UPDATE. Captured events confirm 12 exact non-UTF-8 DDL payloads
+and 13 following UTF-8 row/DROP sessions. SQL client calls changed from
+217 in saved CI to 62 locally. Next: review Unicode table-name workflows,
+then the lower-case table-name variant and the DML identifier cases. Keep native
+inventories, full-matrix validation, final balancing and short PR selection later.

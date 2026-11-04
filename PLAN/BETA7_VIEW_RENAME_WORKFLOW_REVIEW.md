@@ -296,5 +296,11 @@ passed the reverse case with all 17 named assertions. Five batches preserve
 unselected-database statements, logged collation overrides, four old predicates
 and INSERT/UPDATE row states. Captured Query events confirm the session contexts.
 SQL client calls changed from 168 in saved CI to 64 locally.
-Next: review encoded Query SQL and identifier workflows. Keep DML inventories,
-full-matrix validation, final balancing and short PR selection later.
+The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
+passed the forward MyISAM case with all 15 named assertions. Three batches
+retain four old predicates, both restarts, FULL metadata and the added-column
+value before UPDATE. Captured events confirm 12 exact non-UTF-8 DDL payloads
+and 13 following UTF-8 row/DROP sessions. SQL client calls changed from
+217 in saved CI to 62 locally. Next: review Unicode table-name workflows,
+then the lower-case table-name variant and the DML identifier cases. Keep native
+inventories, full-matrix validation, final balancing and short PR selection later.

@@ -1765,6 +1765,30 @@ This also tests translation of the old DEFAULT-name syntax. The 8.4-source
 profile is excluded because native 8.4 rejects that syntax. See the
 [session and workflow review](../PLAN/BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md).
 
+### Connection character sets and Query events
+
+`ddl-compat-query-encodings` uses three source batches. It keeps the original
+ten operations and both deliberate restarts. The source client sends ASCII hex
+through PREPARE, so MySQL receives exact latin1 E9/FC and Shift-JIS 955C bytes.
+The 5C byte remains part of the Shift-JIS character. Each following row operation
+restores the normal UTF-8 connection settings.
+
+Five retained tables keep earlier defaults and row values for final queries.
+The checks include text/binary and ENUM defaults, the binary-default change,
+the added column's value 7, and its later value 8. Both original DROP statements
+remain. Full schema/index/row comparisons include all five retained tables.
+Cleanup drops only those tables after saved-state checks. No offline replay
+path is added.
+
+This case keeps FULL optional metadata for ENUM labels on an 8.4 source. The
+identifier and lower-case table-name cases remain separate selections.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-query-encodings --coverage"
+```
+
+See the [encoded Query and identifier review](../PLAN/BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md).
+
 ### Temporary-table cases
 
 `ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT

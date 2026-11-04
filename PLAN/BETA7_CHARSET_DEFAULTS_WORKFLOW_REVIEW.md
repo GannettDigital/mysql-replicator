@@ -305,6 +305,9 @@ Evidence:
 - `artifacts/charset-defaults-workflow-review/matrix-comparison.json`
 - `artifacts/charset-defaults-workflow-review/unit.log`
 
-Next: review encoded Query SQL and identifier workflows. Keep native encoding
-inventories, ENUM/SET, remaining type/value and key/index reviews, full-matrix
-validation, final balancing and short PR selection in the overall plan.
+The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
+passed the forward case, including exact original bytes and connection settings.
+Next: review Unicode table-name workflows, then the lower-case variant and DML
+identifier cases. Keep native encoding inventories, ENUM/SET, remaining type/value
+and key/index reviews, full-matrix validation, final balancing and short PR
+selection in the overall plan.

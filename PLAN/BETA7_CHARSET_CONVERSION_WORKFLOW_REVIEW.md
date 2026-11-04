@@ -257,5 +257,7 @@ Evidence:
 
 The [DEFAULT workflow results](BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 passed the reverse case, including source session checks and retained row states.
-Next: review encoded Query SQL and identifier workflows. Keep the other areas and
-full-matrix validation in the overall consolidation plan.
+The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
+passed the forward case. Next: review Unicode table-name workflows, then the
+lower-case variant and DML identifier cases. Keep the other areas and full-matrix
+validation in the overall consolidation plan.
