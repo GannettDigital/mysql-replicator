@@ -322,6 +322,18 @@ SET bytes on the two 5.7-to-5.7 profiles. MySQL 8.4.8 rejects that SET definitio
 with native error 3507. Binary choice schema comparisons read raw SHOW CREATE
 output through a separate test parser.
 
+`matrix-binarychoices` uses preparation and body batches with one running applier.
+Two retained tables keep all inserted rows and the result after ALTER changes
+the defaults. Final queries compare raw bytes, ENUM ordinals, SET masks, the
+declared empty member and NULL rows. Separate queries check default bytes before
+and after ALTER. Full schema comparison keeps the raw SHOW CREATE parser.
+The original scripts, three predicates and FULL metadata remain. Cleanup drops
+only the retained tables. The case adds no applier restart.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-binarychoices --coverage"
+```
+
 The `ddl-compat-tagged-gtids` case uses the 8.4 source profile with
 `--variant without-source-gtids` (`target.preserveSourceGTIDs: false`). It compares tagged
 DDL/DML results with the native reference, then checks rotation, process restart,
@@ -1445,7 +1457,7 @@ queries check ENUM ordinal 256 before UPDATE and 255 afterward. They also check
 the full 64-bit SET mask, the high bit and exact label bytes. A separate query
 requires the original table to be empty after DELETE. The case keeps all 256
 ENUM labels, 64 SET members, original scripts and FULL metadata. Cleanup drops
-only the retained tables. The other five ENUM/SET cases keep their current paths.
+only the retained tables. The other four ENUM/SET cases keep their current paths.
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-widechoices --coverage"

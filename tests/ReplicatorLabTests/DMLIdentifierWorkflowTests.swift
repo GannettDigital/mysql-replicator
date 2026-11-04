@@ -27,7 +27,10 @@ final class DMLIdentifierWorkflowTests: XCTestCase {
         XCTAssertNil(fixture.replicatedReplacement)
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
-            ["collations", "nativeencodings", "identifiercase", "unicodeidentifiers", "choices", "widechoices"])
+            [
+                "collations", "nativeencodings", "binarychoices", "identifiercase", "unicodeidentifiers", "choices",
+                "widechoices",
+            ])
         for profile in LabProfile.allCases {
             let metadata = try XCTUnwrap(
                 MetadataDiscoveryCases.fixtures(MetadataDiscoveryCases.columns.id, profile: profile).first {

@@ -52,9 +52,10 @@ Current progress:
   [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
   passed both focused forward cases, each with all 16 named assertions. The
   collation pilot is committed as `6574be6`. The
-  [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#wide-enum-and-set-implementation-and-focused-results)
-  passed choices and widechoices on forward MyISAM, each with all 12 assertions.
-  Next: convert only matrix-binarychoices. Keep all seven IDs, cold metadata inputs, FULL overrides
+  [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#binary-enum-and-set-implementation-and-focused-results)
+  passed choices/widechoices with 12 assertions each and binarychoices with 14
+  on forward MyISAM. Next: convert only matrix-exactchoices with narrow, tested
+  id+0 ordering support. Keep all seven IDs, cold metadata inputs, FULL overrides
   and version exclusions.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
@@ -1520,8 +1521,9 @@ Both keep the original SQL and metadata inputs, check GTID intervals and add no
 applier restart. The [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed both focused forward cases, each with all 16 named assertions. They keep
 all 63 collation members and 36 encoding vectors. The
-[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#wide-enum-and-set-implementation-and-focused-results)
-passed choices and widechoices on forward MyISAM, each with all 12 assertions.
-Next: convert only matrix-binarychoices. Keep all seven IDs and their metadata/version rules.
+[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#binary-enum-and-set-implementation-and-focused-results)
+passed choices/widechoices with 12 assertions each and binarychoices with 14
+on forward MyISAM. Next: convert only matrix-exactchoices with narrow, tested
+id+0 ordering support. Keep all seven IDs and their metadata/version rules.
 Keep remaining type/value and key/index work, full-matrix validation, final
 balancing and short PR selection later.

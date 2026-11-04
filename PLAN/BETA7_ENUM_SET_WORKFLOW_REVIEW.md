@@ -1,8 +1,8 @@
 # ENUM and SET: value and workflow review
 
-Status: matrix-choices and matrix-widechoices passed their focused forward tests.
-The first pilot is committed as `87320df`. Next: convert only matrix-binarychoices
-with the same helper and raw SHOW CREATE checks. The
+Status: choices, widechoices and binarychoices passed their focused forward tests.
+The wide conversion is committed as `9bcd237`. Next: convert only matrix-exactchoices
+after adding tested, narrow id+0 ordering support. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -21,7 +21,7 @@ Do not change production replication or the independent native schema parser.
 
 The initial review used source inspection, MySQL documentation and saved CI
 results without new builds or tests. The results below confirm choices and
-widechoices. Other row maps and counts remain proposed expectations for their own slices.
+widechoices and binarychoices. Other row maps and counts remain proposed expectations for their own slices.
 
 ## MySQL terms and test titles
 
@@ -215,7 +215,7 @@ No new per-case restart or offline replay is required for this batching work.
 These scripts have autocommit DML and implicit DDL commits. Preserve each
 multi-statement script; do not split on semicolons or add BEGIN/COMMIT.
 Counts below come from source inspection and the proposed retained prefixes.
-The results below confirm choices and widechoices; other cases need their own focused confirmation.
+The results below confirm choices, widechoices and binarychoices; other cases need their own focused confirmation.
 
 | Case | GTIDs per original phase | Original total with CREATE | Preparation writes | Body writes / GTIDs | Before cleanup: GTIDs / DDL / rows | After cleanup GTIDs |
 |---|---|---:|---:|---:|---:|---:|
@@ -466,7 +466,98 @@ Evidence:
 - `artifacts/wide-choices-workflow-review/fixture-rebuild.log`
 - `artifacts/wide-choices-workflow-review/fixture-check.log`
 
-Next: convert only matrix-binarychoices. Preserve raw binary ENUM labels, the
-empty member, NULL rows, ASCII binary SET members, latin1 bytes and changed
-hex/bit defaults. Keep independent SHOW CREATE parsing and its unit tests.
-Use focused lab tests and one forward case. Keep the remaining slices above.
+The wide conversion is committed as `9bcd237`. The next section records its
+separate binarychoices follow-up. Keep the remaining slices above.
+
+## Binary ENUM and SET implementation and focused results
+
+Step 4 is complete. matrix-binarychoices now uses the existing helper with two
+retained histories. Its original definition keeps the binary FF/61/empty ENUM
+labels, ASCII binary SET members, latin1 labels and hex/bit default syntax.
+The three original scripts and predicates remain unchanged, with FULL metadata.
+Other source cases, the shared helper/runner and NativeChoiceDefinition are
+unchanged. No production parser, decoder or applier code changed.
+
+Three full row queries retain all inserted fields, the result after ALTER, and
+the final three rows. They include ENUM ordinals, SET masks, raw hex bytes and
+explicit NULL markers. Two separate queries read HEX(DEFAULT(column)) from the
+retained tables. These confirm e/s defaults FF/412C61 before ALTER and 61/41
+afterward; the latin1 default remains E9. Full schema comparison continues to
+read raw SHOW CREATE bytes through the independent native parser.
+
+Focused checks passed:
+
+- 51 Swift tests: seven new binary workflow tests, two NativeChoiceDefinition
+  tests and the 42 existing workflow/metadata tests selected for widechoices.
+- Strict Swift format lint on the changed source and seven changed test files.
+- Catalog structure and normalized matrix comparison: 183 jobs, 1,545 catalog
+  obligations and 182 instrumented collections. Selection and order are unchanged.
+- Source audit: original binary definition/scripts/predicates, other source cases,
+  metadata inputs, shared helper/runner and raw schema oracle are unchanged.
+  Inventory normalization excludes display names, source locations, assertion
+  descriptions and the source-input fingerprint.
+
+The new tests check fixed raw values, exact original SQL, 3/9/1 source transaction
+counts, multi-statement request order, default queries and cleanup ownership.
+Negative checks reject UTF-8 replacement of FF/E9 bytes, ordinal zero in place of
+the declared empty member, NULL-to-empty substitutions and missing row updates.
+A new oracle test confirms that raw 5.7 bytes and 8.4 hex forms produce the same
+ordered binary labels, while the changed defaults remain distinct.
+
+One integration case ran with coverage: mysql84-to-mysql57-myisam, default
+variant, SQL transport, matrix-binarychoices. All 14 named assertions passed.
+Source, native and target agree on all original predicates, complete rows,
+default bytes and schema results. The SQL trace records nine raw SHOW CREATE
+requests: each of the three tables on each role. This confirms the existing
+binary schema oracle remains active. Raw engine checks confirm source InnoDB and
+native/target MyISAM. The existing shared saved-schema restart passed.
+
+| Measurement | Result |
+|---|---:|
+| Case execution | 5.53 seconds |
+| Case SQL client calls | 37 |
+| Source batches / client write requests | 3 / 10 |
+| Applied transactions before cleanup / after cleanup | 12 / 13 |
+| Applied DDL before cleanup / after cleanup | 5 / 6 |
+| Changed rows before cleanup / after cleanup | 16 / 16 |
+| Fixture setup | 14.92 seconds |
+| Container startup, included in setup | 11.96 seconds |
+| Coverage export | 1.77 seconds |
+| Fixture cleanup | 10.78 seconds |
+| Instrumented Swift lines executed / mapped | 7,979 / 20,880 |
+
+Saved CI reported 13.27 seconds and 118 calls. That group compared more
+accumulated poc tables. The local run selected one case and added retained tables.
+These are observations across different inputs, not a controlled speed comparison.
+Coverage includes setup and the shared restart. It does not establish individual
+case equivalence with the old group-level report.
+
+Both checkpoint assertions confirm exact GTID sets, offsets and counter deltas.
+Read-only final SQLite inspection confirms all 13 expanded GTIDs are APPLIED.
+For each multi-GTID request, its last group has the recorded request end offset.
+DDL and row intents are DONE. Latest schemas retain ordered binary/latin1 label
+bytes, including the empty member, and the correct default ordinals. Binary
+default bytes change from FF/412C61 to 61/41; latin1 stays at ordinal 1/E9.
+Cleanup retires the two histories and keeps matrix_binarychoices current. Final
+state is STOPPED with no active GTID, at the shared restart check's later offset.
+Two successful applier invocations are recorded: initial apply and that existing
+restart. This case adds no per-case lifecycle transition or offline replay.
+
+No other integration case/profile, full suite, benchmark or syntax suite ran
+locally. Selection tooling and runner code did not change, so their Python tests
+were not repeated. Leave other profiles, variants and whole-group validation to CI.
+
+Evidence:
+
+- `artifacts/lab/20261104T193007Z-e2bd6c79/result.json`
+- `artifacts/binary-choices-workflow-review/results.json`
+- `artifacts/binary-choices-workflow-review/state-results.json`
+- `artifacts/binary-choices-workflow-review/source-manifest.json`
+- `artifacts/binary-choices-workflow-review/inventory-results.json`
+- `artifacts/binary-choices-workflow-review/verify.py`
+- `artifacts/binary-choices-workflow-review/unit.log`
+
+Next: convert only matrix-exactchoices. Add narrow, tested id+0 ordering support
+before it opts into the helper. Keep FULL metadata, all encoded labels, numeric
+versus quoted defaults, added SET defaults and PRIMARY KEY reuse. Use focused
+lab tests and one forward case. Then continue with the remaining slices above.

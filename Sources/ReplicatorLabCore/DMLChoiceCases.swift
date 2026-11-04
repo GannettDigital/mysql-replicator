@@ -78,7 +78,44 @@ extension DMLCompatibilityCases {
                 check:
                     "SELECT COUNT(*)=3 AND SUM(id=3 AND HEX(e)='FF' AND s+0=3 AND HEX(l)='FF')=1 AND SUM(id=4 AND e IS NULL)=1 FROM poc.matrix_binarychoices"
             ),
-        ], rowMetadata: "FULL")
+        ], rowMetadata: "FULL",
+        workflow: .init(
+            title: "ENUM and SET: binary labels and hex/bit defaults",
+            histories: [
+                .init(table: "bc_after_insert", throughPhase: 1),
+                .init(table: "bc_after_default", throughPhase: 2),
+            ], phaseTransactions: [1, 2, 2],
+            predicateIDs: ["inserted-binary-members", "changed-defaults-and-row", "updated-binary-row-and-delete"],
+            additionalChecks: [
+                .init(
+                    id: "initial-rows",
+                    check: .init(
+                        "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(l+0,'NULL'),IFNULL(HEX(l),'NULL') FROM poc.bc_after_insert ORDER BY id",
+                        "1\t1\tFF\t3\t412C61\t1\tE9\n2\t2\t61\t1\t41\t2\tFF\n3\t3\t\t2\t61\t1\tE9\n4\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL"
+                    )),
+                .init(
+                    id: "changed-default-rows",
+                    check: .init(
+                        "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(l+0,'NULL'),IFNULL(HEX(l),'NULL') FROM poc.bc_after_default ORDER BY id",
+                        "1\t1\tFF\t3\t412C61\t1\tE9\n2\t2\t61\t1\t41\t1\tE9\n3\t3\t\t2\t61\t1\tE9\n4\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL"
+                    )),
+                .init(
+                    id: "final-rows",
+                    check: .init(
+                        "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(l+0,'NULL'),IFNULL(HEX(l),'NULL') FROM poc.matrix_binarychoices ORDER BY id",
+                        "2\t2\t61\t1\t41\t1\tE9\n3\t1\tFF\t3\t412C61\t2\tFF\n4\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL"
+                    )),
+                .init(
+                    id: "original-default-bytes",
+                    check: .init(
+                        "SELECT HEX(DEFAULT(e)),HEX(DEFAULT(s)),HEX(DEFAULT(l)) FROM poc.bc_after_insert WHERE id=1",
+                        "FF\t412C61\tE9")),
+                .init(
+                    id: "changed-default-bytes",
+                    check: .init(
+                        "SELECT HEX(DEFAULT(e)),HEX(DEFAULT(s)),HEX(DEFAULT(l)) FROM poc.bc_after_default WHERE id=1",
+                        "61\t41\tE9")),
+            ], expectedDDL: 5, expectedRows: 16))
 
     static let legacyBinarySet = Case(
         id: "legacybinaryset",
