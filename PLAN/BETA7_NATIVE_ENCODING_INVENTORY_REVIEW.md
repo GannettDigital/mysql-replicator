@@ -1,10 +1,10 @@
 # Character sets and collations: inventory workflow review
 
 Status: both inventory workflows passed their focused forward tests. The
-collation pilot is committed as `6574be6`. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#ordinal-zero-implementation-and-focused-results)
+collation pilot is committed as `6574be6`. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#multibyte-boundary-implementation-and-focused-results)
 passed choices/widechoices with 12 assertions each, binarychoices with 14,
-exactchoices with 16 and enumzero with 14.
-Next: convert only matrix-choiceboundaries with fixed multibyte label/default maps.
+exactchoices with 16, enumzero with 14 and choiceboundaries with 13.
+Next: convert only matrix-legacybinaryset on the 5.7 MyISAM profile.
 
 ## Decision and scope
 
@@ -540,8 +540,8 @@ Evidence:
 The [ENUM/SET review](BETA7_ENUM_SET_WORKFLOW_REVIEW.md) records the label/byte maps,
 phase results, overlap and implementation order. Its matrix-choices pilot passed
 all 12 assertions. Widechoices also passed 12, binarychoices passed 14 and
-exactchoices passed 16. Enumzero passed 14. Next: convert only
-matrix-choiceboundaries with fixed multibyte label/default maps. Keep all seven IDs,
+exactchoices passed 16. Enumzero passed 14 and choiceboundaries passed 13.
+Next: convert only matrix-legacybinaryset on the 5.7 MyISAM profile. Keep all seven IDs,
 cold metadata inputs, FULL overrides and native version
 exclusions. Keep remaining type/value and key/index work, full-matrix validation,
 final balancing and short PR selection in the overall plan.

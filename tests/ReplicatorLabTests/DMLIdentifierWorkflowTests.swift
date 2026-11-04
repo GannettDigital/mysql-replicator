@@ -28,7 +28,7 @@ final class DMLIdentifierWorkflowTests: XCTestCase {
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
-                "collations", "nativeencodings", "exactchoices", "binarychoices", "identifiercase",
+                "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "identifiercase",
                 "unicodeidentifiers", "enumzero", "choices",
                 "widechoices",
             ])

@@ -1480,10 +1480,22 @@ and after ALTER, the added SET default and primary-key reuse. Row queries use
 the original `id+0` ordering. The helper requires an explicit matching order
 setting; it does not accept arbitrary SQL expressions. All four original
 predicates, original scripts and FULL metadata remain. Cleanup drops only the
-retained tables. The other two ENUM/SET cases keep their current paths.
+retained tables.
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-exactchoices --coverage"
+```
+
+`matrix-choiceboundaries` uses the same workflow with two retained tables. Final
+queries check trimmed and escaped ENUM labels, UTF-16LE, UTF-32 and gb18030 bytes,
+empty members, empty SET values and NULL fields. They compare the high-bit and
+maximum 64-bit SET masks as unsigned decimal values. A separate query checks
+default bytes and declared SET member order. All three original predicates,
+original scripts and FULL metadata remain. Cleanup drops only the retained
+tables. Only `matrix-legacybinaryset` keeps its earlier execution path.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-choiceboundaries --coverage"
 ```
 
 `matrix-zerofill` checks integer display widths,

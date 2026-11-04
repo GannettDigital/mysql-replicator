@@ -160,13 +160,13 @@ final class ChoicesWorkflowTests: XCTestCase {
         XCTAssertEqual(plan.final.cleanup, plan.cleanup.writes.map(\.sql))
         XCTAssertEqual(fixture.displayName, "ENUM and SET: quoted values, comma labels, empty members and NULL")
         XCTAssertEqual(LabScenario.correctness.first { $0.id == "matrix-choices" }?.test.name, fixture.displayName)
-        for id in ["legacybinaryset", "choiceboundaries"] {
+        for id in ["legacybinaryset"] {
             XCTAssertNil(try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == id }).workflow, id)
         }
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
-                "collations", "nativeencodings", "exactchoices", "binarychoices", "identifiercase",
+                "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "identifiercase",
                 "unicodeidentifiers", "enumzero", "choices",
                 "widechoices",
             ])

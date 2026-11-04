@@ -100,7 +100,42 @@ extension DMLCompatibilityCases {
                     check:
                         "SELECT COUNT(*)=2 AND SUM(id=2 AND e+0=4)=1 AND SUM(id=3 AND e IS NULL)=1 FROM poc.matrix_choiceboundaries"
                 ),
-            ], rowMetadata: "FULL")
+            ], rowMetadata: "FULL",
+            workflow: .init(
+                title: "ENUM and SET: trimmed labels, escapes and multibyte boundaries",
+                histories: [
+                    .init(table: "cb_after_insert", throughPhase: 1),
+                    .init(table: "cb_after_update", throughPhase: 2),
+                ], phaseTransactions: [1, 1, 1],
+                predicateIDs: [
+                    "inserted-defaults-and-high-bit", "updated-escaped-and-multibyte-values", "deleted-default-row",
+                ],
+                additionalChecks: [
+                    .init(
+                        id: "initial-rows",
+                        check: .init(
+                            "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(g+0,'NULL'),IFNULL(HEX(g),'NULL'),IFNULL(CAST(bits AS UNSIGNED),'NULL'),IFNULL(HEX(bits),'NULL') FROM poc.cb_after_insert ORDER BY id",
+                            "1\t2\t61\t1\t2020\t3\t000020200000002C00004E2D\t1\t9439FC36\t9223372036854775808\t733634\n2\t1\t\t2\t2D4E\t0\t\t2\t3F\t18446744073709551615\t73312C73322C73332C73342C73352C73362C73372C73382C73392C7331302C7331312C7331322C7331332C7331342C7331352C7331362C7331372C7331382C7331392C7332302C7332312C7332322C7332332C7332342C7332352C7332362C7332372C7332382C7332392C7333302C7333312C7333322C7333332C7333342C7333352C7333362C7333372C7333382C7333392C7334302C7334312C7334322C7334332C7334342C7334352C7334362C7334372C7334382C7334392C7335302C7335312C7335322C7335332C7335342C7335352C7335362C7335372C7335382C7335392C7336302C7336312C7336322C7336332C733634\n3\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL"
+                        )),
+                    .init(
+                        id: "updated-rows",
+                        check: .init(
+                            "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(g+0,'NULL'),IFNULL(HEX(g),'NULL'),IFNULL(CAST(bits AS UNSIGNED),'NULL'),IFNULL(HEX(bits),'NULL') FROM poc.cb_after_update ORDER BY id",
+                            "1\t2\t61\t1\t2020\t3\t000020200000002C00004E2D\t1\t9439FC36\t9223372036854775808\t733634\n2\t4\t615C62\t2\t2D4E\t2\t00004E2D\t2\t3F\t1\t7331\n3\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL"
+                        )),
+                    .init(
+                        id: "final-rows",
+                        check: .init(
+                            "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(w+0,'NULL'),IFNULL(HEX(w),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL'),IFNULL(g+0,'NULL'),IFNULL(HEX(g),'NULL'),IFNULL(CAST(bits AS UNSIGNED),'NULL'),IFNULL(HEX(bits),'NULL') FROM poc.matrix_choiceboundaries ORDER BY id",
+                            "2\t4\t615C62\t2\t2D4E\t2\t00004E2D\t2\t3F\t1\t7331\n3\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL"
+                        )),
+                    .init(
+                        id: "default-bytes",
+                        check: .init(
+                            "SELECT HEX(DEFAULT(e)),HEX(DEFAULT(w)),HEX(DEFAULT(s)),HEX(DEFAULT(g)),HEX(DEFAULT(bits)) FROM poc.cb_after_insert WHERE id=1",
+                            "61\t2020\t000020200000002C00004E2D\t9439FC36\t733634"
+                        )),
+                ], expectedDDL: 3, expectedRows: 12))
     }()
     static let binaryChoices = Case(
         id: "binarychoices",

@@ -3,10 +3,10 @@
 Status: both identifier workflows passed their focused forward tests.
 The ASCII pilot is committed as `e4d54e9`; Unicode is committed as `2729752`.
 Both [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
-passed their focused forward cases. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#ordinal-zero-implementation-and-focused-results)
+passed their focused forward cases. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#multibyte-boundary-implementation-and-focused-results)
 passed choices/widechoices with 12 assertions each, binarychoices with 14,
-exactchoices with 16 and enumzero with 14.
-Next: convert only matrix-choiceboundaries with fixed multibyte label/default maps.
+exactchoices with 16, enumzero with 14 and choiceboundaries with 13.
+Next: convert only matrix-legacybinaryset on the 5.7 MyISAM profile.
 
 ## Decision and scope
 
@@ -463,9 +463,9 @@ Evidence:
 The [native inventory review](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md) records
 both complete value/ID maps, saved measurements and both implementation results.
 Each inventory passed all 16 named assertions on forward MyISAM. The
-[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#ordinal-zero-implementation-and-focused-results)
-passed choices, widechoices, binarychoices, exactchoices and enumzero. Next:
-convert only matrix-choiceboundaries with fixed multibyte label/default maps.
+[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#multibyte-boundary-implementation-and-focused-results)
+passed choices, widechoices, binarychoices, exactchoices, enumzero and
+choiceboundaries. Next: convert only matrix-legacybinaryset on the 5.7 MyISAM profile.
 Keep remaining type/value and key/index reviews, full-matrix
 validation, final balancing and short PR selection in the overall plan. Do not
 remove an inventory because its line coverage overlaps another case.

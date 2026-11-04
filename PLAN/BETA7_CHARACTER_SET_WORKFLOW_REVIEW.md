@@ -331,10 +331,10 @@ Both keep the original SQL and metadata inputs, check GTID intervals and add no
 applier restart. The [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed both focused forward cases, each with all 16 named assertions. They keep
 all 63 collation members and 36 encoding vectors. The
-[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#ordinal-zero-implementation-and-focused-results)
+[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#multibyte-boundary-implementation-and-focused-results)
 passed choices/widechoices with 12 assertions each, binarychoices with 14,
-exactchoices with 16 and enumzero with 14 on forward MyISAM.
-Next: convert only matrix-choiceboundaries with fixed multibyte label/default
-maps. Keep all seven IDs and their metadata/version rules.
+exactchoices with 16, enumzero with 14 and choiceboundaries with 13 on forward
+MyISAM. Next: convert only matrix-legacybinaryset on the 5.7 MyISAM profile.
+Keep all seven IDs and their metadata/version rules.
 Keep remaining type/value and key/index work, full-matrix validation, final
 balancing and short PR selection later.
