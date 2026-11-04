@@ -42,8 +42,10 @@ Current progress:
   also passed its focused case. The [DEFAULT workflow](BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md#implementation-and-focused-results)
   passed its reverse case, including source session checks. The
   [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
-  passed its forward case, including original byte and session checks. Next:
-  review Unicode table-name workflows; keep the case-setting variant separate.
+  passed its forward case, including original byte and session checks. The
+  [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+  passed its forward case, including name bytes and retained rows. Next: review
+  the separate mode-1 table-name variant, then DML identifier phases.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1492,6 +1494,10 @@ passed the forward MyISAM case with all 15 named assertions. Three batches
 retain four old predicates, both restarts, FULL metadata and the added-column
 value before UPDATE. Captured events confirm 12 exact non-UTF-8 DDL payloads
 and 13 following UTF-8 row/DROP sessions. SQL client calls changed from
-217 in saved CI to 62 locally. Next: review Unicode table-name workflows,
-then the lower-case table-name variant and the DML identifier cases. Keep native
-inventories, full-matrix validation, final balancing and short PR selection later.
+217 in saved CI to 62 locally. The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the forward case with all 20 named assertions. One body batch preserves
+all original names, four old predicates, pre-update/renamed/LIKE rows and DROP
+outcomes. Saved state confirms nine current tables with exact bytes and retired
+names. SQL client calls changed from 213 in saved CI to 60 locally.
+Next: review the lower-case table-name variant, then DML identifier phases. Keep
+native inventories, full-matrix validation, final balancing and short PR selection later.

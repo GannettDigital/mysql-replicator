@@ -1789,6 +1789,30 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 
 See the [encoded Query and identifier review](../PLAN/BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md).
 
+### Unicode table names
+
+`ddl-compat-unicode-names` uses one source body batch. It keeps all 15 original
+operations. Five retained databases keep earlier rows without changing the
+original table names. Final queries compare precomposed and decomposed name
+bytes, rows before and after UPDATE, RENAME results and the quoted `select`
+table created with LIKE.
+
+The case also checks the existing native conversion of a supplementary-character
+name to `?`. It captures source warnings. This is not a claim that MySQL permits
+supplementary characters in identifiers.
+
+Twelve final queries and full schema/index/row comparisons cover the original
+empty database and all five retained databases. The snapshot keeps nine current
+tables and the retired original names. Cleanup drops only the five retained
+databases after saved-state checks. The case adds no restart or offline replay.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-unicode-names --coverage"
+```
+
+The case needs lower_case_table_names=0. Keep the separate lower-case table-name
+variant for mode 1. See the [Unicode table-name review](../PLAN/BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md).
+
 ### Temporary-table cases
 
 `ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT

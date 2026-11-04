@@ -320,7 +320,8 @@ Evidence:
 - `artifacts/query-identifier-workflow-review/matrix-comparison.json`
 - `artifacts/query-identifier-workflow-review/unit.log`
 
-Next: review Unicode table-name workflows, then the lower-case table-name
-variant. Map the DML identifier phases separately. Keep native inventories,
+The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the forward case with exact name bytes and retained row results. Next:
+review the lower-case variant and DML identifier phases. Keep native inventories,
 ENUM/SET, remaining type/value and key/index reviews, full-matrix validation,
 final balancing and short PR selection in the overall plan.
