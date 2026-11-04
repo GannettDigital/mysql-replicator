@@ -439,7 +439,37 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_widechoices WHERE id=1",
                         check: "SELECT COUNT(*)=0 FROM poc.matrix_widechoices"),
-                ], rowMetadata: "FULL"),
+                ], rowMetadata: "FULL",
+                workflow: .init(
+                    title: "ENUM and SET: two-byte ENUM ordinals and 64-bit SET values",
+                    histories: [
+                        .init(table: "wc_after_insert", throughPhase: 1),
+                        .init(table: "wc_after_update", throughPhase: 2),
+                    ], phaseTransactions: [1, 1, 1],
+                    predicateIDs: [
+                        "inserted-ordinal-256-and-all-bits", "updated-ordinal-255-and-high-bit", "deleted-final-row",
+                    ],
+                    additionalChecks: [
+                        .init(
+                            id: "initial-row",
+                            check: .init(
+                                "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.wc_after_insert ORDER BY id",
+                                "1\t256\t65323536\t18446744073709551615\t"
+                                    + (1...64).map { "s\($0)" }.joined(separator: ",").utf8.map {
+                                        String(format: "%02X", $0)
+                                    }.joined()
+                            )),
+                        .init(
+                            id: "updated-row",
+                            check: .init(
+                                "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.wc_after_update ORDER BY id",
+                                "1\t255\t65323535\t9223372036854775808\t733634")),
+                        .init(
+                            id: "empty-final-table",
+                            check: .init(
+                                "SELECT id,IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.matrix_widechoices ORDER BY id",
+                                "")),
+                    ], expectedDDL: 3, expectedRows: 6)),
             Case(
                 id: "composite",
                 definition: "id INT NOT NULL,report_date DATE NOT NULL,v VARCHAR(40),PRIMARY KEY(report_date,id)",

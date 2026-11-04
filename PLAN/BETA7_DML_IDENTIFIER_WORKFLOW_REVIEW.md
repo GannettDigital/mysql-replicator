@@ -3,8 +3,9 @@
 Status: both identifier workflows passed their focused forward tests.
 The ASCII pilot is committed as `e4d54e9`; Unicode is committed as `2729752`.
 Both [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
-passed their focused forward cases. The [ENUM/SET pilot](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#choices-pilot-implementation-and-focused-results)
-passed matrix-choices with all 12 assertions. Next: convert only matrix-widechoices.
+passed their focused forward cases. The [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#wide-enum-and-set-implementation-and-focused-results)
+passed choices and widechoices, each with all 12 assertions. Next: convert only
+matrix-binarychoices.
 
 ## Decision and scope
 
@@ -461,8 +462,8 @@ Evidence:
 The [native inventory review](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md) records
 both complete value/ID maps, saved measurements and both implementation results.
 Each inventory passed all 16 named assertions on forward MyISAM. The
-[ENUM/SET pilot](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#choices-pilot-implementation-and-focused-results)
-passed matrix-choices. Next: convert only matrix-widechoices. Keep remaining
+[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#wide-enum-and-set-implementation-and-focused-results)
+passed choices and widechoices. Next: convert only matrix-binarychoices. Keep remaining
 type/value and key/index reviews, full-matrix
 validation, final balancing and short PR selection in the overall plan. Do not
 remove an inventory because its line coverage overlaps another case.

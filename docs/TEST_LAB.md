@@ -1434,11 +1434,21 @@ Final queries compare ENUM ordinals and bytes, unsigned SET masks, empty members
 and NULL fields. They retain the apostrophe label, comma label and UTF-8 value
 which the final DELETE removes. The case keeps all three original predicates,
 the original scripts and FULL row metadata. Cleanup drops only the two retained
-tables. The case adds no applier restart. The other six ENUM/SET cases keep their
-current execution paths.
+tables. The case adds no applier restart.
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-choices --coverage"
+```
+
+`matrix-widechoices` uses the same workflow with two retained tables. Final
+queries check ENUM ordinal 256 before UPDATE and 255 afterward. They also check
+the full 64-bit SET mask, the high bit and exact label bytes. A separate query
+requires the original table to be empty after DELETE. The case keeps all 256
+ENUM labels, 64 SET members, original scripts and FULL metadata. Cleanup drops
+only the retained tables. The other five ENUM/SET cases keep their current paths.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-widechoices --coverage"
 ```
 
 `matrix-zerofill` checks integer display widths,

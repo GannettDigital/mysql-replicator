@@ -496,8 +496,21 @@ Both keep the original SQL and metadata inputs, check GTID intervals and add no
 applier restart. The [inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed both focused forward cases, each with all 16 named assertions. They keep
 all 63 collation members and 36 encoding vectors. The
-[ENUM/SET pilot](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#choices-pilot-implementation-and-focused-results)
-passed matrix-choices on forward MyISAM with all 12 assertions. Next: convert
-only matrix-widechoices. Keep all seven IDs and their metadata/version rules.
+[ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#wide-enum-and-set-implementation-and-focused-results)
+passed choices and widechoices on forward MyISAM, each with all 12 assertions.
+Next: convert only matrix-binarychoices. Keep all seven IDs and their metadata/version rules.
 Keep remaining type/value and key/index work, full-matrix validation, final
 balancing and short PR selection later.
+
+### Follow-up: support reports before applier setup
+
+The first widechoices attempt failed while creating the target container because
+OrbStack lacked an image-layer parent snapshot. No test SQL or applier state
+existed. The harness kept harness-failure.json and fixture-lifecycle.json, but
+its support-bundle invocation failed because stateDirectory was not configured.
+The repaired-image retry passed. See the [attempt records](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#wide-enum-and-set-implementation-and-focused-results).
+
+Future work: collect setup logs, fixture configuration and lifecycle results when
+state is unavailable. Avoid a state-dependent bundle command until its required
+configuration exists. Test this with a focused pre-applier setup failure; a full
+SQL correctness run is not required for that diagnostics change.

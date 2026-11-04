@@ -1,8 +1,8 @@
 # ENUM and SET: value and workflow review
 
-Status: matrix-choices passed its focused pilot. Next: convert only
-matrix-widechoices with the same helper. The other five ENUM/SET conversions
-remain separate slices. The
+Status: matrix-choices and matrix-widechoices passed their focused forward tests.
+The first pilot is committed as `87320df`. Next: convert only matrix-binarychoices
+with the same helper and raw SHOW CREATE checks. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -20,8 +20,8 @@ Do not route these cases through the DDL loop or set replicatedReplacement.
 Do not change production replication or the independent native schema parser.
 
 The initial review used source inspection, MySQL documentation and saved CI
-results without new builds or tests. The pilot results below confirm choices.
-Other row maps and counts remain proposed expectations for their own slices.
+results without new builds or tests. The results below confirm choices and
+widechoices. Other row maps and counts remain proposed expectations for their own slices.
 
 ## MySQL terms and test titles
 
@@ -215,7 +215,7 @@ No new per-case restart or offline replay is required for this batching work.
 These scripts have autocommit DML and implicit DDL commits. Preserve each
 multi-statement script; do not split on semicolons or add BEGIN/COMMIT.
 Counts below come from source inspection and the proposed retained prefixes.
-The pilot below confirms choices; other cases need their own focused confirmation.
+The results below confirm choices and widechoices; other cases need their own focused confirmation.
 
 | Case | GTIDs per original phase | Original total with CREATE | Preparation writes | Body writes / GTIDs | Before cleanup: GTIDs / DDL / rows | After cleanup GTIDs |
 |---|---|---:|---:|---:|---:|---:|
@@ -283,11 +283,10 @@ choices pilot results below establish new observed behavior in this plan.
 
 ## Choices pilot implementation and focused results
 
-Steps 1–3 are complete. Only matrix-choices is newly enabled on the existing
-DML workflow helper. It retains its exact definition, three scripts, three
-predicates and FULL row-metadata setting. The other six choice cases, shared
-helper/runner, metadata selection and previously prepared native-encoding work
-are unchanged. No production decoder, parser or applier code changed.
+Steps 1–3 are complete. At this step, only matrix-choices was newly enabled on the existing DML workflow
+helper. It retains its exact definition, three scripts, three predicates and
+FULL row-metadata setting. The other six choice cases, shared helper/runner,
+metadata selection and native-encoding work were unchanged. No production decoder, parser or applier code changed.
 
 Preparation creates the original table and ch_after_insert/ch_after_update.
 The body runs the three original scripts first, then the original prefixes on
@@ -367,8 +366,107 @@ Evidence:
 - `artifacts/choices-workflow-review/verify.py`
 - `artifacts/choices-workflow-review/unit.log`
 
-Next: convert only matrix-widechoices. Keep the 256-label ENUM definition,
-256→255 ordinal transition, 64 SET members, maximum/high-bit unsigned values,
-FULL metadata and an explicit empty final-table assertion. Use the same helper,
-focused unit tests and one forward case. Then proceed with the remaining slices
-above. Keep full-matrix validation, final balancing and short PR selection later.
+This pilot is committed as `87320df`, together with the native-encoding work.
+The next section records its separate widechoices follow-up. Keep full-matrix
+validation, final balancing and short PR selection later.
+
+## Wide ENUM and SET implementation and focused results
+
+The first part of Step 4 is complete. matrix-widechoices now uses the existing
+helper. The original definition keeps all 256 ENUM labels and 64 SET members.
+The original scripts, predicates and FULL metadata setting are unchanged. Other
+source cases and the shared helper/runner are unchanged. No production parser,
+decoder or applier code changed in this slice.
+
+Two retained tables keep the original INSERT result and the result after UPDATE.
+The ENUM definition keeps its two-byte field layout during both phases. Three
+full row queries require ordinal 256/label e256 with the maximum SET mask,
+ordinal 255/label e255 with only bit 64, and an empty original table after DELETE.
+The maximum-mask label bytes include all 64 members in declaration order.
+Unsigned values stay as exact decimal strings, with no floating-point conversion.
+All three old predicates remain separate named assertions.
+
+Focused checks passed:
+
+- 42 Swift tests: six new wide-case tests and the 36 existing workflow/metadata
+  tests selected for the pilot.
+- Strict Swift format lint on the changed source and six changed test files.
+- Catalog structure and normalized matrix comparison: 183 jobs, 1,545 catalog
+  obligations and 182 instrumented collections. Selection and order are unchanged.
+- Source audit: the complete wide definition, three scripts/predicates, other
+  source cases, metadata inputs and shared helper/runner remain unchanged.
+  Inventory normalization excludes display names, source locations, assertion
+  descriptions and the source-input fingerprint.
+
+The new tests preserve full label lists and exact source SQL. Fixed expectations
+check UInt64.max, bit 64, the 492 hex digits of the maximum-mask member list and
+both boundary labels. Negative checks reject signed output, changed label bytes,
+extra bytes and rows remaining in the final table. Counter/offset checks include
+the cleanup boundary. Metadata tests retain the original definition and first
+INSERT/check with FULL metadata on every applicable profile.
+
+The same forward/default/SQL case was attempted twice. The first attempt failed
+before any test SQL: OrbStack could not create the 5.7 target container because
+an image-layer parent snapshot was missing. The failure report and lifecycle
+files were inspected before retrying. Support-bundle collection also failed:
+setup had not yet produced a stateDirectory setting. No usable bundle existed.
+The local MySQL 5.7 fixture image was rebuilt without cache. A mysql --version
+container check passed. The source code was unchanged for the retry.
+
+The retry selected only matrix-widechoices on mysql84-to-mysql57-myisam with
+coverage. All 12 named assertions passed. Source, native and target agree on
+both retained rows, exact unsigned masks and bytes, schema results and the empty
+final table. Raw engine checks confirm source InnoDB and native/target MyISAM.
+The existing shared saved-schema restart passed.
+
+Successful-attempt measurements:
+
+| Measurement | Result |
+|---|---:|
+| Case execution | 3.93 seconds |
+| Case SQL client calls | 27 |
+| Source batches / client write requests | 3 / 10 |
+| Applied transactions before cleanup / after cleanup | 9 / 10 |
+| Applied DDL before cleanup / after cleanup | 3 / 4 |
+| Changed rows before cleanup / after cleanup | 6 / 6 |
+| Fixture setup | 13.25 seconds |
+| Container startup, included in setup | 10.73 seconds |
+| Coverage export | 1.68 seconds |
+| Fixture cleanup | 10.70 seconds |
+| Instrumented Swift lines executed / mapped | 7,506 / 20,880 |
+
+Saved CI reported 14.46 seconds and 130 calls. Its group compared more accumulated
+poc tables. The local run selected one case and added retained tables. This is
+not a controlled speed comparison. Coverage includes setup and the shared restart;
+it does not prove individual-case equivalence with the old group-level report.
+
+Both checkpoint assertions confirm exact GTID sets, offsets and counter deltas.
+Read-only final SQLite inspection confirms all ten GTIDs are APPLIED at their
+recorded end offsets. DDL and row intents are DONE. Each latest saved schema keeps
+all 256 ENUM labels, all 64 SET members, label order, NULL defaults and utf8mb4_bin
+encoding. Cleanup retires the two histories and keeps matrix_widechoices current.
+Final state is STOPPED with no active GTID, at the shared restart check's later
+offset. Two successful applier invocations are recorded: initial apply and that
+existing restart. This case adds no per-case lifecycle transition or offline replay.
+
+No other integration case/profile, full suite, benchmark or syntax suite ran
+locally. Selection tooling and runner code did not change, so their Python tests
+were not repeated. Leave other profiles, variants and whole-group validation to CI.
+
+Evidence:
+
+- `artifacts/lab/20261104T185923Z-a4f18c11/result.json`: successful retry.
+- `artifacts/lab/20261104T180058Z-7b5f8f41/result.json`: setup failure, preserved.
+- `artifacts/wide-choices-workflow-review/results.json`
+- `artifacts/wide-choices-workflow-review/state-results.json`
+- `artifacts/wide-choices-workflow-review/source-manifest.json`
+- `artifacts/wide-choices-workflow-review/inventory-results.json`
+- `artifacts/wide-choices-workflow-review/verify.py`
+- `artifacts/wide-choices-workflow-review/unit.log`
+- `artifacts/wide-choices-workflow-review/fixture-rebuild.log`
+- `artifacts/wide-choices-workflow-review/fixture-check.log`
+
+Next: convert only matrix-binarychoices. Preserve raw binary ENUM labels, the
+empty member, NULL rows, ASCII binary SET members, latin1 bytes and changed
+hex/bit defaults. Keep independent SHOW CREATE parsing and its unit tests.
+Use focused lab tests and one forward case. Keep the remaining slices above.
