@@ -275,7 +275,7 @@ final class CollationInventoryWorkflowTests: XCTestCase {
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
                 "collations", "nativeencodings", "exactchoices", "binarychoices", "identifiercase",
-                "unicodeidentifiers", "choices",
+                "unicodeidentifiers", "enumzero", "choices",
                 "widechoices",
             ])
     }

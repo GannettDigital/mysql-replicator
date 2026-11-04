@@ -1431,10 +1431,20 @@ See [the catalog guide](../tests/DDLCoverage/README.md#beta6-support-audit).
 
 `matrix-enumzero` distinguishes ENUM ordinal zero
 from a declared empty-string label. It checks multirow INSERT, ordinal changes,
-NULL, primary-key changes and DELETE on all four profiles. The shared fixture
+NULL, primary-key changes and DELETE on all four profiles. Preparation and body
+batches share one running applier. Three retained tables keep the results after
+INSERT, UPDATE and DELETE. Final queries compare numeric ordinals and hex bytes
+together; both ordinal zero and the declared empty member have empty bytes.
+The original scripts keep their own non-strict SQL mode after each session reset.
+All four original predicates and FULL metadata remain. Cleanup drops only the
+retained tables. The shared fixture
 also restarts from saved state and verifies a write to reverse_poc.aux. The
 former `matrix-reject-enum-error-value` case is removed. Ordered-label and
 missing-label refusal cases remain.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-enumzero --coverage"
+```
 
 The [ENUM and SET workflow review](../PLAN/BETA7_ENUM_SET_WORKFLOW_REVIEW.md)
 maps the seven value cases, ordered labels, exact bytes, defaults and ordinal
@@ -1470,7 +1480,7 @@ and after ALTER, the added SET default and primary-key reuse. Row queries use
 the original `id+0` ordering. The helper requires an explicit matching order
 setting; it does not accept arbitrary SQL expressions. All four original
 predicates, original scripts and FULL metadata remain. Cleanup drops only the
-retained tables. The other three ENUM/SET cases keep their current paths.
+retained tables. The other two ENUM/SET cases keep their current paths.
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-exactchoices --coverage"

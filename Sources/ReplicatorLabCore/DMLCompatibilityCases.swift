@@ -380,7 +380,44 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "SET SESSION sql_mode=''; UPDATE poc.matrix_enumzero SET id=0,e=0,v=20 WHERE id+0=2",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_enumzero WHERE id+0=0 AND e+0=0 AND v=20"),
-                ], orderBy: "id+0", rowMetadata: "FULL"),
+                ], orderBy: "id+0", rowMetadata: "FULL",
+                workflow: .init(
+                    title: "ENUM: ordinal zero, empty members and primary-key changes",
+                    histories: [
+                        .init(table: "ez_after_insert", throughPhase: 1),
+                        .init(table: "ez_after_update", throughPhase: 2),
+                        .init(table: "ez_after_delete", throughPhase: 3),
+                    ], phaseTransactions: [1, 2, 1, 1],
+                    predicateIDs: [
+                        "inserted-zero-empty-and-null", "updated-zero-and-empty", "deleted-zero-key",
+                        "reused-zero-primary-key",
+                    ],
+                    additionalChecks: [
+                        .init(
+                            id: "initial-rows",
+                            check: .init(
+                                "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),v FROM poc.ez_after_insert ORDER BY id+0",
+                                "0\t\t1\t\t0\n1\t\t0\t\t1\n2\t6F6E65\tNULL\tNULL\t2"
+                            )),
+                        .init(
+                            id: "updated-rows",
+                            check: .init(
+                                "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),v FROM poc.ez_after_update ORDER BY id+0",
+                                "0\t\t0\t\t10\n1\t\t1\t\t11\n2\t6F6E65\tNULL\tNULL\t2"
+                            )),
+                        .init(
+                            id: "after-delete-rows",
+                            check: .init(
+                                "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),v FROM poc.ez_after_delete ORDER BY id+0",
+                                "1\t\t1\t\t11\n2\t6F6E65\tNULL\tNULL\t2"
+                            )),
+                        .init(
+                            id: "final-rows",
+                            check: .init(
+                                "SELECT id+0,HEX(id),IFNULL(e+0,'NULL'),IFNULL(HEX(e),'NULL'),v FROM poc.matrix_enumzero ORDER BY id+0",
+                                "0\t\t0\t\t20\n1\t\t1\t\t11"
+                            )),
+                    ], expectedDDL: 4, expectedRows: 21, order: .idOrdinal)),
             Case(
                 id: "choices", definition: "id INT PRIMARY KEY,e ENUM('','one','it''s','x,y','é'),s SET('a','b','c')",
                 phases: [
