@@ -347,6 +347,10 @@ The [charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#imp
 passed the focused forward MyISAM case. All 17 named assertions passed.
 Four batches retain six old predicates, three restarts, FULL metadata and exact
 GTID/file offsets. SQL client calls changed from 222 in saved CI to
-73 locally. Next: review `charset-defaults` with explicit source session
-boundaries, then encoded SQL and identifier workflows. Keep DML inventories,
+73 locally. The [DEFAULT workflow results](BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the reverse case with all 17 named assertions. Five batches preserve
+unselected-database statements, logged collation overrides, four old predicates
+and INSERT/UPDATE row states. Captured Query events confirm the session contexts.
+SQL client calls changed from 168 in saved CI to 64 locally.
+Next: review encoded Query SQL and identifier workflows. Keep DML inventories,
 full-matrix validation, final balancing and short PR selection later.

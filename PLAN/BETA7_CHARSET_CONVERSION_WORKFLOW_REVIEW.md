@@ -255,6 +255,7 @@ Evidence:
 - `artifacts/charset-conversion-workflow-review/matrix-comparison.json`
 - `artifacts/charset-conversion-workflow-review/unit.log`
 
-Next: review `charset-defaults` with explicit source session boundaries. Then
-review encoded Query SQL and identifier workflows. Keep the other areas and
+The [DEFAULT workflow results](BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the reverse case, including source session checks and retained row states.
+Next: review encoded Query SQL and identifier workflows. Keep the other areas and
 full-matrix validation in the overall consolidation plan.

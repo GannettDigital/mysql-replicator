@@ -1738,6 +1738,33 @@ Retaining earlier results adds five native CONVERT statements. Compare elapsed
 time as well as SQL client calls when assessing this change. See the
 [conversion review](../PLAN/BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md).
 
+### MySQL 5.7 DEFAULT character set syntax
+
+`ddl-compat-charset-defaults` uses five source batches. The first ten operations
+keep their original order and both deliberate restarts. Five retained tables
+keep earlier table defaults, column collations and INSERT/UPDATE row bytes for
+final comparison. DELETE still removes the row from the original table.
+
+Source session boundaries are part of this test. The first table-default clauses
+run without a selected database. Later CONVERT statements use USE ddlcompat and
+an explicit collation_database override. A new client clears both before the
+following row operations. The retained histories keep those same conditions.
+
+Final queries check four original charset results, both retained row values,
+the final table collation and the DELETE result. Full schema and row comparisons
+include all six tables. Cleanup drops only the five retained tables after saved
+state checks. The case does not add an offline replay path.
+
+Run the case against an 8.4 target:
+
+```sh
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case ddl-compat-charset-defaults --coverage"
+```
+
+This also tests translation of the old DEFAULT-name syntax. The 8.4-source
+profile is excluded because native 8.4 rejects that syntax. See the
+[session and workflow review](../PLAN/BETA7_CHARSET_DEFAULTS_WORKFLOW_REVIEW.md).
+
 ### Temporary-table cases
 
 `ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT

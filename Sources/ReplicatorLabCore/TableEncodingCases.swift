@@ -49,45 +49,108 @@ extension DDLCompatibilityCases {
             cleanup: ["DROP TABLE ddlcompat.cc_after_convert"]
         ))
     static let charsetDefaults = Case(
-        "charset-defaults", "5.7 DEFAULT encoding forms retain database inheritance on both target versions",
+        "charset-defaults",
+        "Database and table character set defaults: MySQL 5.7 DEFAULT syntax",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,v VARCHAR(20)) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"),
-            .init(
-                "ALTER TABLE ddlcompat.t DEFAULT CHARSET=DEFAULT",
-                [
-                    .init(
-                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
-                        "utf8mb4_bin")
-                ]),
+            .init("ALTER TABLE ddlcompat.t DEFAULT CHARSET=DEFAULT"),
             .init("ALTER TABLE ddlcompat.t COLLATE latin1_bin, CHARACTER SET DEFAULT"),
             .init("ALTER TABLE ddlcompat.t COLLATE DEFAULT"),
-            .init(
-                "ALTER TABLE ddlcompat.t CHARACTER SET latin1 COLLATE DEFAULT",
-                [
-                    .init(
-                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
-                        "utf8mb4_bin")
-                ]),
-            .init(
-                "USE ddlcompat; ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET DEFAULT",
-                [
-                    .init(
-                        "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='v'",
-                        "utf8mb4_bin")
-                ], restartBefore: true),
+            .init("ALTER TABLE ddlcompat.t CHARACTER SET latin1 COLLATE DEFAULT", phaseEnd: "table-default-clauses"),
+            .init("USE ddlcompat; ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET DEFAULT", restartBefore: true),
             .init(
                 "USE ddlcompat; SET SESSION collation_database=latin1_bin; ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET DEFAULT",
-                [
-                    .init(
-                        "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='v'",
-                        "latin1_bin")
-                ]),
-            .init("INSERT INTO ddlcompat.t VALUES(1,'café')"),
+                phaseEnd: "convert-database-and-session-defaults"),
+            .init("INSERT INTO ddlcompat.t VALUES(1,'café')", phaseEnd: "insert-after-session-reset"),
             .init("UPDATE ddlcompat.t SET v='été' WHERE id=1", restartBefore: true),
             .init("DELETE FROM ddlcompat.t WHERE id=1"),
+            .init(
+                "CREATE TABLE ddlcompat.cd_after_default(id INT PRIMARY KEY,v VARCHAR(20)) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("ALTER TABLE ddlcompat.cd_after_default DEFAULT CHARSET=DEFAULT"),
+            .init(
+                "CREATE TABLE ddlcompat.cd_after_clauses(id INT PRIMARY KEY,v VARCHAR(20)) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("ALTER TABLE ddlcompat.cd_after_clauses DEFAULT CHARSET=DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_clauses COLLATE latin1_bin, CHARACTER SET DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_clauses COLLATE DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_clauses CHARACTER SET latin1 COLLATE DEFAULT"),
+            .init(
+                "CREATE TABLE ddlcompat.cd_after_utf8(id INT PRIMARY KEY,v VARCHAR(20)) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("ALTER TABLE ddlcompat.cd_after_utf8 DEFAULT CHARSET=DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_utf8 COLLATE latin1_bin, CHARACTER SET DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_utf8 COLLATE DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_utf8 CHARACTER SET latin1 COLLATE DEFAULT"),
+            .init(
+                "CREATE TABLE ddlcompat.cd_after_insert(id INT PRIMARY KEY,v VARCHAR(20)) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("ALTER TABLE ddlcompat.cd_after_insert DEFAULT CHARSET=DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_insert COLLATE latin1_bin, CHARACTER SET DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_insert COLLATE DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_insert CHARACTER SET latin1 COLLATE DEFAULT"),
+            .init(
+                "CREATE TABLE ddlcompat.cd_after_update(id INT PRIMARY KEY,v VARCHAR(20)) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init("ALTER TABLE ddlcompat.cd_after_update DEFAULT CHARSET=DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_update COLLATE latin1_bin, CHARACTER SET DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_update COLLATE DEFAULT"),
+            .init("ALTER TABLE ddlcompat.cd_after_update CHARACTER SET latin1 COLLATE DEFAULT"),
+            .init("USE ddlcompat; ALTER TABLE ddlcompat.cd_after_utf8 CONVERT TO CHARACTER SET DEFAULT"),
+            .init("USE ddlcompat; ALTER TABLE ddlcompat.cd_after_insert CONVERT TO CHARACTER SET DEFAULT"),
+            .init(
+                "USE ddlcompat; SET SESSION collation_database=latin1_bin; ALTER TABLE ddlcompat.cd_after_insert CONVERT TO CHARACTER SET DEFAULT"
+            ),
+            .init("USE ddlcompat; ALTER TABLE ddlcompat.cd_after_update CONVERT TO CHARACTER SET DEFAULT"),
+            .init(
+                "USE ddlcompat; SET SESSION collation_database=latin1_bin; ALTER TABLE ddlcompat.cd_after_update CONVERT TO CHARACTER SET DEFAULT",
+                phaseEnd: "update-delete-and-retain-encoding-states"),
+            .init("INSERT INTO ddlcompat.cd_after_insert VALUES(1,'café')"),
+            .init("INSERT INTO ddlcompat.cd_after_update VALUES(1,'café')"),
+            .init(
+                "UPDATE ddlcompat.cd_after_update SET v='été' WHERE id=1", phaseEnd: "retain-insert-and-update-results"),
         ],
-        profileExclusions: [.forward: "MySQL 8.4 source rejects DEFAULT as a charset or collation name (error 1064)."])
+        profileExclusions: [.forward: "MySQL 8.4 source rejects DEFAULT as a charset or collation name (error 1064)."],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "table-default-inherits-database",
+                    check: .init(
+                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cd_after_default'",
+                        "utf8mb4_bin")),
+                .init(
+                    id: "later-default-clauses-inherit-database",
+                    check: .init(
+                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cd_after_clauses'",
+                        "utf8mb4_bin")),
+                .init(
+                    id: "conversion-uses-database-default",
+                    check: .init(
+                        "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cd_after_utf8' AND COLUMN_NAME='v'",
+                        "utf8mb4_bin")),
+                .init(
+                    id: "conversion-uses-session-override",
+                    check: .init(
+                        "SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME='v'",
+                        "latin1_bin")),
+                .init(
+                    id: "inserted-row-bytes",
+                    check: .init("SELECT id,HEX(v) FROM ddlcompat.cd_after_insert ORDER BY id", "1\t636166E9")),
+                .init(
+                    id: "updated-row-bytes",
+                    check: .init("SELECT id,HEX(v) FROM ddlcompat.cd_after_update ORDER BY id", "1\tE974E9")),
+                .init(id: "deleted-original-row", check: .init("SELECT COUNT(*) FROM ddlcompat.t", "0")),
+                .init(
+                    id: "final-table-collation",
+                    check: .init(
+                        "SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t'",
+                        "latin1_bin")),
+            ], databases: ["ddlcompat"],
+            cleanup: [
+                "DROP TABLE ddlcompat.cd_after_default,ddlcompat.cd_after_clauses,ddlcompat.cd_after_utf8,ddlcompat.cd_after_insert,ddlcompat.cd_after_update"
+            ]
+        ))
     static let tableCharset = Case(
         "table-charset", "Table character set and collation: defaults, new columns and CREATE TABLE ... LIKE",
         [
