@@ -327,4 +327,16 @@ final class DDLFinalObservationsTests: XCTestCase {
         XCTAssertTrue(plan.queries()[0].preserveWhitespace)
         XCTAssertTrue(plan.queries()[0].sql.contains("SET NAMES utf8mb4"))
     }
+    func testReadOnlyQueryValidationIsSharedWithoutWeakeningDDLGuards() throws {
+        let observation = DDLFinalObservations.Observation(id: "row", check: .init("SELECT 1", "1"))
+        let plan = DDLFinalObservations(checks: [observation], databases: ["poc"], cleanup: [])
+        XCTAssertNoThrow(try plan.validateQueries())
+        XCTAssertThrowsError(try plan.validate([]))
+        XCTAssertThrowsError(
+            try DDLFinalObservations(checks: [observation, observation], databases: ["poc"], cleanup: [])
+                .validateQueries())
+        XCTAssertThrowsError(
+            try DDLFinalObservations(checks: [observation], databases: [], cleanup: []).validateQueries())
+    }
+
 }

@@ -281,7 +281,9 @@ Evidence:
 - `artifacts/lowercase-table-workflow-review/matrix-comparison.json`
 - `artifacts/lowercase-table-workflow-review/unit.log`
 
-Next: review the two DML identifier cases and their phase/assertion map. Keep
-native collation/encoding inventories, ENUM/SET, remaining type/value and key/index
-reviews, full-matrix validation, final balancing and short PR selection in the
-overall consolidation plan.
+The [ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
+passed its forward case with all 16 named assertions. Next: convert only
+matrix-unicodeidentifiers with the same helper. Preserve source transaction
+boundaries and keep the applier running between cases. Native inventories,
+ENUM/SET, remaining type/value and key/index reviews, full-matrix validation,
+final balancing and short PR selection remain in the overall plan.

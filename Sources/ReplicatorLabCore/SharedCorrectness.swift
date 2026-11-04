@@ -1094,10 +1094,14 @@ public enum SharedCorrectness {
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "poc")
             for test in DMLCompatibilityCases.replicatedCases
             where selects("matrix-" + test.id) && test.applies(to: f.profile) {
-                try reporter.run(QualificationCase("matrix-" + test.id, "Shared DML matrix: " + test.id)) {
+                try reporter.run(QualificationCase("matrix-" + test.id, test.displayName)) {
                     if f.profile.hasOptionalMetadata {
                         _ = try f.sql(
                             .source, "SET GLOBAL binlog_row_metadata=" + (test.rowMetadata ?? f.variant.metadata))
+                    }
+                    if let workflow = test.workflow {
+                        try dmlWorkflow(workflow, test: test)
+                        return
                     }
                     try step(
                         "CREATE TABLE poc.matrix_\(test.id)(\(test.definition)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",

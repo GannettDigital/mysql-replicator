@@ -260,5 +260,9 @@ passed the reverse case, including source session checks and retained row states
 The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-query-implementation-and-focused-results)
 passed the forward case. The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 also passed its forward case. The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-passed its forward mode-1 case. Next: review DML identifier cases. Keep the other
-areas and full-matrix validation in the overall consolidation plan.
+passed its forward mode-1 case. The [ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
+passed its forward case with all 16 named assertions. Next: convert only
+matrix-unicodeidentifiers with the same helper. Keep exact Unicode name bytes,
+NULL/default rows and index identities. Native inventories, ENUM/SET, remaining
+type/value and key/index reviews, full-matrix validation, final balancing and
+short PR selection remain in the overall plan.

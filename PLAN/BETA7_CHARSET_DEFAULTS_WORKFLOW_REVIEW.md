@@ -309,6 +309,9 @@ The [encoded Query workflow](BETA7_QUERY_IDENTIFIER_WORKFLOW_REVIEW.md#encoded-q
 passed the forward case, including exact original bytes and connection settings.
 The [Unicode table-name workflow](BETA7_UNICODE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 passed the forward case. The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-also passed its forward mode-1 case. Next: review DML identifier cases. Keep
-native encoding inventories, ENUM/SET, remaining type/value and key/index reviews,
-full-matrix validation, final balancing and short PR selection in the overall plan.
+also passed its forward mode-1 case. The [ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
+passed its forward case with all 16 named assertions. Next: convert only
+matrix-unicodeidentifiers with the same helper. Keep exact Unicode name bytes,
+NULL/default rows and index identities. Native inventories, ENUM/SET, remaining
+type/value and key/index reviews, full-matrix validation, final balancing and
+short PR selection remain in the overall plan.

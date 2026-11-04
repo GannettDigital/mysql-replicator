@@ -19,6 +19,8 @@ enum DMLCompatibilityCases {
         var profileExclusions: [LabProfile: String] = [:]
         // Keep the fixture for existing-schema tests after its replicated case moves.
         var replicatedReplacement: String? = nil
+        var workflow: DMLExecutionWorkflow? = nil
+        var displayName: String { workflow?.title ?? "Shared DML matrix: " + id }
         func applies(to profile: LabProfile) -> Bool {
             profileExclusions[profile] == nil && (source84OnlyReason == nil || profile.sourceVersion == .mysql84)
         }

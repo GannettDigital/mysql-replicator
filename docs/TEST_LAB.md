@@ -1836,6 +1836,29 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 The default variant excludes this case. Keep the separate Unicode table-name
 case on mode 0. See the [lower-case table-name review](../PLAN/BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md).
 
+### Column and index case sensitivity
+
+`matrix-identifiercase` uses preparation and body batches with one running
+applier. The original SQL keeps its column, PRIMARY KEY and index references
+with different letter cases. Three retained tables keep earlier rows, defaults
+and index names for final checks. The case compares all four original predicates,
+full ordered rows and schemas across source, native and target.
+
+Preparation has four source transactions. The ten body requests have 18 source
+transactions. Multi-statement scripts keep their original autocommit and implicit
+DDL commits. A batch does not combine them into one transaction. The case checks
+applied GTIDs, file offsets and counters after the body and after cleanup.
+Cleanup drops only the three retained tables. The shared final drain and
+saved-schema restart remain. The case adds no applier restart.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-identifiercase --coverage"
+```
+
+The original definitions and first INSERT remain inputs to metadata-discovery
+tests. `matrix-unicodeidentifiers` still uses its existing phased execution.
+See the [DML identifier workflow review](../PLAN/BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md).
+
 ### Temporary-table cases
 
 `ddl-compat-temporary` uses one body batch. It checks permanent INSERT ... SELECT

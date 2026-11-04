@@ -156,7 +156,7 @@ struct LabScenario {
                 family: "rejections", intent: "source or target restriction; no partial apply"))
         cases += DMLCompatibilityCases.replicatedCases.map {
             .init(
-                test: .init("matrix-" + $0.id, "Shared DML matrix: " + $0.id), family: "dml",
+                test: .init("matrix-" + $0.id, $0.displayName), family: "dml",
                 source84OnlyReason: $0.source84OnlyReason, profileExclusions: $0.profileExclusions,
                 smoke: $0.id == "composite")
         }

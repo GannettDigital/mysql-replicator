@@ -296,7 +296,9 @@ Evidence:
 - `artifacts/unicode-table-workflow-review/unit.log`
 
 The [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
-passed its forward mode-1 case. Next: review DML identifier phases. Keep native
-collation/encoding inventories, ENUM/SET, remaining type/value and key/index
-reviews, full-matrix validation, final balancing and short PR selection in the
-overall consolidation plan.
+passed its forward mode-1 case. The [ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
+passed its forward case with all 16 named assertions. Next: convert only
+matrix-unicodeidentifiers with the same helper. Keep exact Unicode name bytes,
+NULL/default rows and index identities. Native inventories, ENUM/SET, remaining
+type/value and key/index reviews, full-matrix validation, final balancing and
+short PR selection remain in the overall plan.

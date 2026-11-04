@@ -53,6 +53,10 @@ struct DDLFinalObservations {
         try require(!phases.isEmpty, "final DDL observations require source phases")
         try require(
             phases.flatMap(\.steps).allSatisfy { $0.checks.isEmpty }, "final DDL observations cannot hide step checks")
+        try validateQueries()
+    }
+
+    func validateQueries() throws {
         try require(
             !checks.isEmpty && Set(checks.map(\.id)).count == checks.count, "duplicate or empty final DDL observations")
         try require(checks.allSatisfy { !$0.id.isEmpty }, "empty final DDL observation name")
