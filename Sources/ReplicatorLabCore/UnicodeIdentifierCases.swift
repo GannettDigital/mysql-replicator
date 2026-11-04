@@ -30,7 +30,72 @@ extension DMLCompatibilityCases {
                     sql:
                         "ALTER TABLE poc.matrix_unicodeidentifiers DROP INDEX 键, DROP COLUMN 列; DELETE FROM poc.matrix_unicodeidentifiers WHERE id=1",
                     check: "SELECT COUNT(*)=1 AND SUM(改名)=15 FROM poc.matrix_unicodeidentifiers"),
-            ])
+            ],
+            workflow: .init(
+                title: "Schema object names: Unicode columns, indexes and quoted identifiers",
+                histories: [
+                    .init(table: "ui_after_insert", throughPhase: 1),
+                    .init(table: "ui_after_add", throughPhase: 2),
+                    .init(table: "ui_after_rename", throughPhase: 3),
+                ], phaseTransactions: [1, 2, 3, 2],
+                predicateIDs: [
+                    "inserted-defaults", "added-column-and-updated-row", "renamed-column-and-row", "deleted-final-row",
+                ],
+                additionalChecks: [
+                    .init(
+                        id: "initial-rows",
+                        check: .init(
+                            "SELECT id,`é`,`e\u{0301}`,值,`a``b`,`\(long)` FROM poc.ui_after_insert ORDER BY id",
+                            "1\t10\t20\t30\t40\t50\n2\t10\t20\tNULL\tNULL\tNULL")),
+                    .init(
+                        id: "added-column-rows",
+                        check: .init(
+                            "SELECT id,`é`,`e\u{0301}`,值,列,`a``b`,`\(long)` FROM poc.ui_after_add ORDER BY id",
+                            "1\t11\t21\t31\t7\t40\t50\n2\t10\t20\tNULL\t7\tNULL\tNULL")),
+                    .init(
+                        id: "renamed-rows",
+                        check: .init(
+                            "SELECT id,改名,`e\u{0301}`,值,列,`a``b`,`\(long)` FROM poc.ui_after_rename ORDER BY id",
+                            "1\t11\t21\t31\t7\t40\t50\n2\t15\t20\tNULL\t7\t41\tNULL")),
+                    .init(
+                        id: "surviving-row",
+                        check: .init(
+                            "SELECT id,改名,`e\u{0301}`,值,`a``b`,`\(long)` FROM poc.matrix_unicodeidentifiers ORDER BY id",
+                            "2\t15\t20\tNULL\t41\tNULL")),
+                    .init(
+                        id: "initial-column-name-bytes",
+                        check: .init(
+                            "SELECT HEX(COLUMN_NAME),CHAR_LENGTH(COLUMN_NAME) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='ui_after_insert' ORDER BY ORDINAL_POSITION",
+                            "6964\t2\nC3A9\t1\n65CC81\t2\nE580BC\t1\n616062\t3\n"
+                                + String(repeating: "E4B8AD", count: 64) + "\t64")),
+                    .init(
+                        id: "renamed-column-name-bytes",
+                        check: .init(
+                            "SELECT HEX(COLUMN_NAME),CHAR_LENGTH(COLUMN_NAME) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='ui_after_rename' ORDER BY ORDINAL_POSITION",
+                            "6964\t2\nE694B9E5908D\t2\n65CC81\t2\nE580BC\t1\nE58897\t1\n616062\t3\n"
+                                + String(repeating: "E4B8AD", count: 64) + "\t64")),
+                    .init(
+                        id: "final-column-name-bytes",
+                        check: .init(
+                            "SELECT HEX(COLUMN_NAME),CHAR_LENGTH(COLUMN_NAME) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_unicodeidentifiers' ORDER BY ORDINAL_POSITION",
+                            "6964\t2\nE694B9E5908D\t2\n65CC81\t2\nE580BC\t1\n616062\t3\n"
+                                + String(repeating: "E4B8AD", count: 64) + "\t64")),
+                    .init(
+                        id: "initial-index-key-parts",
+                        check: .init(
+                            "SELECT HEX(INDEX_NAME),SEQ_IN_INDEX,HEX(COLUMN_NAME) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='ui_after_insert' AND INDEX_NAME<>'PRIMARY' ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",
+                            "65CC81\t1\t65CC81\n65CC81\t2\t6964\nC3A9\t1\tC3A9\nC3A9\t2\t6964")),
+                    .init(
+                        id: "renamed-index-key-parts",
+                        check: .init(
+                            "SELECT HEX(INDEX_NAME),SEQ_IN_INDEX,HEX(COLUMN_NAME) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='ui_after_rename' AND INDEX_NAME<>'PRIMARY' ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",
+                            "65CC81\t1\t65CC81\n65CC81\t2\t6964\nE994AE\t1\tE694B9E5908D\nE994AE\t2\t6964")),
+                    .init(
+                        id: "surviving-index-key-parts",
+                        check: .init(
+                            "SELECT HEX(INDEX_NAME),SEQ_IN_INDEX,HEX(COLUMN_NAME) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='poc' AND TABLE_NAME='matrix_unicodeidentifiers' AND INDEX_NAME<>'PRIMARY' ORDER BY BINARY INDEX_NAME,SEQ_IN_INDEX",
+                            "65CC81\t1\t65CC81\n65CC81\t2\t6964")),
+                ], expectedDDL: 12, expectedRows: 14))
     }()
 }
 

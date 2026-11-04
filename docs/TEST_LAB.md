@@ -1856,8 +1856,23 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 ```
 
 The original definitions and first INSERT remain inputs to metadata-discovery
-tests. `matrix-unicodeidentifiers` still uses its existing phased execution.
+tests.
 See the [DML identifier workflow review](../PLAN/BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md).
+
+### Unicode column and index names
+
+`matrix-unicodeidentifiers` uses the same preparation/body workflow. Three
+retained tables keep earlier rows and schemas. Final queries check the original
+predicates, all row fields, NULL values and defaults. They read column and index
+names as hex bytes. They also check index key-part order and the 64-character
+column name. These checks keep precomposed and decomposed names distinct.
+
+The original multi-statement scripts and their source transaction counts remain.
+Cleanup drops only the retained tables. The case adds no applier restart.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-unicodeidentifiers --coverage"
+```
 
 ### Temporary-table cases
 

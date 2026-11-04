@@ -47,9 +47,10 @@ Current progress:
   passed its forward case, including name bytes and retained rows. The
   [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
   passed its forward mode-1 case, including both restarts and retained rows.
-  The [ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
-  passed its focused forward case. Next: convert only matrix-unicodeidentifiers
-  with the same helper. Keep the applier running between cases.
+  The [DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
+  passed both focused forward cases. Next: review the native collation/encoding
+  inventories with explicit value and ID maps, then ENUM/SET. Keep the applier
+  running between cases.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1508,10 +1509,9 @@ passed the forward lowercase-tables case with all 21 named assertions. Three
 batches preserve mixed-case references, both old predicates, both restarts and
 earlier ADD/copy rows. Runtime evidence confirms mode 1 on all three servers.
 SQL client calls changed from 160 in saved CI to 74 locally. The
-[ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
-passed its forward case with 16 named assertions. It keeps the original SQL and
-metadata-discovery inputs, validates multi-GTID scripts and adds no applier restart.
-Next: convert only matrix-unicodeidentifiers with the same helper. Check exact
-name bytes, NULL/default rows, the 64-character column and surviving index.
-Keep native inventories, full-matrix validation, final balancing and short PR
-selection later.
+[DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
+passed their focused forward cases: 16 ASCII assertions and 20 Unicode assertions.
+Both keep the original SQL and metadata inputs, check GTID intervals and add no
+applier restart. Next: review the native collation/encoding inventories with
+explicit value and ID maps, then ENUM/SET. Keep remaining type/value and key/index
+reviews, full-matrix validation, final balancing and short PR selection later.

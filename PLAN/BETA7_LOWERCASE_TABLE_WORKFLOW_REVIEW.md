@@ -281,9 +281,9 @@ Evidence:
 - `artifacts/lowercase-table-workflow-review/matrix-comparison.json`
 - `artifacts/lowercase-table-workflow-review/unit.log`
 
-The [ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
-passed its forward case with all 16 named assertions. Next: convert only
-matrix-unicodeidentifiers with the same helper. Preserve source transaction
-boundaries and keep the applier running between cases. Native inventories,
-ENUM/SET, remaining type/value and key/index reviews, full-matrix validation,
-final balancing and short PR selection remain in the overall plan.
+The [DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
+passed their focused forward cases: 16 ASCII assertions and 20 Unicode assertions.
+Both keep the original SQL and metadata inputs, check GTID intervals and add no
+applier restart. Next: review the native collation/encoding inventories with
+explicit value and ID maps, then ENUM/SET. Keep remaining type/value and key/index
+reviews, full-matrix validation, final balancing and short PR selection later.

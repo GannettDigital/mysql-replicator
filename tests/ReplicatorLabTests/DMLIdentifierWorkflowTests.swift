@@ -25,9 +25,9 @@ final class DMLIdentifierWorkflowTests: XCTestCase {
         XCTAssertTrue(fixture.setup.isEmpty)
         XCTAssertNil(fixture.rowMetadata)
         XCTAssertNil(fixture.replicatedReplacement)
-        XCTAssertNil(DMLCompatibilityCases.unicodeIdentifiers.workflow)
         XCTAssertEqual(
-            DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id), ["identifiercase"])
+            DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
+            ["identifiercase", "unicodeidentifiers"])
         for profile in LabProfile.allCases {
             let metadata = try XCTUnwrap(
                 MetadataDiscoveryCases.fixtures(MetadataDiscoveryCases.columns.id, profile: profile).first {
@@ -106,6 +106,8 @@ final class DMLIdentifierWorkflowTests: XCTestCase {
         XCTAssertEqual(fixture.displayName, "Identifier case sensitivity: column, PRIMARY KEY and index references")
         XCTAssertEqual(
             LabScenario.correctness.first { $0.id == "matrix-identifiercase" }?.test.name, fixture.displayName)
-        XCTAssertEqual(DMLCompatibilityCases.unicodeIdentifiers.displayName, "Shared DML matrix: unicodeidentifiers")
+        XCTAssertEqual(
+            DMLCompatibilityCases.unicodeIdentifiers.displayName,
+            "Schema object names: Unicode columns, indexes and quoted identifiers")
     }
 }

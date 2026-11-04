@@ -1,8 +1,8 @@
 # Identifier case sensitivity and Unicode columns: DML workflow review
 
-Status: the matrix-identifiercase pilot passed its focused forward test.
-Next: convert only matrix-unicodeidentifiers with the same helper. The lower-case
-table-name workflow was committed as `adb88f9`.
+Status: both identifier workflows passed their focused forward tests.
+The ASCII pilot is committed as `e4d54e9`. Next: review the native collation/encoding
+inventories with explicit value and ID maps, then ENUM/SET.
 
 ## Decision and scope
 
@@ -19,7 +19,7 @@ opt in must keep their existing execution path.
 
 The initial review used saved CI measurements and source inspection. It did not
 run builds or tests. The implementation results below confirm the pilot's row
-values and counters. The Unicode conversion remains a separate step.
+values and counters. The Unicode follow-up results are recorded below.
 
 ## MySQL feature names
 
@@ -69,7 +69,7 @@ Evidence:
   original scripts/checks, retained histories, batches and transaction counts.
 - `artifacts/dml-identifier-workflow-review/review.py`: unchanged-source audit.
 
-## Current execution and transaction boundaries
+## Original execution and transaction boundaries
 
 SharedCorrectness.Run.dml keeps the main applier running across both cases and
 all their phases. Each case creates its table, then executes four phase scripts.
@@ -285,8 +285,8 @@ in the overall consolidation plan.
 
 The ASCII pilot uses `DMLExecutionWorkflow`. It is an opt-in helper on the existing
 DML case. It submits preparation, body and cleanup requests through `LabSQLPhase`.
-It reuses final read-only queries and schema comparisons. All other DML cases,
-including matrix-unicodeidentifiers, keep their existing execution path.
+It reuses final read-only queries and schema comparisons. At this step, all other
+DML cases, including matrix-unicodeidentifiers, kept their existing execution path.
 
 The original definition, all four phase scripts and all four predicates are
 unchanged. The helper changes only the controlled table reference for retained
@@ -364,8 +364,100 @@ Evidence:
 - `artifacts/dml-identifier-workflow-review/unit.log`
 - `artifacts/dml-identifier-workflow-review/tool-*.log`
 
-Next: enable only matrix-unicodeidentifiers with this helper. Preserve the exact
-Unicode name bytes, four original scripts/predicates, NULL/default rows,
-64-character column and surviving decomposed index. Add focused unit tests and
-run only its forward case with coverage. Keep full group/profile validation,
-native inventories, ENUM/SET and the other remaining reviews in the overall plan.
+This pilot is committed as `e4d54e9`. The next section records its separate
+Unicode follow-up. Keep full group/profile validation and the other remaining
+reviews in the overall plan.
+
+## Unicode implementation and focused results
+
+The Unicode case now uses the same helper. Its original definition, four scripts
+and four predicates keep their exact UTF-8 bytes. The new workflow retains the
+first one, two and three phases in ui_after_insert, ui_after_add and
+ui_after_rename. It leaves matrix_unicodeidentifiers for the original final
+result. No shared helper or execution code changed in this slice. The separate
+DDL table-name fixture is unchanged.
+
+The four original predicates run against the appropriate retained or final table.
+Ten additional queries check full ordered rows and name metadata. They include:
+
+- Original and changed defaults, NULL fields and values from the deleted row.
+- Separate C3A9 and 65CC81 column/index names before rename.
+- The renamed column 改名 and renamed index 键, while the decomposed name remains.
+- The escaped backtick name as stored bytes 616062.
+- The long column's full 192 UTF-8 bytes and length of 64 characters.
+- Column order and both index key-part orders, including the id suffix.
+- The final decomposed index after the other index and added column are dropped.
+
+The query expectations are fixed independently of the production parser.
+Queries use HEX for names and BINARY ordering for indexes. Unit tests compare
+SQL and definition bytes with Data, rather than Swift String canonical equality.
+They reject substituted composed names, reversed key parts, changed row results
+and a shortened column name.
+
+Focused checks passed:
+
+- 18 Swift tests: six Unicode workflow tests, five ASCII fixture tests, four
+  workflow helper tests and three metadata-discovery tests.
+- Catalog structure and matrix comparison: 183 jobs, 1,545 catalog obligations
+  and 182 instrumented collections. Existing selections and normalized inventory
+  are unchanged. The normalization excludes display names, source locations,
+  assertion descriptions and the source-input fingerprint.
+- Strict Swift format lint on the three changed Swift files and git diff checks.
+
+Selection tooling and runner code did not change, so their Python tests were not
+repeated. The ASCII source fixture and shared helper/runner match the pilot
+commit. Metadata discovery still reads the original Unicode definition and first
+INSERT/check on every profile.
+
+One integration case ran with coverage: mysql84-to-mysql57-myisam, default
+variant, SQL transport, matrix-unicodeidentifiers. All 20 named assertions passed.
+The final full schema/row comparison agrees across source, native and target.
+Raw engine checks confirm InnoDB on source and MyISAM on native and target.
+
+| Measurement | Result |
+|---|---:|
+| Case execution | 3.96 seconds |
+| Case SQL client calls | 25 |
+| Source batches / client write requests | 3 / 15 |
+| Source GTIDs before cleanup / after cleanup | 22 / 23 |
+| Applied DDL before cleanup / after cleanup | 12 / 13 |
+| Changed rows before cleanup / after cleanup | 14 / 14 |
+| Fixture setup | 15.05 seconds |
+| Container startup, included in setup | 12.23 seconds |
+| Coverage export | 1.77 seconds |
+| Fixture cleanup | 9.71 seconds |
+| Instrumented Swift lines executed / mapped | 7,973 / 20,880 |
+
+Saved CI reported 16.44 seconds and 148 calls. As with the ASCII pilot, the old
+whole-area run had more accumulated tables in poc. The local run selects one
+case. These measurements do not establish a controlled speed comparison or
+individual coverage equivalence. Coverage includes setup and the shared restart.
+
+Both checkpoint assertions confirm exact applied GTID sets, file offsets and
+counter deltas. Read-only inspection of final SQLite state confirms all 23
+expanded GTIDs are APPLIED. Each request's last GTID has its recorded end offset.
+All DDL and row intents are DONE. The latest schemas keep exact column/index
+name bytes, defaults and index key order. Cleanup retired all three retained
+tables and kept the original table current. The final state is STOPPED without
+an active GTID, at the shared restart check's later offset.
+
+The shared saved-schema restart passed. Two successful applier invocations are
+recorded: initial apply and that existing restart. This case added no drain,
+restart, snapshot or offline replay. No other integration case/profile, full
+suite, benchmark or syntax suite ran locally. Leave those checks to GitHub Actions.
+
+Evidence:
+
+- `artifacts/lab/20261104T155903Z-2120a00f/result.json`
+- `artifacts/unicode-dml-workflow-review/results.json`
+- `artifacts/unicode-dml-workflow-review/state-results.json`
+- `artifacts/unicode-dml-workflow-review/source-manifest.json`
+- `artifacts/unicode-dml-workflow-review/inventory-results.json`
+- `artifacts/unicode-dml-workflow-review/verify.py`
+- `artifacts/unicode-dml-workflow-review/unit.log`
+
+Next: review matrix-collations and matrix-nativeencodings with explicit native
+value/ID maps. Then review ENUM/SET overlap. Keep remaining type/value and
+key/index reviews, full-matrix validation, final balancing and short PR selection
+in the overall consolidation plan. Do not remove an inventory because its line
+coverage overlaps another case.

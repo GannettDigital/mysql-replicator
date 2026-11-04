@@ -351,10 +351,9 @@ passed the forward lowercase-tables case with all 21 named assertions. Three
 batches preserve mixed-case references, both old predicates, both restarts and
 earlier ADD/copy rows. Runtime evidence confirms mode 1 on all three servers.
 SQL client calls changed from 160 in saved CI to 74 locally. The
-[ASCII DML identifier pilot](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#pilot-implementation-and-focused-results)
-passed its forward case with 16 named assertions. It keeps the original SQL and
-metadata-discovery inputs, validates multi-GTID scripts and adds no applier restart.
-Next: convert only matrix-unicodeidentifiers with the same helper. Check exact
-name bytes, NULL/default rows, the 64-character column and surviving index.
-Keep native inventories, full-matrix validation, final balancing and short PR
-selection later.
+[DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
+passed their focused forward cases: 16 ASCII assertions and 20 Unicode assertions.
+Both keep the original SQL and metadata inputs, check GTID intervals and add no
+applier restart. Next: review the native collation/encoding inventories with
+explicit value and ID maps, then ENUM/SET. Keep remaining type/value and key/index
+reviews, full-matrix validation, final balancing and short PR selection later.
