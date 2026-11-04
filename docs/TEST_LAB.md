@@ -1704,7 +1704,7 @@ COLUMN. A retained table keeps the earlier two-column metadata available.
 The pair keeps four deliberate restarts and all seven original query checks.
 Cleanup removes only the retained tables. These cases use ordinary compatible
 collations; they do not enable a translation policy. The DEFAULT-syntax,
-encoded-query and full-conversion cases remain separate selections.
+encoded-query and column-conversion cases remain separate selections.
 
 Run the pair in one forward fixture:
 
@@ -1713,6 +1713,30 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 ```
 
 See [the character-set workflow results](../PLAN/BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results).
+
+### Column character set conversion
+
+`ddl-compat-charset-conversion` uses four source batches and three deliberate
+restarts. It keeps the original ten operations first. Three retained tables
+repeat earlier operations to keep their results available for final queries.
+The checks cover TEXT widening, inserted defaults, ENUM/SET labels, generated
+values and binary bytes. They also check that a later CONVERT does not turn
+binary columns back into text, and that DELETE removes the second row.
+
+The case keeps FULL row metadata. Final queries retain all six original result
+checks. A full schema, index and row comparison includes all four tables.
+Cleanup drops only the three retained tables after saved-state checks. The
+case does not add an offline replay path.
+
+Run the case on forward MyISAM:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case ddl-compat-charset-conversion --coverage"
+```
+
+Retaining earlier results adds five native CONVERT statements. Compare elapsed
+time as well as SQL client calls when assessing this change. See the
+[conversion review](../PLAN/BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md).
 
 ### Temporary-table cases
 

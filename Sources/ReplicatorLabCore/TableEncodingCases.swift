@@ -168,7 +168,7 @@ extension DDLCompatibilityCases {
         ))
     static let charsetConversion = Case(
         "charset-conversion",
-        "Native charset conversion widens TEXT and preserves defaults, labels, binary bytes and restart",
+        "Column character set conversion: TEXT widening, defaults and binary values",
         [
             .init(
                 "CREATE TABLE ddlcompat.t(id INT PRIMARY KEY,v VARCHAR(20) NOT NULL DEFAULT 'café',e ENUM('one','a') DEFAULT 'a',s SET('one','a') DEFAULT 'a',tx TEXT,small_tx TINYTEXT,b VARBINARY(8),g VARCHAR(20) AS (v) STORED,KEY by_v(v(8))) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
@@ -176,39 +176,86 @@ extension DDLCompatibilityCases {
             .init("INSERT INTO ddlcompat.t(id,e,s,tx,small_tx,b) VALUES(1,'one','one,a','été','café',X'00FF')"),
             .init(
                 "ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
-                [
-                    .init(
-                        "SELECT COLUMN_NAME,DATA_TYPE,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME IN ('tx','small_tx','b') ORDER BY ORDINAL_POSITION",
-                        "tx\tmediumtext\tutf8mb4_bin\nsmall_tx\ttext\tutf8mb4_bin\nb\tvarbinary\tNULL"),
-                    .init(
-                        "SELECT HEX(v),HEX(e),HEX(s),HEX(tx),HEX(b),HEX(g) FROM ddlcompat.t",
-                        "636166C3A9\t6F6E65\t6F6E652C61\tC3A974C3A9\t00FF\t636166C3A9"),
-                ]),
-            .init(
-                "INSERT INTO ddlcompat.t(id) VALUES(2)",
-                [
-                    .init("SELECT HEX(v),e,s FROM ddlcompat.t WHERE id=2", "636166C3A9\ta\ta")
-                ], restartBefore: true),
+                phaseEnd: "convert-latin1-to-utf8"),
+            .init("INSERT INTO ddlcompat.t(id) VALUES(2)", restartBefore: true),
             .init(
                 "ALTER TABLE ddlcompat.t ADD added VARCHAR(10) CHARACTER SET latin1 DEFAULT 'new', CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
             ),
-            .init("UPDATE ddlcompat.t SET v='été',tx='café',added='é' WHERE id=1"),
             .init(
-                "ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET binary",
-                [
-                    .init(
-                        "SELECT COLUMN_NAME,DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME IN ('v','tx','small_tx') ORDER BY ORDINAL_POSITION",
-                        "v\tvarbinary\ntx\tmediumblob\nsmall_tx\tblob"),
-                    .init(
-                        "SELECT HEX(v),HEX(tx),HEX(b),HEX(g) FROM ddlcompat.t WHERE id=1",
-                        "C3A974C3A9\t636166C3A9\t00FF\tC3A974C3A9"),
-                ], restartBefore: true),
-            .init("ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+                "UPDATE ddlcompat.t SET v='été',tx='café',added='é' WHERE id=1", phaseEnd: "insert-defaults-and-update"),
+            .init("ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET binary", restartBefore: true),
             .init(
-                "UPDATE ddlcompat.t SET v=X'00FF',tx=X'FE',b=X'FF00' WHERE id=1",
-                [
-                    .init("SELECT HEX(v),HEX(tx),HEX(b),HEX(g) FROM ddlcompat.t WHERE id=1", "00FF\tFE\tFF00\t00FF")
-                ], restartBefore: true),
+                "ALTER TABLE ddlcompat.t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
+                phaseEnd: "convert-to-binary-and-set-utf8-default"),
+            .init("UPDATE ddlcompat.t SET v=X'00FF',tx=X'FE',b=X'FF00' WHERE id=1", restartBefore: true),
             .init("DELETE FROM ddlcompat.t WHERE id=2"),
-        ])
+            .init(
+                "CREATE TABLE ddlcompat.cv_after_utf8(id INT PRIMARY KEY,v VARCHAR(20) NOT NULL DEFAULT 'café',e ENUM('one','a') DEFAULT 'a',s SET('one','a') DEFAULT 'a',tx TEXT,small_tx TINYTEXT,b VARBINARY(8),g VARCHAR(20) AS (v) STORED,KEY by_v(v(8))) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init(
+                "INSERT INTO ddlcompat.cv_after_utf8(id,e,s,tx,small_tx,b) VALUES(1,'one','one,a','été','café',X'00FF')"
+            ),
+            .init("ALTER TABLE ddlcompat.cv_after_utf8 CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+            .init(
+                "CREATE TABLE ddlcompat.cv_after_defaults(id INT PRIMARY KEY,v VARCHAR(20) NOT NULL DEFAULT 'café',e ENUM('one','a') DEFAULT 'a',s SET('one','a') DEFAULT 'a',tx TEXT,small_tx TINYTEXT,b VARBINARY(8),g VARCHAR(20) AS (v) STORED,KEY by_v(v(8))) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init(
+                "INSERT INTO ddlcompat.cv_after_defaults(id,e,s,tx,small_tx,b) VALUES(1,'one','one,a','été','café',X'00FF')"
+            ),
+            .init("ALTER TABLE ddlcompat.cv_after_defaults CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+            .init("INSERT INTO ddlcompat.cv_after_defaults(id) VALUES(2)"),
+            .init(
+                "CREATE TABLE ddlcompat.cv_after_binary(id INT PRIMARY KEY,v VARCHAR(20) NOT NULL DEFAULT 'café',e ENUM('one','a') DEFAULT 'a',s SET('one','a') DEFAULT 'a',tx TEXT,small_tx TINYTEXT,b VARBINARY(8),g VARCHAR(20) AS (v) STORED,KEY by_v(v(8))) DEFAULT CHARSET=latin1 COLLATE=latin1_bin"
+            ),
+            .init(
+                "INSERT INTO ddlcompat.cv_after_binary(id,e,s,tx,small_tx,b) VALUES(1,'one','one,a','été','café',X'00FF')"
+            ),
+            .init("ALTER TABLE ddlcompat.cv_after_binary CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+            .init("INSERT INTO ddlcompat.cv_after_binary(id) VALUES(2)"),
+            .init(
+                "ALTER TABLE ddlcompat.cv_after_binary ADD added VARCHAR(10) CHARACTER SET latin1 DEFAULT 'new', CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+            ),
+            .init("UPDATE ddlcompat.cv_after_binary SET v='été',tx='café',added='é' WHERE id=1"),
+            .init(
+                "ALTER TABLE ddlcompat.cv_after_binary CONVERT TO CHARACTER SET binary",
+                phaseEnd: "write-binary-values-and-retain-results"),
+        ],
+        finalObservations: .init(
+            checks: [
+                .init(
+                    id: "utf8-widened-types",
+                    check: .init(
+                        "SELECT COLUMN_NAME,DATA_TYPE,COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cv_after_utf8' AND COLUMN_NAME IN ('tx','small_tx','b') ORDER BY ORDINAL_POSITION",
+                        "tx\tmediumtext\tutf8mb4_bin\nsmall_tx\ttext\tutf8mb4_bin\nb\tvarbinary\tNULL")),
+                .init(
+                    id: "utf8-row-bytes",
+                    check: .init(
+                        "SELECT HEX(v),HEX(e),HEX(s),HEX(tx),HEX(b),HEX(g) FROM ddlcompat.cv_after_utf8",
+                        "636166C3A9\t6F6E65\t6F6E652C61\tC3A974C3A9\t00FF\t636166C3A9")),
+                .init(
+                    id: "utf8-inserted-defaults",
+                    check: .init("SELECT HEX(v),e,s FROM ddlcompat.cv_after_defaults WHERE id=2", "636166C3A9\ta\ta")),
+                .init(
+                    id: "binary-column-types",
+                    check: .init(
+                        "SELECT COLUMN_NAME,DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='cv_after_binary' AND COLUMN_NAME IN ('v','tx','small_tx') ORDER BY ORDINAL_POSITION",
+                        "v\tvarbinary\ntx\tmediumblob\nsmall_tx\tblob")),
+                .init(
+                    id: "binary-row-bytes",
+                    check: .init(
+                        "SELECT HEX(v),HEX(tx),HEX(b),HEX(g) FROM ddlcompat.cv_after_binary WHERE id=1",
+                        "C3A974C3A9\t636166C3A9\t00FF\tC3A974C3A9")),
+                .init(
+                    id: "final-binary-row-bytes",
+                    check: .init(
+                        "SELECT HEX(v),HEX(tx),HEX(b),HEX(g) FROM ddlcompat.t WHERE id=1", "00FF\tFE\tFF00\t00FF")),
+                .init(
+                    id: "final-binary-column-types",
+                    check: .init(
+                        "SELECT COLUMN_NAME,DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ddlcompat' AND TABLE_NAME='t' AND COLUMN_NAME IN ('v','tx','small_tx') ORDER BY ORDINAL_POSITION",
+                        "v\tvarbinary\ntx\tmediumblob\nsmall_tx\tblob")),
+                .init(id: "deleted-second-row", check: .init("SELECT COUNT(*) FROM ddlcompat.t WHERE id=2", "0")),
+            ], databases: ["ddlcompat"],
+            cleanup: ["DROP TABLE ddlcompat.cv_after_utf8,ddlcompat.cv_after_defaults,ddlcompat.cv_after_binary"]
+        ))
 }

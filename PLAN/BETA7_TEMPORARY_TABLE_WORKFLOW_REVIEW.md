@@ -325,7 +325,8 @@ present them as a measured whole-group time. Evidence:
 The [first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
 passed its forward pair: all 26 named assertions, seven old predicates, four
 restarts, exact checkpoints, saved-schema restart and cleanup. SQL calls fell
-from 335 in saved CI to 111 locally. Next: review `charset-conversion`, then
-DEFAULT session context and encoded SQL. Keep native inventory, ENUM/SET,
-type/value and key/index reviews, full-matrix validation, final balancing and
-short PR test selection in the overall plan.
+from 335 in saved CI to 111 locally. The
+[charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#implementation-and-focused-results) passed its focused forward fixture.
+Next: review DEFAULT session context, then encoded SQL. Keep native inventory,
+ENUM/SET, type/value and key/index reviews, full-matrix validation, final balancing
+and short PR test selection in the overall plan.

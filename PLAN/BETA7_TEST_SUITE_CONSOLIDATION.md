@@ -38,7 +38,8 @@ Current progress:
   also passed both focused fixtures. All 11 stored-object group cases now use
   final observations. The [first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
   also passed its focused pair: table defaults and compound conversion.
-  Next: review `charset-conversion` intermediate states.
+  The [charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+  also passed its focused case. Next: review `charset-defaults` source sessions.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1473,6 +1474,10 @@ passed table defaults and compound CONVERT/default clauses together on forward
 MyISAM. All 26 named assertions, seven original predicates, four restarts,
 exact GTIDs/offsets, saved-schema restart and cleanup passed. SQL trace calls fell
 from 335 in saved CI to 111 locally. Matrix and profile selections remain.
-Next: review full `charset-conversion` states and assertions, then DEFAULT session
-context and encoded SQL. Keep DML inventories, full-matrix validation and final
-balancing later.
+The [charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the focused forward MyISAM case. All 17 named assertions passed.
+Four batches retain six old predicates, three restarts, FULL metadata and exact
+GTID/file offsets. SQL client calls changed from 222 in saved CI to
+73 locally. Next: review `charset-defaults` with explicit source session
+boundaries, then encoded SQL and identifier workflows. Keep DML inventories,
+full-matrix validation, final balancing and short PR selection later.

@@ -301,9 +301,10 @@ Evidence:
 - `artifacts/charset-workflow-review/matrix-comparison.json`
 - `artifacts/charset-workflow-review/unit.log`
 
-Next: review `charset-conversion` in detail. Retain all six predicates, three
-restarts, TEXT widening, defaults, ENUM/SET labels, generated values, prefix index,
-binary transitions and FULL metadata. Define the retained intermediate states
-before implementation. Then review DEFAULT session context and encoded SQL.
-Keep DML inventories, full-matrix validation, final balancing and short PR test
-selection in the overall plan.
+The [charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+passed the focused forward MyISAM case. All 17 named assertions passed.
+Four batches retain six old predicates, three restarts, FULL metadata and exact
+GTID/file offsets. SQL client calls changed from 222 in saved CI to
+73 locally. Next: review `charset-defaults` with explicit source session
+boundaries, then encoded SQL and identifier workflows. Keep DML inventories,
+full-matrix validation, final balancing and short PR selection later.

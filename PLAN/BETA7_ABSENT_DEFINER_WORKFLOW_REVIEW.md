@@ -253,6 +253,7 @@ cleanup and exact replay positions. SQL calls fell from 438 in saved CI to 173
 locally. All 11 group cases now use final observations. The
 [first character-set slice](BETA7_CHARACTER_SET_WORKFLOW_REVIEW.md#first-slice-implementation-and-focused-results)
 passed its focused forward pair with 26 named assertions. SQL calls fell from
-335 in saved CI to 111 locally. Next: review `charset-conversion` intermediate
-states. Full-matrix validation, final balancing and short PR selection remain
-later.
+335 in saved CI to 111 locally. The
+[charset-conversion results](BETA7_CHARSET_CONVERSION_WORKFLOW_REVIEW.md#implementation-and-focused-results) passed its focused forward fixture.
+Next: review DEFAULT session context, then encoded SQL. Full-matrix validation,
+final balancing and short PR selection remain later.
