@@ -1,8 +1,9 @@
 # ENUM and SET: value and workflow review
 
-Status: choices, widechoices, binarychoices, exactchoices, enumzero and
-choiceboundaries passed their focused forward tests. Enumzero is committed as
-`a315703`. Next: convert only matrix-legacybinaryset on the 5.7 MyISAM profile. The
+Status: all seven local conversions are complete. Six passed their focused
+forward tests; legacybinaryset passed on the 5.7 MyISAM profile. Choiceboundaries
+is committed as `247bbbe`. Full-matrix validation remains. Next: review the
+remaining character and binary value cases. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -21,8 +22,8 @@ Do not change production replication or the independent native schema parser.
 
 The initial review used source inspection, MySQL documentation and saved CI
 results without new builds or tests. The results below confirm choices,
-widechoices, binarychoices, exactchoices, enumzero and choiceboundaries. The
-legacybinaryset row map and counts remain proposed expectations for its own slice.
+widechoices, binarychoices, exactchoices, enumzero, choiceboundaries and
+legacybinaryset on their stated profiles.
 
 ## MySQL terms and test titles
 
@@ -216,8 +217,8 @@ No new per-case restart or offline replay is required for this batching work.
 These scripts have autocommit DML and implicit DDL commits. Preserve each
 multi-statement script; do not split on semicolons or add BEGIN/COMMIT.
 Counts below come from source inspection and the proposed retained prefixes.
-The results below confirm choices, widechoices, binarychoices, exactchoices,
-enumzero and choiceboundaries. Legacybinaryset needs its own focused confirmation.
+The results below confirm all seven cases on their stated profiles. Other
+profiles and variants remain for full-matrix validation.
 
 | Case | GTIDs per original phase | Original total with CREATE | Preparation writes | Body writes / GTIDs | Before cleanup: GTIDs / DDL / rows | After cleanup GTIDs |
 |---|---|---:|---:|---:|---:|---:|
@@ -830,6 +831,121 @@ Evidence:
 - `artifacts/choice-boundaries-workflow-review/verify.py`
 - `artifacts/choice-boundaries-workflow-review/unit.log`
 
-Next: convert only matrix-legacybinaryset on mysql57-to-mysql57-myisam. Keep
-raw binary SET member/default bytes, all original scripts and predicates, and
-both native 8.4 exclusions with error 3507. Leave the InnoDB repeat to CI.
+The choiceboundaries conversion is committed as `247bbbe`. The next section
+records its separate legacybinaryset follow-up and local completion review.
+
+## Legacy binary SET implementation and local completion
+
+Step 6 is complete. matrix-legacybinaryset now uses preparation and body batches
+with one retained history. Its definition, two scripts, two predicates and both
+8.4 exclusions remain unchanged. Its row-metadata override remains unset; do not
+claim FULL optional metadata on this 5.7 source. The helper, shared runner,
+cold metadata inputs and raw schema parser are unchanged. No production parser,
+decoder or applier code changed.
+
+Preparation creates the original table and ls_after_insert. The original compound
+ALTER/UPDATE/DELETE remains one client request with three source GTIDs. The body
+runs both original scripts before the retained INSERT. Each request keeps its
+session reset. Two complete row queries check raw FF/61 bytes, SET masks and NULL.
+Two default queries check FF2C61 before ALTER and FF afterward. Cleanup drops
+only ls_after_insert; the original matrix table remains current.
+
+Focused checks passed:
+
+- 80 Swift tests: seven new legacy workflow tests and the 73 tests selected for choiceboundaries.
+- Strict Swift format lint on the changed source file and eleven test files.
+- Catalog structure and normalized matrix comparison: 183 jobs, 1,545 catalog
+  obligations and 182 instrumented collections. Selection and order are unchanged.
+- Source audit: original definition/scripts/predicates and version exclusions,
+  all other cases, metadata inputs, helper, runner and raw schema oracle are
+  unchanged. Inventory normalization excludes display names, source locations,
+  assertion descriptions and the source-input fingerprint.
+
+The tests check exact SQL, compound request boundaries, source transaction counts,
+original predicates, complete fixed rows, raw defaults, checkpoint counters,
+cleanup ownership and the shared title. Negative checks reject UTF-8 conversion
+or replacement of FF, wrong masks, NULL-to-empty substitutions, missing row updates,
+an unchanged default, wrong transaction counts and a wrong cleanup offset.
+They also confirm all seven value cases use the helper, while both 8.4 exclusions
+and cold metadata inputs remain in place.
+
+One integration case ran with coverage: mysql57-to-mysql57-myisam, default
+variant, SQL transport, matrix-legacybinaryset. All 12 named assertions passed.
+Source, native and target agree on original predicates, complete rows, default
+bytes and schema comparisons. The SQL trace records six raw SHOW CREATE requests:
+each of the two tables on each role. Raw engine checks confirm source InnoDB and
+native/target MyISAM. The existing shared saved-schema restart passed.
+
+| Measurement | Result |
+|---|---:|
+| Case execution | 4.82 seconds |
+| Case SQL client calls | 32 |
+| Source batches / client write requests | 3 / 6 |
+| Applied transactions before cleanup / after cleanup | 7 / 8 |
+| Applied DDL before cleanup / after cleanup | 3 / 4 |
+| Changed rows before cleanup / after cleanup | 10 / 10 |
+| Fixture setup | 14.85 seconds |
+| Container startup, included in setup | 12.09 seconds |
+| Coverage export | 1.66 seconds |
+| Fixture cleanup | 10.83 seconds |
+| Instrumented Swift lines executed / mapped | 7,897 / 20,880 |
+
+Saved CI on this same profile reported 10.08 seconds and 96 calls. Its group
+compared more accumulated poc tables. The local run selected one case and added
+a retained table. This is not a controlled speed comparison. Coverage includes
+setup and the shared restart; it does not establish individual-case equivalence
+with the old group-level report.
+
+Both checkpoint assertions confirm exact GTID sets, offsets and counter deltas.
+Read-only final SQLite inspection confirms all eight expanded GTIDs are APPLIED.
+The compound request's last GTID has its recorded request end offset. DDL and row
+intents are DONE. Latest schemas retain ordered raw FF/61 SET members, default
+mask 3/bytes FF2C61 in the history and mask 1/bytes FF in the current table.
+Cleanup retires the history. Final state is STOPPED with no active GTID, at the
+shared restart check's later offset. Two successful applier invocations are
+recorded: initial apply and that existing restart. The restart writes
+reverse_poc.aux; it does not write the binary SET table. This case adds no
+per-case lifecycle transition or offline replay.
+
+No other integration case/profile, full suite, benchmark or syntax suite ran
+locally. Selection tooling and runner code did not change, so their Python tests
+were not repeated. Leave the 5.7 InnoDB repeat, other variants and whole-group
+validation to CI. Keep both native 8.4 exclusions with error 3507.
+
+Evidence:
+
+- `artifacts/lab/20261104T205048Z-5f1d809b/result.json`
+- `artifacts/legacy-binary-set-workflow-review/results.json`
+- `artifacts/legacy-binary-set-workflow-review/state-results.json`
+- `artifacts/legacy-binary-set-workflow-review/source-manifest.json`
+- `artifacts/legacy-binary-set-workflow-review/inventory-results.json`
+- `artifacts/legacy-binary-set-workflow-review/verify.py`
+- `artifacts/legacy-binary-set-workflow-review/unit.log`
+
+### Completion check for the seven cases
+
+All seven IDs remain, each with its original definition, scripts, predicates,
+metadata input and version rules. The cases retain earlier values until final
+queries, share their existing fixture/applier and add no per-case restart.
+The focused runs below were separate runs, not one whole-group test. Runtime
+line sets include fixture work and cannot prove per-case coverage equivalence.
+
+| Case | Focused profile | Passed assertions | Seconds | SQL client calls |
+|---|---|---:|---:|---:|
+| matrix-choices | 8.4→5.7 MyISAM | 12 | 4.07 | 27 |
+| matrix-widechoices | 8.4→5.7 MyISAM | 12 | 3.93 | 27 |
+| matrix-binarychoices | 8.4→5.7 MyISAM | 14 | 5.53 | 37 |
+| matrix-exactchoices | 8.4→5.7 MyISAM | 16 | 4.69 | 29 |
+| matrix-enumzero | 8.4→5.7 MyISAM | 14 | 4.06 | 27 |
+| matrix-choiceboundaries | 8.4→5.7 MyISAM | 13 | 3.73 | 27 |
+| matrix-legacybinaryset | 5.7→5.7 MyISAM | 12 | 4.82 | 32 |
+
+Step 7 retains the same 183 jobs and existing feature boundaries. It does not
+require another local whole-group run. Full-matrix validation, new group timing,
+balancing and short PR selection remain later work in the overall plan.
+
+Next: review matrix-encodings, matrix-widestrings and matrix-zerowidth. Use saved
+SQL, assertions, runtime line sets and timings. Consult the MySQL manuals before
+naming features. Map distinct conditions and any overlap before choosing the
+next conversion. This review needs no new build or database run. Continue the
+remaining type/value and key/index work before full-matrix validation.

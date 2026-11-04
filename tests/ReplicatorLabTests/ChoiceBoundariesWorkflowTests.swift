@@ -175,7 +175,7 @@ final class ChoiceBoundariesWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try plan.validateProgress(before: before, after: after, end: cleaned, cleaned: true))
     }
 
-    func testCleanupTitleAndRemainingLegacyCaseStayExplicit() throws {
+    func testCleanupTitleAndChoiceCasesStayExplicit() throws {
         let plan = try XCTUnwrap(fixture.workflow).plan(fixture)
         XCTAssertEqual(plan.final.checks.count, 7)
         XCTAssertEqual(plan.final.databases, ["poc"])
@@ -184,11 +184,11 @@ final class ChoiceBoundariesWorkflowTests: XCTestCase {
         XCTAssertEqual(fixture.displayName, "ENUM and SET: trimmed labels, escapes and multibyte boundaries")
         XCTAssertEqual(
             LabScenario.correctness.first { $0.id == "matrix-choiceboundaries" }?.test.name, fixture.displayName)
-        XCTAssertNil(DMLCompatibilityCases.legacyBinarySet.workflow)
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
-                "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "identifiercase",
+                "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
+                "identifiercase",
                 "unicodeidentifiers", "enumzero", "choices", "widechoices",
             ])
     }

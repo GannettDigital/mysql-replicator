@@ -218,6 +218,29 @@ extension DMLCompatibilityCases {
                 "MySQL 8.4.8 rejects this binary SET definition with native dictionary error 3507; the source cannot create it.",
             .reverse:
                 "MySQL 8.4.8 rejects this binary SET definition with native dictionary error 3507; this is a target-version limit.",
-        ])
+        ],
+        workflow: .init(
+            title: "SET: non-UTF-8 binary members on MySQL 5.7",
+            histories: [.init(table: "ls_after_insert", throughPhase: 1)],
+            phaseTransactions: [1, 3],
+            predicateIDs: ["inserted-binary-default-and-members", "changed-default-updated-and-deleted"],
+            additionalChecks: [
+                .init(
+                    id: "initial-rows",
+                    check: .init(
+                        "SELECT id,IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.ls_after_insert ORDER BY id",
+                        "1\t3\tFF2C61\n2\t1\tFF\n3\t2\t61\n4\tNULL\tNULL")),
+                .init(
+                    id: "final-rows",
+                    check: .init(
+                        "SELECT id,IFNULL(CAST(s AS UNSIGNED),'NULL'),IFNULL(HEX(s),'NULL') FROM poc.matrix_legacybinaryset ORDER BY id",
+                        "2\t1\tFF\n3\t1\tFF\n4\tNULL\tNULL")),
+                .init(
+                    id: "original-default-bytes",
+                    check: .init("SELECT HEX(DEFAULT(s)) FROM poc.ls_after_insert WHERE id=1", "FF2C61")),
+                .init(
+                    id: "changed-default-bytes",
+                    check: .init("SELECT HEX(DEFAULT(s)) FROM poc.matrix_legacybinaryset WHERE id=2", "FF")),
+            ], expectedDDL: 3, expectedRows: 10))
 
 }

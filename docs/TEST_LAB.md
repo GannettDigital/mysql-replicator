@@ -334,6 +334,17 @@ only the retained tables. The case adds no applier restart.
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-binarychoices --coverage"
 ```
 
+`matrix-legacybinaryset` uses the same workflow with one retained table on the
+two 5.7-to-5.7 profiles. Final queries compare raw FF/61 member bytes, SET masks
+and NULL rows. Separate queries check default bytes FF2C61 before ALTER and FF
+afterward. The original compound ALTER/UPDATE/DELETE request, both predicates
+and profile exclusions remain. Full schema comparison keeps the raw SHOW CREATE
+parser. Cleanup drops only the retained table. The case adds no applier restart.
+
+```sh
+make lab-test PROFILE=mysql57-to-mysql57-myisam ARGS="--suite correctness --case matrix-legacybinaryset --coverage"
+```
+
 The `ddl-compat-tagged-gtids` case uses the 8.4 source profile with
 `--variant without-source-gtids` (`target.preserveSourceGTIDs: false`). It compares tagged
 DDL/DML results with the native reference, then checks rotation, process restart,
@@ -1492,7 +1503,7 @@ empty members, empty SET values and NULL fields. They compare the high-bit and
 maximum 64-bit SET masks as unsigned decimal values. A separate query checks
 default bytes and declared SET member order. All three original predicates,
 original scripts and FULL metadata remain. Cleanup drops only the retained
-tables. Only `matrix-legacybinaryset` keeps its earlier execution path.
+tables. All seven ENUM/SET value cases now use the shared workflow.
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-choiceboundaries --coverage"
