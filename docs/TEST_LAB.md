@@ -1428,15 +1428,29 @@ implicit UNSIGNED, padded defaults, numeric boundaries, ALTER and DML. The
 included-DDL refusal case uses an explicit engine outside the selected profile.
 This keeps a real policy failure after ZEROFILL becomes supported.
 
-The `matrix-collations` case tests all 63 native
-5.7 collations for utf8mb4, utf8mb3, latin1 and ASCII. It compares schema metadata
-and bytes after each phase. The case includes a collated key, defaults, NULL,
-INSERT, UPDATE, ALTER and DELETE. It does not test every language-specific sort rule.
+The `matrix-collations` case tests 63 MySQL
+5.7 collations for utf8mb4, utf8mb3, latin1 and ASCII. Preparation and body batches
+share one running applier. Three retained tables keep initial defaults, updated
+bytes and the schema after MODIFY. Final queries compare all 63 member fields,
+stored key case, NULL values and numeric collation mappings across source,
+native and target. The case keeps the original four predicates and scripts.
+It checks c49 at ID 49 before MODIFY and ID 94 afterward. Cleanup drops only
+the retained tables. The case adds no applier restart. It does not test every
+language-specific sort rule.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-collations --coverage"
+```
 
 The `matrix-nativeencodings` case adds the
 remaining 36 native 5.7 text encodings. It checks raw CHAR/VARCHAR/TEXT bytes,
 encoding-specific CHAR padding, NUL, defaults, NULL and DML/DDL phases. A UTF16
 primary key checks binary parameter conversion in key predicates.
+
+The [inventory workflow review](../PLAN/BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md)
+records every selected collation ID and character-set byte vector. It defines
+the conversion steps for these cases. The native-encoding case still uses its
+original phase checks. Both definitions remain inputs to metadata-discovery tests.
 
 The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
 The DML cases and their metadata definitions run on both 5.7-to-5.7 profiles. The inventory gives

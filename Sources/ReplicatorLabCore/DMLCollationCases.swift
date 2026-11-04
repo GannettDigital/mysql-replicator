@@ -84,6 +84,29 @@ extension DMLCompatibilityCases {
             + collations.map { id, charset, name in
                 "c\(id) VARCHAR(12) CHARACTER SET \(charset) COLLATE \(name) DEFAULT 'A'"
             }.joined(separator: ",")
+        let rowSQL = (["HEX(id)"] + columns.map { "IFNULL(HEX(\($0)),'NULL')" }).joined(separator: ",")
+        func row(_ key: String, updated: Bool = false, modified: Bool = false) -> String {
+            ([key]
+                + collations.map { id, charset, _ in
+                    if modified && id == 49 { return "NULL" }
+                    if !updated { return "41" }
+                    return charset == "ascii" ? "410020" : charset == "latin1" ? "E900FF20" : "C3A9E4B8AD0020"
+                }).joined(separator: "\t")
+        }
+        func rows(_ table: String, expected: String, id: String) -> DDLFinalObservations.Observation {
+            .init(id: id, check: .init("SELECT " + rowSQL + " FROM poc." + table + " ORDER BY BINARY id", expected))
+        }
+        func metadata(_ table: String, modified: Bool, id: String) -> DDLFinalObservations.Observation {
+            let members = collations.map { number, charset, name in
+                let changed = modified && number == 49
+                return "c\(number)\t\(changed ? 94 : number)\t\(charset)\t\(changed ? "latin1_spanish_ci" : name)"
+            }
+            return .init(
+                id: id,
+                check: .init(
+                    "SELECT c.COLUMN_NAME,k.ID,REPLACE(c.CHARACTER_SET_NAME,'utf8mb3','utf8'),REPLACE(c.COLLATION_NAME,'utf8mb3_','utf8_') FROM information_schema.COLUMNS c JOIN information_schema.COLLATIONS k ON k.COLLATION_NAME=c.COLLATION_NAME WHERE c.TABLE_SCHEMA='poc' AND c.TABLE_NAME='\(table)' ORDER BY c.ORDINAL_POSITION",
+                    (["id\t246\tutf8mb4\tutf8mb4_unicode_520_ci"] + members).joined(separator: "\n")))
+        }
         return Case(
             id: "collations", definition: definition,
             phases: [
@@ -101,6 +124,33 @@ extension DMLCompatibilityCases {
                 .init(
                     sql: "DELETE FROM poc.matrix_collations WHERE id='FIRSTX'",
                     check: "SELECT COUNT(*)=1 AND MIN(id)='second' AND SUM(c49 IS NULL)=1 FROM poc.matrix_collations"),
-            ])
+            ],
+            workflow: .init(
+                title: "Character sets and collations: collation IDs, stored bytes and case-insensitive keys",
+                histories: [
+                    .init(table: "cl_after_insert", throughPhase: 1),
+                    .init(table: "cl_after_update", throughPhase: 2),
+                    .init(table: "cl_after_modify", throughPhase: 3),
+                ], phaseTransactions: [1, 1, 2, 1],
+                predicateIDs: [
+                    "inserted-defaults", "updated-bytes-and-key", "modified-collation-and-null", "deleted-changed-key",
+                ],
+                additionalChecks: [
+                    rows(
+                        "cl_after_insert", expected: row("6669727374") + "\n" + row("7365636F6E64"),
+                        id: "initial-rows"),
+                    rows(
+                        "cl_after_update",
+                        expected: row("466972737458", updated: true) + "\n" + row("7365636F6E64"),
+                        id: "updated-rows"),
+                    rows(
+                        "cl_after_modify",
+                        expected: row("466972737458", updated: true) + "\n" + row("7365636F6E64", modified: true),
+                        id: "modified-rows"),
+                    rows(
+                        "matrix_collations", expected: row("7365636F6E64", modified: true), id: "surviving-row"),
+                    metadata("cl_after_update", modified: false, id: "original-collation-ids"),
+                    metadata("cl_after_modify", modified: true, id: "modified-collation-ids"),
+                ], expectedDDL: 6, expectedRows: 14))
     }()
 }

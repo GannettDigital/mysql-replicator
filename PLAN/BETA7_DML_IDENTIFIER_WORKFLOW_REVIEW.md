@@ -1,8 +1,10 @@
 # Identifier case sensitivity and Unicode columns: DML workflow review
 
 Status: both identifier workflows passed their focused forward tests.
-The ASCII pilot is committed as `e4d54e9`. Next: review the native collation/encoding
-inventories with explicit value and ID maps, then ENUM/SET.
+The ASCII pilot is committed as `e4d54e9`; Unicode is committed as `2729752`.
+The [collation inventory pilot](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#collation-pilot-implementation-and-focused-results)
+passed its focused forward case. Next: convert only matrix-nativeencodings,
+then review ENUM/SET.
 
 ## Decision and scope
 
@@ -456,8 +458,9 @@ Evidence:
 - `artifacts/unicode-dml-workflow-review/verify.py`
 - `artifacts/unicode-dml-workflow-review/unit.log`
 
-Next: review matrix-collations and matrix-nativeencodings with explicit native
-value/ID maps. Then review ENUM/SET overlap. Keep remaining type/value and
-key/index reviews, full-matrix validation, final balancing and short PR selection
-in the overall consolidation plan. Do not remove an inventory because its line
-coverage overlaps another case.
+The [native inventory review](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md) records
+both complete value/ID maps and saved measurements. Its collation pilot passed
+all 16 named assertions on forward MyISAM. Next: convert only matrix-nativeencodings,
+then review ENUM/SET overlap. Keep remaining type/value and key/index reviews,
+full-matrix validation, final balancing and short PR selection in the overall
+plan. Do not remove an inventory because its line coverage overlaps another case.

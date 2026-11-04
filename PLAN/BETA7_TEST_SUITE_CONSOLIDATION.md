@@ -48,9 +48,11 @@ Current progress:
   [lower-case table-name workflow](BETA7_LOWERCASE_TABLE_WORKFLOW_REVIEW.md#implementation-and-focused-results)
   passed its forward mode-1 case, including both restarts and retained rows.
   The [DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
-  passed both focused forward cases. Next: review the native collation/encoding
-  inventories with explicit value and ID maps, then ENUM/SET. Keep the applier
-  running between cases.
+  passed both focused forward cases. The
+  [collation inventory pilot](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#collation-pilot-implementation-and-focused-results)
+  passed its focused forward case with all 16 named assertions. Next: convert
+  only matrix-nativeencodings with the same helper. Keep all 36 vectors and
+  108 fields, then review ENUM/SET.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
   committed as `a0a130a` (Slices 1–3).
@@ -1512,6 +1514,8 @@ SQL client calls changed from 160 in saved CI to 74 locally. The
 [DML identifier workflows](BETA7_DML_IDENTIFIER_WORKFLOW_REVIEW.md#unicode-implementation-and-focused-results)
 passed their focused forward cases: 16 ASCII assertions and 20 Unicode assertions.
 Both keep the original SQL and metadata inputs, check GTID intervals and add no
-applier restart. Next: review the native collation/encoding inventories with
-explicit value and ID maps, then ENUM/SET. Keep remaining type/value and key/index
-reviews, full-matrix validation, final balancing and short PR selection later.
+applier restart. The [collation inventory pilot](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#collation-pilot-implementation-and-focused-results)
+passed its focused forward case with all 16 named assertions. Next: convert
+only matrix-nativeencodings with the same helper. Preserve all 36 vectors and
+108 fields, then review ENUM/SET. Keep remaining type/value and key/index work,
+full-matrix validation, final balancing and short PR selection later.

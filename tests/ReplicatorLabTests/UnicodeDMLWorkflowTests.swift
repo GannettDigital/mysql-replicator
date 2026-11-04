@@ -166,6 +166,6 @@ final class UnicodeDMLWorkflowTests: XCTestCase {
             LabScenario.correctness.first { $0.id == "matrix-unicodeidentifiers" }?.test.name, fixture.displayName)
         XCTAssertEqual(
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
-            ["identifiercase", "unicodeidentifiers"])
+            ["collations", "identifiercase", "unicodeidentifiers"])
     }
 }
