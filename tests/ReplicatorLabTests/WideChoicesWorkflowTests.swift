@@ -175,8 +175,8 @@ final class WideChoicesWorkflowTests: XCTestCase {
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
-                "identifiercase",
-                "unicodeidentifiers", "enumzero", "choices",
+                "zerowidth", "identifiercase",
+                "unicodeidentifiers", "encodings", "widestrings", "enumzero", "choices",
                 "widechoices",
             ])
     }

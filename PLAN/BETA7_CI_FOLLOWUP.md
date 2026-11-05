@@ -500,9 +500,9 @@ all 63 collation members and 36 encoding vectors. The
 passed choices/widechoices with 12 assertions each, binarychoices with 14,
 exactchoices with 16, enumzero with 14 and choiceboundaries with 13 on forward
 MyISAM. Legacybinaryset passed 12 on the 5.7 MyISAM profile.
-Next: review matrix-encodings, matrix-widestrings and matrix-zerowidth with
-saved SQL, assertions, coverage and timings. No new build or database run is needed
-for that review.
+The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
+records all three conversions: 101 unit tests and 48 forward assertions passed.
+Next: review data-types-values with saved SQL, assertions, coverage and timings.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining type/value and key/index work, full-matrix validation, final
 balancing and short PR selection later.

@@ -192,8 +192,8 @@ final class EnumZeroWorkflowTests: XCTestCase {
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
-                "identifiercase",
-                "unicodeidentifiers", "enumzero", "choices", "widechoices",
+                "zerowidth", "identifiercase",
+                "unicodeidentifiers", "encodings", "widestrings", "enumzero", "choices", "widechoices",
             ])
     }
 }

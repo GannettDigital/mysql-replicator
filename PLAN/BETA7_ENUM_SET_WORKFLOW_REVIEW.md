@@ -2,8 +2,9 @@
 
 Status: all seven local conversions are complete. Six passed their focused
 forward tests; legacybinaryset passed on the 5.7 MyISAM profile. Choiceboundaries
-is committed as `247bbbe`. Full-matrix validation remains. Next: review the
-remaining character and binary value cases. The
+is committed as `247bbbe`; legacybinaryset is committed as `88ff87c`. Full-matrix
+validation remains. The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
+and all three local conversions are complete. Next: review data-types-values. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -944,8 +945,10 @@ Step 7 retains the same 183 jobs and existing feature boundaries. It does not
 require another local whole-group run. Full-matrix validation, new group timing,
 balancing and short PR selection remain later work in the overall plan.
 
-Next: review matrix-encodings, matrix-widestrings and matrix-zerowidth. Use saved
-SQL, assertions, runtime line sets and timings. Consult the MySQL manuals before
-naming features. Map distinct conditions and any overlap before choosing the
-next conversion. This review needs no new build or database run. Continue the
-remaining type/value and key/index work before full-matrix validation.
+The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
+is complete. It keeps encodings, widestrings and zerowidth with their distinct
+values and schema transitions. It records 30 saved passing executions, coverage
+limits, complete row maps and a conversion order. No new build or database run
+was needed for the initial review. Its later conversions passed 101 unit tests
+and 48 forward assertions. Next: review data-types-values from saved evidence.
+Continue remaining type/value and key/index work before full-matrix validation.

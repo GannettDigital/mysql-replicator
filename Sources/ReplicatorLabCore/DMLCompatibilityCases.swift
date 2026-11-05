@@ -87,7 +87,51 @@ enum DMLCompatibilityCases {
                         sql: "DELETE FROM poc.matrix_encodings WHERE id=CONVERT(0xE978 USING latin1)",
                         check: "SELECT COUNT(*)=1 AND SUM(id='second')=1 AND SUM(c IS NULL)=1 FROM poc.matrix_encodings"
                     ),
-                ]),
+                ],
+                workflow: .init(
+                    title: "Character and binary strings: encodings, key changes and JSON DECIMAL values",
+                    histories: [
+                        .init(table: "ev_after_insert", throughPhase: 1),
+                        .init(table: "ev_after_update", throughPhase: 2),
+                        .init(table: "ev_after_add", throughPhase: 3),
+                    ], phaseTransactions: [1, 1, 2, 1],
+                    predicateIDs: [
+                        "inserted-encoded-fields", "changed-case-insensitive-key", "added-default-and-updated-text",
+                        "deleted-case-insensitive-key",
+                    ],
+                    additionalChecks: [
+                        .init(
+                            id: "initial-rows",
+                            check: .init(
+                                "SELECT HEX(id),IFNULL(HEX(c),'NULL'),IFNULL(HEX(v),'NULL'),IFNULL(HEX(t),'NULL'),IFNULL(HEX(a),'NULL'),IFNULL(HEX(u),'NULL'),IFNULL(HEX(b),'NULL'),IFNULL(JSON_TYPE(doc),'NULL'),IFNULL(JSON_LENGTH(doc),'NULL'),IFNULL(JSON_TYPE(JSON_EXTRACT(doc,'$.n')),'NULL'),IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(doc,'$.n')) AS DECIMAL(3,2)),'NULL') FROM poc.ev_after_insert ORDER BY id",
+                                "E9\tE9\t0080FF20\tE980FF00\t410020\tE4B8AD\tFF200000\tOBJECT\t1\tDECIMAL\t1.25\n7365636F6E64\tNULL\t\tNULL\t\t\tNULL\tNULL\tNULL\tNULL\tNULL"
+                            )),
+                        .init(
+                            id: "updated-rows",
+                            check: .init(
+                                "SELECT HEX(id),IFNULL(HEX(c),'NULL'),IFNULL(HEX(v),'NULL'),IFNULL(HEX(t),'NULL'),IFNULL(HEX(a),'NULL'),IFNULL(HEX(u),'NULL'),IFNULL(HEX(b),'NULL'),IFNULL(JSON_TYPE(doc),'NULL'),IFNULL(JSON_LENGTH(doc),'NULL'),IFNULL(JSON_TYPE(JSON_EXTRACT(doc,'$.n')),'NULL'),IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(doc,'$.n')) AS DECIMAL(3,2)),'NULL') FROM poc.ev_after_update ORDER BY id",
+                                "C958\tE9\tFF00E9\tE980FF00\t4E657874\tC3A9\tFF200000\tOBJECT\t1\tDECIMAL\t2.50\n7365636F6E64\tNULL\t\tNULL\t\t\tNULL\tNULL\tNULL\tNULL\tNULL"
+                            )),
+                        .init(
+                            id: "added-column-rows",
+                            check: .init(
+                                "SELECT HEX(id),IFNULL(HEX(c),'NULL'),IFNULL(HEX(v),'NULL'),IFNULL(HEX(t),'NULL'),IFNULL(HEX(a),'NULL'),IFNULL(HEX(u),'NULL'),IFNULL(HEX(b),'NULL'),IFNULL(JSON_TYPE(doc),'NULL'),IFNULL(JSON_LENGTH(doc),'NULL'),IFNULL(JSON_TYPE(JSON_EXTRACT(doc,'$.n')),'NULL'),IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(doc,'$.n')) AS DECIMAL(3,2)),'NULL'),IFNULL(HEX(extra),'NULL') FROM poc.ev_after_add ORDER BY id",
+                                "C958\tE9\tFF00E9\tE900FF\t4E657874\tC3A9\tFF200000\tOBJECT\t1\tDECIMAL\t2.50\t5A\n7365636F6E64\tNULL\t\tNULL\t\t\tNULL\tNULL\tNULL\tNULL\tNULL\t78"
+                            )),
+                        .init(
+                            id: "final-rows",
+                            check: .init(
+                                "SELECT HEX(id),IFNULL(HEX(c),'NULL'),IFNULL(HEX(v),'NULL'),IFNULL(HEX(t),'NULL'),IFNULL(HEX(a),'NULL'),IFNULL(HEX(u),'NULL'),IFNULL(HEX(b),'NULL'),IFNULL(JSON_TYPE(doc),'NULL'),IFNULL(JSON_LENGTH(doc),'NULL'),IFNULL(JSON_TYPE(JSON_EXTRACT(doc,'$.n')),'NULL'),IFNULL(CAST(JSON_UNQUOTE(JSON_EXTRACT(doc,'$.n')) AS DECIMAL(3,2)),'NULL'),IFNULL(HEX(extra),'NULL') FROM poc.matrix_encodings ORDER BY id",
+                                "7365636F6E64\tNULL\t\tNULL\t\t\tNULL\tNULL\tNULL\tNULL\tNULL\t78")),
+                        .init(
+                            id: "original-default-bytes",
+                            check: .init("SELECT HEX(DEFAULT(u)) FROM poc.ev_after_insert WHERE id='second'", "E4B8AD")),
+                        .init(
+                            id: "added-default-bytes",
+                            check: .init(
+                                "SELECT HEX(DEFAULT(u)),HEX(DEFAULT(extra)) FROM poc.ev_after_add WHERE id='second'",
+                                "E4B8AD\t78")),
+                    ], expectedDDL: 6, expectedRows: 14)),
             Case(
                 id: "widestrings",
                 definition:
@@ -105,7 +149,27 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_widestrings WHERE id=1",
                         check: "SELECT COUNT(*)=0 FROM poc.matrix_widestrings"),
-                ]),
+                ],
+                workflow: .init(
+                    title: "VARCHAR and VARBINARY: large values, short updates and DELETE",
+                    histories: [
+                        .init(table: "ws_after_insert", throughPhase: 1),
+                        .init(table: "ws_after_update", throughPhase: 2),
+                    ], phaseTransactions: [1, 1, 1],
+                    predicateIDs: ["inserted-large-values", "updated-short-values", "deleted-large-row"],
+                    additionalChecks: [
+                        .init(
+                            id: "complete-large-payloads",
+                            check: .init(
+                                "SELECT id,OCTET_LENGTH(v),OCTET_LENGTH(b),HEX(v)=REPEAT('E9',18000),HEX(b)=REPEAT('FF00',9000) FROM poc.ws_after_insert ORDER BY id",
+                                "1\t18000\t18000\t1\t1")),
+                        .init(
+                            id: "updated-row",
+                            check: .init("SELECT id,HEX(v),HEX(b) FROM poc.ws_after_update ORDER BY id", "1\t00FF\tFF")),
+                        .init(
+                            id: "empty-final-table",
+                            check: .init("SELECT id,HEX(v),HEX(b) FROM poc.matrix_widestrings ORDER BY id", "")),
+                    ], expectedDDL: 3, expectedRows: 6)),
             Case(
                 id: "spatial",
                 definition:

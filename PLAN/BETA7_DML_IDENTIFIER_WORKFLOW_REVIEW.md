@@ -7,9 +7,9 @@ passed their focused forward cases. The [ENUM/SET workflows](BETA7_ENUM_SET_WORK
 passed choices/widechoices with 12 assertions each, binarychoices with 14,
 exactchoices with 16, enumzero with 14 and choiceboundaries with 13.
 Legacybinaryset passed 12 on the 5.7 MyISAM profile.
-Next: review matrix-encodings, matrix-widestrings and matrix-zerowidth with
-saved SQL, assertions, coverage and timings. No new build or database run is needed
-for that review.
+The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
+records all three conversions: 101 unit tests and 48 forward assertions passed.
+Next: review data-types-values with saved SQL, assertions, coverage and timings.
 
 ## Decision and scope
 
@@ -469,9 +469,9 @@ Each inventory passed all 16 named assertions on forward MyISAM. The
 [ENUM/SET workflows](BETA7_ENUM_SET_WORKFLOW_REVIEW.md#legacy-binary-set-implementation-and-local-completion)
 passed choices, widechoices, binarychoices, exactchoices, enumzero and
 choiceboundaries. Legacybinaryset passed 12 on the 5.7 MyISAM profile.
-Next: review matrix-encodings, matrix-widestrings and matrix-zerowidth with
-saved SQL, assertions, coverage and timings. No new build or database run is needed
-for that review.
+The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
+records all three conversions: 101 unit tests and 48 forward assertions passed.
+Next: review data-types-values with saved SQL, assertions, coverage and timings.
 Keep remaining type/value and key/index reviews, full-matrix
 validation, final balancing and short PR selection in the overall plan. Do not
 remove an inventory because its line coverage overlaps another case.

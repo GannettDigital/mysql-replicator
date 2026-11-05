@@ -441,9 +441,34 @@ defaults with supplementary characters, NUL, byte literals, numeric constants,
 legacy/wide encodings and CHAR padding modes. Metadata comparisons use stored
 defaults and preserve exact Unicode bytes.
 
-`matrix-zerowidth` checks zero-width CHAR,
-VARCHAR, BINARY and VARBINARY columns. It distinguishes empty values from NULL
-and exercises width changes before and after DML.
+`matrix-encodings` checks latin1, ASCII, UTF-8 and binary fields. Three retained
+tables keep the results after INSERT, key UPDATE and ADD COLUMN. Final queries
+check every field, stored key bytes, case-insensitive matching, CHAR trimming,
+BINARY zero padding and JSON DECIMAL types and values. Separate queries check
+the original UTF-8 default and the added CHAR default. The server-based JSON
+comparison remains active.
+
+`matrix-widestrings` checks VARCHAR(20000) and VARBINARY(20000). Two retained
+tables keep the complete 18,000-byte payloads and their short replacements.
+The large-value query compares every byte with fixed REPEAT patterns. Final
+queries also require the original table to be empty after DELETE. The column
+declarations stay unchanged; this is not a packet-limit test.
+
+`matrix-zerowidth` checks zero-length CHAR, VARCHAR, BINARY and VARBINARY columns,
+including UTF-16. Three retained tables keep INSERT, UPDATE and wider-column
+results. Final queries distinguish every empty field from NULL and check the
+wider schema, its defaults and the restored zero-length declarations.
+
+All three cases use preparation and body batches with one running applier.
+They keep their original SQL, predicates and metadata settings. Cleanup drops
+only the retained tables. They add no per-case restart. Cold metadata tests
+keep each original definition and its first INSERT.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-encodings --coverage"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-widestrings --coverage"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-zerowidth --coverage"
+```
 
 `json-year-compatibility` checks the optional 5.7 to 8.4 YEAR conversion inside
 JSON. It includes default refusal, native type checks, restart, UPDATE/DELETE,
