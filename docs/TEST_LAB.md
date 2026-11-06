@@ -74,9 +74,10 @@ uses INFO schema-read records and the target general query log to count reads.
 It allows the first write after ALTER to validate a new DML plan. The next
 write must reuse the plan and schema. It restores the log settings after the case.
 
-The family also retains four target-specific workflows:
-`json-target84-schema`, `target84-index-spatial-metadata`,
-`expression-target84-dependencies` and `alter-rename-target84-refusal`.
+The family also retains three target-specific workflows:
+`target84-index-spatial-metadata`, `expression-target84-dependencies` and
+`alter-rename-target84-refusal`. The JSON-specific `json-target84-schema` case
+belongs to data-types-values with the other JSON cases.
 They retain their own restart, replay or refusal checks.
 All cases in the group share the same MySQL containers. A metadata-only
 selection omits the general correctness applier setup.
@@ -566,6 +567,17 @@ make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-zerowidth --coverage"
 ```
 
+### JSON values, indexes and compatibility
+
+All seven cases assigned to the JSON Data Type feature now belong to the
+existing data-types-values CI group. They share that group's MySQL containers.
+The group includes values, native scalar types, partial updates, generated-column
+indexes, target version/engine limits, target-only expression metadata and YEAR
+conversion. This grouping adds no CI job. The cold JSON metadata read stays in
+metadata-columns-indexes. Extra BINLOG transport selections remain unchanged.
+The YEAR, refusal and target-only schema cases keep their required isolated
+appliers, restarts and replay steps. They do not start another fixture.
+
 `json-year-compatibility` checks the optional 5.7 to 8.4 YEAR conversion inside
 JSON. It includes default refusal, native type checks, restart, UPDATE/DELETE,
 policy-change refusal and offline replay. Run it with:
@@ -604,12 +616,41 @@ Run it with `--profile mysql57-to-mysql84-innodb --suite correctness --case expr
 make lab-test ARGS="--profile mysql57-to-mysql84-innodb --suite correctness --case ddl-compat-json-indexes --case json-target84-schema"
 ```
 
-`matrix-json` checks ordinary JSON values.
-`matrix-typedjson` checks DECIMAL, temporal and
-binary JSON types. All four profiles select these cases. `matrix-jsonpartial` checks partial updates on an 8.4 source.
-It inspects mysqlbinlog output to confirm that the source emitted a change
-record. These cases passed on the applicable profiles. The old `matrix-reject-json-opaque` case
-is removed. See [JSON support and limits](JSON_SUPPORT.md).
+`matrix-json` and `matrix-typedjson` use the shared preparation/body workflow.
+Three retained tables per case keep the INSERT result and both UPDATE results.
+Final reads run after all source writes complete. Cleanup drops only retained
+tables. Both cases keep their original definitions, requests and predicates.
+They add no per-case applier restart.
+
+`matrix-json` checks objects, arrays, empty objects, strings, booleans, DOUBLE,
+SQL NULL and JSON null. It also checks primary-key changes, ADD JSON COLUMN,
+signed/unsigned integer limits, a value above 2^53 and exact Unicode bytes.
+
+`matrix-typedjson` checks exact DECIMAL values, DATE, TIME, DATETIME, TIMESTAMP,
+BLOB and BIT values inside JSON. Fixed queries verify all scalar types and values,
+including binary payloads, zero temporal values and the unchanged second object.
+They also check the ordinary timestamp, BLOB/BINARY fields and BIT column in each
+retained table. The server-based JSON oracle still compares every document path,
+scalar type and value against source and native. It does not compare key order or
+convert exact integer/DECIMAL expectations through host floating-point values.
+
+All four profiles select both cases. `matrix-jsonpartial` checks partial updates
+on an 8.4 source. It keeps its separate phase checks and inspects mysqlbinlog output
+to confirm that the source emitted partial JSON row events. This conversion does
+not change that test. See [JSON support and limits](JSON_SUPPORT.md).
+
+Run the two changed value cases, the full data-type group on one profile, or
+that group across all profiles:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-json --case matrix-typedjson --coverage"
+make lab-test GROUP=data-types-values PROFILE=mysql84-to-mysql57-myisam ARGS="--variant default"
+make lab-test GROUP=data-types-values PROFILE=all ARGS="--variant default"
+```
+
+The last two commands also run the group's numeric, temporal, string, spatial
+and large-value cases. Use `make lab-plan` with the same GROUP/PROFILE/ARGS to see
+the exact cases before starting containers.
 
 `matrix-spatial` checks all eight spatial types,
 SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key

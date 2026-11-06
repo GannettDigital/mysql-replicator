@@ -219,7 +219,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_json WHERE id IN (2,4,5,6,11)",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_json WHERE id=3 AND doc IS NULL"),
-                ]),
+                ], workflow: DMLJSONWorkflows.json),
             Case(
                 id: "typedjson",
                 definition:
@@ -243,7 +243,7 @@ enum DMLCompatibilityCases {
                     ),
                     .init(
                         sql: "DELETE FROM poc.matrix_typedjson", check: "SELECT COUNT(*)=0 FROM poc.matrix_typedjson"),
-                ]),
+                ], workflow: DMLJSONWorkflows.typedjson),
             Case(
                 id: "jsonpartial", definition: "id INT PRIMARY KEY,doc JSON",
                 phases: [

@@ -354,7 +354,7 @@ final class NumericValuesWorkflowTests: XCTestCase {
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
                 "decimaldefaults", "binarydefaults", "textdefaults", "zerowidth", "identifiercase",
                 "unicodeidentifiers", "encodings", "widestrings",
-                "floatbounds", "zerofill", "fixedfloating", "floating",
+                "json", "typedjson", "floatbounds", "zerofill", "fixedfloating", "floating",
                 "bits", "fixed", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal", "precision",
                 "lob",
                 "defaults",

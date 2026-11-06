@@ -1,19 +1,22 @@
 # Data types: value and workflow review
 
-Status: source and saved-evidence review complete. The first six implementation
-slices are complete locally. They cover nineteen type/value cases, including
-character/binary defaults, fixed-length strings and BLOB/TEXT values. All focused
+Status: source and saved-evidence review complete. The first seven implementation
+slices are complete locally. They cover twenty-one type/value cases, including
+JSON values and native JSON scalar types. All focused
 checks passed.
 The numeric and floating slices are committed as `345f71f` and `92df394`.
 The legacy slice is committed as `269e76f`. The temporal slice is committed as
-`fbcedd7`. The string-default/BLOB slice passed its focused checks.
+`fbcedd7`. The string-default/BLOB slice is committed as `0f74741`. The JSON
+slice passed its focused checks.
 See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
 
 ## Decision
 
-Keep all 25 IDs in data-types-values and their existing execution selections.
+Keep all 25 original IDs in data-types-values and their existing execution
+selections. Slice 7 also moves three related JSON cases into this group. The
+group now owns all seven JSON feature cases. See the Slice 7 results below.
 The review found distinct values, metadata and lifecycle conditions. It found
 no complete case replacement. Do not remove a type test because another test
 executes the same Swift lines or also contains INSERT/UPDATE/DELETE.
@@ -250,7 +253,7 @@ per-case restart or offline replay.
 | 4, complete locally | All four legacy floating AUTO_INCREMENT cases through their shared template | Unit-test all generated SQL, declared types, both native error-1063 exclusions and session reset. Select all four changed cases in one 5.7-to-5.7 MyISAM fixture. Leave InnoDB and excluded profiles to CI. |
 | 5, complete locally | temporal, precision and defaults | Fixed time/precision, zero/NULL, generated IDs and automatic timestamp checks. Unit-test source time_zone/timestamp placement and resets. Select changed cases in one forward fixture. |
 | 6, complete locally | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
-| 7 | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
+| 7, complete locally | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
 | 8 | spatial | Every geometry type, SRID, empty/NULL collections, key changes and SPATIAL index metadata. One forward case with coverage. Do not substitute display WKT for exact geometry checks. |
 | 9 | Separate jsonpartial design/conversion | Preserve original bounded source-binlog checks and two diff phases. Test changed offset/event validation with one forward selected case and the 8.4 decoder. Do not bypass the helper guard. |
 | 10 | Reassess area completion and remaining key/index work | Source/assertion/selection audit first. Keep lifecycle cases unchanged unless their own review identifies a concrete safe change. No whole-suite local rerun. |
@@ -954,8 +957,156 @@ schema_check.py, inventory-results.json and four *-results.json files.
 
 Passed result: `artifacts/lab/20261106T185703Z-d2015587/result.json`.
 
-Next: Slice 7 — json and typedjson. Keep fixed paths, native scalar types,
-exact numeric strings and the existing server-based JSON oracle. Select only the
-two changed cases together in one forward SQL fixture with coverage. Keep their
-extra BINLOG selections for CI. Spatial and the separate partial-JSON workflow
-follow in the recorded order.
+Slice 7 follows below. Other profiles and extra BINLOG selections remain for CI.
+
+
+## JSON values and shared JSON fixture results
+
+Slice 7 converts matrix-json and matrix-typedjson through DMLExecutionWorkflow.
+DMLJSONWorkflows retains three earlier results per case. Original definitions,
+eight SQL requests/predicates, session settings, metadata rules and profile
+selections remain byte for byte. No production code, common runner or JSON
+comparison code changed. Names follow MySQL's
+[The JSON Data Type](https://dev.mysql.com/doc/refman/8.4/en/json.html).
+
+### Placement with the other JSON tests
+
+The JSON feature catalog already assigns seven cases. They had four CI owners.
+Keep all seven in the existing data-types-values fixture:
+
+| Cases | What they check | Previous CI group |
+|---|---|---|
+| matrix-json, matrix-typedjson | JSON documents and native scalar types; all four profiles | data-types-values |
+| matrix-jsonpartial | Partial JSON row events; 8.4 source | data-types-values |
+| json-year-compatibility | YEAR translation, refusal, restart and replay; 5.7 to 8.4 | data-types-values |
+| ddl-compat-json-indexes | Indexed generated columns, ALTER, LIKE and forced-index reads; all profiles | table-column-index-changes |
+| json-target57-limits | Version/engine refusals before a target write; 8.4 to 5.7 MyISAM | compatibility-policies-error-skipping |
+| json-target84-schema | Target-only expression defaults/indexes, restart and replay; 5.7 to 8.4 | table-metadata-discovery |
+
+A new separate JSON group would add ten jobs across profiles/variants. Moving
+these three cases into the existing fixture keeps 183 jobs and avoids those
+extra container startups. The group now has 28 registered IDs before profile
+exclusions. Each job uses one fixture. The isolated YEAR, refusal and target-only
+schema workflows keep their deliberate applier instances/restarts/replay steps.
+They do not prepare a second fixture.
+
+Cold metadata reads remain in metadata-columns-indexes. Its existing JSON
+representative still covers typedjson and jsonpartial. General generated-column
+and expression-dependency workflows keep their existing owners. Extra BINLOG
+selections remain unchanged. No test was removed or treated as redundant because
+its line coverage overlaps another test.
+
+The matrix audit compares every profile/variant/suite/transport/case execution,
+including multiplicity. All executions and catalog obligations remain unchanged.
+Only the three named cases change ownership. Job IDs, dependencies, coverage
+collections, profile exclusions and PR selections remain unchanged. A Python
+policy test requires all cases in the JSON feature catalog to share this owner.
+
+### Retained observations
+
+- json keeps INSERT, primary-key UPDATE and ADD COLUMN results. Final checks keep
+  object/array shape, empty objects, SQL NULL versus JSON null, DOUBLE type,
+  signed/unsigned limits, 9007199254740993, booleans and exact Unicode bytes.
+  The original final table must contain only the SQL NULL row.
+- typedjson keeps the initial SQL NULL documents, native typed objects and the
+  later typed array. Fixed queries check exact DECIMAL strings, DATE, TIME,
+  DATETIME, TIMESTAMP, zero temporal values, unsigned limits and DECIMAL scale.
+  Separate checks verify every binary payload and its BLOB/BIT JSON type. The
+  unchanged second object must retain all scalar values after row 1 changes.
+  Complete ordinary timestamp, BLOB, VARBINARY, BINARY and BIT values remain in
+  all retained results. The original final table must be empty.
+
+Exact integer and DECIMAL expectations do not pass through host floating-point
+values. MySQL queries supply types and scalar strings. The existing server-based
+JSON oracle still compares every path, type and scalar value with source/native.
+It also checks binary subtype information. Fixed binary-payload queries inspect
+MySQL's Base64 payload without assuming the displayed subtype prefix is the
+same across versions. Partial-JSON source-event checks keep their current runner.
+
+### Focused validation
+
+The initial selection ran 203 Swift tests. Seven JSON methods failed because a
+new predicate and observation shared one name. The other 196 methods passed.
+After the name correction, all 11 JSON workflow methods passed. They passed again
+after the native HEX and stored TIME expectation corrections below. The tests
+cover original SQL bytes, metadata ownership, request/session order, retained results,
+old predicates, counter deltas, exact GTID sets, offsets and cleanup. No unaffected
+unit classes were repeated. All 31 planner tests and 12 group-selection tests
+passed. Strict format lint and catalog structure checks passed. The full plan
+still has 1,545 obligations and 182 instrumented collections.
+
+The first forward/default/SQL integration run selected only the two changed
+cases. matrix-json passed all 20 assertions. matrix-typedjson then found a wrong
+new expectation: HEX(bits) returns 1FF because MySQL treats BIT as numeric in HEX.
+It does not return the zero-padded binary string 01FF. The support bundle and
+harness-failure.json were read before the correction. The bundled state was
+STOPPED, had no active GTID and had only DONE intents. No replication error or
+BLOCKED state occurred. Only the new expected text changed.
+
+Only matrix-typedjson was selected for the rerun. Its first rebuild stalled
+before compilation, with eight unreaped Git children and no compiler process.
+TERM did not stop the sleeping Swift process; KILL stopped that process only.
+The unchanged retry built normally. The original build log and process findings
+remain. No fixture or support bundle existed for that build attempt.
+
+That retry reached the next fixed scalar check. It found a second expectation
+error: native SQL converts the input JSON TIME -838:59:58.123456 to the stored
+value -630:59:58.123456. The existing [JSON support plan](JSON_SUPPORT.md) and JSONTypeTests already
+document this conversion for both pinned versions. The new check must retain
+the stored value. The second bundle was read first; state was STOPPED with no
+active GTID and only DONE intents. Only the expected result changed. Source SQL
+still uses the original -838-hour literal. All 11 JSON unit methods passed again.
+Only typedjson was selected for the next integration run.
+
+The completed typedjson rerun passed all 22 assertions and the existing shared
+saved-schema restart. matrix-json was not rerun. Its 20 passed assertions and
+cleanup checkpoint remain in the first run. That whole fixture is marked failed
+because of typedjson's expectation error. Its outer saved-schema restart did not
+run. Do not report the first fixture as a green run.
+
+| Case | Passed assertions | Seconds | SQL client calls | Saved CI seconds / calls |
+|---|---:|---:|---:|---:|
+| matrix-json | 20 | 6.36 | 48 | 13.16 / 112 |
+| matrix-typedjson | 22 | 5.86 | 45 | 14.35 / 124 |
+
+The saved CI group compared more accumulated poc tables. These local selections
+add retained tables and have different comparison inputs. The measurements do
+not establish a controlled speed ratio. Coverage below belongs to each whole
+fixture. The first includes work from the failed typedjson check. Do not assign
+these line sets to individual cases or compare them as equivalent inputs.
+
+| Selected fixture | Setup seconds | Container startup seconds, included in setup | Coverage export seconds | Cleanup seconds | Swift runtime lines hit / mapped |
+|---|---:|---:|---:|---:|---:|
+| matrix-json evidence | 14.57 | 11.73 | 1.15 | 10.73 | 7,956 / 20,880 |
+| matrix-typedjson evidence | 14.01 | 11.33 | 1.63 | 10.32 | 8,115 / 20,880 |
+
+| Case | Source client writes | GTIDs before / after cleanup | DDL before / after cleanup | Changed rows before / after cleanup |
+|---|---:|---:|---:|---:|
+| matrix-json | 15 | 16 / 17 | 6 / 7 | 34 / 34 |
+| matrix-typedjson | 15 | 14 / 15 | 4 / 5 | 18 / 18 |
+
+Read-only state inspection confirms all 32 case GTIDs across the two fixtures
+are APPLIED with source file/offsets. Each request's last GTID matches its end
+position. Body and cleanup checkpoints match exact source GTID sets and offsets,
+with expected counters. All DDL/row intents are DONE. The six retained tables are
+retired across the two fixtures. Each original table remains current. Saved
+schemas keep JSON columns, ADD COLUMN, TIMESTAMP(6), all binary families, widths
+and nullability. Engine checks confirm source InnoDB and native/target MyISAM.
+
+Evidence is under artifacts/json-value-workflow-review/: specs.json, unit logs,
+planner-tests.log, group-tests.log, catalog.log, matrix.log, group-command.txt,
+verify.py, inventory-results.json, integration logs, build-stall.json, inspect.py,
+schema_check.py and two *-results.json files.
+
+matrix-json case evidence: `artifacts/lab/20261106T192313Z-f5744236/mysql84-to-mysql57-myisam/correctness/default/20261106T192720Z-683c27aa-auto-autocommit-myisam/cases.json`. Whole fixture: failed; saved-schema restart: not_run.
+
+matrix-typedjson case evidence: `artifacts/lab/20261106T195008Z-cf6a81fe/mysql84-to-mysql57-myisam/correctness/default/20261106T195411Z-16d04dcb-auto-autocommit-myisam/cases.json`. Whole fixture: passed; saved-schema restart: passed.
+
+No other integration case/profile, whole group, full suite, benchmark or syntax
+suite ran. Coverage excludes lab code and the Rust decoder. CI must check the
+new combined group, other profiles/variants and existing BINLOG selections.
+
+Next: Slice 8 — spatial. Keep every geometry type, SRID, empty/NULL values,
+primary-key changes, ADD COLUMN and SPATIAL index changes. Use exact stored
+geometry bytes and native metadata. Select only the changed case on the forward
+profile with coverage. Then design the separate partial-JSON conversion.

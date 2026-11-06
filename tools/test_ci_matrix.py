@@ -11,6 +11,28 @@ def row(identifier, family='database', suite='correctness', profile='forward',
 
 
 class MatrixTests(unittest.TestCase):
+    def test_json_feature_cases_share_the_existing_data_type_fixture(self):
+        import json
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        policy = json.loads((root / 'tools/ci_matrix.json').read_text())
+        features = json.loads((root / 'tools/test_features.json').read_text())
+        # This ownership test uses the published feature catalog. New JSON cases
+        # must join the same fixture or have an explicit reviewed exception.
+        feature = next(f for f in features['features'] if f['id'] == 'json-data-type')
+        expected = set(feature['cases']['correctness'])
+        group = next(a for a in policy['areas'] if a['name'] == 'data-types-values')
+        self.assertTrue(expected.issubset(group['cases']))
+        for area in policy['areas']:
+            if area is not group:
+                self.assertFalse(expected.intersection(area.get('cases', [])))
+        # A cold metadata read still has its own owner. Moving runtime cases
+        # does not change the metadata family or the extra BINLOG selections.
+        self.assertTrue(any(a.get('families') == ['metadata'] for a in policy['areas']))
+        binlog = {c for s in policy['binlog_selections'] for c in s['cases']}
+        self.assertTrue({'matrix-json', 'matrix-typedjson', 'matrix-jsonpartial',
+                         'json-year-compatibility'}.issubset(binlog))
+
     def setUp(self):
         self.policy = dict(areas=[dict(name='database', families=['database'], size=2),
                                  dict(name='failure-recovery-offline', families=['failures', 'recovery', 'offline'])],
