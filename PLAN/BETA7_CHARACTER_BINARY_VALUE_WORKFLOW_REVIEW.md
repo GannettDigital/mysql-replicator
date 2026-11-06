@@ -364,5 +364,8 @@ Partial JSON now keeps bounded event proofs.
 The [index workflow results](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 12 conversions. All 57 original assertions and the shared restart
 passed on forward MyISAM. Eleven focused unit tests passed.
-Next: review primary-key row matching and named PRIMARY/UNIQUE constraints.
+The [primary-key and constraint results](BETA7_PRIMARY_KEY_CONSTRAINT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record both conversions. All 23 operation states and 15 original named assertions
+passed on forward MyISAM. Fourteen focused unit tests passed.
+Next: review conflict statements and their no-op GTID/offset boundaries.
 Full-matrix validation, balancing and short PR selection stay later.

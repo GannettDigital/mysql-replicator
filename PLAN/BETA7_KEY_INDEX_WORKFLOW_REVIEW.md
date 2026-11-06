@@ -208,6 +208,11 @@ Evidence: `artifacts/key-index-completion-review/index-results.json`,
 `inventory-results.json`, `unit.log` and `integration.log`. The passed lab result
 is `artifacts/lab/20261106T210334Z-f3cacf47/result.json`.
 
-Next: review primary-key row matching and named PRIMARY/UNIQUE constraints for
-shared execution. Then review conflict statements, preserving no-op boundaries.
-Keep matrix counts and profile/transport selections unchanged.
+The index workflow is committed as `dae01c2`. The
+[primary-key and constraint results](BETA7_PRIMARY_KEY_CONSTRAINT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record both retained-table conversions. All 23 operation states, 16 fixed
+predicates and 15 original named assertions passed in the existing fixture.
+Fourteen focused unit tests passed. The generic phase guard remains unchanged.
+
+Next: review conflict statements, preserving no-op boundaries. Keep matrix counts
+and profile/transport selections unchanged.

@@ -753,7 +753,7 @@ CREATE and ALTER, explicit index-name precedence, unnamed constraints, and DML
 after the changes on all profiles. Named assertions distinguish single-row
 UPDATE/DELETE from multirow INSERT/UPDATE/DELETE. The multirow phases replace
 `matrix-values`; they retain its separate integer-primary-key table and non-NULL
-value column. Each phase checks exact rows, including unaffected rows.
+value column. Final assertions check the retained rows, including unaffected rows.
 `metadata-columns-indexes` checks initial discovery of integer and unique keys.
 
 `ddl-compat-key-conflicts` combines the former `matrix-upsert`, `matrix-replace`
@@ -792,17 +792,32 @@ The separate `ddl-index-resume` case retains its schema-drift refusal check.
 
 `ddl-compat-primary-key-row-matching` replaces `matrix-composite` and
 `matrix-textkey`. It keeps their separate table definitions and source statements.
-Named assertions check exact rows after each operation. They retain equal IDs
+Named assertions check retained rows for each operation. They retain equal IDs
 on different dates, separate changes to each part of `PRIMARY KEY(report_date,id)`,
 and unaffected rows. The text table uses a `VARCHAR(20)` PRIMARY KEY with
 `utf8mb4_unicode_ci`. Assertions check exact key bytes after a case-only change
 and a case-insensitive DELETE.
 
 `metadata-columns-indexes` retains cold reads of the composite and text key
-definitions. Prefix-key and UNIQUE-key workflows remain separate. The
+definitions. Prefix-key and unique-key row-matching workflows remain separate. The
 [measured review](../PLAN/BETA7_TEST_SUITE_CONSOLIDATION.md#slice-6--composite-and-text-primary-key-review)
 records preserved coverage and the accepted time increase. These cases now share
 the `keys-rows-gtids` fixture with related key and row tests.
+
+Row matching and named PRIMARY/UNIQUE constraints now use retained tables and
+final batched comparisons. A retained table repeats the original SQL through
+the operation that it checks. Later writes cannot overwrite that state. These
+workflows retain all 15 named assertions, 16 fixed predicates and 23 operation
+states. Each case keeps its checkpoint and saved-schema restart. Case IDs,
+profile selection and the generic phase guard remain unchanged. See
+[the primary-key and constraint results](../PLAN/BETA7_PRIMARY_KEY_CONSTRAINT_WORKFLOW_REVIEW.md#implementation-and-focused-results).
+
+Run both cases in one fixture:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam \
+  ARGS="--suite correctness --case ddl-compat-primary-key-row-matching --case ddl-compat-constraints --coverage"
+```
 
 Cases in a group share MySQL containers. They do not all share an applier state
 directory. Bootstrap, failure and replay cases keep their own state and starting

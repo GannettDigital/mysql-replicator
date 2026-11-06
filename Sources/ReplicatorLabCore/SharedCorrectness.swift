@@ -531,7 +531,9 @@ public enum SharedCorrectness {
             }
         }
         func ddl() throws {
-            for test in DDLCompatibilityCases.cases where selects(test.test.id) {
+            for original in DDLCompatibilityCases.cases where selects(original.test.id) {
+                let keyWorkflow = try KeyConstraintWorkflows.plan(original)
+                let test = keyWorkflow?.test ?? original
                 nativeInnoDB = test.nativeInnoDB
                 try setNativeEngine(nativeInnoDB ? "InnoDB" : "MyISAM")
                 try reporter.run(test.test) {
@@ -649,6 +651,13 @@ public enum SharedCorrectness {
                             == count && result["appliedGTIDSet"] as? String == end.gtids,
                         "compatibility checkpoint differs")
                     let saved = try snapshot(test.test.id)
+                    if let keyWorkflow {
+                        try assertion("retained-state-checkpoint", caseID: test.test.id) {
+                            try keyWorkflow.checkpoint(writes: phaseWrites, before: before, after: result) {
+                                try state(saved, $0)
+                            }
+                        }
+                    }
                     try require(
                         state(saved, "SELECT COUNT(*) FROM ddl_intents WHERE status!='DONE'") == "0",
                         "unfinished compatibility DDL")
