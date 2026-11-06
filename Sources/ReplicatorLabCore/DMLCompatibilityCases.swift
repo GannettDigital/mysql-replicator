@@ -194,7 +194,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_spatial WHERE id=10",
                         check: "SELECT COUNT(*)=1 AND SUM(id=2)=1 AND SUM(g IS NULL)=1 FROM poc.matrix_spatial"),
-                ]),
+                ], workflow: DMLSpatialWorkflows.spatial),
             Case(
                 id: "json", definition: "id INT PRIMARY KEY,doc JSON",
                 phases: [

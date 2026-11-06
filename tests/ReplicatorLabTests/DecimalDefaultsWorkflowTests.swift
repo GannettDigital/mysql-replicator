@@ -206,7 +206,7 @@ final class DecimalDefaultsWorkflowTests: XCTestCase {
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
                 "decimaldefaults", "binarydefaults", "textdefaults", "zerowidth", "identifiercase",
                 "unicodeidentifiers", "encodings", "widestrings",
-                "json", "typedjson", "floatbounds", "zerofill", "fixedfloating", "floating",
+                "spatial", "json", "typedjson", "floatbounds", "zerofill", "fixedfloating", "floating",
                 "bits", "fixed", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal", "precision",
                 "lob",
                 "defaults",

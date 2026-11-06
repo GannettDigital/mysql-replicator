@@ -1,13 +1,13 @@
 # Data types: value and workflow review
 
-Status: source and saved-evidence review complete. The first seven implementation
-slices are complete locally. They cover twenty-one type/value cases, including
-JSON values and native JSON scalar types. All focused
-checks passed.
+Status: source and saved-evidence review complete. The first eight implementation
+slices are complete locally. They cover all twenty-two ordinary type/value
+cases, including spatial values and indexes. Partial JSON remains on its
+separate runner. All focused checks passed.
 The numeric and floating slices are committed as `345f71f` and `92df394`.
 The legacy slice is committed as `269e76f`. The temporal slice is committed as
 `fbcedd7`. The string-default/BLOB slice is committed as `0f74741`. The JSON
-slice passed its focused checks.
+slice is committed as `b7ffe2d`. The spatial slice passed its focused checks.
 See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
@@ -16,7 +16,9 @@ validation remains later work.
 
 Keep all 25 original IDs in data-types-values and their existing execution
 selections. Slice 7 also moves three related JSON cases into this group. The
-group now owns all seven JSON feature cases. See the Slice 7 results below.
+group owns all seven JSON feature cases. Slice 8 moves the two related spatial
+cases into it too. The group now owns all three Spatial Data Types cases. See
+the Slice 7 and Slice 8 results below.
 The review found distinct values, metadata and lifecycle conditions. It found
 no complete case replacement. Do not remove a type test because another test
 executes the same Swift lines or also contains INSERT/UPDATE/DELETE.
@@ -254,7 +256,7 @@ per-case restart or offline replay.
 | 5, complete locally | temporal, precision and defaults | Fixed time/precision, zero/NULL, generated IDs and automatic timestamp checks. Unit-test source time_zone/timestamp placement and resets. Select changed cases in one forward fixture. |
 | 6, complete locally | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
 | 7, complete locally | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
-| 8 | spatial | Every geometry type, SRID, empty/NULL collections, key changes and SPATIAL index metadata. One forward case with coverage. Do not substitute display WKT for exact geometry checks. |
+| 8, complete locally | spatial | Every geometry type, SRID, empty/NULL collections, key changes and SPATIAL index metadata. One forward case with coverage. Do not substitute display WKT for exact geometry checks. |
 | 9 | Separate jsonpartial design/conversion | Preserve original bounded source-binlog checks and two diff phases. Test changed offset/event validation with one forward selected case and the 8.4 decoder. Do not bypass the helper guard. |
 | 10 | Reassess area completion and remaining key/index work | Source/assertion/selection audit first. Keep lifecycle cases unchanged unless their own review identifies a concrete safe change. No whole-suite local rerun. |
 
@@ -1106,7 +1108,129 @@ No other integration case/profile, whole group, full suite, benchmark or syntax
 suite ran. Coverage excludes lab code and the Rust decoder. CI must check the
 new combined group, other profiles/variants and existing BINLOG selections.
 
-Next: Slice 8 — spatial. Keep every geometry type, SRID, empty/NULL values,
-primary-key changes, ADD COLUMN and SPATIAL index changes. Use exact stored
-geometry bytes and native metadata. Select only the changed case on the forward
-profile with coverage. Then design the separate partial-JSON conversion.
+Slice 8 follows below. Other profiles and the combined group remain for CI.
+
+
+## Spatial values and shared spatial fixture results
+
+Slice 8 converts matrix-spatial through DMLExecutionWorkflow. DMLSpatialWorkflows
+retains the INSERT, key-change and column/index-change results. Removing the
+single workflow reference restores DMLCompatibilityCases.swift byte for byte.
+The original definition, four SQL requests/predicates, profile selections,
+metadata rules and source settings remain unchanged. No production code, parser,
+common runner or native schema/row oracle changed. Names follow MySQL's
+[Spatial Data Types](https://dev.mysql.com/doc/refman/8.4/en/spatial-types.html)
+and [Supported Spatial Data Formats](https://dev.mysql.com/doc/refman/8.4/en/gis-data-formats.html).
+
+### Shared container startup
+
+All three cases assigned to the Spatial Data Types feature now belong to the
+existing data-types-values fixture:
+
+| Case | Profile scope | Previous CI owner |
+|---|---|---|
+| matrix-spatial | All four profiles | data-types-values |
+| ddl-compat-spatial-prefix-indexes | Both 5.7-to-5.7 profiles; native 8.4 rejects the prefix definition | table-column-index-changes |
+| target84-index-spatial-metadata | 5.7-to-8.4 InnoDB; existing target SRID constraint and invisible index | table-metadata-discovery |
+
+The group now has 30 registered IDs before profile exclusions. Applicable cases
+share its MySQL containers. A separate spatial group is not needed. No job or
+container startup is added. The prefix-index case keeps its two deliberate
+applier restarts. The target-only metadata case keeps its isolated apply/replay
+steps. Neither case prepares another fixture. Cold geometry discovery remains
+in metadata-columns-indexes. No case or assertion was removed.
+
+The matrix audit preserves every profile/variant/suite/transport/case execution,
+including multiplicity and extra BINLOG selections. Only the two listed cases
+change CI ownership. Job IDs, catalog identities, dependencies, exclusions and
+PR selections remain unchanged. A Python policy test requires all spatial feature
+cases to share this owner. The existing JSON ownership test still passes.
+
+### Values and index assertions
+
+The new value workflow uses the same preparation/body/cleanup runner as the
+other type cases. Three tables retain earlier results until final comparison.
+It adds no per-case restart. Checks keep:
+
+- GEOMETRY, POINT, LINESTRING, POLYGON, MULTIPOINT, MULTILINESTRING,
+  MULTIPOLYGON and GEOMETRYCOLLECTION declarations.
+- Complete stored Cartesian geometry bytes, including the four-byte SRID header,
+  WKB type/count fields, nested components and negative coordinates. Independent
+  Python struct packing supplies the fixed expected bytes; no production codec
+  generates them. Unit tests also check known types, lengths and component counts.
+- SQL NULL versus empty collections, the changed primary key and line, the new
+  collection column, unchanged fields and the one remaining row after DELETE.
+- POINT SRIDs 0/4326, payload lengths and both coordinates. Geographic fixed
+  checks do not choose one coordinate order. The existing native comparison
+  checks every stored point byte and catches a coordinate-order change during apply.
+- Initial SPATIAL index sp and replacement sp2, full column p, NOT NULL,
+  uniqueness/part order and MySQL's implicit 32-byte bounding-box prefix.
+  Saved schemas must remove the implicit prefix from the SPATIAL declaration.
+
+The geometry-prefix case still tests BTREE, not SPATIAL search. The target-only
+case still tests an existing 8.4 SRID 0 constraint, not every spatial reference
+system. PLAN/SPATIAL_SUPPORT.md now separates these tested forms from native
+version restrictions and untested primary-key/default combinations. Its old
+bootstrap entry now points to the focused metadata case.
+
+### Focused checks and measurements
+
+All 172 selected Swift tests passed, including 10 new spatial workflow methods.
+They check frozen SQL, metadata ownership, every retained result, index changes,
+request/session order, counters, exact GTID sets and file offsets. All 32 planner
+tests and 12 group-selection tests passed. Strict format lint and catalog checks
+passed. Structure remains 63 DDL scenarios, 235 registered cases and 56 support
+requirements. The plan keeps 183 jobs, 1,545 obligations and 182 instrumented
+collections.
+
+One forward/default/SQL integration selected only matrix-spatial with coverage.
+All 28 named assertions and the existing shared saved-schema restart passed.
+
+| Case | Passed assertions | Seconds | SQL client calls | Saved CI seconds / calls |
+|---|---:|---:|---:|---:|
+| matrix-spatial | 28 | 3.81 | 26 | 10.41 / 88 |
+
+The saved CI group compared more accumulated poc tables. This selection adds
+retained tables and has different inputs. It does not establish a controlled
+speed ratio. Coverage belongs to the whole fixture, including setup/restart,
+and does not identify the spatial case's exclusive line set.
+
+| Shared fixture measurement | Result |
+|---|---:|
+| Fixture setup, seconds | 14.83 |
+| Container startup, seconds; included in setup | 11.98 |
+| Coverage export, seconds | 1.70 |
+| Fixture cleanup, seconds | 10.74 |
+| Swift runtime lines hit / mapped | 7,533 / 20,880 |
+
+The case sends 15 client writes in three source batches. Before cleanup it has
+20 GTIDs, 10 DDL and 14 row changes. Cleanup advances to 21 GTIDs and 11 DDL,
+with no additional row changes. Read-only SQLite inspection confirms every case
+GTID is APPLIED with source file/offsets. Each request's last GTID matches its end
+position. Both checkpoints match exact source GTID sets and offsets. All intents
+are DONE. The three retained schemas are retired; the original remains current.
+Saved types, nullability, added column and SPATIAL parts match the checks.
+
+Engine checks confirm source InnoDB and native/target MyISAM. Final state is
+STOPPED with no active GTID at the shared restart's later position. Both applier
+invocations exited successfully. That restart writes reverse_poc.aux; it does
+not write to every retained spatial table.
+
+No other integration case/profile, combined group, full suite, benchmark or
+syntax suite ran. The two moved cases keep unchanged implementations and existing
+local evidence. CI must check the new combined group and other profiles/variants.
+Coverage excludes lab code and the Rust decoder.
+
+Evidence is under artifacts/spatial-value-workflow-review/: specs.json,
+geometry-bytes.json, unit.log, planner-tests.log, group-tests.log, catalog.log,
+matrix.log, group-command.txt, verify.py, inventory-results.json, integration.log,
+inspect.py, schema_check.py and spatial-results.json.
+
+Passed result: `artifacts/lab/20261106T201949Z-91870380/result.json`.
+
+Next: Slice 9 — design the partial-JSON conversion. Keep the two existing diff
+phases and their bounded mysqlbinlog checks. Record enough source offsets to
+prove that the relevant UPDATE events contain partial JSON data. Do not remove
+the helper's JSON-diff guard or treat final-row equality as proof of event type.
+Select only the changed forward case for local validation. Then reassess area
+completion and remaining key/index work from the saved evidence.

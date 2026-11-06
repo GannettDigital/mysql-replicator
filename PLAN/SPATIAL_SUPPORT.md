@@ -31,11 +31,21 @@ ALTER TABLE or CREATE SPATIAL INDEX, and removed by DROP INDEX. Both versions
 report the implicit 32-byte bounding box as index SUB_PART. Discovery removes
 that implicit size before comparing the index with its DDL declaration.
 
-The supported spatial index has one NOT NULL column and is not unique.
-BTREE indexes on spatial columns, spatial primary keys, non-NULL spatial
-defaults, and MySQL 8.4 column SRID attributes remain unsupported. Other existing
-profile limits still apply. The configured event, transaction, and SQL packet
-limits also apply to spatial values.
+The supported SPATIAL index has one NOT NULL column and is not unique.
+MySQL 5.7 geometry BTREE byte-prefix indexes are a separate supported form.
+MySQL 8.4 rejects that form with native error 1089. See the
+[prefix-index note](SPATIAL_PREFIX_INDEXES.md).
+
+Column SRID constraints follow the target version. MySQL 5.7 does not support
+them. The reverse profile tests an existing 8.4 target POINT with SRID 0, a
+SPATIAL index and an invisible ordinary index. It checks DML, ALTER, restart
+and replay. This does not test every SRID or geometry subtype combination.
+
+Non-NULL spatial defaults require a parenthesized expression on a target that
+supports expression defaults. MySQL 5.7 does not support expression defaults.
+The ordinary spatial value case has no spatial defaults and uses an integer
+primary key. It does not test geometry primary keys or spatial default expressions.
+The configured event, transaction and SQL packet limits also apply.
 
 Legacy JSON opaque values with type GEOMETRY are a separate representation.
 This change does not add an exact SQL constructor for that JSON subtype.
@@ -44,10 +54,24 @@ This change does not add an exact SQL constructor for that JSON subtype.
 
 Unit tests check optional subtype metadata, adjacent text metadata, all three
 row operations, NULL, malformed lengths, DDL, and saved schema round trips.
-Shared `matrix-spatial` and `bootstrap-matrix-spatial` cases check all eight
-types, empty collections, SRIDs 0 and 4326, key changes, column changes, and
-spatial indexes. They compare exact stored bytes and SRIDs with a native replica.
-The same cases run on all four profiles.
+The shared matrix-spatial case checks all eight declarations, empty collections,
+SRIDs 0 and 4326, key changes, column changes and SPATIAL indexes on all four
+profiles. The former bootstrap-matrix-spatial entry is replaced by the focused
+metadata-columns-indexes case. It reads the original schema and uses only the
+first INSERT to trigger discovery.
+
+The value case uses preparation/body batches and three retained tables. Final
+queries check complete Cartesian geometry bytes, NULL/empty values, SRIDs,
+POINT coordinates, declarations and index replacement. Exact stored bytes,
+including geographic point order, still enter the source/native/target comparison.
+See [the lab guide](../docs/TEST_LAB.md#spatial-values-and-indexes).
+
+All three Spatial Data Types cases share the data-types-values CI fixture:
+matrix-spatial, ddl-compat-spatial-prefix-indexes and
+target84-index-spatial-metadata. Native version exclusions and deliberate
+restart/replay steps remain. The following run records predate this batching
+change. Its focused measurements are recorded in the
+[type/value workflow review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md).
 
 The selected cases passed on all four profiles. The forward profile also passed
 with file positions and MINIMAL metadata. Local result directories under

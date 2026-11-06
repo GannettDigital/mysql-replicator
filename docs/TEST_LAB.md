@@ -74,13 +74,16 @@ uses INFO schema-read records and the target general query log to count reads.
 It allows the first write after ALTER to validate a new DML plan. The next
 write must reuse the plan and schema. It restores the log settings after the case.
 
-The family also retains three target-specific workflows:
-`target84-index-spatial-metadata`, `expression-target84-dependencies` and
-`alter-rename-target84-refusal`. The JSON-specific `json-target84-schema` case
-belongs to data-types-values with the other JSON cases.
-They retain their own restart, replay or refusal checks.
-All cases in the group share the same MySQL containers. A metadata-only
-selection omits the general correctness applier setup.
+The table-metadata-discovery CI group also contains two target-specific workflows:
+`expression-target84-dependencies` and `alter-rename-target84-refusal`.
+The catalog's metadata family still lists `json-target84-schema` and
+`target84-index-spatial-metadata`. Their CI owner is data-types-values, where
+they share containers with the related JSON and spatial cases. They keep their
+own restart, replay or refusal checks.
+
+The commands below select the catalog family. Use GROUP=table-metadata-discovery
+to select that CI group instead. Each selected fixture shares its MySQL containers.
+A metadata-only selection omits the general correctness applier setup.
 
 Run one case, the family on one profile, or the family on all profiles:
 
@@ -652,11 +655,47 @@ The last two commands also run the group's numeric, temporal, string, spatial
 and large-value cases. Use `make lab-plan` with the same GROUP/PROFILE/ARGS to see
 the exact cases before starting containers.
 
-`matrix-spatial` checks all eight spatial types,
-SQL NULL, empty collections, SRIDs 0 and 4326, INSERT/UPDATE/DELETE, primary-key
-changes, added columns, and SPATIAL index changes. It compares stored bytes
-and SRIDs with the native replica. It does not compare WKT output across server
-versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
+### Spatial values and indexes
+
+All three cases in the Spatial Data Types feature belong to the existing
+data-types-values group: matrix-spatial, ddl-compat-spatial-prefix-indexes and
+target84-index-spatial-metadata. Applicable cases share the same MySQL containers.
+The prefix-index and target-only metadata cases keep their required applier
+restarts and replay steps. This grouping adds no job or container startup.
+Cold spatial metadata reads remain in metadata-columns-indexes.
+
+`matrix-spatial` checks all eight spatial declarations, SQL NULL, empty
+collections, SRIDs 0 and 4326, key changes, ADD COLUMN, and SPATIAL index changes.
+Preparation and body batches use the existing running applier. Three retained
+tables keep the INSERT, key-change and column/index-change results. Final queries
+check these results and the remaining row after DELETE. Cleanup drops only the
+retained tables. Original SQL requests and predicates remain unchanged.
+
+Fixed queries check complete WKB bytes with the four-byte SRID header for all
+Cartesian values. They distinguish NULL from empty collections. Other queries
+check POINT coordinates, SRIDs, column declarations, NOT NULL and the change from
+sp to sp2. The index check retains MySQL's implicit 32-byte bounding-box prefix.
+The saved schema must remove that implicit prefix from its SPATIAL declaration.
+
+Geographic coordinate order can differ between server versions. Fixed POINT
+checks require SRID 4326 and both coordinates, without requiring one order. The
+existing native comparison still checks every stored point byte in that row.
+It catches any change to coordinate order during apply. The test does not compare
+WKT display across versions. See [spatial support and limits](../PLAN/SPATIAL_SUPPORT.md).
+
+Run the value case, select all spatial cases in one fixture on one profile, or
+run the full data-type group:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-spatial --coverage"
+make lab-test PROFILE=mysql57-to-mysql57-myisam ARGS="--suite correctness --case matrix-spatial --case ddl-compat-spatial-prefix-indexes --coverage"
+make lab-test PROFILE=mysql57-to-mysql84-innodb ARGS="--suite correctness --case matrix-spatial --case target84-index-spatial-metadata --coverage"
+make lab-test GROUP=data-types-values PROFILE=all ARGS="--variant default"
+```
+
+The full group also contains numeric, temporal, string, JSON and large-value
+cases. Profile exclusions remain active for the spatial cases.
+
 The former `reject-geometry` and `reject-fulltext` refusal cases have positive
 coverage. The refusal selection now uses `reject-engine`.
 

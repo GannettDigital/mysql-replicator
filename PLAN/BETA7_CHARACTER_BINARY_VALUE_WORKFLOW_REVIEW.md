@@ -357,7 +357,7 @@ It records 23 unchanged matrix fixtures, two isolated lifecycle workflows,
 211 saved SQL executions and ten additional BINLOG executions. It keeps all
 25 IDs and required event/restart/replay/recovery checks. The initial review
 needed no new build or database run.
-The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#json-values-and-shared-json-fixture-results)
-record twenty-one completed conversions. All focused checks passed.
-The seven JSON feature cases share the data-types-values fixture. Next: spatial.
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#spatial-values-and-shared-spatial-fixture-results)
+record twenty-two completed conversions. All focused checks passed.
+JSON and spatial cases share the data-types-values fixture. Next: partial-JSON event checks.
 Full-matrix validation, balancing and short PR selection stay later.
