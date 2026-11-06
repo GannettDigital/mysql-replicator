@@ -141,4 +141,36 @@ enum DMLJSONWorkflows {
                 )),
             .init(id: "empty-final-table", check: .init("SELECT id FROM poc.matrix_typedjson ORDER BY id", "")),
         ], expectedDDL: 4, expectedRows: 18)
+
+    static let jsonpartial = DMLExecutionWorkflow(
+        title: "Partial JSON updates: replace and remove row events with saved source offsets",
+        histories: [
+            .init(table: "jp_after_insert", throughPhase: 1),
+            .init(table: "jp_after_replace", throughPhase: 2),
+            .init(table: "jp_after_remove", throughPhase: 3),
+        ], phaseTransactions: [1, 1, 1, 1],
+        predicateIDs: [
+            "inserted-json-array", "replaced-decimal-and-date", "removed-first-array-element", "deleted-json-row",
+        ],
+        additionalChecks: [
+            .init(
+                id: "initial-json-values",
+                check: .init(
+                    "SELECT id,JSON_TYPE(doc),JSON_LENGTH(doc),JSON_TYPE(doc->'$.padding'),OCTET_LENGTH(JSON_UNQUOTE(doc->'$.padding')),HEX(JSON_UNQUOTE(doc->'$.padding'))=REPEAT('78',1000),JSON_TYPE(doc->'$.a'),JSON_LENGTH(doc->'$.a'),IFNULL(JSON_TYPE(doc->'$.a[0]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[0]'),'SQL_NULL'),IFNULL(JSON_TYPE(doc->'$.a[1]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[1]'),'SQL_NULL'),IFNULL(JSON_TYPE(doc->'$.a[2]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[2]'),'SQL_NULL'),JSON_TYPE(doc->'$.d'),JSON_UNQUOTE(doc->'$.d') FROM poc.jp_after_insert ORDER BY id",
+                    "1\tOBJECT\t3\tSTRING\t1000\t1\tARRAY\t3\tINTEGER\t1\tINTEGER\t2\tINTEGER\t3\tDECIMAL\t1.00")),
+            .init(
+                id: "replaced-json-values",
+                check: .init(
+                    "SELECT id,JSON_TYPE(doc),JSON_LENGTH(doc),JSON_TYPE(doc->'$.padding'),OCTET_LENGTH(JSON_UNQUOTE(doc->'$.padding')),HEX(JSON_UNQUOTE(doc->'$.padding'))=REPEAT('78',1000),JSON_TYPE(doc->'$.a'),JSON_LENGTH(doc->'$.a'),IFNULL(JSON_TYPE(doc->'$.a[0]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[0]'),'SQL_NULL'),IFNULL(JSON_TYPE(doc->'$.a[1]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[1]'),'SQL_NULL'),IFNULL(JSON_TYPE(doc->'$.a[2]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[2]'),'SQL_NULL'),JSON_TYPE(doc->'$.d'),JSON_UNQUOTE(doc->'$.d') FROM poc.jp_after_replace ORDER BY id",
+                    "1\tOBJECT\t3\tSTRING\t1000\t1\tARRAY\t3\tINTEGER\t1\tDECIMAL\t123.45\tINTEGER\t3\tDATE\t2024-02-29"
+                )),
+            .init(
+                id: "removed-array-element-values",
+                check: .init(
+                    "SELECT id,JSON_TYPE(doc),JSON_LENGTH(doc),JSON_TYPE(doc->'$.padding'),OCTET_LENGTH(JSON_UNQUOTE(doc->'$.padding')),HEX(JSON_UNQUOTE(doc->'$.padding'))=REPEAT('78',1000),JSON_TYPE(doc->'$.a'),JSON_LENGTH(doc->'$.a'),IFNULL(JSON_TYPE(doc->'$.a[0]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[0]'),'SQL_NULL'),IFNULL(JSON_TYPE(doc->'$.a[1]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[1]'),'SQL_NULL'),IFNULL(JSON_TYPE(doc->'$.a[2]'),'SQL_NULL'),IFNULL(JSON_UNQUOTE(doc->'$.a[2]'),'SQL_NULL'),JSON_TYPE(doc->'$.d'),JSON_UNQUOTE(doc->'$.d') FROM poc.jp_after_remove ORDER BY id",
+                    "1\tOBJECT\t3\tSTRING\t1000\t1\tARRAY\t2\tDECIMAL\t123.45\tINTEGER\t3\tSQL_NULL\tSQL_NULL\tDATE\t2024-02-29"
+                )),
+            .init(id: "empty-final-table", check: .init("SELECT id FROM poc.matrix_jsonpartial ORDER BY id", "")),
+        ], expectedDDL: 4, expectedRows: 10,
+        jsonDiffPhases: [.init(phase: 2, operation: .replace), .init(phase: 3, operation: .remove)])
 }

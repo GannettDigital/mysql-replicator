@@ -1,13 +1,14 @@
 # Data types: value and workflow review
 
-Status: source and saved-evidence review complete. The first eight implementation
-slices are complete locally. They cover all twenty-two ordinary type/value
-cases, including spatial values and indexes. Partial JSON remains on its
-separate runner. All focused checks passed.
+Status: source and saved-evidence review complete. The first nine implementation
+slices are complete locally. All twenty-three matrix type/value cases now use
+the shared workflow. Partial JSON also keeps explicit source-event checks. All
+focused checks passed.
 The numeric and floating slices are committed as `345f71f` and `92df394`.
 The legacy slice is committed as `269e76f`. The temporal slice is committed as
 `fbcedd7`. The string-default/BLOB slice is committed as `0f74741`. The JSON
-slice is committed as `b7ffe2d`. The spatial slice passed its focused checks.
+slice is committed as `b7ffe2d`. The spatial slice is committed as `948b682`.
+The partial-JSON slice passed its focused checks.
 See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
@@ -23,17 +24,18 @@ The review found distinct values, metadata and lifecycle conditions. It found
 no complete case replacement. Do not remove a type test because another test
 executes the same Swift lines or also contains INSERT/UPDATE/DELETE.
 
-There are 23 matrix cases. Twenty-two fit the existing DMLExecutionWorkflow:
-no setup SQL, custom ordering, replacement case or partial-JSON event assertion
-is required. Convert them in small slices with retained histories and final
-observations. Leave matrix-jsonpartial on its current runner until it has an
-explicit source-event/offset plan. Keep json-year-compatibility and large-values
-on their isolated apply/replay/recovery paths.
+There are 23 matrix cases. All now use DMLExecutionWorkflow with retained
+histories and final observations. Slice 9 adds the explicit source-event/offset
+plan required for matrix-jsonpartial. Its JSON-diff guard remains strict. Keep
+json-year-compatibility and large-values on their isolated apply/replay/recovery
+paths.
 
-The first implementation slice is matrix-decimaldefaults. It has fixed
-numeric expectations and a small schema. Keep every original script and predicate.
-Use dd_after_insert and dd_after_defaults to retain overwritten values/defaults.
-Do not change the helper, native schema/default/JSON oracles or production code.
+The first implementation slice converted matrix-decimaldefaults. Its fixed
+numeric expectations and small schema supplied the pilot. dd_after_insert and
+dd_after_defaults retain overwritten values/defaults. That slice kept the helper
+unchanged. Slice 9 adds only the explicit source-event plan needed for partial
+JSON. All slices preserve original SQL/predicates, native schema/default/JSON
+oracles and production code.
 
 These cases already share their CI fixture and ordinary applier. Repeated
 per-phase waits and schema/row reads are the conversion target. The current
@@ -257,7 +259,7 @@ per-case restart or offline replay.
 | 6, complete locally | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
 | 7, complete locally | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
 | 8, complete locally | spatial | Every geometry type, SRID, empty/NULL collections, key changes and SPATIAL index metadata. One forward case with coverage. Do not substitute display WKT for exact geometry checks. |
-| 9 | Separate jsonpartial design/conversion | Preserve original bounded source-binlog checks and two diff phases. Test changed offset/event validation with one forward selected case and the 8.4 decoder. Do not bypass the helper guard. |
+| 9, complete locally | Explicit jsonpartial event plan and shared execution | Preserve original bounded source-binlog checks and two diff phases. Test changed offset/event validation with one forward selected case and the 8.4 decoder. Do not bypass the helper guard. |
 | 10 | Reassess area completion and remaining key/index work | Source/assertion/selection audit first. Keep lifecycle cases unchanged unless their own review identifies a concrete safe change. No whole-suite local rerun. |
 
 Each ordinary conversion needs complete retained observations, body/cleanup
@@ -1228,9 +1230,134 @@ inspect.py, schema_check.py and spatial-results.json.
 
 Passed result: `artifacts/lab/20261106T201949Z-91870380/result.json`.
 
-Next: Slice 9 — design the partial-JSON conversion. Keep the two existing diff
-phases and their bounded mysqlbinlog checks. Record enough source offsets to
-prove that the relevant UPDATE events contain partial JSON data. Do not remove
-the helper's JSON-diff guard or treat final-row equality as proof of event type.
-Select only the changed forward case for local validation. Then reassess area
-completion and remaining key/index work from the saved evidence.
+Slice 9 follows below. Other profiles, variants and combined groups remain for CI.
+
+
+## Partial JSON event checks in the shared workflow
+
+Slice 9 moves matrix-jsonpartial into DMLJSONWorkflows beside json and typedjson.
+It already belongs to the shared data-types-values fixture with all seven JSON
+feature cases. No new fixture, container startup, CI job or per-case applier
+restart is added. Its source-8.4 restriction, MINIMAL/file-position selections,
+extra BINLOG selection and cold metadata representative remain unchanged.
+
+Original definition, four SQL requests/predicates, two expectsJSONDiff flags,
+PARTIAL_JSON settings and statement order remain byte for byte. Three retained
+tables keep the initial JSON, replaced elements and the result after removal.
+Final queries check each array position and native INTEGER/DECIMAL/DATE type,
+exact numeric/date strings, all 1,000 padding bytes, unchanged fields and the
+empty original table after DELETE. The native server-based JSON oracle still
+compares complete path/type/value sets.
+
+### Event proof and shared-runner guard
+
+DMLExecutionWorkflow now accepts an explicit jsonDiffPhases plan. It must match
+every flagged phase, in order, without missing, extra or duplicate phases. Each
+such request must declare one source transaction. A missing/mismatched plan still
+fails before execution. Ordinary workflows keep empty event-check plans and
+unchanged requests, ordering and counters.
+
+The generated plan checks five writes: the two original partial UPDATEs and the
+three partial UPDATEs used to retain earlier results. LabSQLPhase already records
+each write's start/end file offsets and GTID delta. Event checks use those saved
+ranges after the body batch; they do not read a later live boundary. A range must
+stay in one file, advance its offset and contain exactly one source GTID.
+
+LabJSONDiff is a narrow independent reader of mysqlbinlog's verbose output for
+this two-column fixture. It does not use the production decoder or parse general
+SQL. Each proof requires the expected GTID, one Update_rows_partial event, one
+UPDATE for the expected table and the expected JSON_REPLACE/JSON_REMOVE expression
+in the JSON column's after image. The row event must end within the saved range.
+Full images, wrong tables/GTIDs, extra rows/events, operation text in a string or
+before image and out-of-range events cannot satisfy the proof.
+
+The harness checks the 8.4 mysqlbinlog version once, copies each required source
+file once and decodes each exact range with checksum verification. Each proof
+has a named assertion, raw file, decoded text and JSON record with the write,
+GTID, offsets, event type and operation. Failure output uses the existing named
+assertion and support-bundle path. A correct final row alone cannot pass.
+
+The old per-phase checker remains for the fallback runner. This conversion does
+not change it. The new fixture uses the shared preparation/body/cleanup path.
+
+### Focused validation and measurements
+
+All 200 selected Swift tests passed. This includes nine new workflow methods and
+four independent event-reader methods. Tests keep original SQL and metadata
+rules, all retained values, session setup, explicit phase plans, invalid-plan
+refusals, counters and exact GTID/offset checkpoints. Event-reader tests reject
+full images, mismatched tables/GTIDs, wrong operations, before-image/string
+lookalikes, multiple updates, missing/duplicate writes, rotation, empty/reversed
+ranges and event boundaries outside the window. Common-runner tests and affected
+workflow membership tests also passed. Strict format lint and catalog checks
+passed. Structure remains 63 DDL scenarios, 235 registered cases and 56 support
+requirements. The matrix still has 183 jobs, 1,545 obligations and 182 instrumented
+collections, with unchanged membership and order. No selection tool changed, so
+its Python tests were not repeated. The normal JSON/source/native comparison
+implementations and production code remain unchanged.
+
+One forward/default/SQL run selected only matrix-jsonpartial with coverage.
+All 19 assertions and the existing shared saved-schema restart passed. This
+includes all five partial-event proofs, not just final row comparisons.
+
+| Case | Passed assertions | Seconds | SQL client calls | Saved CI seconds / calls |
+|---|---:|---:|---:|---:|
+| matrix-jsonpartial | 19 | 6.70 | 48 | 16.68 / 146 |
+
+The saved CI group compared more accumulated poc tables. This selection adds
+retained tables and three extra event checks. Inputs differ. These numbers do
+not establish a controlled speed ratio. Coverage belongs to the whole fixture,
+including setup/restart, and does not identify an exclusive partial-JSON line set.
+
+| Shared fixture measurement | Result |
+|---|---:|
+| Fixture setup, seconds | 15.25 |
+| Container startup, seconds; included in setup | 12.12 |
+| Coverage export, seconds | 1.57 |
+| Fixture cleanup, seconds | 10.73 |
+| Swift runtime lines hit / mapped | 7,707 / 20,880 |
+
+### Saved source ranges
+
+The five decoded files were read again from the one saved raw copy, using their
+same start/stop offsets and checksum verification. Each output matched the saved
+text exactly. The event header, table, operation and GTID also match each write's
+recorded source boundary.
+
+| Write | GTID | File: start–end | Partial row event: start–end | Operation |
+|---|---|---|---|---|
+| original-phase-2 | `17ac1612-da22-11f1-8f09-aa258c5e9cbd:19` | binlog.000003: 4984–6416 | 5234–6385 | JSON_REPLACE |
+| original-phase-3 | `17ac1612-da22-11f1-8f09-aa258c5e9cbd:20` | binlog.000003: 6416–7822 | 6658–7791 | JSON_REMOVE |
+| jp_after_replace-phase-2 | `17ac1612-da22-11f1-8f09-aa258c5e9cbd:24` | binlog.000003: 11928–13358 | 12176–13327 | JSON_REPLACE |
+| jp_after_remove-phase-2 | `17ac1612-da22-11f1-8f09-aa258c5e9cbd:26` | binlog.000003: 14722–16151 | 14969–16120 | JSON_REPLACE |
+| jp_after_remove-phase-3 | `17ac1612-da22-11f1-8f09-aa258c5e9cbd:27` | binlog.000003: 16151–17554 | 16390–17523 | JSON_REMOVE |
+
+The case sends 15 client writes in three source batches. Before cleanup it has
+14 GTIDs, four DDL and ten row changes. Cleanup advances to 15 GTIDs and five DDL,
+with no additional row changes. Read-only SQLite inspection confirms every case
+GTID is APPLIED with source file/offsets. Each request's last GTID matches its end
+position. Both checkpoints match exact source GTID sets and offsets. All intents
+are DONE. Three retained schemas are retired; the original remains current.
+Saved schemas retain INT/JSON declarations and nullability.
+
+Engine checks confirm source InnoDB and native/target MyISAM. Final state is
+STOPPED with no active GTID at the shared restart's later offset. Both applier
+invocations exited successfully. That restart writes reverse_poc.aux; it does
+not write to every retained JSON table.
+
+No other integration case/profile, complete group, full suite, benchmark or
+syntax suite ran. CI must check combined JSON execution, other capture variants
+and the existing BINLOG selection. Coverage excludes lab code and the Rust decoder.
+
+Evidence under artifacts/json-partial-workflow-review/ includes specs.json,
+unit.log, matrix.log, catalog.log, verify.py, inventory-results.json,
+integration.log, inspect.py, proof_check.py, schema_check.py,
+source-event-results.json and jsonpartial-results.json.
+
+Passed result: `artifacts/lab/20261106T203447Z-50138882/result.json`.
+
+Next: Slice 10 — reassess area completion and remaining key/index work. Compare
+saved SQL, assertions, coverage scope and timings. Keep lifecycle/isolated cases
+unless their own review identifies a safe change. Do not remove an event or
+failure assertion because another test reaches the same lines. Leave the full
+combined-group and cross-profile checks to CI.

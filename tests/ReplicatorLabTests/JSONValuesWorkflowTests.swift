@@ -322,9 +322,10 @@ final class JSONValuesWorkflowTests: XCTestCase {
         XCTAssertFalse(scalar.sql.contains(" AS DOUBLE"))
     }
 
-    func testJSONPartialRetainsSourceEventValidationAndItsRunner() throws {
+    func testJSONPartialUsesTheSameWorkflowWithExplicitSourceEventChecks() throws {
         let test = try fixture("jsonpartial")
-        XCTAssertNil(test.workflow)
+        let plan = try XCTUnwrap(test.workflow).plan(test)
+        XCTAssertEqual(plan.body.jsonDiffChecks.count, 5)
         XCTAssertEqual(test.phases.map(\.expectsJSONDiff), [false, true, true, false])
         XCTAssertNotNil(test.source84OnlyReason)
     }
@@ -383,7 +384,8 @@ final class JSONValuesWorkflowTests: XCTestCase {
             [
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
                 "decimaldefaults", "binarydefaults", "textdefaults", "zerowidth", "identifiercase",
-                "unicodeidentifiers", "encodings", "widestrings", "spatial", "json", "typedjson", "floatbounds",
+                "unicodeidentifiers", "encodings", "widestrings", "spatial", "json", "typedjson", "jsonpartial",
+                "floatbounds",
                 "zerofill",
                 "fixedfloating",
                 "floating", "bits", "fixed", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal",

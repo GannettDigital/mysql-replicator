@@ -637,16 +637,33 @@ retained table. The server-based JSON oracle still compares every document path,
 scalar type and value against source and native. It does not compare key order or
 convert exact integer/DECIMAL expectations through host floating-point values.
 
-All four profiles select both cases. `matrix-jsonpartial` checks partial updates
-on an 8.4 source. It keeps its separate phase checks and inspects mysqlbinlog output
-to confirm that the source emitted partial JSON row events. This conversion does
-not change that test. See [JSON support and limits](JSON_SUPPORT.md).
+All four profiles select both cases. `matrix-jsonpartial` uses the same workflow
+and fixture on the 8.4 source profile. Three retained tables keep the initial
+array, replaced elements and the result after removing the first array element.
+Final reads check exact DECIMAL/DATE types and values, each array position,
+unchanged fields, all 1,000 padding bytes and the empty original table after DELETE.
 
-Run the two changed value cases, the full data-type group on one profile, or
-that group across all profiles:
+The case also checks five source UPDATEs: two original updates and three updates
+that retain earlier results. Each write has its own GTID and start/end offsets,
+even though the source writes share one client batch. The helper requires an
+explicit event plan for every phase marked as a JSON diff. A missing or mismatched
+plan fails before source execution.
+
+After the body batch, the lab copies the source binlog once per file. It runs
+MySQL 8.4 mysqlbinlog with checksum verification on each write's exact range.
+Each named assertion requires one Update_rows_partial event, the expected GTID,
+table and JSON_REPLACE or JSON_REMOVE operation. It rejects full row images,
+wrong tables, extra updates and events outside the range. The copied file,
+decoded text and assertion JSON remain in the evidence directory. Final-row
+equality alone does not satisfy this check. The case adds no applier restart.
+See [JSON support and limits](JSON_SUPPORT.md).
+
+Run the two general JSON cases, all three JSON value cases in one fixture,
+the full data-type group on one profile, or that group across all profiles:
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-json --case matrix-typedjson --coverage"
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-json --case matrix-typedjson --case matrix-jsonpartial --coverage"
 make lab-test GROUP=data-types-values PROFILE=mysql84-to-mysql57-myisam ARGS="--variant default"
 make lab-test GROUP=data-types-values PROFILE=all ARGS="--variant default"
 ```

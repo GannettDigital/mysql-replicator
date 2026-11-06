@@ -270,7 +270,8 @@ enum DMLCompatibilityCases {
                         check: "SELECT COUNT(*)=0 FROM poc.matrix_jsonpartial"),
                 ],
                 source84OnlyReason:
-                    "Partial JSON row events require an 8.0 or later source; 5.7 writes complete JSON documents."),
+                    "Partial JSON row events require an 8.0 or later source; 5.7 writes complete JSON documents.",
+                workflow: DMLJSONWorkflows.jsonpartial),
             Case(
                 id: "floatbounds", definition: "id FLOAT(8,2) PRIMARY KEY,v FLOAT(8,2),u FLOAT(8,2) UNSIGNED",
                 phases: [

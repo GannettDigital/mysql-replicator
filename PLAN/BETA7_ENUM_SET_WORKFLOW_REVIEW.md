@@ -5,9 +5,11 @@ forward tests; legacybinaryset passed on the 5.7 MyISAM profile. Choiceboundarie
 is committed as `247bbbe`; legacybinaryset is committed as `88ff87c`. Full-matrix
 validation remains. The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
 and all three local conversions are complete. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) is also complete.
-The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#spatial-values-and-shared-spatial-fixture-results)
-record twenty-two completed conversions. All focused checks passed.
-JSON and spatial cases share the data-types-values fixture. Next: partial-JSON event checks. The
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#partial-json-event-checks-in-the-shared-workflow)
+record twenty-three completed conversions. All focused checks passed.
+JSON and spatial cases share the data-types-values fixture.
+Partial JSON now keeps bounded event proofs.
+Next: area completion and key/index review. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -954,6 +956,6 @@ values and schema transitions. It records 30 saved passing executions, coverage
 limits, complete row maps and a conversion order. No new build or database run
 was needed for the initial review. Its later conversions passed 101 unit tests
 and 48 forward assertions. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md)
-keeps all 25 IDs. The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#spatial-values-and-shared-spatial-fixture-results)
-record twenty-two completed conversions. JSON and spatial cases share the data-types-values fixture. Next: partial-JSON event checks.
+keeps all 25 IDs. The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#partial-json-event-checks-in-the-shared-workflow)
+record twenty-three completed conversions. JSON and spatial cases share the data-types-values fixture. Partial JSON now keeps bounded event proofs. Next: area completion and key/index review.
 Continue remaining type/value and key/index work before full-matrix validation.

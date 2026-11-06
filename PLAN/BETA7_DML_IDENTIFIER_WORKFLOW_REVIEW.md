@@ -10,9 +10,11 @@ Legacybinaryset passed 12 on the 5.7 MyISAM profile.
 The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
 records all three conversions: 101 unit tests and 48 forward assertions passed.
 The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) keeps all 25 IDs.
-The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#spatial-values-and-shared-spatial-fixture-results)
-record twenty-two completed conversions. All focused checks passed.
-JSON and spatial cases share the data-types-values fixture. Next: partial-JSON event checks.
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#partial-json-event-checks-in-the-shared-workflow)
+record twenty-three completed conversions. All focused checks passed.
+JSON and spatial cases share the data-types-values fixture.
+Partial JSON now keeps bounded event proofs.
+Next: area completion and key/index review.
 
 ## Decision and scope
 
@@ -475,9 +477,11 @@ choiceboundaries. Legacybinaryset passed 12 on the 5.7 MyISAM profile.
 The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
 records all three conversions: 101 unit tests and 48 forward assertions passed.
 The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) keeps all 25 IDs.
-The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#spatial-values-and-shared-spatial-fixture-results)
-record twenty-two completed conversions. All focused checks passed.
-JSON and spatial cases share the data-types-values fixture. Next: partial-JSON event checks.
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#partial-json-event-checks-in-the-shared-workflow)
+record twenty-three completed conversions. All focused checks passed.
+JSON and spatial cases share the data-types-values fixture.
+Partial JSON now keeps bounded event proofs.
+Next: area completion and key/index review.
 Keep remaining type/value and key/index reviews, full-matrix
 validation, final balancing and short PR selection in the overall plan. Do not
 remove an inventory because its line coverage overlaps another case.

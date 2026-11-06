@@ -15,6 +15,7 @@ struct DMLExecutionWorkflow {
         let id: String
         let writes: [LabSQLPhase.Write]
         let transactions: [Int]
+        var jsonDiffChecks: [LabJSONDiff.Check] = []
 
         var transactionCount: Int { transactions.reduce(0, +) }
 
@@ -22,6 +23,7 @@ struct DMLExecutionWorkflow {
             try require(
                 results.count == writes.count && transactions.count == writes.count,
                 "DML batch request count differs: " + id)
+            for check in jsonDiffChecks { _ = try check.window(results) }
             return try zip(zip(writes, transactions), results).map { pair, result in
                 let (write, expected) = pair
                 try require(
@@ -71,6 +73,8 @@ struct DMLExecutionWorkflow {
     let expectedRows: Int
     // Fixed final queries declare this ordering; it is not arbitrary SQL.
     var order: Order = .id
+    // A flagged phase needs an explicit bounded source-event check.
+    var jsonDiffPhases: [LabJSONDiff.Phase] = []
 
     func plan(_ test: DMLCompatibilityCases.Case) throws -> Plan {
         func validName(_ value: String) -> Bool {
@@ -81,12 +85,16 @@ struct DMLExecutionWorkflow {
         }
         try require(validName(test.id) && !title.isEmpty, "invalid DML workflow identity")
         try require(
-            test.setup.isEmpty && test.orderBy == order.rawValue && test.replicatedReplacement == nil
-                && !test.phases.contains(where: \.expectsJSONDiff),
-            "DML workflow needs an explicit plan for setup, ordering, replacement or JSON diff checks")
+            test.setup.isEmpty && test.orderBy == order.rawValue && test.replicatedReplacement == nil,
+            "DML workflow needs an explicit plan for setup, ordering or replacement")
         try require(
             !test.phases.isEmpty && phaseTransactions.count == test.phases.count
                 && phaseTransactions.allSatisfy { $0 > 0 }, "DML workflow phase transaction counts differ")
+        let flagged = test.phases.enumerated().filter { $0.element.expectsJSONDiff }.map { $0.offset + 1 }
+        try require(
+            jsonDiffPhases.map(\.phase) == flagged
+                && jsonDiffPhases.allSatisfy { phaseTransactions[$0.phase - 1] == 1 },
+            "DML workflow needs an exact single-transaction plan for every JSON diff phase")
         try require(
             predicateIDs.count == test.phases.count && !predicateIDs.contains(where: \.isEmpty),
             "DML workflow predicate names differ")
@@ -111,6 +119,9 @@ struct DMLExecutionWorkflow {
             LabSQLPhase.Write(id: "original-phase-\(index + 1)", sql: "USE poc; " + phase.sql)
         }
         var counts = phaseTransactions
+        var diffChecks = jsonDiffPhases.map {
+            LabJSONDiff.Check(writeID: "original-phase-\($0.phase)", table: table, operation: $0.operation)
+        }
         for history in histories {
             for (index, phase) in test.phases.prefix(history.throughPhase).enumerated() {
                 writes.append(
@@ -118,6 +129,12 @@ struct DMLExecutionWorkflow {
                         id: history.table + "-phase-\(index + 1)",
                         sql: "USE poc; " + phase.sql.replacingOccurrences(of: table, with: "poc." + history.table)))
                 counts.append(phaseTransactions[index])
+                if let diff = jsonDiffPhases.first(where: { $0.phase == index + 1 }) {
+                    diffChecks.append(
+                        .init(
+                            writeID: history.table + "-phase-\(index + 1)", table: "poc." + history.table,
+                            operation: diff.operation))
+                }
             }
         }
         let cleanupSQL = "DROP TABLE " + histories.map { "poc." + $0.table }.joined(separator: ",")
@@ -137,7 +154,7 @@ struct DMLExecutionWorkflow {
         let final = DDLFinalObservations(checks: checks + additionalChecks, databases: ["poc"], cleanup: [cleanupSQL])
         try final.validateQueries()
         return Plan(
-            prepare: prepare, body: .init(id: "body", writes: writes, transactions: counts),
+            prepare: prepare, body: .init(id: "body", writes: writes, transactions: counts, jsonDiffChecks: diffChecks),
             cleanup: .init(
                 id: "cleanup", writes: [.init(id: "drop-retained-tables", sql: cleanupSQL)], transactions: [1]),
             final: final, expectedDDL: expectedDDL, expectedRows: expectedRows)
@@ -170,6 +187,7 @@ extension SharedCorrectness.Run {
             }
         }
         try checkpoint("body-checkpoint", end: body.last!.end, cleaned: false)
+        try verifyJSONDiffs(plan.body.jsonDiffChecks, results: body, caseID: caseID)
         try ddlFinalObservations(plan.final, caseID: caseID)
         let cleanup = try submit(plan.cleanup)
         try checkpoint("cleanup-checkpoint", end: cleanup.last!.end, cleaned: true)

@@ -517,7 +517,8 @@ final class StringDefaultLOBWorkflowTests: XCTestCase {
             [
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
                 "decimaldefaults", "binarydefaults", "textdefaults", "zerowidth", "identifiercase",
-                "unicodeidentifiers", "encodings", "widestrings", "spatial", "json", "typedjson", "floatbounds",
+                "unicodeidentifiers", "encodings", "widestrings", "spatial", "json", "typedjson", "jsonpartial",
+                "floatbounds",
                 "zerofill",
                 "fixedfloating",
                 "floating", "bits", "fixed", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal",
