@@ -214,5 +214,7 @@ record both retained-table conversions. All 23 operation states, 16 fixed
 predicates and 15 original named assertions passed in the existing fixture.
 Fourteen focused unit tests passed. The generic phase guard remains unchanged.
 
-Next: review conflict statements, preserving no-op boundaries. Keep matrix counts
-and profile/transport selections unchanged.
+The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 11 original assertions and both exact no-op boundary checks passing.
+Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
+UPDATE/DELETE and LOAD DATA. Keep matrix counts and selections unchanged.

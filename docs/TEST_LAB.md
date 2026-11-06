@@ -760,8 +760,20 @@ value column. Final assertions check the retained rows, including unaffected row
 and `matrix-ignore` cases. It keeps separate tables and the original SQL for each
 starting state. Named assertions check mixed insert/update effects, REPLACE
 conflicts with two different rows, skipped duplicate rows, and no-op statements.
-Each check compares exact rows on source, native and target. The metadata group
+Each check compares retained rows on source, native and target. The metadata group
 checks discovery once for the shared primary-key and unique-key definition.
+
+The conflict workflow retains all 11 operation states until its final batched
+comparisons. Its two no-op statements must leave GTID sets, binlog files and
+offsets unchanged. The saved checkpoint checks only logged GTIDs and records
+both unlogged boundaries separately. Valid source warnings remain in phase
+evidence. All assertion IDs and the saved-schema restart remain. See
+[the conflict workflow results](../PLAN/BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results).
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam \
+  ARGS="--suite correctness --case ddl-compat-key-conflicts --coverage"
+```
 
 The `keys-rows-gtids` group contains the `positive` single-row case and related
 key, row and GTID cases. The SQL `without-source-gtids` variant instead uses

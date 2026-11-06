@@ -348,7 +348,10 @@ passed on forward MyISAM. Eleven focused unit tests passed.
 The [primary-key and constraint results](BETA7_PRIMARY_KEY_CONSTRAINT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record both conversions. All 23 operation states and 15 original named assertions
 passed on forward MyISAM. Fourteen focused unit tests passed.
-Next: review conflict statements and their no-op GTID/offset boundaries.
+The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 11 original assertions and both exact no-op boundary checks passing.
+Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
+UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining key/index work, full-matrix validation, final balancing and
 short PR selection later.

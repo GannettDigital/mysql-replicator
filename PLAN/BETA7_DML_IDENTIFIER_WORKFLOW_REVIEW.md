@@ -20,7 +20,10 @@ passed on forward MyISAM. Eleven focused unit tests passed.
 The [primary-key and constraint results](BETA7_PRIMARY_KEY_CONSTRAINT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record both conversions. All 23 operation states and 15 original named assertions
 passed on forward MyISAM. Fourteen focused unit tests passed.
-Next: review conflict statements and their no-op GTID/offset boundaries.
+The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 11 original assertions and both exact no-op boundary checks passing.
+Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
+UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
 
 ## Decision and scope
 
@@ -493,7 +496,10 @@ passed on forward MyISAM. Eleven focused unit tests passed.
 The [primary-key and constraint results](BETA7_PRIMARY_KEY_CONSTRAINT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record both conversions. All 23 operation states and 15 original named assertions
 passed on forward MyISAM. Fourteen focused unit tests passed.
-Next: review conflict statements and their no-op GTID/offset boundaries.
+The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 11 original assertions and both exact no-op boundary checks passing.
+Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
+UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
 Keep remaining key/index reviews, full-matrix validation, final balancing
 and short PR selection in the overall plan. Do not
 remove an inventory because its line coverage overlaps another case.

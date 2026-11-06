@@ -57,7 +57,7 @@ final class KeyConstraintWorkflowTests: XCTestCase {
     }
 
     func testEveryPredicateAndCreateMetadataSurvivesAtItsExactState() throws {
-        for id in ["ddl-compat-primary-key-row-matching", "ddl-compat-constraints"] {
+        for id in ["ddl-compat-primary-key-row-matching", "ddl-compat-constraints", "ddl-compat-key-conflicts"] {
             let source = try original(id)
             let tables = try XCTUnwrap(KeyConstraintWorkflows.tables(id))
             let execution = try XCTUnwrap(KeyConstraintWorkflows.plan(source))

@@ -204,4 +204,9 @@ Passed lab result: `artifacts/lab/20261106T213452Z-a1cea42e/result.json`.
 Other evidence is in `artifacts/primary-key-constraint-review/`:
 `workflow-results.json`, `inventory-results.json`, `unit.log` and `integration.log`.
 
-Next: review conflict statements, including their no-op GTID and offset boundaries.
+The primary-key and constraint workflows are committed as `c268dd7`. The
+[conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 11 original assertions and both unchanged no-op boundaries passing.
+Fifteen focused unit tests passed. The REPLACE group still has three row mutations.
+
+Next: review INSERT SELECT, joined UPDATE/DELETE and LOAD DATA.

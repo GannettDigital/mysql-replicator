@@ -10,6 +10,7 @@ enum KeyConstraintWorkflows {
         var affectedRows: Int
         var createMetadata: String? = nil
         var named = true
+        var unlogged = false
     }
     struct Table {
         var name: String
@@ -21,22 +22,26 @@ enum KeyConstraintWorkflows {
         let states: [State]
         let ddl: Int
         let rows: Int
+        var transactions: Int { test.steps.reduce(0) { $0 + $1.transactions } }
 
         func checkpoint(
             writes: [LabSQLPhase.Result], before: [String: Any], after: [String: Any],
             query: (String) throws -> String
         ) throws -> [String: Any] {
+            try require(writes.count == test.steps.count, "key workflow has missing source operations")
+            let unlogged = try DDLExecutionPhase(id: "key-checkpoint", steps: test.steps).validateUnlogged(writes)
+            let logged = zip(test.steps, writes).filter { $0.0.transactions == 1 }.map { $0.1 }
             try require(
-                writes.count == test.steps.count && Set(writes.map(\.gtids)).count == writes.count,
+                !logged.isEmpty && Set(logged.map(\.gtids)).count == logged.count,
                 "key workflow has missing or repeated source transactions")
             for (key, expected) in [
-                ("transactionsApplied", test.steps.count), ("ddlApplied", ddl), ("rowsApplied", rows),
+                ("transactionsApplied", transactions), ("ddlApplied", ddl), ("rowsApplied", rows),
             ] {
                 try require(
                     (after[key] as? Int ?? 0) - (before[key] as? Int ?? 0) == expected,
                     "key workflow counter differs: " + key)
             }
-            for write in writes {
+            for write in logged {
                 try require(
                     try DMLCompatibilityCases.transactionCount(write.gtids) == 1,
                     "key operation must log one transaction")
@@ -47,7 +52,7 @@ enum KeyConstraintWorkflows {
                     actual == "APPLIED|\(write.end.file)|\(write.end.position)",
                     "key workflow saved offset differs: " + write.write.id)
             }
-            let interval = writes.map { LabSQLName.sqliteLiteral($0.gtids) }.joined(separator: ",")
+            let interval = logged.map { LabSQLName.sqliteLiteral($0.gtids) }.joined(separator: ",")
             for (table, expected) in [("ddl_intents", ddl), ("row_intents", rows)] {
                 let count = try query("SELECT COUNT(*) FROM \(table) WHERE gtid IN (\(interval))")
                 let done = try query("SELECT COUNT(*) FROM \(table) WHERE gtid IN (\(interval)) AND status='DONE'")
@@ -66,6 +71,8 @@ enum KeyConstraintWorkflows {
             return [
                 "writes": writes.map(\.json), "checkpoint": checkpoint, "ddl": ddl, "rows": rows,
                 "tables": states.map(\.table),
+                "transactions": transactions, "unloggedOperations": unlogged,
+                "unloggedWrites": zip(test.steps, writes).filter { $0.0.transactions == 0 }.map { $0.1.json },
             ]
         }
     }
@@ -161,6 +168,48 @@ enum KeyConstraintWorkflows {
                         .init(table: "row_values", assertion: "primary-key-multirow-delete", rows: 1, affectedRows: 2),
                     ]),
             ]
+        case "ddl-compat-key-conflicts":
+            let metadata = "id:int:NO:-:-\nv:int:NO:-:-\nPRIMARY:0:1:id\nuk:0:1:v"
+            return [
+                .init(
+                    name: "insert_on_duplicate", steps: 0..<4,
+                    states: [
+                        .init(
+                            table: "upsert_created", assertion: "upsert-table-create", rows: 0, affectedRows: 0,
+                            createMetadata: metadata),
+                        .init(table: "upsert_seeded", assertion: "insert-on-duplicate-seed", rows: 2, affectedRows: 2),
+                        .init(table: "upsert_mixed", assertion: "insert-on-duplicate-mixed", rows: 3, affectedRows: 2),
+                        .init(
+                            table: "insert_on_duplicate", assertion: "insert-on-duplicate-noop", rows: 3,
+                            affectedRows: 0, unlogged: true),
+                    ]),
+                .init(
+                    name: "replace_rows", steps: 4..<7,
+                    states: [
+                        .init(
+                            table: "replace_created", assertion: "replace-table-create", rows: 0, affectedRows: 0,
+                            createMetadata: metadata),
+                        .init(table: "replace_seeded", assertion: "replace-seed", rows: 2, affectedRows: 2),
+                        // Native REPLACE can use an UPDATE for the last unique-key
+                        // conflict. Both saved source versions log three mutations.
+                        .init(
+                            table: "replace_rows", assertion: "replace-primary-and-unique-conflicts", rows: 2,
+                            affectedRows: 3),
+                    ]),
+                .init(
+                    name: "insert_ignore", steps: 7..<11,
+                    states: [
+                        .init(
+                            table: "ignore_created", assertion: "ignore-table-create", rows: 0, affectedRows: 0,
+                            createMetadata: metadata),
+                        .init(table: "ignore_seeded", assertion: "insert-ignore-seed", rows: 1, affectedRows: 1),
+                        .init(
+                            table: "ignore_mixed", assertion: "insert-ignore-mixed-conflicts", rows: 2, affectedRows: 1),
+                        .init(
+                            table: "insert_ignore", assertion: "insert-ignore-noop", rows: 2, affectedRows: 0,
+                            unlogged: true),
+                    ]),
+            ]
         default: return nil
         }
     }
@@ -199,8 +248,8 @@ enum KeyConstraintWorkflows {
         var checks: [DDLFinalObservations.Observation] = []
         var ddl = 0
         var rows = 0
-        func append(sql: String, changedRows: Int, to steps: inout [DDLCompatibilityCases.Step]) {
-            steps.append(.init(sql))
+        func append(sql: String, changedRows: Int, transactions: Int, to steps: inout [DDLCompatibilityCases.Step]) {
+            steps.append(.init(sql, transactions: transactions))
             ddl +=
                 sql.hasPrefix("CREATE TABLE ") || sql.hasPrefix("ALTER TABLE ")
                     || sql.hasPrefix("USE ddlcompat; ALTER TABLE ") ? 1 : 0
@@ -211,7 +260,7 @@ enum KeyConstraintWorkflows {
                 let step = original.steps[index]
                 let state = table.states[offset]
                 try require(
-                    step.transactions == 1 && !step.restartBefore && step.phaseEnd == nil
+                    step.transactions == (state.unlogged ? 0 : 1) && !step.restartBefore && step.phaseEnd == nil
                         && step.sql == step.sqlTransactional && step.checks.count <= 1,
                     "key workflow source behavior changed; review its execution plan")
                 try require(
@@ -224,12 +273,18 @@ enum KeyConstraintWorkflows {
                 try require(
                     state.createMetadata == nil || step.sql.hasPrefix("CREATE TABLE "),
                     "key metadata observation must follow CREATE")
-                append(sql: step.sql, changedRows: state.affectedRows, to: &body)
+                try require(
+                    !state.unlogged
+                        || (state.affectedRows == 0 && state.createMetadata == nil
+                            && ["INSERT ", "UPDATE ", "DELETE ", "REPLACE "].contains(where: step.sql.hasPrefix)),
+                    "unlogged key operation must be DML with no row mutations")
+                append(sql: step.sql, changedRows: state.affectedRows, transactions: step.transactions, to: &body)
                 if state.table != table.name {
                     for previous in table.steps.lowerBound...index {
                         append(
                             sql: rename(original.steps[previous].sql, from: table.name, to: state.table),
-                            changedRows: table.states[previous - table.steps.lowerBound].affectedRows, to: &history)
+                            changedRows: table.states[previous - table.steps.lowerBound].affectedRows,
+                            transactions: original.steps[previous].transactions, to: &history)
                     }
                 }
                 let check: DDLCompatibilityCases.Check
@@ -258,7 +313,7 @@ enum KeyConstraintWorkflows {
         }
         func end(_ steps: inout [DDLCompatibilityCases.Step], _ id: String) {
             let last = steps.removeLast()
-            steps.append(.init(last.sql, phaseEnd: id))
+            steps.append(.init(last.sql, transactions: last.transactions, phaseEnd: id))
         }
         try require(!body.isEmpty && !history.isEmpty, "empty retained key workflow")
         end(&body, "key-changes")
