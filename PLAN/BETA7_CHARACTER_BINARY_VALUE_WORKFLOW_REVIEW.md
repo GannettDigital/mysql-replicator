@@ -357,7 +357,7 @@ It records 23 unchanged matrix fixtures, two isolated lifecycle workflows,
 211 saved SQL executions and ten additional BINLOG executions. It keeps all
 25 IDs and required event/restart/replay/recovery checks. The initial review
 needed no new build or database run.
-The [numeric workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#integer-decimal-and-bit-implementation-results)
-record the DECIMAL-default pilot and three numeric-limit conversions. All focused
-checks passed. Next: zerofill, floatbounds, fixedfloating and floating.
+The [numeric and floating workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#floating-point-and-numeric-attribute-implementation-results)
+record eight completed type/value conversions. All focused checks passed.
+Next: the four legacy floating AUTO_INCREMENT cases on the 5.7 MyISAM profile.
 Full-matrix validation, balancing and short PR selection stay later.

@@ -288,7 +288,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_floatbounds WHERE id<0",
                         check: "SELECT COUNT(*)=1 AND MIN(id)=1 FROM poc.matrix_floatbounds"),
-                ]),
+                ], workflow: DMLFloatingWorkflows.floatbounds),
             Case(
                 id: "zerofill",
                 definition:
@@ -310,7 +310,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_zerofill WHERE id IN (1,4294967295)",
                         check: "SELECT COUNT(*)=1 AND MIN(id)=2 FROM poc.matrix_zerofill"),
-                ]),
+                ], workflow: DMLFloatingWorkflows.zerofill),
             Case(
                 id: "fixedfloating",
                 definition:
@@ -337,7 +337,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_fixedfloating WHERE id IN (2,3,10.26)",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_fixedfloating WHERE id=4 AND a IS NULL AND b IS NULL"),
-                ]),
+                ], workflow: DMLFloatingWorkflows.fixedfloating),
             Case(
                 id: "floating",
                 definition: "id DOUBLE PRIMARY KEY,a FLOAT,b DOUBLE,c FLOAT UNSIGNED DEFAULT 1.23456789",
@@ -364,7 +364,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_floating WHERE id IN (0,2,3,10.25)",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_floating WHERE id=4 AND a IS NULL AND b IS NULL"),
-                ]),
+                ], workflow: DMLFloatingWorkflows.floating),
             Case(
                 id: "bits",
                 definition: "id BIT(64) PRIMARY KEY,a BIT DEFAULT b'1',b BIT(7),c BIT(8),d BIT(9),e BIT(63)",

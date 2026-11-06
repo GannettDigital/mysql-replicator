@@ -438,10 +438,29 @@ fixture with:
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-integers --case matrix-decimal --case matrix-bits --coverage"
 ```
 
-`matrix-floating` adds FLOAT/DOUBLE DML and DDL
-cases for all four profiles. `matrix-fixedfloating` checks fixed-scale forms, defaults, rounding and
-ALTER. They replace the fixed-scale refusal cases. Full CI includes these cases; inspect the results for the exact commit. See
-[FLOAT/DOUBLE support](../PLAN/FLOATING_POINT_SUPPORT.md).
+`matrix-floatbounds` checks FLOAT(M,D) boundary rounding and primary-key changes.
+`matrix-zerofill` checks implicit UNSIGNED, numeric defaults, display-width changes
+and unsigned limits. `matrix-fixedfloating` checks fixed-scale FLOAT/DOUBLE,
+rounded defaults, large exponents and ALTER. `matrix-floating` checks ordinary,
+smallest positive and maximum FLOAT/DOUBLE values, NULL and precision changes.
+See [FLOAT/DOUBLE support](../PLAN/FLOATING_POINT_SUPPORT.md).
+
+These four cases use the same shared runner, profile and batch approach as the
+integer, DECIMAL and BIT cases. Each keeps its own name, original SQL and
+predicates. Retained tables keep earlier results. Final queries check every row,
+numeric attributes, declarations and defaults. MySQL evaluates approximate
+values with SQL equality/range checks. The native row comparison also remains
+active. The tests do not convert expected values through host Double arithmetic.
+
+Select only the four changed cases in one fixture with:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-zerofill --case matrix-floatbounds --case matrix-fixedfloating --case matrix-floating --coverage"
+```
+
+The regular data-types-values CI group shares its fixture and ordinary applier
+across all selected cases. These conversions add no separate CI job, container
+restart or per-case applier restart. Cold metadata inputs stay unchanged.
 
 `matrix-decimaldefaults` checks native
 DECIMAL default rounding, scientific notation, quoted constants, unsigned and
@@ -1602,6 +1621,9 @@ The `floatingauto*` DML cases test native 5.7 floating-point AUTO_INCREMENT.
 The DML cases and their metadata definitions run on both 5.7-to-5.7 profiles. The inventory gives
 native error 1063 as the exclusion reason for a profile with an 8.4 source or target.
 The common selection code and both execution paths use these profile exclusions.
+The four IDs belong to the existing data-types-values group. They share its
+fixture and ordinary applier with the other applicable cases. No separate
+profile or CI job is required.
 
 The `lowercase-tables` variant starts all three MySQL servers with
 `lower_case_table_names=1`. Use `--case ddl-compat-table-name-case` to check
