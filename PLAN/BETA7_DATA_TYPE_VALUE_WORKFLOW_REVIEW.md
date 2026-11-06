@@ -1,12 +1,12 @@
 # Data types: value and workflow review
 
-Status: source and saved-evidence review complete. The first five implementation
-slices are complete locally. They cover fifteen type/value cases, including
-temporal values, fractional seconds and automatic column values. All focused
+Status: source and saved-evidence review complete. The first six implementation
+slices are complete locally. They cover nineteen type/value cases, including
+character/binary defaults, fixed-length strings and BLOB/TEXT values. All focused
 checks passed.
 The numeric and floating slices are committed as `345f71f` and `92df394`.
-The legacy slice is committed as `269e76f`. The temporal slice passed its
-focused checks.
+The legacy slice is committed as `269e76f`. The temporal slice is committed as
+`fbcedd7`. The string-default/BLOB slice passed its focused checks.
 See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
@@ -249,7 +249,7 @@ per-case restart or offline replay.
 | 3, complete locally | zerofill, floatbounds, fixedfloating and floating | Keep native numeric comparisons, distinct FLOAT/DOUBLE metadata, rounding and retained key results. Select only changed cases in one forward fixture. Do not convert expectations through host Double by default. |
 | 4, complete locally | All four legacy floating AUTO_INCREMENT cases through their shared template | Unit-test all generated SQL, declared types, both native error-1063 exclusions and session reset. Select all four changed cases in one 5.7-to-5.7 MyISAM fixture. Leave InnoDB and excluded profiles to CI. |
 | 5, complete locally | temporal, precision and defaults | Fixed time/precision, zero/NULL, generated IDs and automatic timestamp checks. Unit-test source time_zone/timestamp placement and resets. Select changed cases in one forward fixture. |
-| 6 | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
+| 6, complete locally | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
 | 7 | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
 | 8 | spatial | Every geometry type, SRID, empty/NULL collections, key changes and SPATIAL index metadata. One forward case with coverage. Do not substitute display WKT for exact geometry checks. |
 | 9 | Separate jsonpartial design/conversion | Preserve original bounded source-binlog checks and two diff phases. Test changed offset/event validation with one forward selected case and the 8.4 decoder. Do not bypass the helper guard. |
@@ -846,14 +846,116 @@ Evidence under artifacts/temporal-values-workflow-review/:
 
 Passed result: `artifacts/lab/20261106T182517Z-4382e639/result.json`.
 
-Next: Slice 6 — binarydefaults, textdefaults, fixed and lob. Keep exact bytes,
-stored defaults, source PAD_CHAR_TO_FULL_LENGTH settings, fixed-length padding,
-large values, empty versus NULL and native schema comparison. Select only those
-four changed cases together in one forward fixture. Reuse one coverage build;
-leave other profiles and the complete group to CI.
+Slice 6 follows below. Other profiles and the complete group remain for CI.
 
 Keep these four IDs in the existing data-types-values group beside the numeric
 and temporal cases. The shared runner prepares one fixture per group/profile;
-ordinary cases reuse its containers and applier. The conversion needs no new CI
+ordinary cases reuse its containers and applier. The conversion adds no new CI
 group or container startup. A focused local command starts one fresh fixture for
 all four changed cases, without rerunning the completed cases.
+
+## String defaults, fixed-length strings and BLOB/TEXT implementation results
+
+Slice 6 converts matrix-binarydefaults, matrix-textdefaults, matrix-fixed and
+matrix-lob through the existing DMLExecutionWorkflow. DMLStringValueWorkflows
+supplies retained results and final observations. Removing the four workflow
+references restores all three original fixture files byte for byte. Definitions,
+12 original requests/predicates, session settings, metadata flags and profile
+selections remain unchanged. No common runner, native oracle or production code
+changed. Names use the MySQL manual's string data types: CHAR, VARCHAR, BINARY,
+VARBINARY, BLOB and TEXT.
+
+All four cases remain in data-types-values on all four existing profiles. They
+share the group's containers and ordinary applier. This change adds no profile,
+CI job or per-case restart. Each case retains its INSERT result and its next
+changed result in two additional tables. Final reads check all retained results
+and the original table after all source writes complete.
+
+- binarydefaults checks all bytes of fixed and variable binary fields. It keeps
+  zero padding, empty defaults, NUL, binary CHAR, numeric versus quoted constants,
+  changed defaults, ADD COLUMN, wider BINARY and DROP DEFAULT.
+- textdefaults keeps supplementary and decomposed Unicode, latin1 and UTF-16,
+  CHAR trimming, VARCHAR spaces, NUL and numeric versus quoted constants. The
+  original compound request keeps PAD_CHAR_TO_FULL_LENGTH. Each later request
+  resets the profile session mode. Row checks use exact hexadecimal bytes.
+- fixed checks complete CHAR(255) and BINARY(8) results before and after UPDATE.
+  The empty and NULL rows remain distinct. DELETE must leave only the empty CHAR
+  row and its eight-byte zero-padded BINARY value.
+- lob keeps all four BLOB and all four TEXT families. Queries compare every byte
+  of the repeated large values, including the 70 KB MEDIUMTEXT/MEDIUMBLOB fields.
+  They also check quotes, backslash, NUL, Unicode, empty values, NULL, shortened
+  values and the TEXT prefix index. DELETE must leave the original table empty.
+
+Default queries inspect actual stored values separately from rows. Final queries
+omit DEFAULT(e) or DEFAULT(v) after DROP DEFAULT; metadata verifies removal.
+Native complete row, schema/index and stored-default comparisons remain active.
+Cold metadata fixtures keep their original definitions and first INSERTs.
+
+### Focused checks and measurements
+
+All 145 selected Swift tests passed, including 14 new workflow methods. They
+check original SQL bytes, session order, retained results, complete values,
+defaults, declarations, predicates, counters, GTID sets and offsets. Strict
+format lint passed. Catalog structure remains 63 DDL scenarios, 235 registered
+cases and 56 support requirements. The normalized matrix keeps 183 jobs, 1,545
+catalog obligations and 182 instrumented collections, with unchanged membership
+and order. Source audits confirm the helper, earlier workflows, metadata/profile
+rules and native oracles match HEAD.
+
+One forward/default/SQL run selected only these four cases with coverage. They
+shared one fixture and ordinary applier. All 63 named assertions and the existing
+saved-schema restart passed.
+
+| Case | Passed assertions | Seconds | SQL client calls | Saved CI seconds / calls |
+|---|---:|---:|---:|---:|
+| matrix-binarydefaults | 18 | 4.44 | 30 | 8.32 / 70 |
+| matrix-textdefaults | 18 | 4.80 | 33 | 8.31 / 70 |
+| matrix-fixed | 13 | 3.45 | 28 | 11.84 / 106 |
+| matrix-lob | 14 | 3.82 | 28 | 12.49 / 106 |
+
+The saved CI cases compared more accumulated poc tables. This run selects four
+cases and adds retained tables. These are different inputs. The table does not
+establish a controlled speed ratio. Coverage belongs to the whole fixture,
+including shared setup/restart. It does not identify per-case line sets.
+
+| Case | Source client writes | GTIDs before / after cleanup | DDL before / after cleanup | Changed rows before / after cleanup |
+|---|---:|---:|---:|---:|
+| matrix-binarydefaults | 10 | 14 / 15 | 6 / 7 | 11 / 11 |
+| matrix-textdefaults | 10 | 13 / 14 | 6 / 7 | 10 / 10 |
+| matrix-fixed | 10 | 9 / 10 | 3 / 4 | 13 / 13 |
+| matrix-lob | 10 | 9 / 10 | 3 / 4 | 6 / 6 |
+
+| Shared fixture measurement | Result |
+|---|---:|
+| Fixture setup, seconds | 14.62 |
+| Container startup, seconds; included in setup | 11.80 |
+| Coverage export, seconds | 1.62 |
+| Fixture cleanup, seconds | 10.75 |
+| Swift runtime lines hit / mapped | 8,381 / 20,880 |
+
+Read-only SQLite inspection confirms all 49 case GTIDs are APPLIED with source
+file/offsets. Each request's last GTID matches its recorded end position. Body
+and cleanup checkpoints match exact source GTID sets and positions, with expected
+counter deltas. All DDL and row intents are DONE. Saved schemas keep types,
+widths, nullability, exact defaults, character sets, collations and prefix-index
+metadata. The eight retained tables are retired. All four original tables remain
+current. Engine checks confirm source InnoDB and native/target MyISAM.
+
+Final state is STOPPED with no active GTID, at the shared saved-schema restart's
+later offset. Both applier invocations exited successfully. That restart writes
+reverse_poc.aux; it does not write to each retained table. No other integration
+case/profile, full suite, benchmark or syntax suite ran. Selection-tool code did
+not change, so its Python tests were not repeated. Coverage excludes lab code and
+the Rust decoder. Leave other profiles, variants and the complete group to CI.
+
+Evidence under artifacts/string-default-lob-workflow-review/ includes specs.json,
+unit.log, integration.log, catalog.log, matrix.log, verify.py, inspect.py,
+schema_check.py, inventory-results.json and four *-results.json files.
+
+Passed result: `artifacts/lab/20261106T185703Z-d2015587/result.json`.
+
+Next: Slice 7 — json and typedjson. Keep fixed paths, native scalar types,
+exact numeric strings and the existing server-based JSON oracle. Select only the
+two changed cases together in one forward SQL fixture with coverage. Keep their
+extra BINLOG selections for CI. Spatial and the separate partial-JSON workflow
+follow in the recorded order.

@@ -507,14 +507,35 @@ and temporal cases. One group/profile run shares its containers and ordinary
 applier across these cases. Selecting the four cases together starts one fixture;
 it does not start a new set of containers for each case.
 
-`matrix-binarydefaults` checks exact binary
-default bytes, NUL, empty values, BINARY padding, CREATE and ALTER. The lab reads
-stored native defaults because displayed metadata can omit bytes.
+All four use preparation and body batches through the shared execution workflow.
+Two retained tables per case keep the INSERT result and the next changed result.
+Final queries check these results after all source writes complete. Cleanup drops
+only the retained tables. The original SQL requests and predicates stay in place.
 
-`matrix-textdefaults` checks CHAR/VARCHAR
-defaults with supplementary characters, NUL, byte literals, numeric constants,
-legacy/wide encodings and CHAR padding modes. Metadata comparisons use stored
-defaults and preserve exact Unicode bytes.
+`matrix-binarydefaults` checks exact binary default bytes, NUL, empty values,
+BINARY padding, binary CHAR declarations, numeric versus quoted constants,
+changed widths and removed defaults. It compares every row field and actual
+stored defaults. Metadata checks verify that DROP DEFAULT removed the default.
+
+`matrix-textdefaults` checks CHAR/VARCHAR defaults with supplementary and
+decomposed Unicode, NUL, byte literals, numeric constants, latin1 and UTF-16.
+The original request keeps PAD_CHAR_TO_FULL_LENGTH. Each following request resets
+the session mode. Final reads check exact bytes, CHAR trimming, VARCHAR spaces
+and the changed declarations. Queries do not evaluate a removed default.
+
+`matrix-fixed` checks all CHAR(255) and BINARY(8) bytes before and after UPDATE.
+It keeps the empty and NULL rows separate. The final result must contain only
+the empty CHAR row with eight zero bytes in its BINARY field.
+
+`matrix-lob` checks TINYTEXT, TEXT, MEDIUMTEXT, LONGTEXT and all four BLOB types.
+Queries compare every byte of the large repeated values, including 70 KB fields.
+They also check NUL, quotes, a backslash, Unicode, empty values, NULL and the TEXT
+prefix index. The original table must be empty after DELETE. Native schema,
+stored-default and complete row comparisons remain active for all four cases.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-binarydefaults --case matrix-textdefaults --case matrix-fixed --case matrix-lob --coverage"
+```
 
 `matrix-encodings` checks latin1, ASCII, UTF-8 and binary fields. Three retained
 tables keep the results after INSERT, key UPDATE and ADD COLUMN. Final queries

@@ -23,5 +23,5 @@ extension DMLCompatibilityCases {
                 check:
                     "SELECT COUNT(*)=2 AND SUM(id=3 AND HEX(w)='20200020' AND q='1000' AND v IS NULL)=1 FROM poc.matrix_textdefaults"
             ),
-        ])
+        ], workflow: DMLStringValueWorkflows.textdefaults)
 }

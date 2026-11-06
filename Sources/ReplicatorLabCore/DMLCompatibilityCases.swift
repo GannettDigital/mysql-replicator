@@ -423,7 +423,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_fixed WHERE id IN (1,3)",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_fixed WHERE id=2 AND HEX(b)='0000000000000000'"),
-                ]),
+                ], workflow: DMLStringValueWorkflows.fixed),
             // The exactchoices case separately checks lossy native metadata.
             Case(
                 id: "enumzero", definition: "id ENUM('','one','two') PRIMARY KEY,e ENUM('','yes','no'),v INT UNSIGNED",
@@ -769,7 +769,7 @@ enum DMLCompatibilityCases {
                             "SELECT COUNT(*)=1 FROM poc.matrix_lob WHERE a IS NULL AND b='' AND c='short' AND e=X'' AND HEX(h)='00FF'"
                     ),
                     .init(sql: "DELETE FROM poc.matrix_lob WHERE id=1", check: "SELECT COUNT(*)=0 FROM poc.matrix_lob"),
-                ]),
+                ], workflow: DMLStringValueWorkflows.lob),
             Case(
                 id: "defaults",
                 definition:

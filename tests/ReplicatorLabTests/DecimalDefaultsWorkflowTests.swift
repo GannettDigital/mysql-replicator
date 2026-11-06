@@ -204,9 +204,11 @@ final class DecimalDefaultsWorkflowTests: XCTestCase {
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
-                "decimaldefaults", "zerowidth", "identifiercase", "unicodeidentifiers", "encodings", "widestrings",
+                "decimaldefaults", "binarydefaults", "textdefaults", "zerowidth", "identifiercase",
+                "unicodeidentifiers", "encodings", "widestrings",
                 "floatbounds", "zerofill", "fixedfloating", "floating",
-                "bits", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal", "precision",
+                "bits", "fixed", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal", "precision",
+                "lob",
                 "defaults",
                 "floatingautofloat", "floatingautodouble", "floatingautofixedfloat", "floatingautounsigneddouble",
             ])

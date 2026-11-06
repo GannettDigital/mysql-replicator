@@ -23,5 +23,5 @@ extension DMLCompatibilityCases {
                 check:
                     "SELECT COUNT(*)=2 AND SUM(id=3 AND HEX(a)='FF0004000000' AND e IS NULL)=1 AND SUM(id=1 AND HEX(v)='0000FF00')=1 FROM poc.matrix_binarydefaults"
             ),
-        ])
+        ], workflow: DMLStringValueWorkflows.binarydefaults)
 }
