@@ -462,6 +462,13 @@ The regular data-types-values CI group shares its fixture and ordinary applier
 across all selected cases. These conversions add no separate CI job, container
 restart or per-case applier restart. Cold metadata inputs stay unchanged.
 
+`matrix-temporal` checks DATE, DATETIME, TIMESTAMP, TIME and YEAR values,
+including time-zone changes, zero values and NULL. `matrix-precision` checks
+fractional seconds. `matrix-defaults` checks AUTO_INCREMENT, constant defaults
+and automatic TIMESTAMP initialization/updates under fixed source timestamps.
+These cases belong to data-types-values on all four existing profiles. They
+share the group's fixture and applier; they require no additional profile.
+
 `matrix-decimaldefaults` checks native
 DECIMAL default rounding, scientific notation, quoted constants, unsigned and
 ZEROFILL forms. It includes CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
@@ -1624,6 +1631,23 @@ The common selection code and both execution paths use these profile exclusions.
 The four IDs belong to the existing data-types-values group. They share its
 fixture and ordinary applier with the other applicable cases. No separate
 profile or CI job is required.
+
+All four declarations use the same batch template. Three retained tables per
+case keep the INSERT, key-change and ALTER results. Final comparisons check all
+rows, explicit zero, generated IDs after a high explicit ID, fractional keys,
+the added default, AUTO_INCREMENT attributes and each table's next generated
+value staying above the retained keys. Reserved gaps are permitted. Original
+scripts and predicates stay intact. Cleanup drops only retained tables. This
+conversion adds no restart and keeps the cold metadata inputs.
+
+Select only these four cases in one 5.7-to-5.7 MyISAM fixture with:
+
+```sh
+make lab-test PROFILE=mysql57-to-mysql57-myisam ARGS="--suite correctness --case matrix-floatingautofloat --case matrix-floatingautodouble --case matrix-floatingautofixedfloat --case matrix-floatingautounsigneddouble --coverage"
+```
+
+The source session uses `NO_AUTO_VALUE_ON_ZERO` for every request. The case
+therefore keeps an explicit zero separate from a generated AUTO_INCREMENT ID.
 
 The `lowercase-tables` variant starts all three MySQL servers with
 `lower_case_table_names=1`. Use `--case ddl-compat-table-name-case` to check

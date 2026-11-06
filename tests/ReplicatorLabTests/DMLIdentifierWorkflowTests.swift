@@ -32,6 +32,7 @@ final class DMLIdentifierWorkflowTests: XCTestCase {
                 "decimaldefaults", "zerowidth", "identifiercase", "unicodeidentifiers", "encodings", "widestrings",
                 "floatbounds", "zerofill", "fixedfloating", "floating",
                 "bits", "enumzero", "choices", "widechoices", "integers", "decimal",
+                "floatingautofloat", "floatingautodouble", "floatingautofixedfloat", "floatingautounsigneddouble",
             ])
         for profile in LabProfile.allCases {
             let metadata = try XCTUnwrap(

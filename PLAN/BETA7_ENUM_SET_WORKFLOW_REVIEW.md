@@ -5,9 +5,9 @@ forward tests; legacybinaryset passed on the 5.7 MyISAM profile. Choiceboundarie
 is committed as `247bbbe`; legacybinaryset is committed as `88ff87c`. Full-matrix
 validation remains. The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
 and all three local conversions are complete. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) is also complete.
-The [numeric and floating workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#floating-point-and-numeric-attribute-implementation-results)
-record eight completed type/value conversions. All focused checks passed.
-Next: the four legacy floating AUTO_INCREMENT cases on the 5.7 MyISAM profile. The
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#legacy-floating-auto_increment-implementation-results)
+record twelve completed conversions, including legacy floating AUTO_INCREMENT.
+All focused checks passed. Next: temporal, precision and defaults. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -954,7 +954,6 @@ values and schema transitions. It records 30 saved passing executions, coverage
 limits, complete row maps and a conversion order. No new build or database run
 was needed for the initial review. Its later conversions passed 101 unit tests
 and 48 forward assertions. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md)
-keeps all 25 IDs. The [numeric and floating workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#floating-point-and-numeric-attribute-implementation-results)
-record eight completed type/value conversions. Next: the four legacy floating
-AUTO_INCREMENT cases on the 5.7 MyISAM profile.
+keeps all 25 IDs. The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#legacy-floating-auto_increment-implementation-results)
+record twelve completed conversions. Next: temporal, precision and defaults.
 Continue remaining type/value and key/index work before full-matrix validation.

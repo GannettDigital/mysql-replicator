@@ -28,6 +28,6 @@ extension DMLCompatibilityCases {
                     "MySQL 8.4 rejects FLOAT/DOUBLE AUTO_INCREMENT with native error 1063; the source cannot create this schema.",
                 .reverse:
                     "MySQL 8.4 rejects FLOAT/DOUBLE AUTO_INCREMENT with native error 1063; this is a target-version limit.",
-            ])
+            ], workflow: DMLLegacyNumericWorkflows.make(suffix: suffix, type: type))
     }
 }

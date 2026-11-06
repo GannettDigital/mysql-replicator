@@ -1,9 +1,10 @@
 # Data types: value and workflow review
 
-Status: source and saved-evidence review complete. The first three implementation
-slices are complete locally: decimaldefaults, integers, decimal, bits, floatbounds,
-zerofill, fixedfloating and floating. Focused unit and forward integration checks
-passed. The first two slices are committed as `345f71f`. See the results below.
+Status: source and saved-evidence review complete. The first four implementation
+slices are complete locally. They cover twelve type/value cases, including the
+four legacy floating AUTO_INCREMENT declarations. All focused checks passed.
+The numeric and floating slices are committed as `345f71f` and `92df394`.
+The legacy slice passed its focused checks. See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
 
@@ -243,7 +244,7 @@ per-case restart or offline replay.
 | 1, complete locally | Only decimaldefaults; two histories and fixed decimal/schema/default checks | Focused workflow/helper/metadata unit tests, updated opt-in membership tests, strict format lint, catalog and normalized matrix audit. One forward/default/SQL case with coverage and saved-state inspection. |
 | 2, complete locally | integers, decimal and bits as separate named cases with retained outcomes | Unit-test exact numeric strings, unsigned high bits, NULL and key/width changes. Run the changed cases together in one forward fixture; reuse one build. |
 | 3, complete locally | zerofill, floatbounds, fixedfloating and floating | Keep native numeric comparisons, distinct FLOAT/DOUBLE metadata, rounding and retained key results. Select only changed cases in one forward fixture. Do not convert expectations through host Double by default. |
-| 4 | All four legacy floating AUTO_INCREMENT cases through their shared template | Unit-test all generated SQL, declared types, both native error-1063 exclusions and session reset. Select all four changed cases in one 5.7-to-5.7 MyISAM fixture. Leave InnoDB and excluded profiles to CI. |
+| 4, complete locally | All four legacy floating AUTO_INCREMENT cases through their shared template | Unit-test all generated SQL, declared types, both native error-1063 exclusions and session reset. Select all four changed cases in one 5.7-to-5.7 MyISAM fixture. Leave InnoDB and excluded profiles to CI. |
 | 5 | temporal, precision and defaults | Fixed time/precision, zero/NULL, generated IDs and automatic timestamp checks. Unit-test source time_zone/timestamp placement and resets. Select changed cases in one forward fixture. |
 | 6 | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
 | 7 | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
@@ -593,13 +594,137 @@ Evidence under artifacts/floating-values-workflow-review/:
 
 Passed result: `artifacts/lab/20261106T160855Z-dda33f3e/result.json`.
 
-Next: Slice 4 — the four legacy floating AUTO_INCREMENT cases through their
-shared template. Keep the source/target 8.4 exclusions and native error 1063.
-Select only those four changed cases in one 5.7-to-5.7 MyISAM fixture. Unit-test
-all generated forms and session resets. Leave InnoDB and excluded profiles to CI.
+Slice 4 follows below. The other profiles and the complete group remain for CI.
 
 Keep all four IDs in the existing data-types-values group. Both 5.7-to-5.7
 profiles select them; their existing exclusions remove profiles with an 8.4
 source or target. A profile describes the replication topology. These cases are
 a feature selection within that topology. They need no new profile or CI job.
 Use the same shared fixture and applier as the other applicable numeric cases.
+
+
+## Legacy floating AUTO_INCREMENT implementation results
+
+All four cases now use DMLLegacyNumericWorkflows through their original shared
+template. The source template adds only its workflow reference. Definitions,
+16 scripts/predicates, compound requests, profile exclusions, cold metadata and
+row-metadata flags remain unchanged. No common helper, runner, native oracle or
+production code changed. Both existing 5.7-to-5.7 profiles retain these cases in
+data-types-values. A profile with an 8.4 source or target keeps error 1063 as its
+exclusion reason. This slice adds no profile, CI job, fixture group or restart.
+
+Each declaration retains INSERT, key-change and ALTER results. Complete rows
+check explicit zero, generated IDs 1/2, fractional key 9.5, explicit high key 100,
+next generated key 101, its UPDATE to 102, unchanged rows and later DELETE.
+Separate checks retain AUTO_INCREMENT/type/nullability attributes and default 7
+while one stored row has explicit value 8. Source requests reset the profile
+session, including NO_AUTO_VALUE_ON_ZERO. All source scripts remain intact.
+
+### Native reservation behavior
+
+The first integration run found a new test assumption error. Its exact next-ID
+expectation was 3 after the first INSERT and 102 after the second phase. The
+InnoDB source reported 4 and 103 because bulk INSERT can reserve unused values.
+All original predicates, complete row checks and column/default checks had
+passed. The harness failed before cleanup and did not start the other cases.
+
+The support bundle had no failure.json because the error came from a harness
+assertion. Bundle diagnostics, harness-failure.json and read-only SQLite checks
+confirmed 19 case GTIDs applied, six DDL operations, 25 changed rows, exact source
+checkpoint, DONE intents and STOPPED state with no active GTID. All saved row,
+predicate and column/default checks before the counter assertion had passed. Original failed
+evidence remains available.
+
+The corrected counter observation requires each next value to exceed its retained
+keys. It permits native reserved gaps. The row checks still require the exact
+source-generated values, including 101 after explicit 100. This checks the
+generated row values while permitting unused reserved IDs.
+No source operation or production behavior changed for this correction.
+
+### Focused checks and measurements
+
+All 120 selected Swift unit tests passed, including ten new legacy workflow
+methods. After the counter correction, only that changed unit method ran again;
+it passed. A selection-test Set argument and a large Swift expression were also
+corrected before their tests ran. Strict Swift format lint passed for two changed
+source files and 16 changed test files; the counter edit passed lint again.
+
+Catalog structure remains 63 DDL scenarios, 235 registered cases and 56 support
+requirements. Normalized planning keeps 183 jobs, 1,545 catalog obligations and
+182 instrumented collections, with unchanged membership and order. The source
+audit restores the original shared template byte for byte. Other fixtures,
+metadata/version rules, common helper and native oracles match HEAD.
+
+The corrected integration run selected only the four legacy cases on
+mysql57-to-mysql57-myisam/default/SQL, with coverage. They shared one fixture,
+coverage build and ordinary applier session. All 72 assertions and the existing
+saved-schema restart passed. The other three cases had not run before the retry.
+
+| Case | Passed assertions | Seconds | SQL client calls | Saved CI seconds / calls |
+|---|---:|---:|---:|---:|
+| matrix-floatingautofloat | 18 | 3.95 | 24 | 12.55 / 117 |
+| matrix-floatingautodouble | 18 | 4.03 | 24 | 12.58 / 117 |
+| matrix-floatingautofixedfloat | 18 | 3.83 | 24 | 12.66 / 117 |
+| matrix-floatingautounsigneddouble | 18 | 4.03 | 24 | 12.56 / 117 |
+
+The saved CI cases compared more accumulated poc tables. This run selects four
+cases and adds retained tables. These are different inputs, so this is not a
+controlled speed comparison. The full CI run must measure the complete group.
+Coverage covers the whole selected fixture, including shared setup and restart;
+it does not identify separate line sets for individual cases.
+
+| Per-case measurement | Result |
+|---|---:|
+| Source client writes | 15 |
+| Case GTIDs before / after cleanup | 19 / 20 |
+| DDL before / after cleanup | 6 / 7 |
+| Changed rows before / after cleanup | 25 / 25 |
+
+| Shared fixture measurement | Result |
+|---|---:|
+| Fixture setup, seconds | 14.60 |
+| Container startup, seconds; included in setup | 11.64 |
+| Coverage export, seconds | 1.60 |
+| Fixture cleanup, seconds | 10.67 |
+| Swift runtime lines hit / mapped | 7,747 / 20,880 |
+
+Read-only SQLite inspection confirms all 80 case GTIDs are APPLIED with source
+file/offsets. Each request's final GTID matches its recorded end offset. Body and
+cleanup checkpoints match the source GTID sets, positions and expected counter
+deltas. All DDL and row intents are DONE. Latest schemas preserve FLOAT, DOUBLE,
+FLOAT(10,2) or unsigned DOUBLE, AUTO_INCREMENT, nullability and added default 7.
+The twelve histories are retired; all four original tables remain current.
+
+Engine checks confirm source InnoDB and native/target MyISAM, all MySQL 5.7.
+Final state is STOPPED with no active GTID, at the existing saved-schema restart's
+later offset. Both applier invocations exited successfully. The shared restart
+writes reverse_poc.aux; it is not a separate restart or post-restart write to each
+legacy table. Leave the 5.7 InnoDB target and version exclusions to CI. No other
+integration cases/profiles, full suite, benchmark or syntax suite ran. No
+selection-tool code changed, so its Python tests were not repeated. Coverage
+excludes lab code and the Rust decoder.
+
+Evidence under artifacts/legacy-floating-auto-workflow-review/:
+
+- specs.json: original expansions, retained rows, bounds, requests and counts.
+- unit.log and unit-counter.log: 120 tests and the corrected counter check.
+- unit-compile.log and unit-counter-compile.log: retained compile diagnostics.
+- matrix.log, catalog.log, verify.py and inventory-results.json: unchanged source
+  and selection audits.
+- integration.log and first-failure-review.json: failed exact-counter assertion
+  and support-bundle findings.
+- integration-retry.log, inspect.py, schema_check.py and four *-results.json files:
+  passed shared run, timings, coverage, schema fields, GTIDs and offsets.
+
+Passed result: `artifacts/lab/20261106T164338Z-8f06fddc/result.json`.
+
+Next: Slice 5 — temporal, precision and defaults. Keep fixed session timestamps,
+time zones, zero/NULL values, fractional seconds, generated IDs and automatic
+updates. Select only those changed cases together in one forward fixture. Reuse
+one coverage build; leave the other profiles and full group to CI.
+
+The temporal, precision and defaults cases already belong to data-types-values
+on all four existing profiles. Keep them as separate named cases in that group,
+with one shared fixture and ordinary applier. They need no new profile or CI job.
+The local slice above selects only the three changed cases on the forward
+MyISAM profile. The regular CI matrix retains the other profiles.

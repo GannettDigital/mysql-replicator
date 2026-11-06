@@ -181,6 +181,7 @@ final class LegacyBinarySetWorkflowTests: XCTestCase {
                 "decimaldefaults", "zerowidth", "identifiercase", "unicodeidentifiers", "encodings", "widestrings",
                 "floatbounds", "zerofill", "fixedfloating", "floating",
                 "bits", "enumzero", "choices", "widechoices", "integers", "decimal",
+                "floatingautofloat", "floatingautodouble", "floatingautofixedfloat", "floatingautounsigneddouble",
             ])
     }
 }
