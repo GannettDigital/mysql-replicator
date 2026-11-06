@@ -357,7 +357,7 @@ It records 23 unchanged matrix fixtures, two isolated lifecycle workflows,
 211 saved SQL executions and ten additional BINLOG executions. It keeps all
 25 IDs and required event/restart/replay/recovery checks. The initial review
 needed no new build or database run.
-The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#legacy-floating-auto_increment-implementation-results)
-record twelve completed conversions, including legacy floating AUTO_INCREMENT.
-All focused checks passed. Next: temporal, precision and defaults.
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#temporal-fractional-second-and-automatic-value-implementation-results)
+record fifteen completed conversions. All focused checks passed.
+Next: binarydefaults, textdefaults, fixed and lob.
 Full-matrix validation, balancing and short PR selection stay later.

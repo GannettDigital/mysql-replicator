@@ -1,10 +1,13 @@
 # Data types: value and workflow review
 
-Status: source and saved-evidence review complete. The first four implementation
-slices are complete locally. They cover twelve type/value cases, including the
-four legacy floating AUTO_INCREMENT declarations. All focused checks passed.
+Status: source and saved-evidence review complete. The first five implementation
+slices are complete locally. They cover fifteen type/value cases, including
+temporal values, fractional seconds and automatic column values. All focused
+checks passed.
 The numeric and floating slices are committed as `345f71f` and `92df394`.
-The legacy slice passed its focused checks. See the results below.
+The legacy slice is committed as `269e76f`. The temporal slice passed its
+focused checks.
+See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
 
@@ -245,7 +248,7 @@ per-case restart or offline replay.
 | 2, complete locally | integers, decimal and bits as separate named cases with retained outcomes | Unit-test exact numeric strings, unsigned high bits, NULL and key/width changes. Run the changed cases together in one forward fixture; reuse one build. |
 | 3, complete locally | zerofill, floatbounds, fixedfloating and floating | Keep native numeric comparisons, distinct FLOAT/DOUBLE metadata, rounding and retained key results. Select only changed cases in one forward fixture. Do not convert expectations through host Double by default. |
 | 4, complete locally | All four legacy floating AUTO_INCREMENT cases through their shared template | Unit-test all generated SQL, declared types, both native error-1063 exclusions and session reset. Select all four changed cases in one 5.7-to-5.7 MyISAM fixture. Leave InnoDB and excluded profiles to CI. |
-| 5 | temporal, precision and defaults | Fixed time/precision, zero/NULL, generated IDs and automatic timestamp checks. Unit-test source time_zone/timestamp placement and resets. Select changed cases in one forward fixture. |
+| 5, complete locally | temporal, precision and defaults | Fixed time/precision, zero/NULL, generated IDs and automatic timestamp checks. Unit-test source time_zone/timestamp placement and resets. Select changed cases in one forward fixture. |
 | 6 | binarydefaults, textdefaults, fixed and lob | Independent bytes/defaults, source PAD mode, complete large payloads, lengths and empty/NULL states. Preserve native schema/default comparison. Select only changed cases in one forward fixture. |
 | 7 | json and typedjson | Fixed paths, native scalar types, exact decimal/integer strings and unchanged server-based JSON oracle. Select both changed cases in one forward SQL fixture. Preserve extra BINLOG selections for CI. |
 | 8 | spatial | Every geometry type, SRID, empty/NULL collections, key changes and SPATIAL index metadata. One forward case with coverage. Do not substitute display WKT for exact geometry checks. |
@@ -718,13 +721,139 @@ Evidence under artifacts/legacy-floating-auto-workflow-review/:
 
 Passed result: `artifacts/lab/20261106T164338Z-8f06fddc/result.json`.
 
-Next: Slice 5 — temporal, precision and defaults. Keep fixed session timestamps,
-time zones, zero/NULL values, fractional seconds, generated IDs and automatic
-updates. Select only those changed cases together in one forward fixture. Reuse
-one coverage build; leave the other profiles and full group to CI.
+Slice 5 follows below. The other profiles and the complete group remain for CI.
 
 The temporal, precision and defaults cases already belong to data-types-values
 on all four existing profiles. Keep them as separate named cases in that group,
 with one shared fixture and ordinary applier. They need no new profile or CI job.
 The local slice above selects only the three changed cases on the forward
 MyISAM profile. The regular CI matrix retains the other profiles.
+
+
+## Temporal, fractional-second and automatic-value implementation results
+
+Slice 5 converts matrix-temporal, matrix-precision and matrix-defaults through
+the existing DMLExecutionWorkflow. DMLTemporalWorkflows supplies their retained
+results. Removing only the three references restores DMLCompatibilityCases.swift
+byte for byte. Original definitions, eight scripts/predicates, session settings,
+metadata flags and profile selections remain unchanged. No common helper,
+runner, native schema/default oracle or production code changed.
+
+Names follow MySQL's
+[Date and Time Data Types](https://dev.mysql.com/doc/refman/8.4/en/date-and-time-types.html),
+[Fractional Seconds](https://dev.mysql.com/doc/refman/8.4/en/fractional-seconds.html)
+and [Automatic Initialization and Updating](https://dev.mysql.com/doc/refman/8.4/en/timestamp-initialization.html).
+The three cases remain in data-types-values on all four existing profiles. The
+local run selects only these three on the forward profile. It adds no profile,
+CI job, container restart or per-case applier restart.
+
+- temporal retains INSERT and UPDATE results. Complete UTC rows keep the +05:30
+  conversion, leap date, maximum DATETIME, maximum TIMESTAMP, negative/positive
+  TIME limits, signed subsecond TIME, zero date/timestamp, YEAR limits and NULL.
+  The UPDATE retains UTC input after the first INSERT's session time-zone change.
+- precision retains its initial result. Complete rows keep TIME precision zero
+  through six, DATETIME/TIMESTAMP precision zero and three, negative fractions,
+  the change to positive TIME, zero microseconds, NULL and all unchanged fields.
+- defaults retains INSERT and UPDATE results. Complete rows keep generated IDs,
+  constant defaults, exact string bytes, fixed automatic timestamps, the untouched
+  second row, explicit zero/high IDs and SQL NULL. Metadata checks retain
+  AUTO_INCREMENT, defaults 7/seed, CURRENT_TIMESTAMP(6) and its ON UPDATE attribute.
+  They inspect the timestamp default expression instead of evaluating it at read
+  time. All row reads use UTC.
+
+Each source write retains its original request and profile-session reset.
+The +05:30 setting stays before its original INSERT. Both SET timestamp values
+stay before their original INSERT/UPDATE. Histories execute only original
+prefixes. Unit checks require each following request's UTC reset. Final queries
+also set UTC. No host floating-point clock conversion or production formatter
+supplies expected values; an independent integer-epoch check confirms them.
+
+### Focused checks and measurements
+
+All 131 selected Swift tests passed, including 11 new workflow methods. They
+check frozen SQL, session order, all row fields, fractional declarations,
+metadata/default attributes, old predicates, counter deltas, exact GTID sets and
+file/offsets. Strict Swift format lint passed for two changed source files and
+17 changed test files. Catalog structure remains 63 DDL scenarios, 235 registered
+cases and 56 support requirements. Normalized planning keeps 183 jobs, 1,545
+catalog obligations and 182 instrumented collections, with unchanged membership
+and order. The source audit also confirms all earlier workflows, metadata/profile
+rules, common runner and native oracles match HEAD.
+
+The first integration attempt stalled inside swift-build before compilation or
+fixture startup. Docker VM inspection showed a sleeping process with six unreaped
+Git children and no compiler process. The process did not exit after TERM; only
+that build process received KILL. The original failed build log and result remain.
+There was no applier, database test or support bundle at that point. The retry
+compiled normally with unchanged source, build configuration and cached inputs.
+
+One completed forward/default/SQL run selected only these three cases with
+coverage. They shared one fixture and ordinary applier. All 39 named assertions
+and the existing saved-schema restart passed.
+
+| Case | Passed assertions | Seconds | SQL client calls | Saved CI seconds / calls |
+|---|---:|---:|---:|---:|
+| matrix-temporal | 13 | 3.39 | 25 | 12.10 / 106 |
+| matrix-precision | 11 | 3.33 | 25 | 9.09 / 79 |
+| matrix-defaults | 15 | 3.65 | 28 | 12.13 / 106 |
+
+The saved CI cases compared more accumulated poc tables. This run selects three
+cases and adds retained tables. These are different inputs; the table is not a
+controlled speed comparison. The complete group remains for the later full CI
+run. Coverage belongs to this whole fixture, including shared setup/restart,
+and does not identify separate line sets for individual cases.
+
+| Case | Source client writes | GTIDs before / after cleanup | DDL before / after cleanup | Changed rows before / after cleanup |
+|---|---:|---:|---:|---:|
+| matrix-temporal | 10 | 9 / 10 | 3 / 4 | 9 / 9 |
+| matrix-precision | 6 | 5 / 6 | 2 / 3 | 3 / 3 |
+| matrix-defaults | 10 | 9 / 10 | 3 / 4 | 10 / 10 |
+
+| Shared fixture measurement | Result |
+|---|---:|
+| Fixture setup, seconds | 14.77 |
+| Container startup, seconds; included in setup | 11.87 |
+| Coverage export, seconds | 1.76 |
+| Fixture cleanup, seconds | 10.77 |
+| Swift runtime lines hit / mapped | 7,637 / 20,880 |
+
+Read-only SQLite inspection confirms all 26 case GTIDs are APPLIED with source
+file/offsets. Each request's final GTID matches its recorded end offset. Body and
+cleanup checkpoints match exact source GTID sets and positions, with expected
+counter deltas. All DDL and row intents are DONE. Saved schemas keep every
+fractional precision, YEAR/DATE declaration, nullability, constant default,
+AUTO_INCREMENT and automatic timestamp attribute. The five histories are retired;
+all three original tables remain current.
+
+Engine checks confirm source InnoDB and native/target MyISAM. Final state is
+STOPPED with no active GTID, at the existing saved-schema restart's later offset.
+Both applier invocations exited successfully. The shared restart writes
+reverse_poc.aux; it is not a separate restart or post-restart write to each retained
+table. No other integration case/profile, full suite, benchmark or syntax suite
+ran. No selection-tool code changed, so its Python tests were not repeated.
+Coverage excludes lab code and the Rust decoder. Leave the other profiles,
+variants and complete group to CI.
+
+Evidence under artifacts/temporal-values-workflow-review/:
+
+- specs.json: original SQL, retained values, session settings and counts.
+- unit.log: 131 selected tests, including 11 new temporal workflow methods.
+- matrix.log, catalog.log, verify.py and inventory-results.json: unchanged source
+  and selection audits.
+- integration.log and build-stall.json: retained build failure and process findings.
+- integration-retry.log, inspect.py, schema_check.py and three *-results.json files:
+  passed run, timings, coverage, schema fields, GTIDs and offsets.
+
+Passed result: `artifacts/lab/20261106T182517Z-4382e639/result.json`.
+
+Next: Slice 6 — binarydefaults, textdefaults, fixed and lob. Keep exact bytes,
+stored defaults, source PAD_CHAR_TO_FULL_LENGTH settings, fixed-length padding,
+large values, empty versus NULL and native schema comparison. Select only those
+four changed cases together in one forward fixture. Reuse one coverage build;
+leave other profiles and the complete group to CI.
+
+Keep these four IDs in the existing data-types-values group beside the numeric
+and temporal cases. The shared runner prepares one fixture per group/profile;
+ordinary cases reuse its containers and applier. The conversion needs no new CI
+group or container startup. A focused local command starts one fresh fixture for
+all four changed cases, without rerunning the completed cases.

@@ -338,9 +338,9 @@ MyISAM. Legacybinaryset passed 12 on the 5.7 MyISAM profile.
 The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
 records all three conversions: 101 unit tests and 48 forward assertions passed.
 The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) keeps all 25 IDs.
-The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#legacy-floating-auto_increment-implementation-results)
-record twelve completed conversions, including legacy floating AUTO_INCREMENT.
-All focused checks passed. Next: temporal, precision and defaults.
+The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#temporal-fractional-second-and-automatic-value-implementation-results)
+record fifteen completed conversions. All focused checks passed.
+Next: binarydefaults, textdefaults, fixed and lob.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining type/value and key/index work, full-matrix validation, final
 balancing and short PR selection later.

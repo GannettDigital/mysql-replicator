@@ -277,7 +277,8 @@ final class CollationInventoryWorkflowTests: XCTestCase {
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
                 "decimaldefaults", "zerowidth", "identifiercase", "unicodeidentifiers", "encodings", "widestrings",
                 "floatbounds", "zerofill", "fixedfloating", "floating",
-                "bits", "enumzero", "choices", "widechoices", "integers", "decimal",
+                "bits", "enumzero", "choices", "widechoices", "integers", "decimal", "temporal", "precision",
+                "defaults",
                 "floatingautofloat", "floatingautodouble", "floatingautofixedfloat", "floatingautounsigneddouble",
             ])
     }

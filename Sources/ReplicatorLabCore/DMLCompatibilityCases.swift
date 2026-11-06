@@ -734,7 +734,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_temporal WHERE id=2",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_temporal"),
-                ]),
+                ], workflow: DMLTemporalWorkflows.temporal),
             Case(
                 id: "precision",
                 definition:
@@ -751,7 +751,7 @@ enum DMLCompatibilityCases {
                         check:
                             "SELECT COUNT(*)=1 FROM poc.matrix_precision WHERE t1='12:34:56.1' AND t6='00:00:00' AND d3 IS NULL"
                     ),
-                ]),
+                ], workflow: DMLTemporalWorkflows.precision),
             Case(
                 id: "lob",
                 definition:
@@ -788,7 +788,7 @@ enum DMLCompatibilityCases {
                         sql:
                             "INSERT INTO poc.matrix_defaults(id,v,s,ts) VALUES(0,0,'zero',NULL),(20,20,'explicit',NULL)",
                         check: "SELECT COUNT(*)=4 AND MIN(id)=0 AND MAX(id)=20 FROM poc.matrix_defaults"),
-                ]),
+                ], workflow: DMLTemporalWorkflows.defaults),
         ] + legacyFloatingAutoIncrement
 
     struct Rejection {

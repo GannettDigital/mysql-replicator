@@ -469,6 +469,23 @@ and automatic TIMESTAMP initialization/updates under fixed source timestamps.
 These cases belong to data-types-values on all four existing profiles. They
 share the group's fixture and applier; they require no additional profile.
 
+All three cases submit preparation, body and cleanup batches. Retained tables
+keep each earlier result. Final queries read in UTC and check every column,
+including signed subsecond TIME values, zero dates, unchanged rows and NULL.
+Metadata checks retain fractional precision, AUTO_INCREMENT, constant defaults
+and automatic TIMESTAMP initialization/update attributes.
+
+Original scripts keep their time-zone and timestamp settings. The profile session
+resets the time zone before each source request. Fixed `SET timestamp` statements
+stay immediately before their original INSERT or UPDATE. Cleanup drops only
+retained tables. The cases add no applier restart and keep cold metadata inputs.
+
+Select only the three changed cases in one fixture with:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-temporal --case matrix-precision --case matrix-defaults --coverage"
+```
+
 `matrix-decimaldefaults` checks native
 DECIMAL default rounding, scientific notation, quoted constants, unsigned and
 ZEROFILL forms. It includes CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
@@ -483,6 +500,12 @@ original definition and first INSERT.
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-decimaldefaults --coverage"
 ```
+
+The `matrix-binarydefaults`, `matrix-textdefaults`, `matrix-fixed` and
+`matrix-lob` cases belong to the same data-types-values group as the numeric
+and temporal cases. One group/profile run shares its containers and ordinary
+applier across these cases. Selecting the four cases together starts one fixture;
+it does not start a new set of containers for each case.
 
 `matrix-binarydefaults` checks exact binary
 default bytes, NUL, empty values, BINARY padding, CREATE and ALTER. The lab reads
