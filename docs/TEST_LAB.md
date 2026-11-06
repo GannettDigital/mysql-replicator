@@ -419,9 +419,24 @@ The full `dml` family includes `large-values` on all four profiles. This case
 checks large TEXT/BLOB values, packet limits, restart, offline replay, and
 recovery inspection. It requires GTID mode. See [large-value limits and tests](LARGE_VALUES.md).
 
-`matrix-bits` checks widths through 64 bits, defaults,
-primary-key changes, ADD/MODIFY, and DML. Full CI includes these cases; inspect
-the results for the exact commit. See [BIT support](../PLAN/BIT_SUPPORT.md).
+`matrix-integers` checks signed and unsigned TINYINT, SMALLINT and MEDIUMINT
+limits, a signed primary-key change, NULL and DELETE. `matrix-decimal` checks
+all 65 digits of DECIMAL(65,30), unsigned values, exact scale, NULL and DELETE.
+
+`matrix-bits` checks widths through 64 bits, defaults, primary-key changes and
+ADD/MODIFY. Queries check the full unsigned values, the widened declaration and
+the new defaults. See [BIT support](../PLAN/BIT_SUPPORT.md).
+
+These three cases use preparation, body and cleanup batches on one running
+applier. Retained tables preserve every earlier result. Final comparisons keep
+the original predicates, exact numeric strings and native schema/default checks.
+Cleanup removes only the retained tables. No case adds an applier restart or
+changes its cold metadata definition and first INSERT. Select all three in one
+fixture with:
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-integers --case matrix-decimal --case matrix-bits --coverage"
+```
 
 `matrix-floating` adds FLOAT/DOUBLE DML and DDL
 cases for all four profiles. `matrix-fixedfloating` checks fixed-scale forms, defaults, rounding and
@@ -431,6 +446,17 @@ ALTER. They replace the fixed-scale refusal cases. Full CI includes these cases;
 `matrix-decimaldefaults` checks native
 DECIMAL default rounding, scientific notation, quoted constants, unsigned and
 ZEROFILL forms. It includes CREATE, ALTER DEFAULT, ADD, MODIFY and row changes.
+Preparation and body batches share one running applier. Two retained tables keep
+the INSERT result and the first default change. Final queries compare every
+numeric field, actual stored defaults and declared scales/attributes. Metadata
+and saved-state checks verify the removed default. They keep
+the three original predicates and the compound SQL requests. Cleanup drops only
+the retained tables. The case adds no applier restart. Cold metadata keeps the
+original definition and first INSERT.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam ARGS="--suite correctness --case matrix-decimaldefaults --coverage"
+```
 
 `matrix-binarydefaults` checks exact binary
 default bytes, NUL, empty values, BINARY padding, CREATE and ALTER. The lab reads

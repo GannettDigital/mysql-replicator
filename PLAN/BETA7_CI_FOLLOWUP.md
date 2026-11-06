@@ -502,7 +502,10 @@ exactchoices with 16, enumzero with 14 and choiceboundaries with 13 on forward
 MyISAM. Legacybinaryset passed 12 on the 5.7 MyISAM profile.
 The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
 records all three conversions: 101 unit tests and 48 forward assertions passed.
-Next: review data-types-values with saved SQL, assertions, coverage and timings.
+The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) keeps all 25 IDs.
+The [numeric workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#integer-decimal-and-bit-implementation-results)
+record the DECIMAL-default pilot and three numeric-limit conversions. All focused
+checks passed. Next: zerofill, floatbounds, fixedfloating and floating.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining type/value and key/index work, full-matrix validation, final
 balancing and short PR selection later.

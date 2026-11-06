@@ -4,7 +4,10 @@ Status: all seven local conversions are complete. Six passed their focused
 forward tests; legacybinaryset passed on the 5.7 MyISAM profile. Choiceboundaries
 is committed as `247bbbe`; legacybinaryset is committed as `88ff87c`. Full-matrix
 validation remains. The [character and binary value review](BETA7_CHARACTER_BINARY_VALUE_WORKFLOW_REVIEW.md#implementation-results)
-and all three local conversions are complete. Next: review data-types-values. The
+and all three local conversions are complete. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) is also complete.
+The [numeric workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#integer-decimal-and-bit-implementation-results)
+record the DECIMAL-default pilot and three numeric-limit conversions. All focused
+checks passed. Next: zerofill, floatbounds, fixedfloating and floating. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -950,5 +953,8 @@ is complete. It keeps encodings, widestrings and zerowidth with their distinct
 values and schema transitions. It records 30 saved passing executions, coverage
 limits, complete row maps and a conversion order. No new build or database run
 was needed for the initial review. Its later conversions passed 101 unit tests
-and 48 forward assertions. Next: review data-types-values from saved evidence.
+and 48 forward assertions. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md)
+keeps all 25 IDs. The [numeric workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#integer-decimal-and-bit-implementation-results)
+record the completed DECIMAL-default, integer, DECIMAL and BIT slices. Next:
+zerofill, floatbounds, fixedfloating and floating.
 Continue remaining type/value and key/index work before full-matrix validation.

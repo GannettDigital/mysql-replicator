@@ -29,9 +29,8 @@ final class DMLIdentifierWorkflowTests: XCTestCase {
             DMLCompatibilityCases.replicatedCases.filter { $0.workflow != nil }.map(\.id),
             [
                 "collations", "nativeencodings", "exactchoices", "choiceboundaries", "binarychoices", "legacybinaryset",
-                "zerowidth", "identifiercase",
-                "unicodeidentifiers", "encodings", "widestrings", "enumzero", "choices",
-                "widechoices",
+                "decimaldefaults", "zerowidth", "identifiercase", "unicodeidentifiers", "encodings", "widestrings",
+                "bits", "enumzero", "choices", "widechoices", "integers", "decimal",
             ])
         for profile in LabProfile.allCases {
             let metadata = try XCTUnwrap(

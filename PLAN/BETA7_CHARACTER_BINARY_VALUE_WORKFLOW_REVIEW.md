@@ -1,6 +1,7 @@
 # Character and binary strings: value and workflow review
 
-Status: all three conversions passed focused unit and forward integration tests.
+Status: all three conversions passed focused unit and forward integration tests
+and are committed as `415e94d`.
 The seven ENUM/SET conversions are also locally complete; legacybinaryset is
 committed as `88ff87c`. Full-matrix validation remains later.
 
@@ -351,8 +352,12 @@ Selected lab results:
 - `artifacts/lab/20261105T002041Z-2da41b32/result.json`
 - `artifacts/lab/20261105T002134Z-c9ac457d/result.json`
 
-Next: review the remaining data-types-values area against saved SQL, assertions,
-coverage and timings. Map distinct numeric, temporal, JSON, spatial and binary
-conditions before choosing another conversion. Keep deliberate restart/replay,
-refusal and recovery workflows separate. This review needs no new build or
-database run. Full-matrix validation, balancing and short PR selection stay later.
+The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md) is complete.
+It records 23 unchanged matrix fixtures, two isolated lifecycle workflows,
+211 saved SQL executions and ten additional BINLOG executions. It keeps all
+25 IDs and required event/restart/replay/recovery checks. The initial review
+needed no new build or database run.
+The [numeric workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#integer-decimal-and-bit-implementation-results)
+record the DECIMAL-default pilot and three numeric-limit conversions. All focused
+checks passed. Next: zerofill, floatbounds, fixedfloating and floating.
+Full-matrix validation, balancing and short PR selection stay later.

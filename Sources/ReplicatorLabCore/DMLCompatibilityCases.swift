@@ -392,7 +392,7 @@ enum DMLCompatibilityCases {
                         check:
                             "SELECT COUNT(*)=1 FROM poc.matrix_bits WHERE id=9223372036854775808 AND a IS NULL AND e IS NULL"
                     ),
-                ]),
+                ], workflow: DMLNumericWorkflows.bits),
             Case(
                 id: "generated", definition: "id INT PRIMARY KEY,n INT,v INT AS (n+1) STORED",
                 phases: [
@@ -694,7 +694,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_integers WHERE id=127",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_integers"),
-                ]),
+                ], workflow: DMLNumericWorkflows.integers),
             Case(
                 id: "decimal",
                 definition: "id INT PRIMARY KEY,a DECIMAL(65,30),b DECIMAL(10,2) UNSIGNED,c DECIMAL(4,4)",
@@ -714,7 +714,7 @@ enum DMLCompatibilityCases {
                     .init(
                         sql: "DELETE FROM poc.matrix_decimal WHERE id=2",
                         check: "SELECT COUNT(*)=1 FROM poc.matrix_decimal"),
-                ]),
+                ], workflow: DMLNumericWorkflows.decimal),
             Case(
                 id: "temporal",
                 definition: "id INT PRIMARY KEY,d DATE,dt DATETIME(6),ts TIMESTAMP(6) NULL,t TIME(6),y YEAR",
