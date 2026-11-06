@@ -777,6 +777,19 @@ operations run in cases that check specific keys, types and schema changes:
 | `ddl-compat-primary-key-row-matching` | Changes to each composite-key part and DELETE by the complete key; case-only text key UPDATE and case-insensitive DELETE |
 | `ddl-compat-keyless-rows` | Single-row and multirow changes without a usable unique key, including duplicate rows |
 
+The group also owns 12 index cases. They share MySQL containers, setup and
+source write phases. Each case keeps its ID and assertions. The runner captures
+metadata and rows at the required operation boundaries, then checks the saved
+observations. It retains exact metadata, intermediate rows, saved schema history
+and decoded binlog comparisons. One shared restart replaces the per-case
+restarts. See [the index workflow results](../PLAN/BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results).
+
+Select any index case with `--case`, or repeat the option for several cases.
+They share execution in the same fixture. The first selected case owns the
+shared time and SQL client calls. SQL traces list the participating IDs in
+`shared_case_ids`; batch query names identify their individual observations.
+The separate `ddl-index-resume` case retains its schema-drift refusal check.
+
 `ddl-compat-primary-key-row-matching` replaces `matrix-composite` and
 `matrix-textkey`. It keeps their separate table definitions and source statements.
 Named assertions check exact rows after each operation. They retain equal IDs

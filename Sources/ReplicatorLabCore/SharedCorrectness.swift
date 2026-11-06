@@ -126,9 +126,10 @@ public enum SharedCorrectness {
                         ]).text
                         try require((Int(count) ?? 0) > 0, "temporary-table cleanup missing from durable audit")
                     }
-                    // The MODIFY-only pilot already verifies its saved schemas and
-                    // a following write. Mixed selections retain the outer check.
-                    if !(savedSchemaRestartChecked && selected == [ModifyIndexCases.columns.id]) {
+                    // A workflow-only selection already checks saved schemas and a
+                    // following write. Mixed selections retain the outer check.
+                    let workflowIDs = Set([ModifyIndexCases.columns.id] + ModifyIndexCases.standaloneCases.map { $0.test.id })
+                    if !(savedSchemaRestartChecked && selected.map { !$0.isEmpty && $0.isSubset(of: workflowIDs) } == true) {
                         try applier.start(initialize: false)
                         try step("INSERT INTO reverse_poc.aux VALUES(99,1)", database: "reverse_poc")
                         try applier.drain()
@@ -1121,118 +1122,7 @@ public enum SharedCorrectness {
             }
             try resetNativeEngine()
             if selects(ModifyIndexCases.columns.id) { try modifyColumns() }
-            for test in ModifyIndexCases.standaloneCases where selects(test.test.id) {
-                try reporter.run(test.test) {
-                    try step(
-                        "CREATE DATABASE IF NOT EXISTS demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
-                        database: "demo")
-                    // Seed only on the source, through replication. Keep these
-                    // single-table DROP checks separate from the multi-table case.
-                    for name in ["mi_clone", "mi_renamed", "mi", "explicit_default_engine"] {
-                        try step("DROP TABLE IF EXISTS demo.\(name)", database: "demo")
-                    }
-                    let parts = test.seed.components(separatedBy: "; ").filter {
-                        !$0.hasPrefix("SET SESSION") && !$0.hasPrefix("CREATE DATABASE") && !$0.hasPrefix("DROP TABLE")
-                            && !$0.isEmpty
-                    }
-                    for sql in parts { try step(sql, database: "demo") }
-                    var starts: [LabProfile.Role: Boundary] = [:]
-                    for role in LabProfile.Role.allCases { starts[role] = try f.boundary(role) }
-                    let before = try applier.latestProgress() ?? [:]
-                    try assertion("schema-effects", caseID: test.test.id) {
-                        let observation = try step(
-                            test.sql, database: "demo",
-                            checks: [
-                                .init(
-                                    "SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",
-                                    test.retained)
-                            ], checkWarnings: true)
-                        var values: [String: Any] = ["source_observation": observation]
-                        for role in LabProfile.Role.allCases {
-                            values[role.rawValue] = try ModifyIndexCases.metadata(
-                                f.h, f.profile.service(role), test, expectedEngine: f.profile.engine(role))
-                        }
-                        return values
-                    }
-                    if !test.workload.isEmpty {
-                        try assertion("following-dml", caseID: test.test.id) {
-                            var observed: [[String: Any]] = []
-                            for item in test.workload {
-                                observed.append(
-                                    try step(
-                                        item.sql, database: "demo",
-                                        checks: [
-                                            .init(
-                                                "SELECT id,IFNULL(HEX(name),'NULL'),IFNULL(CAST(n AS CHAR),'NULL'),IFNULL(HEX(b),'NULL') FROM demo.\(test.table) ORDER BY id",
-                                                item.rows)
-                                        ]))
-                            }
-                            return observed
-                        }
-                    }
-                    try applier.drain()
-                    let saved = try snapshot(test.test.id)
-                    let end = try f.boundary()
-                    let result = try applier.latestProgress() ?? [:]
-                    try assertion("source-boundary", caseID: test.test.id) {
-                        for (key, expected) in [
-                            ("transactionsApplied", 1 + test.workload.count),
-                            ("rowsApplied", test.workload.reduce(0, { $0 + $1.affectedRows })), ("ddlApplied", 1),
-                        ] {
-                            try require(
-                                (result[key] as? Int ?? 0) - (before[key] as? Int ?? 0) == expected,
-                                "MODIFY/index counter differs: " + key)
-                        }
-                        try require(result["appliedGTIDSet"] as? String == end.gtids, "MODIFY/index GTIDs differ")
-                        let checkpoint = try state(
-                            saved, "SELECT lifecycle||'|'||applied_file||'|'||applied_position FROM state")
-                        try require(
-                            checkpoint == "STOPPED|\(end.file)|\(end.position)", "MODIFY/index checkpoint differs")
-                        return ["source": end.json, "saved": checkpoint, "summary": result]
-                    }
-                    try assertion("schema-history", caseID: test.test.id) {
-                        let quoted = test.sql.replacingOccurrences(of: "'", with: "''")
-                        let intent = try state(
-                            saved, "SELECT status||'|'||target_sql FROM ddl_intents ORDER BY rowid DESC LIMIT 1")
-                        try require(intent == "DONE|" + test.sql, "DDL rewritten or incomplete")
-                        // RENAME records several transitions and has no single after_schema_id.
-                        // Check the published table against its journaled after-image.
-                        let table = test.table.replacingOccurrences(of: "'", with: "''")
-                        let published =
-                            "SELECT id FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='demo' AND json_extract(schema_json,'$.table')='\(table)'"
-                        try require(
-                            state(saved, "SELECT COUNT(*) FROM schemas WHERE id IN (\(published))") == "1",
-                            "published index-test schema is missing or ambiguous")
-                        let references = try state(
-                            saved,
-                            "SELECT COUNT(*) FROM row_intents WHERE status='DONE' AND schema_id IN (\(published))")
-                        try require(
-                            references == String(test.workload.reduce(0, { $0 + $1.affectedRows })),
-                            "following rows did not use published schema")
-                        let history = try state(
-                            saved,
-                            "SELECT json_extract(value,'$.after') FROM ddl_details,json_each(transitions_json) WHERE gtid=(SELECT gtid FROM ddl_intents WHERE target_sql='\(quoted)' ORDER BY rowid DESC LIMIT 1) AND json_extract(value,'$.after.database')='demo' AND json_extract(value,'$.after.table')='\(table)'"
-                        )
-                        let schema = try JSONSerialization.jsonObject(with: Data(history.utf8)) as? [String: Any]
-                        let current = try state(saved, "SELECT schema_json FROM schemas WHERE id IN (\(published))")
-                        let currentSchema = try JSONSerialization.jsonObject(with: Data(current.utf8)) as? [String: Any]
-                        try require(
-                            NSDictionary(dictionary: schema ?? [:]).isEqual(to: currentSchema ?? [:]),
-                            "published schema differs from the DDL transition")
-                        try require(
-                            (schema?["columns"] as? [[String: Any]])?.count == 4
-                                && schema?["secondaryIndexes"] is [[String: Any]], "extended schema metadata missing")
-                        try require(state(saved, "PRAGMA user_version") == "14", "state version gate differs")
-                        return ["intent": intent, "schema": schema ?? [:], "following_row_intents": references]
-                            as [String: Any]
-                    }
-                    try assertion("normalized-binlog", caseID: test.test.id) {
-                        try binlogAssertion(test, starts: starts)
-                    }
-                    try applier.start(initialize: false)
-                    try wait()
-                }
-            }
+            try indexOperations()
         }
         /// Test-only: negative scenarios deliberately diverge from the native
         /// oracle. Preserve its failure evidence, then skip that rejected range

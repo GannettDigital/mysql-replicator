@@ -8,7 +8,7 @@ The numeric and floating slices are committed as `345f71f` and `92df394`.
 The legacy slice is committed as `269e76f`. The temporal slice is committed as
 `fbcedd7`. The string-default/BLOB slice is committed as `0f74741`. The JSON
 slice is committed as `b7ffe2d`. The spatial slice is committed as `948b682`.
-The partial-JSON slice passed its focused checks.
+The partial-JSON slice is committed as `97da9d6`.
 See the results below.
 The character/binary conversions are committed as `415e94d`. Full-matrix
 validation remains later work.
@@ -1356,8 +1356,13 @@ source-event-results.json and jsonpartial-results.json.
 
 Passed result: `artifacts/lab/20261106T203447Z-50138882/result.json`.
 
-Next: Slice 10 — reassess area completion and remaining key/index work. Compare
-saved SQL, assertions, coverage scope and timings. Keep lifecycle/isolated cases
-unless their own review identifies a safe change. Do not remove an event or
-failure assertion because another test reaches the same lines. Leave the full
-combined-group and cross-profile checks to CI.
+Slice 10 is complete as a source and saved-evidence review. See
+[area completion and key/index review](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md).
+All 23 local case reports passed 391 named assertions. The review records the
+matrix-json outer-restart limit. It keeps both isolated lifecycle runners.
+
+The [index workflow results](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 12 conversions. All 57 original assertions and the shared restart
+passed on forward MyISAM. Eleven focused unit tests passed.
+Next: review primary-key row matching and named PRIMARY/UNIQUE constraints.
+Leave the full combined-group and cross-profile checks to CI.

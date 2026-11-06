@@ -9,7 +9,10 @@ The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#parti
 record twenty-three completed conversions. All focused checks passed.
 JSON and spatial cases share the data-types-values fixture.
 Partial JSON now keeps bounded event proofs.
-Next: area completion and key/index review. The
+The [index workflow results](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 12 conversions. All 57 original assertions and the shared restart
+passed on forward MyISAM. Eleven focused unit tests passed.
+Next: review primary-key row matching and named PRIMARY/UNIQUE constraints. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -957,5 +960,8 @@ limits, complete row maps and a conversion order. No new build or database run
 was needed for the initial review. Its later conversions passed 101 unit tests
 and 48 forward assertions. The [data-type review](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md)
 keeps all 25 IDs. The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#partial-json-event-checks-in-the-shared-workflow)
-record twenty-three completed conversions. JSON and spatial cases share the data-types-values fixture. Partial JSON now keeps bounded event proofs. Next: area completion and key/index review.
-Continue remaining type/value and key/index work before full-matrix validation.
+record twenty-three completed conversions. JSON and spatial cases share the data-types-values fixture. Partial JSON now keeps bounded event proofs. The [index workflow results](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 12 conversions. All 57 original assertions and the shared restart
+passed on forward MyISAM. Eleven focused unit tests passed.
+Next: review primary-key row matching and named PRIMARY/UNIQUE constraints.
+Continue remaining key/index work before full-matrix validation.

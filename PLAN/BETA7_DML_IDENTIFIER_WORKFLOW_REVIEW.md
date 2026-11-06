@@ -14,7 +14,10 @@ The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#parti
 record twenty-three completed conversions. All focused checks passed.
 JSON and spatial cases share the data-types-values fixture.
 Partial JSON now keeps bounded event proofs.
-Next: area completion and key/index review.
+The [index workflow results](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 12 conversions. All 57 original assertions and the shared restart
+passed on forward MyISAM. Eleven focused unit tests passed.
+Next: review primary-key row matching and named PRIMARY/UNIQUE constraints.
 
 ## Decision and scope
 
@@ -481,7 +484,10 @@ The [type/value workflow results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md#parti
 record twenty-three completed conversions. All focused checks passed.
 JSON and spatial cases share the data-types-values fixture.
 Partial JSON now keeps bounded event proofs.
-Next: area completion and key/index review.
-Keep remaining type/value and key/index reviews, full-matrix
-validation, final balancing and short PR selection in the overall plan. Do not
+The [index workflow results](BETA7_KEY_INDEX_WORKFLOW_REVIEW.md#implementation-and-focused-results)
+record all 12 conversions. All 57 original assertions and the shared restart
+passed on forward MyISAM. Eleven focused unit tests passed.
+Next: review primary-key row matching and named PRIMARY/UNIQUE constraints.
+Keep remaining key/index reviews, full-matrix validation, final balancing
+and short PR selection in the overall plan. Do not
 remove an inventory because its line coverage overlaps another case.

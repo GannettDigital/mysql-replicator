@@ -186,6 +186,13 @@ extension ModifyIndexCases {
     /// A later DROP retires earlier schemas. Check immutable schema IDs and the
     /// exact GTID interval, rather than the latest intent or the current schema.
     static func columnHistory(_ test: Case, gtids: [String], query: (String) throws -> String) throws -> [String: Any] {
+        try workflowHistory(test, gtids: gtids, published: false, query: query)
+    }
+    /// Index cases keep their table until the shared checkpoint. RENAME has no
+    /// single after_schema_id, so use its published table and DDL transition.
+    static func workflowHistory(
+        _ test: Case, gtids: [String], published: Bool, query: (String) throws -> String
+    ) throws -> [String: Any] {
         try require(!gtids.isEmpty, "MODIFY interval has no journaled GTIDs")
         let interval = gtids.map { "'" + $0.replacingOccurrences(of: "'", with: "''") + "'" }.joined(separator: ",")
         let predicate = "gtid IN (\(interval))"
@@ -194,7 +201,18 @@ extension ModifyIndexCases {
             "MODIFY interval must have one DDL intent")
         let intent = try query("SELECT status||'|'||target_sql FROM ddl_intents WHERE \(predicate)")
         try require(intent == "DONE|" + test.sql, "MODIFY DDL rewritten or incomplete")
-        let schemaID = try query("SELECT after_schema_id FROM ddl_intents WHERE \(predicate)")
+        let schemaID: String
+        if published {
+            let table = test.table.replacingOccurrences(of: "'", with: "''")
+            let condition =
+                "current=1 AND json_extract(schema_json,'$.database')='demo' AND json_extract(schema_json,'$.table')='\(table)'"
+            try require(
+                try query("SELECT COUNT(*) FROM schemas WHERE \(condition)") == "1",
+                "published index-test schema is missing or ambiguous")
+            schemaID = try query("SELECT id FROM schemas WHERE \(condition)")
+        } else {
+            schemaID = try query("SELECT after_schema_id FROM ddl_intents WHERE \(predicate)")
+        }
         guard let id = Int(schemaID) else { throw LabError("MODIFY after-schema ID is missing") }
         let raw = try query("SELECT schema_json FROM schemas WHERE id=\(id)")
         let schema = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
@@ -260,14 +278,16 @@ extension ModifyIndexCases {
     }
     /// Keep a complete row block only when its header names this case's table.
     /// Strip mysqlbinlog's type annotations as in the standalone comparison.
-    static func columnBinlog(_ decoded: String, test: Case) throws -> [String] {
+    static func columnBinlog(_ decoded: String, test: Case, tables: Set<String>? = nil) throws -> [String] {
         var rows = false
         var lines: [String] = []
-        let table = "`demo`.`\(test.table)`"
+        let names = Set((tables ?? [test.table]).map { "`demo`.`\($0)`" })
         for raw in decoded.components(separatedBy: "\n") {
             let line = raw.range(of: " /*", options: .backwards).map { String(raw[..<$0.lowerBound]) } ?? raw
             let headers = ["### INSERT INTO ", "### UPDATE ", "### DELETE FROM "]
-            if let header = headers.first(where: line.hasPrefix) { rows = line == header + table }
+            if let header = headers.first(where: line.hasPrefix) {
+                rows = names.contains(String(line.dropFirst(header.count)))
+            }
             if line == test.sql || (line.hasPrefix("###") && rows) { lines.append(line) }
         }
         try require(
