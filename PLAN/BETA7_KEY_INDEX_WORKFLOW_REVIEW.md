@@ -217,7 +217,10 @@ Fourteen focused unit tests passed. The generic phase guard remains unchanged.
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
 Fifteen focused unit tests passed. The
-[SQL/assertion overlap review](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md)
-withdraws the standalone conversion. Next: retain the missing JOIN conditions in
-the existing JSON index case, then retire matrix-select with mapped assertions
-and scopes. Keep LOAD DATA unchanged.
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the replacement checks and retirement of matrix-select, committed as
+`5956130`. The [LOAD DATA workflow](BETA7_LOAD_DATA_INFILE_WORKFLOW_REVIEW.md)
+now uses dml-load-data-infile in the same keys-rows-gtids fixture. It keeps the
+original import and ten SQL selections. Its five assertions, saved-schema
+restart and complete forward default SQL report passed. Eight Swift and 62
+Python tests passed. Keep other profiles and variants for CI.

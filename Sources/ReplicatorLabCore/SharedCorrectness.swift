@@ -1102,6 +1102,7 @@ public enum SharedCorrectness {
         func dml() throws {
             try resetNativeEngine()
             try step("CREATE DATABASE poc CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", database: "poc")
+            try loadDataInfile()
             for test in DMLCompatibilityCases.replicatedCases
             where selects("matrix-" + test.id) && test.applies(to: f.profile) {
                 try reporter.run(QualificationCase("matrix-" + test.id, test.displayName)) {

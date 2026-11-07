@@ -785,7 +785,23 @@ copy and its unchanged permanent input. Ordinary integer row changes and derived
 SELECT values remain in the constraint and temporary-table cases. The migration
 requires these cases in all ten original SQL profile/variant selections. See the
 [SQL/assertion overlap review](../PLAN/BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md).
-`matrix-load` and its LOAD DATA INFILE behavior remain unchanged.
+`matrix-load` was replaced by `dml-load-data-infile`. It stays in the existing
+`keys-rows-gtids` fixture and uses its running applier. One source batch creates
+the table, exports the original two rows and imports the file with LOAD DATA
+INFILE. The export must leave GTIDs and binlog offsets unchanged. Final checks
+compare the original count/sum predicate, exact rows and schema on source,
+native and target. Applied counters and the final GTID/file/offset must match.
+The case adds no container setup or applier restart. The shared fixture still
+checks its saved-schema restart. All ten original SQL selections remain.
+
+The source reads the server-side file. The replicas receive row events; they
+do not read that file. This case does not test LOCAL, custom delimiters or
+import errors. See the [LOAD DATA workflow review](../PLAN/BETA7_LOAD_DATA_INFILE_WORKFLOW_REVIEW.md).
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam \
+  ARGS="--suite correctness --case dml-load-data-infile --coverage"
+```
 
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam \

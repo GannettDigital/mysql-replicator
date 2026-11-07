@@ -39,7 +39,7 @@
         "ddl-compat-primary-key-row-matching",
         "ddl-compat-primary-key-parts",
         "ddl-compat-constraints",
-        "matrix-load",
+        "dml-load-data-infile",
         "positive",
         "ddl-index-create",
         "ddl-index-unique",

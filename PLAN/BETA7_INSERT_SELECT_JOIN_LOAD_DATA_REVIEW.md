@@ -225,5 +225,8 @@ migration assertions. Unit logs are `retirement-unit.log` and
 `selection-unit.log`. All three attempts remain recorded; do not treat the
 second attempt's passed case as a passed outer report.
 
-Next: leave the other profiles and variants to CI. Keep full-matrix validation,
-final balancing and short PR selection later. LOAD DATA stays aside.
+The JOIN consolidation is committed as `5956130`. The following
+[LOAD DATA workflow](BETA7_LOAD_DATA_INFILE_WORKFLOW_REVIEW.md) uses the existing
+keys-rows-gtids fixture. It preserves the original file import and ten SQL
+selections. Leave other profiles and variants to CI. Keep full-matrix
+validation, final balancing and short PR selection later.

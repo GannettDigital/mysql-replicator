@@ -365,7 +365,7 @@
       },
       "cases": {
         "correctness": [
-          "matrix-load",
+          "dml-load-data-infile",
           "positive"
         ]
       }

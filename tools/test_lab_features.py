@@ -137,7 +137,8 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(owners[('correctness', 'ddl-compat-json-indexes')], 'json-data-type')
         self.assertIn('ddl-compat-json-indexes', definitions['data-manipulation-statements']['description'])
         self.assertNotIn(('correctness', 'matrix-select'), owners)
-        self.assertEqual(owners[('correctness', 'matrix-load')], 'data-manipulation-statements')
+        self.assertNotIn(('correctness', 'matrix-load'), owners)
+        self.assertEqual(owners[('correctness', 'dml-load-data-infile')], 'data-manipulation-statements')
         self.assertFalse(any(case.startswith('bootstrap-matrix-') for _, case in owners))
         self.assertEqual(definitions['runtime-control']['kind'], 'project')
 

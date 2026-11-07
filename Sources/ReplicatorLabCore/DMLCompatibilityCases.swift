@@ -680,7 +680,7 @@ enum DMLCompatibilityCases {
                         sql:
                             "SELECT 1,10 UNION ALL SELECT 2,20 INTO OUTFILE '/var/lib/mysql-files/replicator-dml.tsv'; LOAD DATA INFILE '/var/lib/mysql-files/replicator-dml.tsv' INTO TABLE poc.matrix_load",
                         check: "SELECT COUNT(*)=2 AND SUM(v)=30 FROM poc.matrix_load")
-                ]),
+                ], replicatedReplacement: "dml-load-data-infile"),
             Case(
                 id: "integers",
                 definition:

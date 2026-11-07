@@ -69,6 +69,10 @@ struct LabScenario {
         value["family"] = family
         value["dependencies"] = dependencies
         value["requires_main_applier"] = requiresMainApplier
+        if id == LoadDataInfileWorkflow.test.id {
+            value["assertions"] = LoadDataInfileWorkflow.assertions
+            value["replaces"] = ["matrix-load"]
+        }
         if let ddl = DDLCompatibilityCases.cases.first(where: { $0.test.id == id }) {
             let assertions =
                 ddl.steps.compactMap(\.assertionID)
@@ -154,6 +158,7 @@ struct LabScenario {
                 test: .init(
                     "create-select-contract", "Native permanent CTAS restrictions and unchanged target progress"),
                 family: "rejections", intent: "source or target restriction; no partial apply"))
+        cases.append(.init(test: LoadDataInfileWorkflow.test, family: "dml"))
         cases += DMLCompatibilityCases.replicatedCases.map {
             .init(
                 test: .init("matrix-" + $0.id, $0.displayName), family: "dml",

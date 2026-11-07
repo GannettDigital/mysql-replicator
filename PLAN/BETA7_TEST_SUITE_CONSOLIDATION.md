@@ -80,7 +80,13 @@ Fifteen focused unit tests passed. The
 [INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
 record the JOIN checks in the existing JSON index workflow. Its 11 old final
 observations and three new checks remain. The migration retains all ten SQL
-selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+selections. The standalone matrix-select case is retired. That change is
+committed as `5956130`. The [LOAD DATA workflow](BETA7_LOAD_DATA_INFILE_WORKFLOW_REVIEW.md)
+now uses dml-load-data-infile in the existing keys-rows-gtids fixture. It retains
+the original import and ten SQL selections, with one source batch and no case
+restart. Its five assertions, saved-schema restart and complete forward default
+SQL report passed. Eight Swift and 62 Python tests passed. Keep the other
+profiles and variants for CI.
 The focused forward default SQL run and saved-schema restart passed. Other
 profiles and variants remain for CI.
   Keep all seven ENUM/SET IDs, cold metadata inputs, FULL overrides and version exclusions.
@@ -1571,7 +1577,13 @@ Fifteen focused unit tests passed. The
 [INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
 record the JOIN checks in the existing JSON index workflow. Its 11 old final
 observations and three new checks remain. The migration retains all ten SQL
-selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+selections. The standalone matrix-select case is retired. That change is
+committed as `5956130`. The [LOAD DATA workflow](BETA7_LOAD_DATA_INFILE_WORKFLOW_REVIEW.md)
+now uses dml-load-data-infile in the existing keys-rows-gtids fixture. It retains
+the original import and ten SQL selections, with one source batch and no case
+restart. Its five assertions, saved-schema restart and complete forward default
+SQL report passed. Eight Swift and 62 Python tests passed. Keep the other
+profiles and variants for CI.
 The focused forward default SQL run and saved-schema restart passed. Other
 profiles and variants remain for CI.
 Keep all seven IDs and their metadata/version rules.

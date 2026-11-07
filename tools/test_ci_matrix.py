@@ -11,6 +11,15 @@ def row(identifier, family='database', suite='correctness', profile='forward',
 
 
 class MatrixTests(unittest.TestCase):
+    def test_load_data_reuses_the_existing_key_row_fixture(self):
+        import json
+        from pathlib import Path
+        policy = json.loads((Path(__file__).resolve().parent / 'ci_matrix.json').read_text())
+        owners = [a['name'] for a in policy['areas'] if 'dml-load-data-infile' in a.get('cases', [])]
+        self.assertEqual(owners, ['keys-rows-gtids'])
+        self.assertFalse(any('matrix-load' in a.get('cases', []) for a in policy['areas']))
+        self.assertFalse(any('dml-load-data-infile' in s['cases'] for s in policy['binlog_selections']))
+
     def test_spatial_feature_cases_share_the_existing_data_type_fixture(self):
         import json
         from pathlib import Path

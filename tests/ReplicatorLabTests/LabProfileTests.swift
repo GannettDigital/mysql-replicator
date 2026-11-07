@@ -27,7 +27,6 @@ final class LabProfileTests: XCTestCase {
         let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "select" })
         XCTAssertEqual(fixture.phases.count, 3, "Keep the original definition for the metadata and migration history")
         XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == "select" })
-        XCTAssertTrue(cases.contains { $0.id == "matrix-load" })
     }
 
     func testKeyConflictMigrationKeepsSourceStatements() throws {

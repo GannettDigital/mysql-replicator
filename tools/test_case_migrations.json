@@ -691,6 +691,86 @@
     },
     {
       "suite": "correctness",
+      "retired": "matrix-load",
+      "replacement": "dml-load-data-infile",
+      "review": "PLAN/BETA7_LOAD_DATA_INFILE_WORKFLOW_REVIEW.md",
+      "scopes": [
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "Create the same integer primary-key and non-NULL value columns. Export the same two rows to the same source-side file, then import them with LOAD DATA INFILE. The export leaves GTIDs and offsets unchanged.",
+          "assertion": "load-source-operations"
+        },
+        {
+          "condition": "Retain the original predicate COUNT(*)=2 AND SUM(v)=30 on source, native and target.",
+          "assertion": "load-import-count-and-sum"
+        },
+        {
+          "condition": "Verify exact imported rows (1,10),(2,20) on source, native and target.",
+          "assertion": "load-imported-rows"
+        },
+        {
+          "condition": "Compare the complete replicated table schema and rows.",
+          "assertion": "final-schema-poc"
+        },
+        {
+          "condition": "CREATE and LOAD log two transactions, one DDL and two rows. Save the exact applied GTIDs and source file offset.",
+          "assertion": "load-applied-checkpoint"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
       "retired": "bootstrap-matrix-binarychoices",
       "replacement": "metadata-labels-defaults",
       "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
@@ -2719,7 +2799,7 @@
       "replacement": "metadata-columns-indexes",
       "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
       "retained_cases": [
-        "matrix-load",
+        "dml-load-data-infile",
         "metadata-cache-ddl"
       ],
       "scopes": [
@@ -2776,7 +2856,7 @@
       ],
       "conditions": [
         {
-          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in matrix-load.",
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Source file import and exact imported rows run in dml-load-data-infile.",
           "assertion": "metadata-upsert"
         },
         {
