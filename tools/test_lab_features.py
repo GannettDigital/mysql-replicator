@@ -134,6 +134,10 @@ class FeatureTests(unittest.TestCase):
             self.assertEqual(owners[('correctness', case)], 'indexes')
         for case in ('metadata-columns-indexes', 'metadata-labels-defaults', 'metadata-cache-ddl'):
             self.assertEqual(owners[('correctness', case)], 'table-metadata')
+        self.assertEqual(owners[('correctness', 'ddl-compat-json-indexes')], 'json-data-type')
+        self.assertIn('ddl-compat-json-indexes', definitions['data-manipulation-statements']['description'])
+        self.assertNotIn(('correctness', 'matrix-select'), owners)
+        self.assertEqual(owners[('correctness', 'matrix-load')], 'data-manipulation-statements')
         self.assertFalse(any(case.startswith('bootstrap-matrix-') for _, case in owners))
         self.assertEqual(definitions['runtime-control']['kind'], 'project')
 

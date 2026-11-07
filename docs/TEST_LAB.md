@@ -594,8 +594,11 @@ ALTER, CREATE LIKE, row changes, and restart on all four profiles. It uses a
 STORED indexed column on MyISAM targets and a VIRTUAL indexed column on InnoDB
 targets. It also adds a STORED indexed column on all profiles.
 The case sends three source batches around its two deliberate restarts. Separate
-tables retain the initial index lookup and the LIKE copy before its final UPDATE.
-One final query batch checks forced-index results and generated-column metadata.
+tables retain the initial index lookup and the LIKE copy before its final joined
+UPDATE and DELETE. The copy UPDATE computes a JSON value from the permanent input
+table. DELETE removes one copied row. Named checks verify all remaining copy rows,
+all unchanged input rows and absence of the deleted value through the renamed index.
+One final query batch checks these results and generated-column metadata.
 The final schema comparison also checks the complete JSON values and types.
 
 `json-target57-limits` uses the 8.4 source and native InnoDB replica to accept
@@ -773,6 +776,20 @@ evidence. All assertion IDs and the saved-schema restart remain. See
 ```sh
 make lab-test PROFILE=mysql84-to-mysql57-myisam \
   ARGS="--suite correctness --case ddl-compat-key-conflicts --coverage"
+```
+
+`matrix-select` was replaced by `ddl-compat-json-indexes`. That existing JSON case
+now checks INSERT SELECT, UPDATE JOIN and DELETE JOIN. It retains its JSON values,
+generated columns, indexes and restarts. Named final checks verify the changed
+copy and its unchanged permanent input. Ordinary integer row changes and derived
+SELECT values remain in the constraint and temporary-table cases. The migration
+requires these cases in all ten original SQL profile/variant selections. See the
+[SQL/assertion overlap review](../PLAN/BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md).
+`matrix-load` and its LOAD DATA INFILE behavior remain unchanged.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam \
+  ARGS="--suite correctness --case ddl-compat-json-indexes --coverage"
 ```
 
 The `keys-rows-gtids` group contains the `positive` single-row case and related
@@ -1252,7 +1269,10 @@ Plans also include `feature_catalog`. It assigns each suite/case identity to one
 primary feature. Each execution group lists its `features`. The feature catalog
 covers the queried catalog, including excluded cases; the group's `cases` list
 shows what will run. Cases that contain several operations keep one primary
-feature and retain their original descriptions and assertions.
+feature and retain their original descriptions and assertions. For example,
+`ddl-compat-json-indexes` belongs to `json-data-type` and also checks INSERT SELECT
+and joined UPDATE/DELETE. The Data Manipulation Statements description points to
+that case. Select its case ID to run those checks; do not schedule it twice.
 
 `tools/test_features.json` holds the assignments and documentation references.
 MySQL feature names follow the Reference Manual. Application behavior, such as

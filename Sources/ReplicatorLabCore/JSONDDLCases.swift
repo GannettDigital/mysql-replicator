@@ -19,7 +19,10 @@ extension DDLCompatibilityCases {
             .init("CREATE TABLE ddlcompat.copy LIKE ddlcompat.t"),
             .init("INSERT INTO ddlcompat.copy(id,doc) SELECT id,doc FROM ddlcompat.t", phaseEnd: "before-restart-2"),
             .init("ALTER TABLE ddlcompat.copy DROP INDEX by_name, ADD INDEX renamed_name(name)", restartBefore: true),
-            .init("UPDATE ddlcompat.copy SET doc=JSON_OBJECT('name','final','n',50) WHERE id=4"),
+            .init(
+                "UPDATE ddlcompat.copy c JOIN ddlcompat.t s ON c.id=s.id SET c.doc=JSON_OBJECT('name','final','n',s.n+10) WHERE c.id=4"
+            ),
+            .init("USE ddlcompat; DELETE c FROM ddlcompat.copy c JOIN ddlcompat.t s ON c.id=s.id WHERE s.id=1"),
             .init(
                 "CREATE TABLE ddlcompat.ji_initial(id INT PRIMARY KEY,doc JSON,name VARCHAR(40) AS (doc->>'$.name') STORED,KEY by_name(name)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
                 sqlTransactional:
@@ -67,6 +70,18 @@ extension DDLCompatibilityCases {
                     check: .init(
                         "SELECT id,name,n FROM ddlcompat.copy FORCE INDEX(renamed_name) WHERE name='final'",
                         "4\tfinal\t50")),
+                .init(
+                    id: "join-copy-final-rows",
+                    check: .init("SELECT id,name,n FROM ddlcompat.copy ORDER BY id", "3\tNULL\tNULL\n4\tfinal\t50")),
+                .init(
+                    id: "join-input-unchanged",
+                    check: .init(
+                        "SELECT id,name,n FROM ddlcompat.t ORDER BY id",
+                        "1\tgamma\t30\n3\tNULL\tNULL\n4\tdelta\t40")),
+                .init(
+                    id: "delete-join-index-absence",
+                    check: .init(
+                        "SELECT COUNT(*) FROM ddlcompat.copy FORCE INDEX(renamed_name) WHERE name='gamma'", "0")),
                 .init(
                     id: "copy-index-names",
                     check: .init(

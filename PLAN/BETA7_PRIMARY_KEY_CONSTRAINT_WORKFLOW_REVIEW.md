@@ -209,4 +209,7 @@ The primary-key and constraint workflows are committed as `c268dd7`. The
 record all 11 original assertions and both unchanged no-op boundaries passing.
 Fifteen focused unit tests passed. The REPLACE group still has three row mutations.
 
-Next: review INSERT SELECT, joined UPDATE/DELETE and LOAD DATA.
+The [INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the replacement JOIN checks in the existing JSON index workflow. The
+standalone matrix-select case is retired. The migration keeps all ten original
+SQL selections. LOAD DATA stays unchanged.

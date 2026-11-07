@@ -670,7 +670,8 @@ enum DMLCompatibilityCases {
                         check: "SELECT COUNT(*)=1 AND MIN(id)=12 FROM poc.matrix_select"),
                 ],
                 setup:
-                    "CREATE TABLE poc.matrix_input(id INT PRIMARY KEY,v INT NOT NULL); INSERT INTO poc.matrix_input VALUES(1,10),(2,20)"
+                    "CREATE TABLE poc.matrix_input(id INT PRIMARY KEY,v INT NOT NULL); INSERT INTO poc.matrix_input VALUES(1,10),(2,20)",
+                replicatedReplacement: "ddl-compat-json-indexes"
             ),
             Case(
                 id: "load", definition: "id INT PRIMARY KEY,v INT NOT NULL",

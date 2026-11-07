@@ -198,6 +198,12 @@ Passed lab result: `artifacts/lab/20261106T224218Z-b83be123/result.json`.
 Other evidence is in `artifacts/key-conflict-workflow-review/`:
 `workflow-results.json`, `inventory-results.json`, `unit.log` and `integration.log`.
 
-Next: review INSERT SELECT, joined UPDATE/DELETE and LOAD DATA in the remaining
-`matrix-select`/`matrix-load` cases. Keep their distinct source statements and
-input-file conditions.
+The conflict workflow is committed as `e842229`. The
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the JOIN checks in the existing JSON index workflow and retirement of
+matrix-select. The migration keeps all ten original SQL selections. LOAD DATA
+and its proposed rename stay aside.
+
+The focused forward default SQL run, saved-schema restart and complete report
+passed. Next: leave the other profiles and variants to CI. Keep full-matrix
+validation, final balancing and short PR selection later.

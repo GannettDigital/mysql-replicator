@@ -194,7 +194,7 @@
       "id": "json-data-type",
       "title": "The JSON Data Type",
       "kind": "mysql",
-      "description": "JSON types, values, partial updates, expression indexes, defaults and version compatibility.",
+      "description": "JSON types, values, partial updates, expression indexes, defaults and version compatibility. ddl-compat-json-indexes also checks INSERT SELECT and joined UPDATE/DELETE with an unchanged permanent input table.",
       "reference": {
         "title": "The JSON Data Type",
         "location": "https://dev.mysql.com/doc/refman/8.4/en/json.html",
@@ -357,7 +357,7 @@
       "id": "data-manipulation-statements",
       "title": "Data Manipulation Statements",
       "kind": "mysql",
-      "description": "Multirow writes, duplicate-key updates, REPLACE, IGNORE, join writes and LOAD DATA.",
+      "description": "Multirow writes, duplicate-key updates, REPLACE, IGNORE and LOAD DATA. INSERT SELECT and joined UPDATE/DELETE also run in ddl-compat-json-indexes, whose primary feature is json-data-type.",
       "reference": {
         "title": "SQL Statements",
         "location": "https://dev.mysql.com/doc/refman/8.4/en/sql-statements.html",
@@ -365,7 +365,6 @@
       },
       "cases": {
         "correctness": [
-          "matrix-select",
           "matrix-load",
           "positive"
         ]

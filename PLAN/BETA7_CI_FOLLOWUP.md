@@ -11,6 +11,12 @@ for subsequent work. Do not repeat the completed local profile checks.
 
 ## Current grouping direction
 
+The current local plan has 183 jobs, 1,535 catalog obligations and 182 integration
+coverage collections. The INSERT SELECT/JOIN migration removes ten duplicate
+selections and keeps replacement checks in every original scope. Its focused
+forward default SQL run passed; the full current plan has not run in CI. See
+[the latest results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results).
+
 The MODIFY pilot and failure diagnostics are committed as `30f3a16`.
 Follow the [revised execution plan](BETA7_TEST_SUITE_CONSOLIDATION.md#current-execution-plan-after-the-modify-pilot)
 for remaining work. It takes priority over the earlier next-step notes below.
@@ -31,7 +37,7 @@ Generated dependencies now use 18 named observation phases and four retained
 live restarts. All 22 assertions and offline replay passed locally. Calls fell
 from 365 in the saved CI run to 273. Database lifecycle now belongs to the
 database family; all seven applicable cases passed in one shared fixture.
-The planner retains 187 jobs and all 1,545 current obligations.
+At that step, the planner retained 187 jobs and all 1,545 obligations.
 
 Database creation batching also passed. Six cases now share one running applier
 and one snapshot/restart. Local creation time fell from 109.5 to 40.5 seconds;
@@ -515,8 +521,13 @@ record both conversions. All 23 operation states and 15 original named assertion
 passed on forward MyISAM. Fourteen focused unit tests passed.
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
-Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
-UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
+Fifteen focused unit tests passed. The
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the JOIN checks in the existing JSON index workflow. Its 11 old final
+observations and three new checks remain. The migration retains all ten SQL
+selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+The focused forward default SQL run and saved-schema restart passed. Other
+profiles and variants remain for CI.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining key/index work, full-matrix validation, final balancing and
 short PR selection later.

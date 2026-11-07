@@ -23,7 +23,7 @@ Partial JSON retains source-event and offset checks. The isolated
 successful CI baseline. Their restart, replay and recovery checks remain.
 See [the type/value results](BETA7_DATA_TYPE_VALUE_WORKFLOW_REVIEW.md).
 
-The generated full matrix remains 183 jobs, 1,545 catalog obligations and
+At that step, the generated full matrix had 183 jobs, 1,545 catalog obligations and
 182 integration coverage collections. The type/value area owns 30 IDs after
 the related JSON and spatial cases moved into its existing fixture. No new
 whole-area timing or coverage measurement exists for these conversions.
@@ -216,5 +216,8 @@ Fourteen focused unit tests passed. The generic phase guard remains unchanged.
 
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
-Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
-UPDATE/DELETE and LOAD DATA. Keep matrix counts and selections unchanged.
+Fifteen focused unit tests passed. The
+[SQL/assertion overlap review](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md)
+withdraws the standalone conversion. Next: retain the missing JOIN conditions in
+the existing JSON index case, then retire matrix-select with mapped assertions
+and scopes. Keep LOAD DATA unchanged.

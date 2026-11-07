@@ -607,6 +607,90 @@
     },
     {
       "suite": "correctness",
+      "retired": "matrix-select",
+      "replacement": "ddl-compat-json-indexes",
+      "review": "PLAN/BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md",
+      "retained_cases": [
+        "ddl-compat-constraints",
+        "ddl-compat-temporary-create-select"
+      ],
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "gtid-full",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql84-to-mysql57-myisam",
+          "variant": "position-minimal",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "INSERT SELECT copies JSON values and SQL NULL into a generated-column table; retain exact rows before UPDATE and DELETE.",
+          "assertion": "like-copy-before-update"
+        },
+        {
+          "condition": "UPDATE JOIN changes only the selected copy row and computes its value from the permanent input; the renamed index returns the changed value.",
+          "assertion": "renamed-index-updated-lookup"
+        },
+        {
+          "condition": "DELETE JOIN removes only the matched copy row; exact final rows retain the NULL row and the updated neighbor.",
+          "assertion": "join-copy-final-rows"
+        },
+        {
+          "condition": "UPDATE JOIN and DELETE JOIN leave all permanent input rows unchanged.",
+          "assertion": "join-input-unchanged"
+        },
+        {
+          "condition": "The renamed generated-column index no longer returns the row removed by DELETE JOIN.",
+          "assertion": "delete-join-index-absence"
+        }
+      ]
+    },
+    {
+      "suite": "correctness",
       "retired": "bootstrap-matrix-binarychoices",
       "replacement": "metadata-labels-defaults",
       "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
@@ -3015,7 +3099,7 @@
       "replacement": "metadata-columns-indexes",
       "review": "PLAN/BETA7_METADATA_GROUP_REVIEW.md",
       "retained_cases": [
-        "matrix-select",
+        "ddl-compat-json-indexes",
         "metadata-cache-ddl"
       ],
       "scopes": [
@@ -3072,7 +3156,7 @@
       ],
       "conditions": [
         {
-          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. Full DML phases remain in matrix-select.",
+          "condition": "Read and save column, encoding and index metadata from the existing table. Representative definition: upsert. INSERT SELECT and JOIN conditions run in ddl-compat-json-indexes; ordinary integer row values remain in ddl-compat-constraints.",
           "assertion": "metadata-upsert"
         },
         {

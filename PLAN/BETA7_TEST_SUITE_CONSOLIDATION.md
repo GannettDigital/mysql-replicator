@@ -9,6 +9,11 @@ work; their next-step notes are historical.
 
 Current progress:
 
+The current local plan has 183 jobs, 1,535 catalog obligations and 182 integration
+coverage collections. The INSERT SELECT/JOIN migration keeps its checks in all
+ten original scopes. Its focused forward default SQL run passed. Full-matrix
+validation remains. See [the latest results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results).
+
 - Current table/column/index conversion work is locally complete: 20
   compatibility cases use final observations, and the MODIFY pilot uses shared
   preparation, observations and binlog checks. See the
@@ -71,8 +76,13 @@ record both conversions. All 23 operation states and 15 original named assertion
 passed on forward MyISAM. Fourteen focused unit tests passed.
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
-Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
-UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
+Fifteen focused unit tests passed. The
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the JOIN checks in the existing JSON index workflow. Its 11 old final
+observations and three new checks remain. The migration retains all ten SQL
+selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+The focused forward default SQL run and saved-schema restart passed. Other
+profiles and variants remain for CI.
   Keep all seven ENUM/SET IDs, cold metadata inputs, FULL overrides and version exclusions.
 
 - Baseline, feature ownership, migration checks and generated-column changes:
@@ -127,8 +137,8 @@ column keys use 23 named observation phases and five deliberate live restarts.
 Both retain offline replay. See [the results and remaining work](BETA7_TABLE_COLUMN_INDEX_REVIEW.md#focused-integration-results).
 Generated dependencies also passed: 18 phase observations, four live restarts
 and offline replay. Database lifecycle now belongs to the database group; all
-seven applicable cases passed together on forward MyISAM. The matrix still has
-187 jobs and 1,545 obligations. Database creation now shares one running applier
+seven applicable cases passed together on forward MyISAM. At that step, the
+matrix had 187 jobs and 1,545 obligations. Database creation now shares one running applier
 and one snapshot/restart across its six cases. All seven database cases passed
 locally. Creation time fell from 109.5 to 40.5 seconds and SQL calls from 416 to
 205. The full database group's executed runtime line set is unchanged.
@@ -1557,8 +1567,13 @@ record both conversions. All 23 operation states and 15 original named assertion
 passed on forward MyISAM. Fourteen focused unit tests passed.
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
-Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
-UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
+Fifteen focused unit tests passed. The
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the JOIN checks in the existing JSON index workflow. Its 11 old final
+observations and three new checks remain. The migration retains all ten SQL
+selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+The focused forward default SQL run and saved-schema restart passed. Other
+profiles and variants remain for CI.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining key/index work, full-matrix validation, final balancing and
 short PR selection later.

@@ -61,9 +61,10 @@ final class IndexWorkflowTests: XCTestCase {
 
     func testJSONKeepsStoredVirtualAndCopyBeforeUpdate() throws {
         let test = DDLCompatibilityCases.jsonGeneratedIndexes
-        try verify(test, count: 20, restarts: [2, 8])
-        prefix(test, start: 10, count: 2, replacements: [("t", "ji_initial")])
-        prefix(test, start: 12, count: 8, replacements: [("t", "ji_before"), ("copy", "ji_copy")])
+        try verify(test, count: 21, restarts: [2, 8])
+        XCTAssertEqual(try XCTUnwrap(DDLExecutionPhase.plan(test.steps)).map { $0.steps.count }, [2, 6, 13])
+        prefix(test, start: 11, count: 2, replacements: [("t", "ji_initial")])
+        prefix(test, start: 13, count: 8, replacements: [("t", "ji_before"), ("copy", "ji_copy")])
         XCTAssertTrue(test.profileExclusions.isEmpty)
         let creates = test.steps.filter { $0.sql.hasPrefix("CREATE TABLE") && $0.sql.contains("name VARCHAR") }
         XCTAssertEqual(creates.count, 3)
@@ -72,12 +73,29 @@ final class IndexWorkflowTests: XCTestCase {
             XCTAssertTrue(step.sqlTransactional.contains("VIRTUAL,KEY by_name"))
         }
         let checks = try XCTUnwrap(test.finalObservations).checks
-        XCTAssertEqual(checks.count, 11)
+        XCTAssertEqual(checks.count, 14)
         XCTAssertEqual(
             checks.first { $0.id == "like-copy-before-update" }?.check.expected,
             "1\tgamma\t30\n3\tNULL\tNULL\n4\tdelta\t40")
         XCTAssertEqual(checks.filter { $0.transactionalCheck != nil }.count, 5)
-        XCTAssertEqual(checks.filter { $0.check.sql.contains("FORCE INDEX") }.count, 4)
+        XCTAssertEqual(checks.filter { $0.check.sql.contains("FORCE INDEX") }.count, 5)
+        XCTAssertEqual(
+            test.steps[9].sql,
+            "UPDATE ddlcompat.copy c JOIN ddlcompat.t s ON c.id=s.id SET c.doc=JSON_OBJECT('name','final','n',s.n+10) WHERE c.id=4")
+        XCTAssertEqual(
+            test.steps[10].sql,
+            "USE ddlcompat; DELETE c FROM ddlcompat.copy c JOIN ddlcompat.t s ON c.id=s.id WHERE s.id=1")
+        XCTAssertEqual(test.steps[9].sqlTransactional, test.steps[9].sql)
+        XCTAssertEqual(test.steps[10].sqlTransactional, test.steps[10].sql)
+        XCTAssertEqual(
+            checks.first { $0.id == "join-copy-final-rows" }?.check.expected, "3\tNULL\tNULL\n4\tfinal\t50")
+        XCTAssertEqual(
+            checks.first { $0.id == "join-input-unchanged" }?.check.expected,
+            "1\tgamma\t30\n3\tNULL\tNULL\n4\tdelta\t40")
+        XCTAssertEqual(
+            checks.first { $0.id == "delete-join-index-absence" }?.check.sql,
+            "SELECT COUNT(*) FROM ddlcompat.copy FORCE INDEX(renamed_name) WHERE name='gamma'")
+        XCTAssertEqual(checks.first { $0.id == "delete-join-index-absence" }?.check.expected, "0")
         XCTAssertEqual(
             test.finalObservations?.cleanup, ["DROP TABLE ddlcompat.ji_initial,ddlcompat.ji_before,ddlcompat.ji_copy"])
     }

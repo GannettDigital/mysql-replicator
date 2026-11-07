@@ -17,8 +17,13 @@ record both conversions. All 23 operation states and 15 original named assertion
 passed on forward MyISAM. Fourteen focused unit tests passed.
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
-Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
-UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load. The
+Fifteen focused unit tests passed. The
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the JOIN checks in the existing JSON index workflow. Its 11 old final
+observations and three new checks remain. The migration retains all ten SQL
+selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+The focused forward default SQL run and saved-schema restart passed. Other
+profiles and variants remain for CI. The
 [native inventory workflows](BETA7_NATIVE_ENCODING_INVENTORY_REVIEW.md#native-encoding-implementation-and-focused-results)
 passed their focused checks before this review.
 
@@ -974,6 +979,11 @@ record both conversions. All 23 operation states and 15 original named assertion
 passed on forward MyISAM. Fourteen focused unit tests passed.
 The [conflict workflow results](BETA7_KEY_CONFLICT_WORKFLOW_REVIEW.md#implementation-and-focused-results)
 record all 11 original assertions and both exact no-op boundary checks passing.
-Fifteen focused unit tests passed. Next: review INSERT SELECT, joined
-UPDATE/DELETE and LOAD DATA in matrix-select/matrix-load.
+Fifteen focused unit tests passed. The
+[INSERT SELECT/JOIN results](BETA7_INSERT_SELECT_JOIN_LOAD_DATA_REVIEW.md#implementation-and-focused-results)
+record the JOIN checks in the existing JSON index workflow. Its 11 old final
+observations and three new checks remain. The migration retains all ten SQL
+selections. The standalone matrix-select case is retired. LOAD DATA is unchanged.
+The focused forward default SQL run and saved-schema restart passed. Other
+profiles and variants remain for CI.
 Continue remaining key/index work before full-matrix validation.

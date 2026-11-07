@@ -39,7 +39,6 @@
         "ddl-compat-primary-key-row-matching",
         "ddl-compat-primary-key-parts",
         "ddl-compat-constraints",
-        "matrix-select",
         "matrix-load",
         "positive",
         "ddl-index-create",

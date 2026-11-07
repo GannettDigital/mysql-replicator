@@ -3,6 +3,33 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class LabProfileTests: XCTestCase {
+    func testInsertSelectJoinMigrationKeepsAssertionsAndOriginalScopes() throws {
+        let cases = LabScenario.correctness
+        XCTAssertFalse(cases.contains { $0.id == "matrix-select" || $0.id == "bootstrap-matrix-select" })
+        let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-json-indexes" })
+        let required: Set<String> = [
+            "like-copy-before-update", "renamed-index-updated-lookup", "join-copy-final-rows",
+            "join-input-unchanged", "delete-join-index-absence",
+        ]
+        for profile in LabProfile.allCases {
+            let variants: [LabVariant] = profile == .forward
+                ? [.standard, .positionMinimal, .gtidFull, .lowercaseTables] : [.standard, .lowercaseTables]
+            for variant in variants {
+                XCTAssertNil(replacement.reason(profile, variant: variant))
+                let fields = replacement.fields(profile, variant: variant)
+                XCTAssertEqual(fields["replaces"] as? [String], ["matrix-select"])
+                XCTAssertTrue(required.isSubset(of: Set(try XCTUnwrap(fields["assertions"] as? [String]))))
+            }
+        }
+        XCTAssertThrowsError(try LabScenario.select(tier: "full", family: nil, ids: ["matrix-select"])) { error in
+            XCTAssertTrue(String(describing: error).contains("was replaced by ddl-compat-json-indexes"))
+        }
+        let fixture = try XCTUnwrap(DMLCompatibilityCases.cases.first { $0.id == "select" })
+        XCTAssertEqual(fixture.phases.count, 3, "Keep the original definition for the metadata and migration history")
+        XCTAssertFalse(DMLCompatibilityCases.replicatedCases.contains { $0.id == "select" })
+        XCTAssertTrue(cases.contains { $0.id == "matrix-load" })
+    }
+
     func testKeyConflictMigrationKeepsSourceStatements() throws {
         let cases = LabScenario.correctness
         let replacement = try XCTUnwrap(cases.first { $0.id == "ddl-compat-key-conflicts" })
