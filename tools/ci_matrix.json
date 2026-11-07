@@ -35,7 +35,7 @@
       "cases": [
         "ddl-compat-unique-row-identity",
         "ddl-compat-keyless-rows",
-        "ddl-compat-grouped-constraints",
+        "ddl-alter-table-columns-constraints-and-index-names",
         "ddl-compat-primary-key-row-matching",
         "ddl-compat-primary-key-parts",
         "ddl-compat-constraints",

@@ -297,9 +297,6 @@ public enum SharedCorrectness {
             let condition = "TABLE_SCHEMA=" + LabSQLName.literal(database)
             for role in LabProfile.Role.allCases {
                 let service = role.rawValue
-                func sql(_ statement: String, preserveWhitespace: Bool = false) throws -> String {
-                    try f.sql(role, "SET NAMES utf8mb4; " + statement, preserveWhitespace: preserveWhitespace)
-                }
                 var snapshot = try f.h.sqlBatch(
                     f.profile.service(role),
                     [
@@ -436,47 +433,22 @@ public enum SharedCorrectness {
                 let indexRows = snapshot["indexes"]!.components(separatedBy: "\n").map {
                     $0.components(separatedBy: "\t")
                 }
-                var rowQueries: [String] = []
-                var jsonRows: [Data: String] = [:]
-                for table in tables {
+                let rowTables = tables.map { table -> LabComparisonRows.Table in
                     let names = columnRows.filter { $0.count >= 2 && LabSQLName.equal($0[0], table) }.map { $0[1] }
                     let expressions = names.map { "IFNULL(HEX(CAST(" + LabSQLName.quote($0) + " AS BINARY)),'<NULL>')" }
                         .joined(separator: ",")
                     let primaryOrder = indexRows.filter {
                         $0.count >= 5 && LabSQLName.equal($0[0], table) && $0[1] == "PRIMARY"
                     }.map { LabSQLName.quote($0[4]) }.joined(separator: ",")
-                    // The oracle does not use the applier's key selection. Sort
-                    // keyless snapshots by all exact projected values instead.
+                    // Keep the independent exact-value ordering for keyless rows.
                     let keys = primaryOrder.isEmpty ? expressions : primaryOrder
                     let jsonColumns = columnRows.filter {
                         $0.count >= 4 && LabSQLName.equal($0[0], table) && $0[3] == "json"
                     }.map { $0[1] }
-                    if !jsonColumns.isEmpty {
-                        jsonRows[Data(table.utf8)] = try f.comparisonRows(
-                            role, table: LabSQLName.quote(database) + "." + LabSQLName.quote(table), columns: names,
-                            jsonColumns: jsonColumns, orderBy: keys)
-                    }
-                    rowQueries.append(
-                        "SELECT " + LabSQLName.literal(table) + ",\(expressions) FROM " + LabSQLName.quote(database)
-                            + "." + LabSQLName.quote(table) + " ORDER BY \(keys)")
+                    return .init(name: table, columns: names, jsonColumns: jsonColumns, orderBy: keys)
                 }
-                snapshot["rows"] =
-                    rowQueries.isEmpty
-                    ? ""
-                    : try sql("SET time_zone='+00:00'; " + rowQueries.joined(separator: "; "), preserveWhitespace: true)
-                // Keep ordinary row bytes. Replace only JSON-bearing table rows
-                // with the independent value/type comparison from the servers.
-                if !jsonRows.isEmpty {
-                    var next: [Data: Int] = [:]
-                    let replacements = jsonRows.mapValues { $0.isEmpty ? [] : $0.components(separatedBy: "\n") }
-                    snapshot["rows"] = try snapshot["rows"]!.components(separatedBy: "\n").map { line in
-                        let table = String(line.prefix(while: { $0 != "\t" }))
-                        guard let rows = replacements[Data(table.utf8)] else { return line }
-                        let index = next[Data(table.utf8), default: 0]
-                        next[Data(table.utf8)] = index + 1
-                        try require(index < rows.count, "JSON comparison row count changed")
-                        return table + "\t" + rows[index]
-                    }.joined(separator: "\n")
+                snapshot["rows"] = try LabComparisonRows.read(database: database, tables: rowTables) {
+                    try f.h.sqlBatch(f.profile.service(role), $0)
                 }
                 // Compare normalized row multisets. Server versions can order
                 // NULL sentinels and JSON text differently. Keep duplicate lines.
@@ -533,7 +505,9 @@ public enum SharedCorrectness {
         func ddl() throws {
             for original in DDLCompatibilityCases.cases where selects(original.test.id) {
                 let keyWorkflow = try KeyConstraintWorkflows.plan(original)
-                let test = keyWorkflow?.test ?? original
+                try KeyRowLifecycleWorkflows.validateOriginal(original)
+                let lifecycle = KeyRowLifecycleWorkflows.plan(original)
+                let test = lifecycle ?? keyWorkflow?.test ?? original
                 nativeInnoDB = test.nativeInnoDB
                 try setNativeEngine(nativeInnoDB ? "InnoDB" : "MyISAM")
                 try reporter.run(test.test) {
@@ -570,7 +544,8 @@ public enum SharedCorrectness {
                     let begin = try f.boundary()
                     var phaseWrites: [LabSQLPhase.Result] = []
                     if let phases {
-                        phaseWrites = try ddlPhases(phases, test: test)
+                        phaseWrites = try ddlPhases(
+                            phases, test: test, rowKeyObservations: KeyRowLifecycleWorkflows.observations(original))
                     } else {
                         for item in test.steps {
                             if item.restartBefore {
@@ -656,6 +631,14 @@ public enum SharedCorrectness {
                             try keyWorkflow.checkpoint(writes: phaseWrites, before: before, after: result) {
                                 try state(saved, $0)
                             }
+                        }
+                    }
+                    if lifecycle != nil {
+                        try assertion("retained-row-key-schemas", caseID: test.test.id) {
+                            let expected = KeyRowLifecycleWorkflows.snapshots(original).flatMap(\.tables).count
+                            let actual = try state(saved, KeyRowLifecycleWorkflows.schemaEvidenceSQL(original))
+                            try require(actual == String(expected), "retained row/key schemas were not saved")
+                            return ["schemas": expected]
                         }
                     }
                     try require(
@@ -865,10 +848,14 @@ public enum SharedCorrectness {
                         try verifyAbsentDefinerErrors(.afterReplay, caseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-primary-key-parts" {
-                        try replayDDLWorkflow("primary-key-parts", stopAfter: 4, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "primary-key-parts", stopAfter: 4, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
-                    if test.test.id == "ddl-compat-grouped-constraints" {
-                        try replayDDLWorkflow("grouped-constraints", stopAfter: 6, from: begin, to: end)
+                    if test.test.id == "ddl-alter-table-columns-constraints-and-index-names" {
+                        try replayDDLWorkflow(
+                            test.test.id, stopAfter: 6, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-column-index-syntax" {
                         try replayDDLWorkflow(
@@ -930,14 +917,16 @@ public enum SharedCorrectness {
                         try require(
                             state(
                                 saved,
-                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_array_length(schema_json,'$.primaryKeyColumns')=0 AND json_extract(schema_json,'$.rowIdentity.kind')='unique'"
+                                "SELECT COUNT(*) FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table') IN ('t','seq') AND json_array_length(schema_json,'$.primaryKeyColumns')=0 AND json_extract(schema_json,'$.rowIdentity.kind')='unique'"
                             ) == "2", "unique row identities were not saved")
                         try require(
                             state(
                                 saved,
                                 "SELECT json_extract(schema_json,'$.rowIdentity.index') FROM schemas WHERE current=1 AND json_extract(schema_json,'$.database')='ddlcompat' AND json_extract(schema_json,'$.table')='t'"
                             ) == "by_code", "selected key did not follow ordered DDL")
-                        try replayDDLWorkflow("unique-row-identity", stopAfter: 7, from: begin, to: end)
+                        try replayDDLWorkflow(
+                            "unique-row-identity", stopAfter: 7, from: begin, to: end,
+                            finalObservations: test.finalObservations, observationCaseID: test.test.id)
                     }
                     if test.test.id == "ddl-compat-view-renames" {
                         try require(

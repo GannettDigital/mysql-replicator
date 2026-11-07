@@ -71,7 +71,7 @@
           "ddl-compat-unique-row-identity",
           "ddl-compat-keyless-rows",
           "ddl-compat-column-index-syntax",
-          "ddl-compat-grouped-constraints",
+          "ddl-alter-table-columns-constraints-and-index-names",
           "ddl-compat-primary-key-parts",
           "ddl-compat-alter-column-keys",
           "ddl-compat-constraints",

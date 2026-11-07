@@ -11,6 +11,14 @@ for subsequent work. Do not repeat the completed local profile checks.
 
 ## Current grouping direction
 
+The [latest row-key and comparison-read work](BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md)
+has passed its focused local checks. Keyless comparison reads now use shared
+batches. The original runner, failure boundaries and assertions remain. Its
+same-host case time fell from 104.30 to 78.73 seconds, with 222 fewer client
+calls and identical covered runtime lines. Next: push the completed changes and
+run one full instrumented CI selection. Review failures, report completeness,
+coverage and timing before job balancing and final PR case selection.
+
 The current local plan has 183 jobs, 1,535 catalog obligations and 182 integration
 coverage collections. The INSERT SELECT/JOIN migration removes ten duplicate
 selections and keeps replacement checks in every original scope. Its focused

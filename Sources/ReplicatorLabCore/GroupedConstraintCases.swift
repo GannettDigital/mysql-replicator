@@ -2,7 +2,7 @@ import Foundation
 
 extension DDLCompatibilityCases {
     static let groupedConstraints = Case(
-        "grouped-constraints", "Grouped FK and ignored CHECK clauses, reserved index names, restart and replay",
+        "grouped-constraints", "ALTER TABLE: add columns and constraints; verify index names, restart and replay",
         [
             .init("CREATE TABLE ddlcompat.p(id INT PRIMARY KEY)"),
             .init("CREATE TABLE ddlcompat.t(id INT PRIMARY KEY)"),
@@ -29,5 +29,6 @@ extension DDLCompatibilityCases {
             .init("ALTER TABLE ddlcompat.g DROP KEY PRIMARY_2", restartBefore: true),
             .init("DELETE FROM ddlcompat.t"),
             .init("DROP TABLE ddlcompat.t,ddlcompat.p,ddlcompat.g"),
-        ], profileExclusions: [.forward: "An 8.4 CHECK is enforced; this case tests native 5.7 ignored CHECK clauses."])
+        ], profileExclusions: [.forward: "An 8.4 CHECK is enforced; this case tests native 5.7 ignored CHECK clauses."],
+        catalogID: "ddl-alter-table-columns-constraints-and-index-names")
 }

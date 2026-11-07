@@ -822,6 +822,27 @@ operations run in cases that check specific keys, types and schema changes:
 | `ddl-compat-primary-key-row-matching` | Changes to each composite-key part and DELETE by the complete key; case-only text key UPDATE and case-insensitive DELETE |
 | `ddl-compat-keyless-rows` | Single-row and multirow changes without a usable unique key, including duplicate rows |
 
+The prefix-key, unique-key and ALTER columns/constraints cases use shared batch
+helpers inside this fixture. Each keeps its original transactions first and all
+three deliberate restarts. Original predicates and schemas are checked live at
+predicate and restart boundaries. Additional tables retain other states for
+final comparisons. Offline replay keeps its original stop/resume checks.
+The keyless case keeps its original runner: its measured trial did not reduce
+SQL calls or container setup. Its transaction-7/8 failure and recovery checks
+remain. No case or fixture is removed. See the
+[row-key lifecycle workflow review](../PLAN/BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md).
+
+Shared row comparisons read each table once. They combine these reads across
+tables, then combine JSON type and value queries across tables. Each batch has
+a limit of 32 queries or 256 KiB of SQL; a larger single query runs alone.
+Schema comparisons still read current metadata. Exact row bytes, duplicate
+counts, SQL NULL and JSON scalar types remain part of the comparisons.
+
+```sh
+make lab-test PROFILE=mysql84-to-mysql57-myisam \
+  ARGS="--suite correctness --case ddl-compat-primary-key-parts --case ddl-compat-unique-row-identity --coverage"
+```
+
 The group also owns 12 index cases. They share MySQL containers, setup and
 source write phases. Each case keeps its ID and assertions. The runner captures
 metadata and rows at the required operation boundaries, then checks the saved
@@ -1949,7 +1970,9 @@ the native parent-rename defect stops before target SQL. It also checks the
 saved checkpoint and unchanged target. This case runs after the normal writer
 stops, so its intentional failure does not enter another case.
 
-`ddl-compat-grouped-constraints` tests grouped FK and ignored CHECK clauses on
+`ddl-alter-table-columns-constraints-and-index-names` tests ALTER TABLE that adds
+columns and constraints in one statement. It also checks native generated index
+names when a column is named PRIMARY. It tests FK and ignored CHECK clauses on
 the three 5.7-source profiles. It also checks reserved index names, later rows,
 restart and replay.
 

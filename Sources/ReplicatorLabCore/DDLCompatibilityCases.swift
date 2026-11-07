@@ -55,9 +55,9 @@ enum DDLCompatibilityCases {
         init(
             _ id: String, _ description: String, _ steps: [Step], nativeInnoDB: Bool = false,
             profileExclusions: [LabProfile: String] = [:], finalObservations: DDLFinalObservations? = nil,
-            file: String = #filePath, line: UInt = #line
+            catalogID: String? = nil, file: String = #filePath, line: UInt = #line
         ) {
-            test = QualificationCase("ddl-compat-" + id, description, file: file, line: line)
+            test = QualificationCase(catalogID ?? ("ddl-compat-" + id), description, file: file, line: line)
             self.steps = steps
             self.nativeInnoDB = nativeInnoDB
             self.finalObservations = finalObservations

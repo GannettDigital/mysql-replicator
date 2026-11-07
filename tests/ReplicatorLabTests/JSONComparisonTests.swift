@@ -3,6 +3,14 @@ import XCTest
 @testable import ReplicatorLabCore
 
 final class JSONComparisonTests: XCTestCase {
+    private func rows(
+        _ raw: String, columns: [String], jsonColumns: [String], from: String,
+        execute: ([LabSQLBatch.Query]) throws -> [String: String]
+    ) throws -> String {
+        try LabJSONComparison.rows([.init(raw: raw, columns: columns, jsonColumns: jsonColumns, from: from)],
+            execute: execute)[0]
+    }
+
     private func hex(_ text: String) -> String {
         text.utf8.map { String(format: "%02X", $0) }.joined()
     }
@@ -18,7 +26,7 @@ final class JSONComparisonTests: XCTestCase {
             ["33", hex("1.00"), hex("\"2024-02-29\"")],
         ].map { $0.joined(separator: "\t") }.joined(separator: "\n")
         var calls = 0
-        let result = try LabJSONComparison.rows(
+        let result = try rows(
             raw, columns: ["id", "j`", "other"], jsonColumns: ["j`", "other"],
             from: " FROM `db`.`t` ORDER BY `id`"
         ) { queries in
@@ -49,7 +57,7 @@ final class JSONComparisonTests: XCTestCase {
 
     func testPathsAcrossChunksRetainOrder() throws {
         let text = "[" + Array(repeating: "0", count: 33).joined(separator: ",") + "]"
-        let result = try LabJSONComparison.rows(hex(text), columns: ["j"], jsonColumns: ["j"], from: " FROM t") {
+        let result = try rows(hex(text), columns: ["j"], jsonColumns: ["j"], from: " FROM t") {
             queries in
             XCTAssertEqual(queries.map(\.name), ["json-0-0", "json-0-32"])
             XCTAssertEqual(queries.map { $0.sql.components(separatedBy: "JSON_TYPE(").count - 1 }, [32, 2])
@@ -67,7 +75,7 @@ final class JSONComparisonTests: XCTestCase {
     func testQueryCountBoundPreservesDuplicateRows() throws {
         var sizes: [Int] = []
         var names: [String] = []
-        let result = try LabJSONComparison.rows(
+        let result = try rows(
             Array(repeating: hex("null"), count: 65).joined(separator: "\n"),
             columns: ["j"], jsonColumns: ["j"], from: " FROM t"
         ) { queries in
@@ -85,7 +93,7 @@ final class JSONComparisonTests: XCTestCase {
         for keyLength in [40_000, 80_000] {
             let text = "{\"" + String(repeating: "x", count: keyLength) + "\":null}"
             var sizes: [Int] = []
-            _ = try LabJSONComparison.rows(
+            _ = try rows(
                 Array(repeating: hex(text), count: 3).joined(separator: "\n"),
                 columns: ["j"], jsonColumns: ["j"], from: " FROM t"
             ) { queries in
@@ -100,7 +108,7 @@ final class JSONComparisonTests: XCTestCase {
 
     func testNoInspectionForEmptyRowsSQLNullOrNonJSONColumns() throws {
         for (raw, columns) in [("", ["j"]), ("<NULL>", ["j"]), ("3132", [])] {
-            let result = try LabJSONComparison.rows(raw, columns: ["j"], jsonColumns: columns, from: " FROM t") { _ in
+            let result = try rows(raw, columns: ["j"], jsonColumns: columns, from: " FROM t") { _ in
                 XCTFail("unexpected inspection")
                 return [:]
             }
@@ -115,12 +123,12 @@ final class JSONComparisonTests: XCTestCase {
             ["json-0-0": "NULL\t6E756C6C\nNULL\t6E756C6C"],
         ] {
             XCTAssertThrowsError(
-                try LabJSONComparison.rows(hex("null"), columns: ["j"], jsonColumns: ["j"], from: " FROM t") { _ in
+                try rows(hex("null"), columns: ["j"], jsonColumns: ["j"], from: " FROM t") { _ in
                     result
                 })
         }
         XCTAssertThrowsError(
-            try LabJSONComparison.rows("00\t00", columns: ["j"], jsonColumns: ["j"], from: " FROM t") { _ in
+            try rows("00\t00", columns: ["j"], jsonColumns: ["j"], from: " FROM t") { _ in
                 XCTFail("invalid row must fail before querying")
                 return [:]
             })
@@ -129,7 +137,7 @@ final class JSONComparisonTests: XCTestCase {
     func testClientErrorStopsRemainingBatches() {
         var calls = 0
         XCTAssertThrowsError(
-            try LabJSONComparison.rows(
+            try rows(
                 Array(repeating: hex("null"), count: 65).joined(separator: "\n"),
                 columns: ["j"], jsonColumns: ["j"], from: " FROM t"
             ) { _ in
@@ -161,4 +169,48 @@ final class JSONComparisonTests: XCTestCase {
         XCTAssertThrowsError(try LabJSONComparison.scalar("NULL", "NULL"))
         XCTAssertThrowsError(try value("DOUBLE", "not-a-number"))
     }
+    func testTablesShareInspectionBatchesAndKeepTheirOwnRowOffsets() throws {
+        let tables: [LabJSONComparison.Table] = [
+            .init(raw: "31\t" + hex("null") + "\n32\t<NULL>", columns: ["id", "j"], jsonColumns: ["j"], from: " FROM a ORDER BY id"),
+            .init(raw: hex("1.00"), columns: ["j"], jsonColumns: ["j"], from: " FROM b"),
+            .init(raw: "", columns: ["j"], jsonColumns: ["j"], from: " FROM empty"),
+            .init(raw: "", columns: ["v"], jsonColumns: [], from: " FROM ordinary"),
+        ]
+        var calls = 0
+        let result = try LabJSONComparison.rows(tables) { queries in
+            calls += 1
+            XCTAssertEqual(queries.map(\.name), ["json-0-0", "json-1-0"])
+            XCTAssertTrue(queries[0].sql.hasSuffix(" FROM a ORDER BY id LIMIT 1 OFFSET 0"))
+            XCTAssertTrue(queries[1].sql.hasSuffix(" FROM b LIMIT 1 OFFSET 0"))
+            return ["json-0-0": "NULL\t6E756C6C", "json-1-0": "DECIMAL\t312E3030"]
+        }
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(result, try ["31\t" + encoded([["$", "NULL", "6E756C6C"]]) + "\n32\t<NULL>",
+            encoded([["$", "DECIMAL", "312E3030"]]), "", ""])
+    }
+
+    func testQueryCountLimitSpansTablesWithoutNameCollisions() throws {
+        let raw = Array(repeating: hex("null"), count: 33).joined(separator: "\n")
+        var sizes: [Int] = []
+        var names: [String] = []
+        let result = try LabJSONComparison.rows(["a", "b"].map {
+            .init(raw: raw, columns: ["j"], jsonColumns: ["j"], from: " FROM " + $0)
+        }) { queries in
+            sizes.append(queries.count)
+            names += queries.map(\.name)
+            for query in queries {
+                if query.name == "json-32-0" { XCTAssertTrue(query.sql.hasSuffix(" FROM a LIMIT 1 OFFSET 32")) }
+                if query.name == "json-33-0" { XCTAssertTrue(query.sql.hasSuffix(" FROM b LIMIT 1 OFFSET 0")) }
+            }
+            return Dictionary(uniqueKeysWithValues: queries.map { ($0.name, "NULL\t6E756C6C") })
+        }
+        XCTAssertEqual(sizes, [32, 32, 2])
+        XCTAssertEqual(names, (0..<66).map { "json-\($0)-0" })
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0].components(separatedBy: "\n").count, 33)
+        XCTAssertEqual(result[0], result[1])
+        XCTAssertNotEqual(try LabJSONComparison.scalar("DOUBLE", hex("0.0")),
+            try LabJSONComparison.scalar("DOUBLE", hex("-0.0")))
+    }
+
 }

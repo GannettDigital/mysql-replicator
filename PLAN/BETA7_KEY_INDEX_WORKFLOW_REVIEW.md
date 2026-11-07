@@ -131,15 +131,16 @@ RENAME, LIKE and index DDL. Do not change the native-only fixtures.
 
 ## Remaining group review
 
-The other 12 IDs require separate assertion checks before conversion:
+The original review identified the following remaining work. The linked
+results now record the completed slices and current lifecycle conversion:
 
 | Cases | Decision and next review |
 |---|---|
-| `ddl-compat-primary-key-row-matching`, `ddl-compat-constraints` | Ordinary candidates after indexes. Preserve exact composite/text-key rows and named single-row/multirow assertions. |
-| `ddl-compat-key-conflicts` | Ordinary candidate with no-op statements. Preserve zero-new-transaction boundaries and warning expectations for INSERT IGNORE and INSERT ON DUPLICATE KEY UPDATE. |
-| `matrix-select`, `matrix-load` | Review joined DML, INSERT SELECT, and LOAD DATA separately. Preserve input-table setup, the server file path and row predicates. Do not treat them as repeated integer-value tests. |
-| `ddl-compat-primary-key-parts`, `ddl-compat-grouped-constraints`, `ddl-compat-unique-row-identity` | Keep deliberate live restarts and offline replay. Grouped constraints also has a source-version exclusion and InnoDB-specific FK SQL. |
-| `ddl-compat-keyless-rows` | Keep duplicate-row, restart, replay and recovery conditions. These are not replaced by primary-key tests. |
+| `ddl-compat-primary-key-row-matching`, `ddl-compat-constraints` | Converted with exact composite/text-key rows and named single-row/multirow assertions. See the primary-key/constraint results below. |
+| `ddl-compat-key-conflicts` | Converted; both no-op boundaries and source warnings remain. See the conflict results below. |
+| `matrix-select`, `matrix-load` | Replaced by JSON JOIN checks and dml-load-data-infile. Original source conditions and selections remain mapped in their reviews. |
+| `ddl-compat-primary-key-parts`, `ddl-alter-table-columns-constraints-and-index-names`, `ddl-compat-unique-row-identity` | Shared lifecycle execution passed focused checks. Original live predicates, restarts, replay boundaries and SQL branches remain. The ALTER case has a DBA-facing name. |
+| `ddl-compat-keyless-rows` | Keep its original runner. The trial added SQL calls and removed no fixture setup. Duplicate-row, restart, replay and recovery checks remain. |
 | `positive`, `ddl-compat-source-gtid-preservation`, `ddl-compat-tagged-gtids` | Retain the earlier GTID review decisions. Exact counters, target GTID membership, tag intervals and isolated state differ. |
 
 `ddl-index-resume` already runs in `table-filters-index-resume`. It checks
@@ -224,3 +225,12 @@ now uses dml-load-data-infile in the same keys-rows-gtids fixture. It keeps the
 original import and ten SQL selections. Its five assertions, saved-schema
 restart and complete forward default SQL report passed. Eight Swift and 62
 Python tests passed. Keep other profiles and variants for CI.
+
+
+The [row-key lifecycle implementation](BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md)
+uses the existing fixture for three converted workflows and the unchanged
+keyless runner. Live predicates and restart boundaries stay observed on their
+original tables. Other states use retained copies. Focused integration runs,
+18 Swift tests and 62 Python tests passed. The only selection change is renaming
+the ALTER case to ddl-alter-table-columns-constraints-and-index-names in its six
+original scopes. Full CI, balancing and short PR selection remain.

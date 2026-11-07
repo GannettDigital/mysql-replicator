@@ -5000,6 +5000,62 @@
           "assertion": "saved-state-resume"
         }
       ]
+    },
+    {
+      "suite": "correctness",
+      "retired": "ddl-compat-grouped-constraints",
+      "replacement": "ddl-alter-table-columns-constraints-and-index-names",
+      "review": "PLAN/BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md",
+      "scopes": [
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql57-myisam",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "default",
+          "transport": "sql"
+        },
+        {
+          "profile": "mysql57-to-mysql84-innodb",
+          "variant": "lowercase-tables",
+          "transport": "sql"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "ALTER TABLE adds columns and constraints, preserves ignored 5.7 CHECK clauses and uses the InnoDB foreign-key branch where applicable. Original row predicate after the column change remains 1,1,6.",
+          "assertion": "original-step-8-check-1"
+        },
+        {
+          "condition": "A column named PRIMARY gets the native generated index names PRIMARY, PRIMARY_2 and PRIMARY_3.",
+          "assertion": "original-step-9-check-1"
+        },
+        {
+          "condition": "The original tables are dropped after the original restart sequence and following DML.",
+          "assertion": "original-tables-dropped"
+        },
+        {
+          "condition": "Intermediate states between live observations remain available for final source/native/target comparison and replay.",
+          "assertion": "retained-state-tables"
+        }
+      ]
     }
   ]
 }

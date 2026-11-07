@@ -657,7 +657,7 @@
       ],
       "candidate_cases": [
         "ddl-compat-column-index-syntax",
-        "ddl-compat-grouped-constraints",
+        "ddl-alter-table-columns-constraints-and-index-names",
         "ddl-compat-primary-key-parts",
         "json-target84-schema"
       ],

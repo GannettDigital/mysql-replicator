@@ -9,6 +9,23 @@ work; their next-step notes are historical.
 
 Current progress:
 
+The [remaining key workflow review](#remaining-key-workflows-and-fixture-reuse)
+keeps all four remaining cases in the existing keys-rows-gtids fixture. They
+already share container setup. The [implementation](BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md)
+now batches prefix-key, unique-key and ALTER columns/constraints workflows.
+Focused runs passed. The keyless trial did not reduce SQL calls, so its existing
+runner remains. No fixture was added. The ordinary index runner is unchanged.
+
+The subsequent comparison-read change keeps that keyless runner and all its
+operation boundaries. A same-host before/after pair passed with identical
+32-step results, replay outcomes and 10,560 covered runtime lines. Case time
+fell from 104.30 to 78.73 seconds; client calls fell from 684 to 462. All 20
+focused comparison tests passed. See the
+[measured results](BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md#implemented-read-batching-and-local-results).
+Next: one full instrumented CI run after the user pushes. Check failures and
+report completeness first, then coverage changes and job balance. Select the
+short PR case list last. Do not repeat the completed local cases before that run.
+
 The current local plan has 183 jobs, 1,535 catalog obligations and 182 integration
 coverage collections. The INSERT SELECT/JOIN migration keeps its checks in all
 ten original scopes. Its focused forward default SQL run passed. Full-matrix
@@ -1589,3 +1606,68 @@ profiles and variants remain for CI.
 Keep all seven IDs and their metadata/version rules.
 Keep remaining key/index work, full-matrix validation, final balancing and
 short PR selection later.
+
+## Remaining key workflows and fixture reuse
+
+Reviewed after LOAD DATA commit `8b4801f`. All four cases below already run
+inside the existing keys-rows-gtids fixture. Each profile/variant group creates
+its containers once. Separate case IDs do not imply separate container starts.
+Keep the fixture assignment and public case IDs for this slice.
+
+| Case | Existing SQL selections | Execution to retain |
+|---|---:|---|
+| ddl-compat-primary-key-parts | 10 | Prefix lengths, full-value matching, binary/BLOB values, LIKE copy, column/table renames, three live restarts and offline replay |
+| ddl-compat-unique-row-identity | 10 | Unique-key selection and replacement, case-only changes, primary-key addition/removal, AUTO_INCREMENT without a primary key, three live restarts, saved key choice and replay |
+| ddl-compat-keyless-rows | 10 | Duplicate and NULL rows, exact bytes and JSON types, signed zero, three live restarts, full-row schema records and replay failure/recovery |
+| ddl-compat-grouped-constraints | 6 | Grouped clauses, ignored 5.7 CHECK constraints, reserved index names, three live restarts, engine-specific FK SQL and replay |
+
+The first three cases run on all four profiles. Grouped constraints runs only
+with a 5.7 source, on three profiles and two variants each. All these selections
+use SQL transport. Their source definitions are unchanged from the saved
+passing baseline at efb3458. This review does not create new runtime results.
+
+### Reuse existing execution, not only containers
+
+The current DDL runner still drops/recreates ddlcompat per case and performs
+ordinary comparisons after individual statements. Those operations are inside
+the shared fixture. Optimize them separately from container setup.
+
+Use DDLExecutionPhase and DDLFinalObservations for compatible source batches
+and final checks. Keep DDLReplayWorkflow for stop/resume and recovery behavior.
+Use distinct table names where checks can be deferred. Preserve an intermediate
+observation when later writes cannot prove its result. Keep the original SQL
+forms, named assertions, saved key selection and source-position boundaries.
+
+Do not insert these cases directly into IndexOperationsWorkflow. Its cases use
+common setup, DML rounds and one shared restart. These four cases require
+ordered schema transitions, deliberate restarts and offline replay.
+KeyConstraintWorkflows also rejects restart-bearing steps and different
+transactional SQL. It cannot accept all four unchanged. Reuse the common helpers
+without weakening those guards.
+
+Keep grouped constraints in the current fixture. The existing foreign-key
+fixture runs only the two InnoDB profiles. Moving the entire case there would
+need additional MyISAM fixture runs or would lose its 5.7 MyISAM checks. Its
+InnoDB FK clause does not replace the grouped-column, CHECK and index-name
+conditions. No fixture move is justified before new timing data.
+
+Start with primary-key-parts, then review unique-row-identity, keyless-rows and
+grouped-constraints. Keep the dedicated GTID cases as the earlier review decided.
+Before each conversion, map intermediate schema/row states and replay stop points.
+Verify the original selections and helper guards. Run only the changed case on
+one representative profile locally. Add a second profile only for a changed
+engine/version branch. Use full CI later for the other profiles, balancing and
+the final short PR selection.
+
+Source review and saved-plan checks only. No build or test ran. No case,
+selection, assertion or execution changed. Evidence:
+`artifacts/remaining-key-fixture-review/review.json`.
+
+The subsequent [implementation](BETA7_KEY_ROW_LIFECYCLE_WORKFLOWS.md) uses the
+shared phase, observation and replay helpers for three cases. Their focused
+runs passed. Keyless keeps its original runner after a measured trial showed no
+SQL-call reduction. Its original failure positions remain. The ALTER case is
+now named ddl-alter-table-columns-constraints-and-index-names. All 18 focused
+Swift and 62 Python tests passed. Plans retain all selections and job assignments,
+with only that public case rename. Next: full instrumented CI after the user
+pushes, then measured balancing and the short PR case list.

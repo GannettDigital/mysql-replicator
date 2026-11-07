@@ -78,8 +78,12 @@ struct DDLExecutionPhase {
 }
 
 extension SharedCorrectness.Run {
-    func ddlPhases(_ phases: [DDLExecutionPhase], test: DDLCompatibilityCases.Case) throws -> [LabSQLPhase.Result] {
+    func ddlPhases(
+        _ phases: [DDLExecutionPhase], test: DDLCompatibilityCases.Case,
+        rowKeyObservations: [String: KeyRowLifecycleWorkflows.Observation] = [:]
+    ) throws -> [LabSQLPhase.Result] {
         var captured: [LabSQLPhase.Result] = []
+        try require(Set(rowKeyObservations.keys).isSubset(of: Set(phases.map(\.id))), "missing row/key observation phase")
         try test.finalObservations?.validate(phases)
         for phase in phases {
             if phase.steps[0].restartBefore {
@@ -109,6 +113,9 @@ extension SharedCorrectness.Run {
                     "writes": writes.map(\.json), "checks": observations,
                     "snapshots": try compare("ddlcompat"),
                 ]
+            }
+            if let observation = rowKeyObservations[phase.id] {
+                try rowKeyObservation(observation, caseID: test.test.id)
             }
         }
         if let final = test.finalObservations {

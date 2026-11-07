@@ -9727,7 +9727,7 @@
     },
     {
       "suite": "ddl-suite",
-      "case_id": "ddl-compat-grouped-constraints",
+      "case_id": "ddl-alter-table-columns-constraints-and-index-names",
       "reason": "Grouped FK and ignored CHECK clauses, reserved index names, restart and replay."
     },
     {

@@ -74,13 +74,17 @@ struct LabScenario {
             value["replaces"] = ["matrix-load"]
         }
         if let ddl = DDLCompatibilityCases.cases.first(where: { $0.test.id == id }) {
+            let liveChecks = KeyRowLifecycleWorkflows.observations(ddl).values.sorted { $0.step < $1.step }
+                .flatMap { $0.checks.map(\.id) }
+            let ddl = KeyRowLifecycleWorkflows.plan(ddl) ?? ddl
             let assertions =
-                ddl.steps.compactMap(\.assertionID)
+                liveChecks
+                + ddl.steps.compactMap(\.assertionID)
                 + (ddl.finalObservations?.checks.map(\.id) ?? [])
             if !assertions.isEmpty { value["assertions"] = assertions }
             let replaces = DMLCompatibilityCases.cases.filter { $0.replicatedReplacement == id }.map {
                 "matrix-" + $0.id
-            }
+            } + KeyRowLifecycleWorkflows.renamedCases.filter { $0.value == id }.map(\.key).sorted()
             if !replaces.isEmpty { value["replaces"] = replaces }
         }
         value["intent"] = intent
@@ -350,6 +354,9 @@ struct LabScenario {
         }
         replacements += ModifyIndexCases.columnIDs.filter(ids.contains).map {
             "\($0) was replaced by \(ModifyIndexCases.columns.id)"
+        }
+        replacements += KeyRowLifecycleWorkflows.renamedCases.filter { ids.contains($0.key) }.map {
+            "\($0.key) was replaced by \($0.value)"
         }
         try require(replacements.isEmpty, replacements.joined(separator: "; "))
         try require(

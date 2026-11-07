@@ -9,6 +9,8 @@ Write for data engineers, DBAs, and platform engineers who know MySQL replicatio
 - Use short sentences. Give each sentence one main subject.
 - Use active voice and direct instructions.
 - Use one term for each concept. Explain technical terms when necessary.
+- Name test groups and cases for the MySQL operations and replication behavior
+  they check. A DBA must understand the name without reading the implementation.
 - Prefer standard industry terms and terms defined in the MySQL documentation.
   Define a project-specific term before you use it. Do not use phrases such as
   "replication coverage qualified" without a clear definition. State which tests
